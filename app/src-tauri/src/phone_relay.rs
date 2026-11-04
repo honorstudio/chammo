@@ -1,7 +1,7 @@
 //! 폰 중계 — 이 컴퓨터가 중계 허브에 주인으로 붙어 있는 소켓 하나(ADR 0013·서버 ADR 0005). 테일스케일 없는 폰이 이 길로 온다.
 //! - 켜지는 때: 폰 연결을 켜 뒀고(mobile.json) 이 기기가 중계에 등록돼 있고(team.json) 폰 입구 주소(phoneWeb)가 있을 때
 //! - 받은 틀은 phone_relay_core(세션·같은 문)로, 처리는 일꾼 스레드(최대 8)에서 하고 봉하기·보내기는 이 스레드만(번호 차례)
-//! - 끊기면 2·4·8…초(최대 5분) 뒤 다시. 서버가 이 기기를 끊으면(4001) 다시 안 붙는다
+//! - 끊기면 1초(잘 돌던 연결)·4·8…초(최대 5분) 뒤 다시. 서버가 이 기기를 끊으면(4001) 다시 안 붙는다
 use crate::mobile_http::{Backend, Gate};
 use crate::phone_relay_core::{self as core, Ev, Lines, Tunnels};
 use crate::phone_tunnel as tun;
@@ -25,6 +25,12 @@ const HEALTHY: Duration = Duration::from_secs(60);
 /// 다음 다시 붙기 차례 수(team_relay_ws::backoff 에 넣는다). up = 이번에 붙어 있던 시간(못 붙었으면 None)
 fn next_fails(fails: u32, up: Option<Duration>) -> u32 {
     if up.is_some_and(|d| d >= HEALTHY) { 1 } else { fails.saturating_add(1) }
+}
+
+/// 다시 붙기 전 기다림 — 첫 차례(잘 돌던 연결이 끊김)는 1초, 그 뒤로는 4·8·16초…(최대 5분).
+/// 중계 쪽 연결이 몇 분마다 닫는 틀 없이 끊겨서(11-02 notify.log) 4초씩 비면 그동안 폰 요청이 다 실패했다
+fn reconnect_wait(fails: u32) -> Duration {
+    if fails <= 1 { Duration::from_secs(1) } else { crate::team_relay_ws::backoff(fails - 1) }
 }
 
 /// 지금 상태 — 설정 화면이 읽는다
@@ -64,7 +70,8 @@ struct RealLines {
 
 impl Lines for RealLines {
     fn line_of(&self, relay: &str) -> Option<(String, Vec<u8>)> {
-        let (id, x) = self.devices.relay_line(relay)?;
+        // 폰 줄, 아니면 중계로 짝지은 다른 컴퓨터 참모 줄(C-3a) — 어느 쪽인지는 문(gate_req)이 줄로 다시 본다
+        let (id, x) = self.devices.relay_line(relay).or_else(|| self.devices.relay_peer_line(relay))?;
         Some((id, tun::pubkey(&x).ok()?))
     }
     fn agree(&self, their: &[u8]) -> Option<[u8; 32]> {
@@ -141,7 +148,7 @@ pub fn boot<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
                 Err(e) => {
                     set_status(|s| { s.connected = false; s.error = Some(e.clone()); });
                     fails = next_fails(fails, up.map(|t: Instant| t.elapsed()));
-                    let wait = crate::team_relay_ws::backoff(fails);
+                    let wait = reconnect_wait(fails);
                     // 끊긴 까닭·붙어 있던 시간을 남긴다 — 전엔 '허브에 붙음'만 남아 폰이 안 될 때 맥 쪽이 빠졌었는지 못 가렸다
                     log(&format!("허브 끊김 — {e} · {}초 붙어 있었음 · {}초 뒤 다시", up.map_or(0, |t: Instant| t.elapsed().as_secs()), wait.as_secs()));
                     std::thread::sleep(wait);
@@ -315,6 +322,12 @@ fn register_tunnel(st: &TeamState, keys: &DeviceKeys) {
     }
 }
 
+/// 숫자 확인을 받아도 되는 기기인가 — 서버가 찍은 plat 으로 고른 갈래별로, 내 계정 기기 목록(서버 말)에서 본다.
+/// 폰: 같은 계정 폰(허용 대기 중도 — 이 카드가 계정 허용도 한다). 컴퓨터(peer): 같은 계정의 **허용된** 다른 컴퓨터만(대기 컴퓨터는 기기 허용이 먼저)
+pub(crate) fn link_dev_ok(st: &TeamState, dev: &str, peer: bool) -> bool {
+    st.my_devices.iter().any(|d| d.id == dev && !d.current && if peer { matches!(d.kind.as_str(), "mac" | "win") && !d.pending() } else { d.kind == "phone" })
+}
+
 /// 숫자 확인 한 단계 — link1(인사·commit) → link2(nM) / link3(nP) → 숫자 카드. 순서를 어기거나 못 연 상자는 닫는다
 fn link_step(m: &Value, me_pub: &[u8], lines: &Arc<RealLines>, tx: &Sender<Out>) {
     let s = |k: &str| m[k].as_str().unwrap_or("").to_string();
@@ -347,9 +360,10 @@ fn link_step(m: &Value, me_pub: &[u8], lines: &Arc<RealLines>, tx: &Sender<Out>)
     };
     match step.as_str() {
         "link1" => {
-            // 같은 계정의 폰 기기만 — 서버가 확인한 기기 id 가 내 기기 목록에서 폰이어야
+            // 같은 계정의 폰 기기, 또는 허용된 다른 컴퓨터(C-3b) — 갈래는 허브가 찍은 plat(서버 DB 값)으로만. 옛 서버(plat 없음)는 폰
             let dev = s("dev");
-            let mine = |st: &TeamState| st.my_devices.iter().any(|d| d.id == dev && d.kind == "phone" && !d.current);
+            let peer = matches!(m["plat"].as_str(), Some("mac" | "win"));
+            let mine = |st: &TeamState| link_dev_ok(st, &dev, peer);
             if !mine(&st) {
                 let due = {
                     let mut last = LINK_REFRESHED.lock().unwrap_or_else(|e| e.into_inner());
@@ -365,10 +379,10 @@ fn link_step(m: &Value, me_pub: &[u8], lines: &Arc<RealLines>, tx: &Sender<Out>)
                     }
                 }
                 if !mine(&st) {
-                    return close("내 계정 폰이 아님");
+                    return close(if peer { "내 계정의 허용된 컴퓨터가 아님" } else { "내 계정 폰이 아님" });
                 }
             }
-            match LINKS.first_replacing(&k, &body, &s("key"), &dev, me_pub, now) {
+            match LINKS.first_kind_replacing(&k, &body, &s("key"), &dev, me_pub, peer, now) {
                 Ok((cm, old)) => {
                     // 같은 폰의 옛 두드리기 카드는 닫는다(기기마다 하나)
                     if let Some(card) = old {
@@ -391,8 +405,14 @@ fn link_step(m: &Value, me_pub: &[u8], lines: &Arc<RealLines>, tx: &Sender<Out>)
                 let id = crate::mobile_pair::random_hex(4).ok().filter(|i| !i.is_empty())?;
                 let until = now_ms() + crate::device_link::LINK_TTL.as_millis() as u64;
                 // 허용 대기 기기면 이 카드가 계정 허용도 한다 — 새 기기·로그인한 곳을 같이 보인다(리뷰 2차 중)
-                let pending = fresh.my_devices.iter().find(|d| d.id == h.dev && d.pending()).map(|d| [d.req_city.as_str(), d.req_country.as_str()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(", "));
-                crate::direct::append_row(&crate::device_cards::phone_link_row(&id, &h.name, n, until, pending.as_deref(), &crate::direct::chrono_now())).ok()?;
+                let row = if h.peer {
+                    // 컴퓨터 이름은 서버 기기 목록 것(그 앱이 보낸 이름보다 믿을 만하다), 없으면 보낸 이름
+                    crate::device_cards::peer_link_row(&id, &peer_name(&fresh, h), &h.dev, n, until, &crate::direct::chrono_now())
+                } else {
+                    let pending = fresh.my_devices.iter().find(|d| d.id == h.dev && d.pending()).map(|d| [d.req_city.as_str(), d.req_country.as_str()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(", "));
+                    crate::device_cards::phone_link_row(&id, &h.name, n, until, pending.as_deref(), &crate::direct::chrono_now())
+                };
+                crate::direct::append_row(&row).ok()?;
                 Some(id)
             };
             match LINKS.link3(&k, &np, me_pub, now, write_card) {
@@ -433,6 +453,9 @@ pub fn link_answer(card: &str, yes: bool) -> Result<(), String> {
     }
     let dir = crate::config::data_dir();
     let st = team_relay::load_state(dir);
+    if h.peer {
+        return peer_link_answer(&h, &st, gen, &devices, mac, reply);
+    }
     let line = st.my_devices.iter().find(|d| d.id == h.dev).cloned();
     if line.as_ref().is_some_and(|d| d.pending()) {
         if let Err(e) = crate::team_account::decide_device(dir, &crate::team_relay_keys::store(), &team_relay::Curl, &h.dev, true) {
@@ -462,6 +485,37 @@ pub fn link_answer(card: &str, yes: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// 컴퓨터 연결 허용(C-3b) — 허용된 같은 계정 컴퓨터만(대기 컴퓨터를 이 카드로 허용하지 않는다), 64자 열쇠로 peer 줄(중계 기기 id·터널 열쇠)을 만들고 link5 로 돌려준다
+fn peer_link_answer(h: &crate::device_link::Hello, st: &TeamState, gen: u64, devices: &crate::mobile_pair::Devices, mac: Value, reply: impl Fn(Value) -> Result<(), String>) -> Result<(), String> {
+    if !link_dev_ok(st, &h.dev, true) {
+        let _ = reply(json!({ "step": "link5", "ok": false, "error": "device" }));
+        return Err(crate::i18n::tr("내 계정의 허용된 컴퓨터가 아니에요", "That is not an allowed computer on this account").into());
+    }
+    if LINK_OUT.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_none_or(|o| o.gen != gen) {
+        return Err(crate::i18n::tr("허브 연결이 바뀌었어요 — 그 컴퓨터에서 다시 해 주세요", "The relay connection changed — try again from that computer").into());
+    }
+    let token = crate::mobile_pair::random_hex(32).map_err(|e| e.to_string())?;
+    // 새 줄만 먼저 — 보낸 뒤에야 옛 줄을 지운다(다시 짝짓기가 실패해도 되던 줄이 남게, 리뷰 11-01 ④)
+    let id = match devices.stage_peer_relay(&token, &peer_name(st, h), crate::mobile_pair::Relay { device: h.dev.clone(), x: tun::b64(&h.x) }, std::time::SystemTime::now()) {
+        Ok(id) => id,
+        Err(e) => {
+            let _ = reply(json!({ "step": "link5", "ok": false, "error": "pair" }));
+            return Err(e.to_string());
+        }
+    };
+    if let Err(e) = reply(json!({ "step": "link5", "ok": true, "token": token, "device": h.dev, "mac": mac })) {
+        // 못 보냈으면 방금 만든 줄만 지운다(아무도 그 열쇠를 모른다) — 옛 줄은 그대로
+        let _ = devices.remove(&id);
+        return Err(e);
+    }
+    devices.commit_peer_relay(&h.dev, &id).map_err(|e| e.to_string())
+}
+
+/// 컴퓨터 이름 — 서버 기기 목록 이름(그 앱이 보낸 이름보다 믿을 만하다), 없으면 보낸 이름
+fn peer_name(st: &TeamState, h: &crate::device_link::Hello) -> String {
+    st.my_devices.iter().find(|d| d.id == h.dev).map(|d| d.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| h.name.clone())
+}
+
 /// 요청 하나를 일꾼에게 — 다 차 있으면 바로 503
 fn work(req: core::TReq, line: String, c: String, gate: &Arc<Gate>, be: &Arc<dyn Backend>, busy: &Arc<AtomicUsize>, tx: &Sender<Out>) {
     let head = req.method == "HEAD";
@@ -473,7 +527,12 @@ fn work(req: core::TReq, line: String, c: String, gate: &Arc<Gate>, be: &Arc<dyn
     }
     let (gate, be, busy, tx) = (gate.clone(), be.clone(), busy.clone(), tx.clone());
     std::thread::spawn(move || {
+        let t0 = Instant::now();
         let r = core::serve(&req, &line, &gate, &*be);
+        // 컴퓨터끼리 요청만 — 주인 쪽 처리 시간(C-6 ③: 손님 call − 이것 ≈ 중계·망)
+        if gate.devices.is_peer(&line) {
+            crate::peer_conn::note("serve-peer", t0.elapsed().as_millis().min(u32::MAX as u128) as u32);
+        }
         busy.fetch_sub(1, Ordering::SeqCst);
         let _ = tx.send(Out::Reply(c, core::reply_chunks(&req, &r)));
     });

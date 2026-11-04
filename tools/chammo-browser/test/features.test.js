@@ -64,3 +64,130 @@ test('플레이라이트 MCP 는 우리 인자가 있으면 자기 것을 또 �
   assert.match(src, /if \(!browser\.launchOptions\.args\.some\(\(a\) => a\.includes\("--disable-blink-features"\)\)\)\s*browser\.launchOptions\.args\.push\(`--disable-blink-features=AutomationControlled`\)/,
     '플레이라이트 MCP 의 AutomationControlled 넣기가 바뀌었다 — chromeArgs 의 AUTOMATION_ARG 와 겹치지 않나 다시 볼 것');
 });
+
+// 2026-11-02 — 세션 크롬에서 구글 계정으로 사이트에 로그인하면 크롬이 '나만의 Chrome 만들기 — <계정>으로 계속 / 계정 없이 Chrome 사용'
+// 버블(DiceWebSigninInterceptor kChromeSignin)을 띄웠고, 크롬 자체 화면이라 앱 칸(CDP 그림)에서 안 눌려 안 닫혔다.
+// 끄는 길은 프로필 설정 signin.interception_enabled=false(크로미움 GetHeuristicOutcome → kAbortInterceptionDisabled).
+// signin.allowed·--allow-browser-signin=false 는 크롬에 로그인된 프로필을 로그아웃시켜(이 맥 세션 프로필 11개) 쓰지 않는다
+const os = require('os');
+const { quietSignin, dismissSigninBubble, BUBBLE_URL } = require('../src/features');
+
+function tmpProfile(prefs) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cb-signin-'));
+  if (prefs !== undefined) {
+    fs.mkdirSync(path.join(dir, 'Default'));
+    fs.writeFileSync(path.join(dir, 'Default', 'Preferences'), typeof prefs === 'string' ? prefs : JSON.stringify(prefs));
+  }
+  return dir;
+}
+const readPrefs = (dir) => JSON.parse(fs.readFileSync(path.join(dir, 'Default', 'Preferences'), 'utf8'));
+
+test('로그인 권유 끄기 — 새 프로필이면 Default/Preferences 를 만들어 interception_enabled=false 만 넣는다', () => {
+  const dir = tmpProfile();
+  assert.strictEqual(quietSignin(dir), 'set');
+  assert.deepStrictEqual(readPrefs(dir), { signin: { interception_enabled: false } });
+  assert.deepStrictEqual(fs.readdirSync(path.join(dir, 'Default')), ['Preferences'], '임시 파일이 남지 않는다');
+});
+
+test('로그인 권유 끄기 — 있던 설정(사이트 로그인·다른 signin 값)은 그대로 두고 그 한 칸만', () => {
+  const before = { profile: { name: 'project-x' }, account_info: [{ email: 'a@b.c' }], signin: { allowed: true, accounts_metadata_dict: { 1: { x: 1 } } } };
+  const dir = tmpProfile(before);
+  assert.strictEqual(quietSignin(dir), 'set');
+  const after = readPrefs(dir);
+  assert.deepStrictEqual(after, { ...before, signin: { ...before.signin, interception_enabled: false } });
+  assert.strictEqual(after.signin.allowed, true, 'signin.allowed 를 끄면 크롬에 로그인된 프로필이 로그아웃된다 — 건드리지 않는다');
+});
+
+test('로그인 권유 끄기 — 이미 꺼져 있으면 파일을 다시 쓰지 않는다', () => {
+  const dir = tmpProfile({ signin: { interception_enabled: false }, z: 1 });
+  const f = path.join(dir, 'Default', 'Preferences');
+  const t = new Date('2020-01-01');
+  fs.utimesSync(f, t, t);
+  assert.strictEqual(quietSignin(dir), 'already');
+  assert.strictEqual(fs.statSync(f).mtimeMs, t.getTime());
+});
+
+test('로그인 권유 끄기 — 크롬이 그 프로필을 쓰는 중이면 안 쓴다(끌 때 크롬이 자기 값으로 덮는다)', () => {
+  const dir = tmpProfile({ a: 1 });
+  assert.strictEqual(quietSignin(dir, { running: true }), 'running');
+  assert.deepStrictEqual(readPrefs(dir), { a: 1 });
+});
+
+test('로그인 권유 끄기 — 깨진 파일·객체가 아닌 JSON 은 손대지 않는다(크롬이 알아서 하게)', () => {
+  for (const bad of ['{"a":', '[1,2]', 'null', '"x"']) {
+    const dir = tmpProfile(bad);
+    assert.strictEqual(quietSignin(dir), 'bad', bad);
+    assert.strictEqual(fs.readFileSync(path.join(dir, 'Default', 'Preferences'), 'utf8'), bad);
+  }
+});
+
+test('로그인 권유 끄기 — signin 칸이 객체가 아니면 객체로 바꿔 넣는다', () => {
+  const dir = tmpProfile({ signin: 'x', k: 2 });
+  assert.strictEqual(quietSignin(dir), 'set');
+  assert.deepStrictEqual(readPrefs(dir), { signin: { interception_enabled: false }, k: 2 });
+});
+
+test('로그인 권유 끄기 — 못 써도 던지지 않는다(크롬은 그대로 뜬다)', () => {
+  const dir = tmpProfile({ a: 1 });
+  fs.chmodSync(path.join(dir, 'Default'), 0o500);
+  try {
+    assert.strictEqual(quietSignin(dir), 'error');
+    assert.deepStrictEqual(readPrefs(dir), { a: 1 });
+  } finally {
+    fs.chmodSync(path.join(dir, 'Default'), 0o700);
+  }
+  assert.strictEqual(quietSignin(path.join(dir, 'Default', 'Preferences', 'no')), 'error', '프로필 자리가 파일이면');
+});
+
+/** 가짜 CDP 웹소켓 — 보낸 것을 sent 에 쌓고 handle(msg) 의 답을 돌려준다 */
+function fakeWS(handle, { fail = false } = {}) {
+  const sent = [];
+  class WS {
+    constructor(url) { this.url = url; WS.last = this; setTimeout(() => (fail ? this.onerror(new Error('x')) : this.onopen()), 0); }
+    send(s) { const m = JSON.parse(s); sent.push(m); setTimeout(() => this.onmessage({ data: JSON.stringify({ id: m.id, ...(handle(m) || { result: {} }) }) }), 0); }
+    close() { this.closed = true; }
+  }
+  return { WS, sent };
+}
+const PORT = { port: 9333, wsPath: '/devtools/browser/abc' };
+const targets = (list) => (m) => (m.method === 'Target.getTargets' ? { result: { targetInfos: list } } : m.method === 'Target.attachToTarget' ? { result: { sessionId: `s-${m.params.targetId}` } } : null);
+
+test('뜬 버블 닫기 — 버블이 없으면 0, 다른 크롬 화면(주소창 목록)엔 붙지 않는다', async () => {
+  const { WS, sent } = fakeWS(targets([{ targetId: 'o', type: 'browser_ui', url: 'chrome://omnibox-popup.top-chrome/' }, { targetId: 'p', type: 'page', url: `${BUBBLE_URL}chrome-signin` }]));
+  assert.strictEqual(await dismissSigninBubble(PORT, WS), 0);
+  assert.deepStrictEqual(sent.map((m) => m.method), ['Target.getTargets']);
+  assert.strictEqual(WS.last.url, 'ws://127.0.0.1:9333/devtools/browser/abc');
+  assert.ok(WS.last.closed);
+});
+
+test("뜬 버블 닫기 — '계정 없이 Chrome 사용'(cancel)을 누른다, 계속(accept)은 절대 안 누른다", async () => {
+  const base = targets([{ targetId: 'b', type: 'browser_ui', url: `${BUBBLE_URL}chrome-signin` }]);
+  const { WS, sent } = fakeWS((m) => base(m) || (m.method === 'Runtime.evaluate' ? { result: { result: { value: 'cancel' } } } : null));
+  assert.strictEqual(await dismissSigninBubble(PORT, WS), 1);
+  const ev = sent.find((m) => m.method === 'Runtime.evaluate');
+  assert.strictEqual(ev.sessionId, 's-b');
+  assert.match(ev.params.expression, /#cancel-button/);
+  assert.doesNotMatch(ev.params.expression, /accept/);
+  assert.ok(!sent.some((m) => m.method === 'Input.dispatchKeyEvent'), '눌렀으면 Esc 는 안 보낸다');
+});
+
+test('뜬 버블 닫기 — 버튼을 못 찾는 버블(프로필 전환 등)은 Esc(크롬이 닫기로 받는다)', async () => {
+  const base = targets([{ targetId: 'b', type: 'browser_ui', url: BUBBLE_URL }]);
+  const { WS, sent } = fakeWS((m) => base(m) || (m.method === 'Runtime.evaluate' ? { result: { result: { value: 'none' } } } : null));
+  assert.strictEqual(await dismissSigninBubble(PORT, WS), 1);
+  const keys = sent.filter((m) => m.method === 'Input.dispatchKeyEvent');
+  assert.deepStrictEqual(keys.map((k) => [k.params.type, k.params.key, k.sessionId]), [['rawKeyDown', 'Escape', 's-b'], ['keyUp', 'Escape', 's-b']]);
+});
+
+test('뜬 버블 닫기 — 웹소켓·포트가 없거나 연결 실패면 0(던지지 않는다)', async () => {
+  assert.strictEqual(await dismissSigninBubble(null, fakeWS(() => null).WS), 0);
+  assert.strictEqual(await dismissSigninBubble(PORT, null), 0);
+  assert.strictEqual(await dismissSigninBubble(PORT, fakeWS(() => null, { fail: true }).WS), 0);
+});
+
+test('뜬 버블 닫기 — 크롬이 답을 안 주면 시간 안에 0', async () => {
+  class Mute { constructor() { setTimeout(() => this.onopen(), 0); } send() {} close() {} }
+  const t = Date.now();
+  assert.strictEqual(await dismissSigninBubble(PORT, Mute, 200), 0);
+  assert.ok(Date.now() - t < 2000);
+});

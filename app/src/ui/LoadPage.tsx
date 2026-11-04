@@ -53,6 +53,8 @@ export function LoadPage({ sys, report, onOpen, onKilled }: Props) {
         <b className={`ld-lv ${lv}`}>{lv === 'high' ? tr('부하 높음', 'Heavy load') : lv === 'warn' ? tr('부하 주의', 'Busy') : tr('여유 있음', 'Fine')}</b>
         <span>{tr(`코어 ${sys.cores}개 · 1분 부하 ${sys.load1.toFixed(1)} (5분 ${sys.load5.toFixed(1)})`, `${sys.cores} cores · load ${sys.load1.toFixed(1)} (5 min ${sys.load5.toFixed(1)})`)}</span>
         <span>{tr(`스왑 ${(sys.swapUsedMb / 1024).toFixed(1)}/${(sys.swapTotalMb / 1024).toFixed(1)}GB`, `Swap ${(sys.swapUsedMb / 1024).toFixed(1)}/${(sys.swapTotalMb / 1024).toFixed(1)}GB`)}</span>
+        {sys.memFreePct !== undefined && <span>{tr(`메모리 여유 ${sys.memFreePct}%`, `Memory ${sys.memFreePct}% free`)}</span>}
+        {sys.diskFreeGb !== undefined && <span>{tr(`저장공간 ${Math.round(sys.diskFreeGb)}GB 남음`, `${Math.round(sys.diskFreeGb)}GB storage left`)}</span>}
         <span className="ld-dim">{tr(`Chammo 몫 CPU ${pct(mineCpu)} · 100% = 코어 하나`, `Chammo's share ${pct(mineCpu)} CPU · 100% = one core`)}</span>
       </div>
       {note && <div className="ld-note">{note}</div>}

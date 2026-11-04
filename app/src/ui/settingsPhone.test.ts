@@ -63,6 +63,17 @@ describe('폰 설명 — 계정 로그인 여부로', () => {
     expect(h.login).toBe(true);
     expect(h.text).toContain('Chammo 계정에 로그인하면');
   });
+  it('로그인 안 됐어도 테일스케일을 권하지 않는다(11-01 사용자 — 폰 VPN 이 금융 앱을 막는다)', () => {
+    setLang('ko');
+    expect(phoneReachHint(false).text).not.toContain('테일스케일');
+    setLang('en');
+    expect(phoneReachHint(false).text).not.toMatch(/Tailscale/);
+    setLang('ko');
+  });
+  it('로그인돼 있으면 테일스케일은 "있으면" 덤으로만', () => {
+    setLang('ko');
+    expect(phoneReachHint(true).text).toMatch(/테일스케일이 있으면/);
+  });
   it('영문도 같은 뜻', () => {
     setLang('en');
     expect(phoneReachHint(true).text).toMatch(/anywhere/);
@@ -103,7 +114,26 @@ describe('폰 받지 않음(10-24) — 사람이 폰 연결을 끄면 기기 관
   it('기기 관리가 폰 상태의 off 를 보고 안내한다', () => {
     const src = tsx['/src/ui/DevicesSection.tsx'] ?? '';
     expect(src).toContain('setPhoneOff(!!m.off)');
-    expect(src).toContain('이 컴퓨터는 폰을 받지 않아요');
+    expect(src).toContain('꺼져 있어서 폰이 이 컴퓨터에 붙지 않아요');
+  });
+});
+
+describe('테일스케일 없이(11-01 사용자) — 폰 연결 스위치는 위 내 기기 칸, 테일스케일은 맨 아래 덤 칸', () => {
+  const dev = tsx['/src/ui/DevicesSection.tsx'] ?? '';
+  const mob = tsx['/src/ui/MobileSection.tsx'] ?? '';
+  it('내 기기 칸에 폰 연결 스위치(mobileApi.set) — 접힘(fallback)보다 위', () => {
+    const sw = dev.indexOf("tr('폰 연결', 'Phone link')");
+    expect(sw).toBeGreaterThan(-1);
+    expect(dev).toMatch(/role="switch"[^>]*phoneOff|phoneOff[^>]*role="switch"/);
+    expect(dev).toContain('mobileApi.set(');
+    expect(sw).toBeLessThan(dev.indexOf('{fold && fallback}'));
+  });
+  it('안내 글에 "테일스케일로 직접 잇기의 폰 연결을 켜면" 같은 길 안내가 없다', () => {
+    expect(dev).not.toContain('테일스케일로 직접 잇기');
+    expect(dev).toContain("tr('테일스케일이 있는 분만'");
+  });
+  it('계정이 있으면 접힘 안 폰 칸엔 켜기 단추를 또 두지 않는다(같은 스위치 둘 금지)', () => {
+    expect(mob).toMatch(/!hasAccount && st && \(\s*<IconButton[\s\S]{0,400}mobileApi\.set/);
   });
 });
 
@@ -126,5 +156,13 @@ describe('폰 추가(10-24 사용자 — QR 찍으면 사파리로 열려 홈 �
   it('옛 짝짓기 QR(테일스케일 접힘)엔 사파리에서만 열린다는 경고 — 폰 앱은 위 폰 추가로', () => {
     expect(mob).toContain('사파리에서만 열려');
     expect(mob).toContain("'폰 추가'");
+  });
+});
+
+describe('다른 기기 참모 칸 — 테일스케일이 없는 컴퓨터(11-01)', () => {
+  const peer = tsx['/src/ui/PeerSection.tsx'] ?? '';
+  it('Rust 의 no-tailscale 은 빨간 오류가 아니라 작은 안내 한 줄', () => {
+    expect(peer).toContain("setErr(m.includes('no-tailscale') ? null : m)");
+    expect(peer).toContain('이 컴퓨터엔 테일스케일이 없어요.');
   });
 });

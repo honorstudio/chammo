@@ -12,7 +12,7 @@ import { defaultView, logDays, type LockerViewMode, type LogItem } from '../../d
 import { batchActs, trashKey, batchMenu, type PickedLook } from '../../domain/lockerSelect';
 import type { DotKind } from '../../domain/dot';
 import { IconButton } from '../kit/IconButton';
-import { IconClose, IconDashboard, IconFolderAlias, IconFolderLink, IconFolderMove, IconFolderPlus, IconList, IconMaximize, IconMore, IconPlus, IconTrash } from '../Icons';
+import { IconClose, IconDashboard, IconFolderAlias, IconFolderLink, IconFolderMove, IconFolderPlus, IconList, IconMore, IconPlus, IconTrash } from '../Icons';
 import { SendToOrch, type OrchTo } from './SendToOrch';
 import { SortButton } from '../SortButton';
 import { readSortOf, sortList, type SortState } from '../../domain/sortList';
@@ -28,6 +28,8 @@ import { teamLockerTeams } from '../../data/teamApi';
 import { teamUploadSub, uploadApi } from '../team/teamUpload';
 import './tools.css';
 import './locker.css';
+import { ALL_PROJECTS } from '../../domain/projectsView';
+import { ProjectList, ProjectPanel, type ProjectsKit } from './ProjectView';
 
 /** 폴더 안 정렬 — 팀 보관함과 같은 단추(SortButton), 고른 건 기억 */
 const LK_SORTS = ['name', 'at', 'size'] as const;
@@ -205,7 +207,7 @@ function AddMenu({ folder, onNewDoc, onChoose, onConnect }: { folder: string; on
     return () => { stopOutside(); window.removeEventListener('keydown', esc); };
   }, [open]);
   const go = (f: () => void) => { setOpen(false); f(); };
-  if (!onNewDoc) return <IconButton tone="pri" label={tr('파일 넣기', 'Add files')} title={tr('맥에서 파일 골라 넣기', 'Pick files from your Mac')} onClick={() => onChoose(folder)}><IconPlus /></IconButton>;
+  if (!onNewDoc) return <IconButton tone="pri" label={tr('파일 넣기', 'Add files')} title={tr('파일 골라 넣기', 'Pick files')} onClick={() => onChoose(folder)}><IconPlus /></IconButton>;
   return (
     <div className="lk-add" ref={box}>
       <IconButton tone="pri" label={tr('새로 만들기·파일 넣기', 'New or add')} pressed={open} onClick={() => setOpen((o) => !o)}><IconPlus /></IconButton>
@@ -214,7 +216,7 @@ function AddMenu({ folder, onNewDoc, onChoose, onConnect }: { folder: string; on
           <button role="menuitem" onClick={() => go(() => onNewDoc(folder, 'md'))}>{tr('새 문서', 'New document')}</button>
           <button role="menuitem" onClick={() => go(() => onNewDoc(folder, 'xlsx'))}>{tr('새 엑셀', 'New spreadsheet')}</button>
           <button role="menuitem" onClick={() => go(() => onChoose(folder))}>{tr('파일 넣기', 'Add files')}</button>
-          {onConnect && <button role="menuitem" onClick={() => go(() => onConnect(folder))}>{tr('맥 폴더 연결…', 'Link a Mac folder…')}</button>}
+          {onConnect && <button role="menuitem" onClick={() => go(() => onConnect(folder))}>{tr('폴더 연결…', 'Link a folder…')}</button>}
         </div>
       )}
     </div>
@@ -224,55 +226,20 @@ function AddMenu({ folder, onNewDoc, onChoose, onConnect }: { folder: string; on
 /** session = 그 프로젝트에 떠 있는 세션(있으면 머리줄 '크게' = 그 세션 탭, 패널 하나로 S6) */
 export type ChipProject = { root: string; name: string; dot: DotKind; what?: string; session?: string };
 
-/** 진행 중 칩 줄 + '모든 프로젝트' 덮개(찾기 · 진행 중 · 쉼 · 꺼짐) */
-function Chips({ active, all, on, onPick, onAddProject }: { active: ChipProject[]; all: ChipProject[]; on?: string; onPick: (root?: string) => void; /** 프로젝트 폴더 더하기(devRoot 밖) — 옛 왼쪽 메뉴 '프로젝트' 절 + 에서 옮김 */ onAddProject?: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [q, setQ] = useState('');
-  const box = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const stopOutside = closeOnOutside(window, (t) => !!box.current?.contains(t as Node), () => setOpen(false));
-    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
-    window.addEventListener('keydown', esc);
-    return () => { stopOutside(); window.removeEventListener('keydown', esc); };
-  }, [open]);
-  const hit = all.filter((p) => !q.trim() || p.name.toLowerCase().includes(q.trim().toLowerCase()));
-  const group = (title: string, ps: ChipProject[]) => ps.length > 0 && (
-    <>
-      <div className="lk-pop-cap">{title}</div>
-      {ps.map((p) => (
-        <button key={p.root} className={`lk-pop-it ${p.root === on ? 'on' : ''}`} onClick={() => { setOpen(false); onPick(p.root); }} title={p.root}>
-          <span className={`lk-dot d-${p.dot}`} aria-hidden="true" /><span className="lk-pop-nm">{p.name}</span>
-        </button>
-      ))}
-    </>
-  );
-  const pinned = on && !active.some((p) => p.root === on) ? all.find((p) => p.root === on) : undefined;
+/** 진행 중 칩 줄 + '모든 프로젝트' 칩 — 누르면 보관함 본문이 프로젝트 목록(ProjectList, 2026-11-01 사용자 시안 A — 옛 덮개를 키움) */
+function Chips({ active, all, on, onPick }: { active: ChipProject[]; all: ChipProject[]; on?: string; onPick: (root?: string) => void }) {
+  const pinned = on && on !== ALL_PROJECTS && !active.some((p) => p.root === on) ? all.find((p) => p.root === on) : undefined;
   return (
-    <div className="lk-chips" ref={box}>
+    <div className="lk-chips">
       <button className={`lk-chip ${!on ? 'on' : ''}`} onClick={() => onPick(undefined)}>{tr('전체 기록', 'All activity')}</button>
       {[...active, ...(pinned ? [pinned] : [])].map((p) => (
         <button key={p.root} className={`lk-chip ${p.root === on ? 'on' : ''}`} onClick={() => onPick(p.root === on ? undefined : p.root)} title={p.root}>
           <span className={`lk-dot d-${p.dot}`} aria-hidden="true" />{p.name}
         </button>
       ))}
-      {(all.length > 0 || onAddProject) && (
-        <button className={`lk-chip more ${open ? 'open' : ''}`} aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-          {tr(`모든 프로젝트 ${all.length}`, `All projects ${all.length}`)}
-        </button>
-      )}
-      {open && (
-        <div className="lk-pop" role="dialog" aria-label={tr('모든 프로젝트', 'All projects')}>
-          <input className="lk-pop-find" autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr('프로젝트 찾기', 'Find a project')} aria-label={tr('프로젝트 찾기', 'Find a project')} />
-          <div className="lk-pop-list">
-            {group(tr('진행 중', 'Active'), hit.filter((p) => p.dot === 'ask' || p.dot === 'run'))}
-            {group(tr('쉬는 것', 'Resting'), hit.filter((p) => p.dot === 'rest'))}
-            {group(tr('꺼진 것', 'Off'), hit.filter((p) => p.dot === 'off'))}
-            {hit.length === 0 && <div className="lk-menu-note">{tr('없어요', 'Nothing')}</div>}
-          </div>
-          {onAddProject && <button className="lk-pop-add" onClick={() => { setOpen(false); onAddProject(); }}>{tr('프로젝트 폴더 더하기', 'Add a project folder')}</button>}
-        </div>
-      )}
+      <button className={`lk-chip more ${on === ALL_PROJECTS ? 'on' : ''}`} aria-pressed={on === ALL_PROJECTS} onClick={() => onPick(on === ALL_PROJECTS ? undefined : ALL_PROJECTS)}>
+        {tr(`모든 프로젝트 ${all.length}`, `All projects ${all.length}`)}
+      </button>
     </div>
   );
 }
@@ -280,7 +247,7 @@ function Chips({ active, all, on, onPick, onAddProject }: { active: ChipProject[
 const VIEW_KEY = 'lockerView';
 const loadViews = (): Record<string, string> => { try { return JSON.parse(localStorage.getItem(VIEW_KEY) ?? '{}') as Record<string, string>; } catch { return {}; } };
 
-export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, onPlace, onChoose, onConnect, onNewDoc, onNewFolder, acts, onBigProject, onAddProject }: {
+export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, onPlace, onChoose, onConnect, onNewDoc, onNewFolder, acts, onBigProject, onAddProject, kit }: {
   dir: string;
   /** 홈(l:<참모>#h)은 HomeView 가 그린다 */
   place: Exclude<LkPlace, { kind: 'home' }>;
@@ -304,6 +271,8 @@ export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, o
   /** 진행 중 칩 머리줄 크게 — 그 프로젝트 세션 탭(세션 id) */
   onBigProject?: (session: string) => void;
   onAddProject?: () => void;
+  /** 프로젝트 목록·화면 재료(뺀 것·세션·기록) */
+  kit: ProjectsKit;
 }) {
   const [views, setViews] = useState<Record<string, string>>(loadViews);
   const vkey = place.kind === 'dir' ? `d:${place.rel}` : place.project ? `p:${place.project}` : 'root';
@@ -332,7 +301,7 @@ export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, o
   // 연결 폴더(맥 폴더의 바로가기)와 그 안쪽은 읽기 전용 — 새 폴더·넣기·끌어놓기가 없다
   const ro = readOnlyAt(entries, here);
   const roAt = (r: string) => readOnlyAt(entries, r);
-  const connectBtn = onConnect && !ro ? <IconButton tone="line" label={tr('맥 폴더 연결…', 'Link a Mac folder…')} onClick={() => onConnect(here)}><IconFolderLink /></IconButton> : null;
+  const connectBtn = onConnect && !ro ? <IconButton tone="line" label={tr('폴더 연결…', 'Link a folder…')} onClick={() => onConnect(here)}><IconFolderLink /></IconButton> : null;
   // 새 폴더 — 만들고 그 자리에 머물러 그 카드를 바로 이름 칸으로(나무의 이름 칸을 대신한다)
   const [fresh, setFresh] = useState('');
   const newFolder = (parent: string) => { if (parent !== here) onPlace(parent ? { kind: 'dir', rel: parent } : { kind: 'root' }); void Promise.resolve(onNewFolder(parent)).then((rel) => { if (rel) setFresh(rel); }); };
@@ -365,7 +334,7 @@ export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, o
   }, [teamNote]);
   const box = useRef<HTMLDivElement>(null);
   // 고르기(⌘·⇧클릭·네모·⌘A·풀기)는 팀 보관함과 같은 훅(usePick) — 고른 게 바뀌면 묻던 휴지통 확인은 닫는다
-  const pick = usePick({ box, order, reset: vkey, skip: '[data-pick], button, input, textarea, a, [role=menu], .lk-selbar, .lk-head, .lk-chips, .lk-pop', touch: () => setAsk(null) });
+  const pick = usePick({ box, order, reset: vkey, skip: '[data-pick], button, input, textarea, a, [role=menu], .lk-selbar, .lk-head, .lk-chips, .pv-list, .pv-panel', touch: () => setAsk(null) });
   const { sel, end: endPick, bandStart, band } = pick;
   // Backspace·Delete·⌘⌫ = 고른 것 휴지통(Finder 처럼, 2026-10-15 사용자) — 보관함 칸 안 포커스일 때만(domain/lockerSelect trashKey). 최신 고른 것은 keyRef 로
   const keyRef = useRef<(e: KeyboardEvent) => void>(() => {});
@@ -578,18 +547,25 @@ export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, o
           {viewSeg}
           <AddMenu folder="" onNewDoc={onNewDoc} onChoose={onChoose} onConnect={onConnect} />
         </header>
-        <Chips active={chips.active} all={chips.all} on={place.project} onAddProject={onAddProject} onPick={(root) => onPlace(root ? { kind: 'root', project: root } : { kind: 'root' })} />
-        {cur && (
-          <div className="lk-phd">
-            <span className={`lk-dot d-${cur.dot}`} aria-hidden="true" /><b>{cur.name}</b>{cur.what && <span>{cur.what}</span>}
-            <span className="lk-sp" />
-            {cur.session && onBigProject && <IconButton size="s" tone="line" label={tr('크게', 'Open large')} title={tr('크게 — 그 세션을 가운데 탭으로', 'Open large — the session in a tab')} onClick={() => onBigProject(cur.session!)}><IconMaximize /></IconButton>}
-          </div>
+        <Chips active={chips.active} all={chips.all} on={place.project} onPick={(root) => onPlace(root ? { kind: 'root', project: root } : { kind: 'root' })} />
+        {place.project === ALL_PROJECTS ? (
+          <ProjectList all={chips.all} kit={kit} onPick={(root) => onPlace({ kind: 'root', project: root })} onAddProject={onAddProject} onReveal={acts.onReveal} onBig={onBigProject} />
+        ) : cur ? (
+          <>
+            <ProjectPanel p={cur} kit={kit} onBig={onBigProject} onReveal={acts.onReveal}
+              list={view === 'list'}
+              fileTile={(path, name, ms) => (view === 'list'
+                ? <Row path={path} name={name} ms={ms} who="" gone={false} onOpen={acts.onOpen} onMenu={fileMenu({ path, name, gone: false })} />
+                : <Card c={{ path, name, gone: false, ms }} mark={null} acts={acts} onMenu={fileMenu({ path, name, gone: false })} />)} />
+            {items.length > 0 && <div className="lk-sub">{tr('주고받은 파일', 'Exchanged files')}</div>}
+            {logItems(items)}
+          </>
+        ) : (
+          <>
+            {tops.length > 0 && <div className="lk-fgrid">{tops.map((e) => <FolderCard key={e.rel} e={e} dir={dir} count={count(e.rel)} onPlace={onPlace} onRename={acts.onRename} onMenu={folderMenu(e)} fresh={fresh === e.rel} />)}</div>}
+            {items.length === 0 ? <div className="cv-blank">{tr('아직 주고받은 파일이 없어요 — 끌어놓거나 + 로 골라 넣어요', 'Nothing yet — drop files here or press +')}</div> : logItems(items)}
+          </>
         )}
-        {!place.project && tops.length > 0 && <div className="lk-fgrid">{tops.map((e) => <FolderCard key={e.rel} e={e} dir={dir} count={count(e.rel)} onPlace={onPlace} onRename={acts.onRename} onMenu={folderMenu(e)} fresh={fresh === e.rel} />)}</div>}
-        {items.length === 0 ? (
-          <div className="cv-blank">{place.project ? tr('이 프로젝트와 주고받은 파일이 아직 없어요', 'Nothing exchanged with this project yet') : tr('아직 주고받은 파일이 없어요 — 파인더에서 끌어놓거나 + 로 골라 넣어요', 'Nothing yet — drop files from Finder or press +')}</div>
-        ) : logItems(items)}
         {bandEl}
         {selBar}
         {undoBar || teamBar}
@@ -614,7 +590,7 @@ export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, o
           {acts.onReconnect && <button className="lk-relink" onClick={() => acts.onReconnect!(here)}>{tr('다시 연결…', 'Relink…')}</button>}
         </div>
       ) : dirs.length === 0 && files.length === 0 ? (
-        <div className="cv-blank">{tr('비어 있어요 — 기록에서 끌어 오거나 파인더에서 끌어놓아요', 'Empty — drag from the activity list or from Finder')}</div>
+        <div className="cv-blank">{tr('비어 있어요 — 기록에서 끌어 오거나 파일을 끌어놓아요', 'Empty — drag from the activity list or drop files here')}</div>
       ) : (
         <>
           {dirs.length > 0 && <div className="lk-fgrid">{dirs.map((e) => <FolderCard key={e.rel} e={e} dir={dir} count={count(e.rel)} onPlace={onPlace} onRename={acts.onRename} onMenu={folderMenu(e)} fresh={fresh === e.rel} pick={pickOf(abs(e.rel))} />)}</div>}

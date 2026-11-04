@@ -64,6 +64,8 @@ type Props = {
   memo?: MemoHooks;
   /** 채팅 입력칸 위 한 줄(참모 깨우는 중) — 이 격자의 채팅 모두에 */
   chatNotice?: ReactNode;
+  /** 칸을 다른 화면이 덮고 있다(팀 모드·다른 기기 참모·기기 보기) — 채팅 읽기를 늦춘다 */
+  covered?: boolean;
   /** 한 열로 세로 쌓기 — 사무실 모드 오른쪽 대화 세션 열 */
   column?: boolean;
   /** 스페이스 모드 — 창마다 터미널 위에 채팅 판(터미널은 뒤에 붙어 있다). tabs 면 탭 줄 + 한 번에 한 창 */
@@ -144,7 +146,7 @@ const cumulative = (fr: number[]) => {
  * 세션 여러 개를 격자로 + 접은 창은 아래 띠. 띠의 창은 attach 를 떼어 둔다(메모리).
  * 경계선을 끌면 열·줄 비율이 바뀌고, 머리줄을 끌어 다른 창에 놓으면 자리가 바뀐다
  */
-export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, onMessage, fontSize, home, onFocusSession, initialFocus, focusRequest, onFocusRequestDone, gridId, onStop, titleOf = paneTitle, subOf, memo, chatNotice, column, chat, ctxOf, modelOf, pinnedIds = [], onReorder, statusOf = sessionStatus, headSlot }: Props) {
+export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, onMessage, fontSize, home, onFocusSession, initialFocus, focusRequest, onFocusRequestDone, gridId, onStop, titleOf = paneTitle, subOf, memo, chatNotice, covered = false, column, chat, ctxOf, modelOf, pinnedIds = [], onReorder, statusOf = sessionStatus, headSlot }: Props) {
   const panes = useRef(new Map<string, PaneApi>());
   // 모델 칩 — 바꾸는 동안 지금 모델·에포트(상태줄)를 새로 읽게(일하는 중엔 화면 글로는 끝을 못 알아본다)
   const modelOfRef = useRef(modelOf);
@@ -428,6 +430,7 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
                           modelInfo={modelOf?.(s)}
                           cwd={s.cwd}
                           notice={noticeOf(id, s) ?? chatNotice}
+                          covered={covered}
                           link={linkOf[id]}
                           pickModel={(want) => pickFor(id, s, want)}
                           state={s.state}

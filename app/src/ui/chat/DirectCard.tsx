@@ -101,9 +101,11 @@ export function DirectCardView({ c, name: given, project, profile, compact, onOp
         <div className={c.amount ? 'dc-muted' : 'dc-q'}>{c.amount ? [c.q, c.detail].filter(Boolean).join(' · ') : c.q}</div>
         {!c.amount && c.detail && <div className="dc-muted">{c.detail}</div>}
       </div>
-      {c.kind === 'link' && c.sub === 'phone-link' && c.code && <div className="dc-code" aria-label={tr(`확인 숫자 ${c.code}`, `Check number ${c.code}`)}>{c.code}</div>}
+      {c.kind === 'link' && (c.sub === 'phone-link' || c.sub === 'peer-link') && c.code && <div className="dc-code" aria-label={tr(`확인 숫자 ${c.code}`, `Check number ${c.code}`)}>{c.code}</div>}
       {c.kind === 'link' && c.sub === 'phone-link' ? (
         <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('폰에 뜬 숫자와 같을 때만 허용하세요. 허용하면 그 폰이 나처럼 이 컴퓨터에 카드 답과 메시지를 보낼 수 있어요', 'Approve only if it matches the number on the phone. That phone will then reach this computer as you (card answers, messages)')}</dd><dt>{c.no}</dt><dd>{tr('숫자가 다르거나 내가 연 게 아니면', 'If the number differs or it wasn\'t you')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('10분 뒤 없던 일이 돼요', 'It lapses after 10 minutes')}</dd></dl>
+      ) : c.kind === 'link' && c.sub === 'peer-link' ? (
+        <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('그 컴퓨터 화면 숫자와 같을 때만 허용하세요. 허용하면 두 컴퓨터 참모가 서로 말을 주고받고 화면을 볼 수 있어요', 'Approve only if it matches the number on that computer. Then the assistants on both computers can talk and see each other')}</dd><dt>{c.no}</dt><dd>{tr('숫자가 다르거나 내가 누른 게 아니면', 'If the number differs or it wasn\'t you')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('10분 뒤 없던 일이 돼요', 'It lapses after 10 minutes')}</dd></dl>
       ) : numberMode ? (
         <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('새 기기 화면의 숫자와 같을 때만 — 내 기기가 되고 내 메시지를 읽어요', 'Only if it matches the new device — it becomes yours and can read your messages')}</dd><dt>{c.no}</dt><dd>{tr('그 기기는 로그아웃돼요', 'That device is signed out')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{c.until ? tr('24시간 뒤 접속은 열리지만 메시지는 못 읽어요', 'After 24 hours it can connect, but it can\'t read messages') : tr('그 기기는 메시지를 못 읽은 채로 남아요', 'That device stays unable to read messages')}</dd></dl>
       ) : c.kind === 'link' && c.sub === 'device' ? (
@@ -114,17 +116,20 @@ export function DirectCardView({ c, name: given, project, profile, compact, onOp
         <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('그 QR 을 연 폰이 이 컴퓨터에 사람으로 닿아요 — 끊기는 설정 > 기기 관리', 'The phone that opened the QR reaches this computer as you — unlink in Settings > Devices')}</dd><dt>{c.no}</dt><dd>{tr('그 QR 코드가 죽어요', 'The QR code dies')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('10분 뒤 없던 일이 돼요', 'It lapses after 10 minutes')}</dd></dl>
       ) : c.kind === 'link' ? (
         <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('두 기기 참모가 서로 말을 주고받아요 — 끊기는 설정 > 기기 관리', 'The assistants on both devices can talk — unlink in Settings > Devices')}</dd><dt>{c.no}</dt><dd>{tr('아무것도 안 생겨요', 'Nothing is created')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('5분 뒤 없던 일이 돼요', 'It lapses after 5 minutes')}</dd></dl>
+      ) : c.sub === 'perm' ? (
+        <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('이번 명령 한 번만 실행해요', 'Runs this command once')}</dd>{c.options[0] && <><dt>{c.options[0]}</dt><dd>{c.options[0] === tr('이 세션 동안 허용', 'Allow for this session') ? tr('이 세션이 끝날 때까지 허용해요', 'Allowed until this session ends') : tr('이 프로젝트에선 같은 종류를 안 물어요', "This project won't ask for this kind again")}</dd></>}<dt>{c.no}</dt><dd>{tr('세션에 안 된다고 알려요', 'Tells the session no')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('답할 때까지 세션이 기다려요', 'The session waits until you answer')}</dd></dl>
       ) : c.kind === 'login' ? (
         <dl className="dc-if"><dt>{tr('하는 법', 'How')}</dt><dd>{tr('크게 보기에서 직접 로그인하고, 끝나면 다 했어', 'Sign in yourself in the big view, then press Done')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('세션은 여기서 기다려요', 'The session waits here')}</dd></dl>
       ) : (
         <dl className="dc-if"><dt>{c.yes}</dt><dd>{tr('누르면 이 세션에 네 답으로 바로 전해요 — 세션이 이어서 해요', 'Sends your answer to this session — it carries on')}</dd><dt>{c.no}</dt><dd>{tr('하지 말라고 전해요', 'Tells it not to')}</dd><dt>{tr('그냥 두면', 'If you wait')}</dt><dd>{tr('세션은 여기서 기다려요 — 다른 일은 그대로 돌아요', 'The session waits — other work goes on')}</dd></dl>
       )}
       {dev && num.mode === 'outside' ? <div className="dc-muted">{outsideHint()}</div> : numberMode && dev ? <NumberEntry dev={dev} api={number} ready={num.ready} mine={num.mine} claim={num.claim} note={num.err} code={num.code} decline={(e) => answer(e, { pick: 'no' })} /> : <>
+      {c.sub === 'perm' && <div className="dc-muted">{tr('회사 정책이라 앱이 대신 누르지 않아요', "Company policy: the app won't press it for you")}</div>}
       {c.options.length > 0 && (
         <div className="dc-opts">{c.options.map((o, i) => <button key={i} className="dc-btn dc-no" disabled={busy} onClick={(e) => answer(e, { pick: 'option', option: i })}>{o}</button>)}</div>
       )}
       <div className="dc-acts">
-        {free === null && c.kind !== 'link' && <button className="dc-link dc-free" onClick={() => setFree('')}>{tr('직접 답 쓰기', 'Write an answer')}</button>}
+        {free === null && c.kind !== 'link' && c.sub !== 'perm' && <button className="dc-link dc-free" onClick={() => setFree('')}>{tr('직접 답 쓰기', 'Write an answer')}</button>}
         {c.kind === 'login' && profile && <IconButton size="l" tone="line" className="dc-ib" label={tr('크게 보기로 하기', 'Open big view')} onClick={() => openAgentModal(profile)}><IconMaximize /></IconButton>}
         {c.kind === 'login' && !profile && <span className="dc-muted">{tr(`로그인은 ${machine()} 앱 크게 보기에서`, `Sign in from the ${machine()} app big view`)}</span>}
         <button className="dc-btn dc-no" disabled={busy} onClick={(e) => answer(e, { pick: 'no' })}>{c.no}</button>

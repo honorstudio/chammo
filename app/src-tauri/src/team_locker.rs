@@ -15,7 +15,7 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 pub const CHUNK: usize = 8 * 1024 * 1024;
@@ -415,34 +415,20 @@ fn send(net: &dyn Net, me: &Me, to: &[Recipient], team: &str, room: &str, kind: 
     Ok(FileRef { id, team: team.into(), room: room.into(), name, size: plain })
 }
 
-/// 내려받기 — 조각마다 받아 열고 dest(임시 이름) 에 쓴 뒤 dir 안 겹치지 않는 이름으로 옮긴다
-pub fn download(net: &dyn Net, team: &str, f: &RemoteFile, o: &Opened, dir: &Path, progress: &mut dyn FnMut(u64, u64)) -> Result<PathBuf, String> {
+/// 내려받기 — 조각마다 받아 열고 dest(임시 이름) 에 쓴 뒤 dir 안 겹치지 않는 이름으로 옮긴다.
+/// progress(받은 평문 바이트, 전체) — Err 를 돌려주면 거기서 멈추고 임시 파일을 지운다(화면 멈추기, team_down)
+pub fn download(net: &dyn Net, team: &str, f: &RemoteFile, o: &Opened, dir: &Path, progress: &mut dyn FnMut(u64, u64) -> Result<(), String>) -> Result<PathBuf, String> {
     let room = f.room.as_deref().unwrap_or("");
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let tmp = dir.join(format!(".chammo-down-{}", B64.encode(rand::<6>())));
-    let res = (|| -> Result<(), String> {
-        let mut out = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
-        let mut done = 0u64;
-        progress(0, o.meta.size);
-        for i in 0..f.parts {
-            let (c, ct) = net.get(&format!("/v0/teams/{team}/locker/files/{}/parts/{i}", f.id))?;
-            if c != 200 {
-                return Err(why(c, &Value::Null));
-            }
-            let pt = open_chunk(&o.k, team, room, &f.id, i, i + 1 == f.parts, &ct)?;
-            out.write_all(&pt).map_err(|e| e.to_string())?;
-            done += pt.len() as u64;
-            progress(done, o.meta.size);
+    let mut next = |i: u64| -> Result<Vec<u8>, String> {
+        let (c, ct) = net.get(&format!("/v0/teams/{team}/locker/files/{}/parts/{i}", f.id))?;
+        if c != 200 {
+            return Err(why(c, &Value::Null));
         }
-        if done != o.meta.size {
-            return Err("받은 크기가 서명과 달라".into());
-        }
-        out.sync_all().map_err(|e| e.to_string())
-    })();
-    if let Err(e) = res {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e);
-    }
+        open_chunk(&o.k, team, room, &f.id, i, i + 1 == f.parts, &ct)
+    };
+    crate::team_down_file::write_parts(&tmp, f.parts, o.meta.size, &mut next, progress)?;
     let at = crate::locker_fs::unique(dir, &safe_file_name(&o.meta.name), true);
     std::fs::rename(&tmp, &at).map_err(|e| e.to_string())?;
     Ok(at)

@@ -5,10 +5,11 @@
 // loading = 팀 상태를 아직 못 읽음(링크로 앱이 막 켜졌을 때 — 로그인 화면이 번쩍이다 바뀌지 않게)
 export type StartScreen = 'loading' | 'login' | 'make' | 'join' | 'invite' | 'already';
 
-export function startScreen(v: { joined: boolean; account: unknown } | null, o: { invite: string; wantJoin: boolean }): StartScreen {
+// wantMake = 레일 + ·칩 ▾ 메뉴의 '새 팀 만들기' — 팀이 있어도 만들기(11-02 팀 여러 개). 초대 링크로 열렸으면 들어가기가 먼저
+export function startScreen(v: { joined: boolean; account: unknown } | null, o: { invite: string; wantJoin: boolean; wantMake?: boolean }): StartScreen {
   if (!v) return 'loading';
-  if (v.joined && !v.account) return o.invite || o.wantJoin ? 'already' : 'invite';
-  if (v.joined) return o.invite || o.wantJoin ? 'join' : 'invite';
+  if (v.joined && !v.account) return o.invite || o.wantJoin || o.wantMake ? 'already' : 'invite';
+  if (v.joined) return o.invite || o.wantJoin ? 'join' : o.wantMake ? 'make' : 'invite';
   if (!v.account) return 'login';
   return o.invite || o.wantJoin ? 'join' : 'make';
 }

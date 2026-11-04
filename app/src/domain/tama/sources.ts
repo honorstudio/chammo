@@ -1,13 +1,10 @@
 // 다마고치 먹이 출처 — 작업 기록 원문을 pet.ts 의 TamaEvent 로 바꾼다
 import type { TaskEvent } from '../tasks';
 import type { TamaEvent } from './pet';
+import { isCodePath } from '../codeLines';
 
 const TEST_PATH = /(^|\/)(__tests__|tests?|e2e|spec)\/|\.(test|spec)\.[a-z0-9]+$|_test\.[a-z]+$|(^|\/)test_[^/]+\.py$/i;
 export const isTestPath = (p: string) => TEST_PATH.test(p);
-
-// 커밋 크기 규칙이 예외로 인정하는 자동 생성물 — lock·빌드 결과·스키마 타입·마이그레이션·스냅샷. 줄 수(똥)에서 뺀다
-const GENERATED = /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|[^/]+\.lock)$|(^|\/)(dist|build)\/|\.min\.(js|css)$|(\.types|\.generated|\.gen)\.[a-z]+$|(^|\/)migrations\/[^/]+\.sql$|(^|\/)__snapshots__\//i;
-export const isGeneratedPath = (p: string) => GENERATED.test(p);
 
 /** 스쿼시 머지는 GitHub 가 제목 끝에 (#번호) 를 붙인다 */
 const SQUASH_PR = /\(#\d+\)\s*$/;
@@ -42,7 +39,7 @@ export function parseCommitLog(raw: string): TamaEvent[] {
     if (skip || !cur) continue;
     const [a, d, path] = line.split('\t');
     if (path === undefined) continue;
-    if (!isGeneratedPath(path)) cur.lines += (Number(a) || 0) + (Number(d) || 0);
+    if (isCodePath(path)) cur.lines += (Number(a) || 0) + (Number(d) || 0);
     if (isTestPath(path)) cur.hasTest = true;
   }
   flush();

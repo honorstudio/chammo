@@ -8,6 +8,9 @@ mod access;
 mod appctl;
 mod away;
 mod offmain;
+mod org_policy;
+mod perm_card;
+mod perm_card_cmd;
 mod orch_bubble;
 #[cfg(test)]
 mod offmain_scan;
@@ -49,6 +52,8 @@ mod hq;
 mod hq_browser;
 mod i18n;
 mod reader;
+mod thumbs;
+mod win_thumb;
 #[cfg(target_os = "macos")]
 mod keys_mac;
 mod ptt;
@@ -88,6 +93,8 @@ mod team_cmd;
 mod team_locker;
 mod team_locker_app;
 mod team_locker_cmd;
+mod team_down;
+mod team_down_file;
 mod team_revise;
 mod team_profile;
 mod team_profile_cmd;
@@ -110,6 +117,9 @@ mod team_agent_cmd;
 mod team_relay_inbox;
 mod team_relay_keys;
 mod phone_tunnel;
+mod peer_tunnel;
+mod peer_conn;
+mod peer_pair;
 // 종단 암호 봉투 열쇠 감싸기(chammo-relay ADR 0007) — 단계 B 에서 봉투가 쓴다
 #[allow(dead_code)]
 mod e2e_hpke;
@@ -632,6 +642,8 @@ fn main() {
             std::thread::spawn(computer_use::sweep_logged);
             // 있던 프로젝트에 붙여 둔 참모 브라우저(local scope)를 떠 있던 claude 가 지웠으면 다시(GitHub #2)
             std::thread::spawn(|| { browser_attach::reassert(); });
+            // 파일 썸네일 캐시 상한 맞추기·옛 <데이터>/ql 지우기(2026-11-01 — 1600 PNG 를 안 지우고 162MB 쌓였다)
+            thumbs::startup_tidy();
             // 세션 크롬 가리기 지킴이(세션 브라우저 앱에서 보기) + 크롬 자체 창(패스키) 보기 — 앱이 떠 있을 때만 가려진다
             agent_browser::watch_hidden();
             // 세션 크롬 Dock·⌘Tab 빼기 dylib 를 데이터 폴더에 — 래퍼가 있으면 사본을 재서명하고 넣는다
@@ -745,6 +757,9 @@ fn main() {
             remote::remote_pair,
             remote::remote_unpair,
             remote::remote_connect,
+            peer_pair::peer_relay_connect,
+            peer_pair::peer_relay_state,
+            peer_pair::peer_relay_clear,
             remote::remote_connect_cancel,
             remote::remote_call,
             remote::remote_human_say,
@@ -833,7 +848,12 @@ fn main() {
             team_locker_cmd::team_locker_mkdir,
             team_locker_cmd::team_locker_folder,
             team_locker_cmd::team_locker_save,
+            team_locker_cmd::team_down_list,
+            team_locker_cmd::team_down_stop,
+            team_locker_cmd::team_down_dismiss,
+            team_locker_cmd::team_down_show,
             team_locker_cmd::team_locker_peek,
+            team_locker_cmd::team_locker_peeked,
             team_locker_cmd::team_locker_pick,
             team_locker_cmd::team_locker_rename,
             team_locker_cmd::team_locker_act,
@@ -881,7 +901,7 @@ fn main() {
             agent_browser::agent_takeover,
             agent_browser::agent_handback,
             agent_browser::agent_dialog,
-            agent_browser::agent_ask_done, direct::direct_log, direct::direct_answer, direct::direct_shown, agent_browser::agent_drop_files, agent_browser::agent_choose_files,
+            agent_browser::agent_ask_done, direct::direct_log, direct::direct_answer, direct::direct_shown, perm_card_cmd::perm_card_open, perm_card_cmd::perm_card_close, org_policy::org_policy, org_policy::startup_modes, agent_browser::agent_drop_files, agent_browser::agent_choose_files,
             webpage::web_open,
             webpage::web_bounds,
             webpage::web_go,
@@ -946,6 +966,8 @@ fn main() {
             copies::app_copies,
             setup::pick_folder,
             project::harness_project,
+            project::project_log,
+            project::project_new,
             browser::browser_status,
             browser_setup::browser_setup_start,
             agent_browser::agent_dialog_wrapper,
@@ -1092,7 +1114,6 @@ fn main() {
             claude::write_view,
             claude::write_voice_mode,
             claude::read_usage,
-            claude::today_commits,
             claude::commit_log,
             claude::ci_runs,
             lessons::read_lessons,

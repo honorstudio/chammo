@@ -45,6 +45,9 @@
 /* git 이름·메일 줄 입력 — 표시(점) 자리만큼 들여 줄 글과 맞춘다 */
 .su-git-id { padding: 0 0 10px 34px; }
 .su-git-id .btn { min-height: 36px; }
+/* 설정·첫 설정 '코드 프로젝트에 git 쓰기' 바로 아래 이름·메일 칸(시안 git-optional) */
+.cfg-git-id { display: flex; flex-direction: column; gap: 8px; padding: 0 0 12px; }
+.cfg-git-id .su-git-id { padding: 0; }
 .su-field > .su-hint { padding-left: 162px; }
 .su-hint { font-size: 12px; color: var(--text-3); line-height: 1.5; }
 .su-mini { height: 28px; padding: 0 10px; font-size: 12px; margin-left: 6px; }
@@ -231,6 +234,13 @@
 .dm-wait b { font-size: 13px; color: var(--text); }
 .dm-confirm > span { flex: 1; min-width: 0; font-size: 13px; }
 .dm-fold-h { color: var(--text-2); }
+/* 폰 연결 스위치 줄(11-01) — 내 기기 칸 맨 위 옅은 면, 왼쪽 띠 없이 전체 테두리 */
+/* 컴퓨터끼리 잇기(시안 peer-relay 안 A) — 숫자 칸은 옅은 면, 왼쪽 띠 없이 */
+.dm-peer { flex-wrap: wrap; }
+.dm-peer-pend { flex-basis: 100%; display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: 10px; background: var(--hover); font-size: 12.5px; }
+.dm-peer-code { font-size: 26px; font-weight: 700; letter-spacing: 3px; font-variant-numeric: tabular-nums; }
+.dm-peer-err { flex-basis: 100%; }
+.dm-phone { padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--hover); }
 
 /* 로그인 필수 화면(10-24) — 앱 위를 덮는다 */
 .setup.lg-gate { display: flex; align-items: center; justify-content: center; padding: 24px; }

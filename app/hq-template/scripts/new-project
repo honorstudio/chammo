@@ -8,14 +8,16 @@ echo "python not found — install Python 3 (winget install Python.Python.3.12)"
 __doc__ = """Create a project folder for new work, with the project harness, then hand it to a session.
 새 일을 맡을 프로젝트 폴더를 만들고 하네스를 깐다 — 그다음 그 폴더에서 세션을 띄워 맡긴다.
 
-  scripts/new-project <name> "<one-line summary>"
+  scripts/new-project <name> "<one-line summary>" [--git | --no-git]
 
 <name>: lowercase letters, digits, - _ . (e.g. shop-landing). The folder is <devRoot>/<name>.
-It runs `git init` and lays down CLAUDE.md + docs/starter.md + docs/roadmap.md + docs/decisions/
+git is optional (Settings > Features "Use git for code projects", features.git; unset = on when a global git
+email exists). --git / --no-git overrides it: code (app, site, script) → git; design, documents, video, print → --no-git.
+An existing folder never gets `git init`. It lays down CLAUDE.md + docs/starter.md + docs/roadmap.md + docs/decisions/
 (files that already exist are never overwritten) and marks a folder it just created as trusted for Claude Code
 (an existing folder is left for the user to trust once). If the user has their own `project-starter` skill,
 it only creates the folder and tells you to start the session with /project-starter instead.
-Prints JSON: {path, existed, written, projectStarter, trusted, browser, next}.
+Prints JSON: {path, existed, git, written, projectStarter, trusted, browser, committed, next}.
 With browser automation installed, a new project also gets its own logged-in browser profile (.mcp.json).
 """
 import datetime, json, os, re, shlex, shutil, subprocess, sys, time
@@ -69,6 +71,45 @@ def swap_in(tmp, cj):
     with open(tmp, encoding='utf-8') as src, open(cj, 'w', encoding='utf-8') as dst:
         dst.write(src.read())
     os.remove(tmp)
+
+
+def git_ok():
+    """이 기기에서 git 을 불러도 되나 — 맥은 명령줄 도구가 없으면 /usr/bin/git 이 설치 창을 띄운다"""
+    if not shutil.which('git'):
+        return False
+    if sys.platform == 'darwin':
+        try:
+            return subprocess.run(['xcode-select', '-p'], capture_output=True, timeout=5).returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+    return True
+
+
+def git_on(cfg):
+    """설정 '코드 프로젝트에 git 쓰기'(features.git). 값이 없으면(옛 설치) 전역 git 메일이 있으면 켬 — ADR 0024"""
+    f = cfg.get('features') if isinstance(cfg.get('features'), dict) else {}
+    if isinstance(f.get('git'), bool):
+        return f['git']
+    if not git_ok():
+        return False
+    try:
+        r = subprocess.run(['git', 'config', '--global', 'user.email'], capture_output=True, text=True, timeout=5)
+        return bool(r.stdout.strip())
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def render(body, git):
+    """틀 글 — '[git] ' 줄은 깃 프로젝트에만, '[nogit] ' 줄은 깃 없는 프로젝트에만(머리표는 지운다)"""
+    out = []
+    for line in body.splitlines(keepends=True):
+        for tag, keep in (('[git] ', git), ('[nogit] ', not git)):
+            if line.startswith(tag):
+                line = line[len(tag):] if keep else None
+                break
+        if line is not None:
+            out.append(line)
+    return ''.join(out)
 
 
 def computer_use_on(cfg):
@@ -197,6 +238,44 @@ def first_commit(path, lang):
     return False, (f'첫 커밋 실패 — {why}' if ko else f'First commit failed — {why}')
 
 
+# 10MB 넘는 파일은 커밋을 한 번 멈춘다 — 디자인 원본이 커밋돼 .git 이 사흘에 407MB(2026-11-02, ADR 0024). 영영 막지 않는다:
+# 꼭 넣어야 하면 CHAMMO_BIG_OK=1 로 다시(이유는 커밋 메시지에), 사람이 터미널에서 친 커밋은 경고만(사용자 11-02). git 표준 훅이라 어느 세션이든 같다
+SIZE_HOOK = r"""#!/bin/sh
+# Chammo: files over 10 MB (design, video, archive originals) stop a commit once — they usually stay out of git.
+# Chammo: 10MB 넘는 파일(디자인·영상·압축 원본)은 커밋을 한 번 멈춘다 — 보통은 깃에 안 넣는다.
+mb=${CHAMMO_COMMIT_MAX_MB:-10}
+limit=$((mb * 1024 * 1024))
+big=$(git -c core.quotepath=off diff --cached --name-only --diff-filter=AM | while IFS= read -r f; do
+  s=$(git cat-file -s ":$f" 2>/dev/null || echo 0)
+  [ "$s" -gt "$limit" ] && echo "  $f ($((s / 1048576)) MB)"
+done)
+[ -z "$big" ] && exit 0
+[ "${CHAMMO_BIG_OK:-}" = 1 ] && exit 0
+if [ -t 2 ]; then
+  echo "Note: files over $mb MB are going into git / 참고: ${mb}MB 넘는 파일이 깃에 들어가요:" >&2
+  echo "$big" >&2
+  exit 0
+fi
+echo "Commit stopped once — files over $mb MB (design, video and archive originals usually stay out of git):" >&2
+echo "커밋 한 번 멈춤 — ${mb}MB 넘는 파일이에요(디자인·영상·압축 원본은 보통 깃에 안 넣어요):" >&2
+echo "$big" >&2
+echo "If it really must go in, commit again with CHAMMO_BIG_OK=1 and put the reason in the commit message. Otherwise: git reset <file> and add it to .gitignore." >&2
+echo "꼭 넣어야 하면 CHAMMO_BIG_OK=1 로 다시 커밋하고 이유 한 줄을 커밋 메시지에. 아니면 git reset <파일> 하고 .gitignore 에." >&2
+exit 1
+"""
+
+
+def size_hook(path):
+    """새 깃 프로젝트에 큰 파일 훅 — 있던 훅은 안 덮는다"""
+    hook = os.path.join(path, '.git', 'hooks', 'pre-commit')
+    if os.path.exists(hook):
+        return
+    os.makedirs(os.path.dirname(hook), exist_ok=True)
+    with open(hook, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(SIZE_HOOK)
+    os.chmod(hook, 0o755)
+
+
 def gitignore(path, line):
     """<폴더>/.gitignore 에 한 줄 — 있던 줄은 그대로, 이미 있으면 안 더한다"""
     gi = os.path.join(path, '.gitignore')
@@ -223,7 +302,7 @@ def pick_node(data, which=shutil.which, win=None):
     return which('node') or next((p for p in ['/opt/homebrew/bin/node', '/usr/local/bin/node'] if not win and os.path.isfile(p)), None)
 
 
-def browser(path, name, data, node=None):
+def browser(path, name, data, node=None, git=True):
     """브라우저 자동화가 깔려 있으면 이 프로젝트만의 브라우저 프로필(.mcp.json)을 만들고, 백그라운드 세션이 못 누르는
     MCP 승인 창을 미리 승인해 둔다(.claude/settings.local.json). 여러 세션이 한 브라우저로 부딪히지 않게"""
     tool = os.path.join(data, 'tools/chammo-browser')
@@ -237,7 +316,8 @@ def browser(path, name, data, node=None):
     if r.returncode != 0:
         return False
     local_settings(path, enable=['playwright'])
-    gitignore(path, '.playwright-mcp/')  # playwright MCP 가 폴더에 남기는 페이지 스냅샷 — git 에 섞이지 않게
+    if git:
+        gitignore(path, '.playwright-mcp/')  # playwright MCP 가 폴더에 남기는 페이지 스냅샷 — git 에 섞이지 않게
     return True
 
 
@@ -246,8 +326,9 @@ def next_cmd(path, name, first):
     return f'cd {shlex.quote(path)} && claude --bg --dangerously-skip-permissions -n {name} "{first}<first instruction>"'
 
 
-def create(name, summary, data=None, home=None, today=None, node=None, win=None):
-    """폴더·git·하네스. 있는 파일은 안 덮는다. 사용자 project-starter 스킬이 있으면 그 스킬에 맡긴다"""
+def create(name, summary, data=None, home=None, today=None, node=None, win=None, use_git=None):
+    """폴더·(고르면)git·하네스. 있는 파일은 안 덮는다. 사용자 project-starter 스킬이 있으면 그 스킬에 맡긴다.
+    use_git = --git(True)/--no-git(False), None 이면 설정을 따른다"""
     if not valid_name(name):
         raise ValueError(f'folder name must be lowercase letters, digits, - _ . : {name!r}')
     home = home or os.path.expanduser('~')
@@ -261,8 +342,17 @@ def create(name, summary, data=None, home=None, today=None, node=None, win=None)
         path = path.replace('\\', '/')
     existed = os.path.isdir(path)
     os.makedirs(path, exist_ok=True)
-    if not os.path.isdir(os.path.join(path, '.git')):
+    ko = cfg.get('language') == 'ko'
+    note = ''
+    # 있던 폴더(사용자 것)는 깃을 켜지도 끄지도 않는다. 새 폴더만 고른 대로 — 깃이 기본이던 때 디자인 원본이 커밋돼 .git 407MB(2026-11-02)
+    want = not existed and (git_on(cfg) if use_git is None else use_git)
+    if want and not git_ok():
+        want = False
+        note = ('이 기기엔 git 이 없어서 깃 없이 만들었어 — 폴더에 파일만 남는다.' if ko
+                else 'git is not available on this device, so the project was made without it — files just stay in the folder.')
+    if want:
         subprocess.run(['git', 'init', '-q'], cwd=path, check=False)
+    git = os.path.isdir(os.path.join(path, '.git'))
     starter = os.path.isfile(os.path.join(home, '.claude/skills/project-starter/SKILL.md'))
     written = []
     if not starter:
@@ -273,22 +363,24 @@ def create(name, summary, data=None, home=None, today=None, node=None, win=None)
             for fn in files:
                 src = os.path.join(root, fn)
                 rel = os.path.relpath(src, tpl)
+                if rel == 'gitignore' and not git:
+                    continue  # 깃이 없으면 거를 것도 없다
                 rel = '.gitignore' if rel == 'gitignore' else rel
                 dest = os.path.join(path, rel)
                 if os.path.exists(dest):
                     continue
                 os.makedirs(os.path.dirname(dest), exist_ok=True)
                 with open(src, encoding='utf-8') as f:
-                    body = f.read().replace('{{name}}', name).replace('{{summary}}', summary).replace('{{date}}', date)
+                    body = render(f.read(), git).replace('{{name}}', name).replace('{{summary}}', summary).replace('{{date}}', date)
                 with open(dest, 'w', encoding='utf-8') as f:
                     f.write(body)
                 written.append(rel)
     # 있던 폴더도 사용자가 믿은 프로젝트 폴더 안이면 적는다 — Claude 2.1.306 은 git 저장소 폴더에 위 믿음을 안 물려줘
     # 하네스를 깐 뒤 claude --bg 가 'Workspace not trusted' 였다(2026-10-21). 동의 전엔 몰래 안 믿는다
     trusted = trust(path, home, computer_use=computer_use_on(cfg)) if not existed or under_consent(data, path) else False
-    web = False if existed else browser(path, name, data, node)  # 있던 폴더(사용자 저장소)의 .mcp.json 은 대신 안 건드린다
+    web = False if existed else browser(path, name, data, node, git)  # 있던 폴더(사용자 저장소)의 .mcp.json 은 대신 안 건드린다
     status = os.path.join(data, 'tools/statusline')
-    committed, note = False, ''
+    committed = False
     if not existed:
         # 상태줄 = 이 세션의 대화 % 가 사이드바에 뜨게(사용자 원래 상태줄은 그 안에서 그대로).
         # 격리 none = 새 프로젝트는 본 폴더에서 바로 고친다(HQ 와 같은 값) — 결과물이 숨은 .claude/worktrees 에만 생겼다(2026-10-21). 큰 일은 참모가 워크트리로
@@ -298,11 +390,14 @@ def create(name, summary, data=None, home=None, today=None, node=None, win=None)
         # 윈도우는 파이썬 도구(scripts/*) 출력이 cp949 라 프로젝트·예약 세션이 받는 한글이 깨졌다 — HQ(hq.rs)처럼 PYTHONUTF8(2026-10-22 윈도우 QA 2차)
         env = {**({'CHAMMO_HOME': data.replace('\\', '/') if win else data} if custom else {}), **({'PYTHONUTF8': '1'} if win else {})}
         local_settings(path, statusline=status if os.path.isfile(status) else None, isolation='none', env=env or None)
-        committed, note = first_commit(path, 'ko' if cfg.get('language') == 'ko' else 'en')
+        if git:
+            size_hook(path)
+            committed, note = first_commit(path, 'ko' if ko else 'en')
     first = '/project-starter ' if starter else ''
     return {
         'path': path,
         'existed': existed,
+        'git': git,
         'written': sorted(written),
         'projectStarter': starter,
         'trusted': trusted,
@@ -313,12 +408,25 @@ def create(name, summary, data=None, home=None, today=None, node=None, win=None)
     }
 
 
+def parse_args(argv):
+    """<name> "<summary>" [--git|--no-git] (깃발은 어디든) → (이름, 설명, True/False/None)"""
+    use = None
+    rest = []
+    for a in argv:
+        if a in ('--git', '--no-git'):
+            use = a == '--git'
+        else:
+            rest.append(a)
+    return (rest[0] if rest else ''), ' '.join(rest[1:]), use
+
+
 def main(argv):
-    if len(argv) < 2:
+    name, summary, use = parse_args(argv)
+    if not name or not summary:
         print(__doc__, file=sys.stderr)
         return 2
     try:
-        out = create(argv[0], ' '.join(argv[1:]))
+        out = create(name, summary, use_git=use)
     except ValueError as e:
         print(str(e), file=sys.stderr)
         return 2

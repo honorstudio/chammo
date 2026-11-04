@@ -43,8 +43,9 @@ const NUDGE_KEEP_MS = 24 * 60 * 60_000;
 export type Win = { used: number; resetsAt: number };
 export type Why = 'five' | 'week' | 'limit' | 'auth' | 'terms';
 /** fp = 이 계정의 주간 창 시각(지문). blockFp = 막을 때의 지문 — 지금 지문과 다르면 그 막힘은 무효.
- *  openedAt = 막힘이 풀린 시각 — 그 전에 난 한도 오류는 이 칸 소진 신호가 아니다. authAt = 이 칸 토큰으로 물었더니 401·403 이던 시각 */
-export type SlotAuto = { fp?: number; five?: Win; week?: Win; seenAt?: number; blockedUntil?: number; why?: Why; blockFp?: number; openedAt?: number; authAt?: number };
+ *  openedAt = 막힘이 풀린 시각 — 그 전에 난 한도 오류는 이 칸 소진 신호가 아니다. authAt = 이 칸 토큰으로 물었더니 401·403 이던 시각.
+ *  noFive = 5시간 한도가 없는 요금제(2026-11 Ultra — 사용량 주소가 five_hour:null) — five 가 없는 '못 읽음'과 다르다. 소진 판단엔 안 쓴다(five 가 없으면 원래 안 본다) */
+export type SlotAuto = { fp?: number; five?: Win; week?: Win; noFive?: true; seenAt?: number; blockedUntil?: number; why?: Why; blockFp?: number; openedAt?: number; authAt?: number };
 /** 배우는 중인 지문 — for 칸 몫으로, first 부터 n 번(파일 고친 시각 lastAt 이 바뀔 때마다) */
 export type Learn = { for: string; fp: number; first: number; n: number; lastAt: number };
 export type AutoState = {
@@ -89,6 +90,7 @@ export function readAuto(v: unknown): AutoState {
     const five = win(r.five), week = win(r.week);
     if (five) s.five = five;
     if (week) s.week = week;
+    if (r.noFive === true) s.noFive = true;
     if (r.why === 'five' || r.why === 'week' || r.why === 'limit' || r.why === 'auth' || r.why === 'terms') s.why = r.why;
     slots[id] = s;
   }
@@ -179,7 +181,7 @@ export function fpOf(ms: number): number {
 
 /** 계정 토큰으로 바로 물은 값(Rust accounts_usage) — who = 칸 id. 지금 로그인 값도 Rust 가 키체인과 로그인 표시를
  *  같은 잠금 안에서 읽어 그 칸 id 로 준다(바꿔 끼우는 도중이면 엇갈린다). 칸에 없는 로그인이면 'live' — 버린다 */
-export type ApiGot = { who: string; status: string; five?: Win | null; week?: Win | null };
+export type ApiGot = { who: string; status: string; five?: Win | null; week?: Win | null; noFive?: boolean };
 
 /** 물은 값을 칸 기록에 — 주인이 확실하니 지문도 이걸로 안다. 실패·만료(status != ok)는 손대지 않는다(마지막 값 그대로) */
 export function applyApi(prev: AutoState, res: ApiGot[], ids: string[], now: number): AutoState {
@@ -201,8 +203,8 @@ export function applyApi(prev: AutoState, res: ApiGot[], ids: string[], now: num
     // 지문이 다른 칸 것이면 그 칸 몫 — 돌던 세션이 키체인을 옛 계정 토큰으로 되쓰면 '지금 로그인' 값이 남의 계정 것이다
     const other = week ? ids.find((x) => x !== r.who && s.slots[x]?.fp === fpOf(week.resetsAt)) : undefined;
     const id = other ?? r.who;
-    const { five: _f, week: _w, ...rest } = s.slots[id] ?? {};
-    s.slots[id] = { ...rest, ...(week ? { fp: fpOf(week.resetsAt), week } : {}), ...(five ? { five } : {}), seenAt: now };
+    const { five: _f, week: _w, noFive: _n, ...rest } = s.slots[id] ?? {};
+    s.slots[id] = { ...rest, ...(week ? { fp: fpOf(week.resetsAt), week } : {}), ...(five ? { five } : r.noFive ? { noFive: true as const } : {}), seenAt: now };
   }
   return s;
 }
@@ -216,7 +218,9 @@ function attribute(s: AutoState, ids: string[], active: string, u: UsageAt, now:
   // 드물게 두 칸 지문이 같으면 5시간 창 시각으로
   if (owners.length > 1) owners = owners.filter((id) => !!w.five && s.slots[id]?.five?.resetsAt === w.five.resetsAt);
   const write = (id: string) => {
+    // 상태줄엔 '한도 없음'이 안 적힌다 — 5시간 값이 오면 있는 것, 안 오면 사용량 주소가 적은 noFive 를 그대로
     const { five: _f, week: _w, ...rest } = s.slots[id] ?? {};
+    if (w.five) delete rest.noFive;
     s.slots[id] = { ...rest, ...(w.five ? { five: w.five } : {}), week: w.week!, seenAt: u.at };
   };
   if (owners.length === 1) {

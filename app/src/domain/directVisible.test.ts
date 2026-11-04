@@ -207,3 +207,18 @@ describe('주인을 일 기록으로 못 정한 카드 — 짐작으로 참모 �
     expect(phoneOwns(placed, 'ee55ff66').map((c) => c.id)).toEqual(['c0c0c0c2']);
   });
 });
+
+// 2026-11-01 사용자 — 참모 업데이트(참모-2)가 스스로 띄운 카드가 회사 비서 채팅에 떴다. 다른 참모가 그 참모에게 넘김(task send)한 기록이
+// 있으면 sentBy 가 그 참모를 주인으로 골랐다. 참모가 직접 낸 카드는 그 참모 채팅이 주인이다
+describe('참모가 직접 띄운 카드', () => {
+  const MINE = JSON.stringify({ ts: ASK_TS, type: 'ask', id: 'c0ffee02', from: 'ee55ff66', cwd: HQ, q: '시험 카드', kind: 'other', yes: '승인', no: '거절', options: [] });
+  // 참모가 참모-2 에게 일을 넘긴 기록
+  const HANDOVER: TaskEvent = { ts: '2026-10-05T05:10:00+00:00', type: 'send', task: 't2', target: '참모-2', from: 'aa11bb22', fromName: '참모' };
+  it('일을 넘긴 다른 참모가 아니라 카드를 띄운 참모 자기 채팅에', () => {
+    const everyone = parseAgents(raw(ORCH, ORCH2), DEV, EXTRAS);
+    const orchs = everyone.filter((s) => s.cwd === HQ);
+    const now = T_ASK + 5_000;
+    const [p] = placeDirect(MINE, { everyone, seen: stepSeen({}, everyone.map((s) => s.id), now), now, ...noAct, events: [HANDOVER], orchs });
+    expect(p!.owner?.id).toBe('ee55ff66');
+  });
+});

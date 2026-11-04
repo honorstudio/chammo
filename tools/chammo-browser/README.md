@@ -116,7 +116,12 @@ chammo-browser setup <profile> [dir]  register playwright in dir/.mcp.json (merg
 chammo-browser launch <profile> [--owner pid] [--channel chrome|chrome-beta] [--headless] [--no-view] [--wait sec]
                                       Chrome for a script — prints {ok, wsEndpoint, shared, holder}
 chammo-browser release <profile> [--owner pid]   the script is done (last one closes Chrome)
+chammo-browser signin-bubble <profile>  close an open "Sign in to Chrome" bubble with "Use Chrome without an account"
 ```
+
+Session Chrome never offers to sign in to Chrome after a Google web sign-in: right before Chrome starts, the profile's
+`signin.interception_enabled` is set to false (site sign-ins, cookies and passkeys are untouched; `signin.allowed` is left alone
+because turning it off signs a Chrome-signed-in profile out).
 
 ## Where things live
 

@@ -5,9 +5,9 @@ import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { afterUnpeek, peekStep, tabStrip, type Live } from '../../domain/agentBrowser';
 import { keyEvents, keyTarget, type InputEv } from '../../domain/agentInput';
-import { closeWay, deskOffer, paneMenuKeys, paneStatus, signedAutoPeek, signedLine, turnCard, turnCardAfterDone, type PaneMenuKey } from '../../domain/browserDock';
+import { closeWay, deskOffer, paneMenuKeys, paneStatus, paneWantsPeek, signedLine, turnCard, turnCardAfterDone, type PaneMenuKey } from '../../domain/browserDock';
 import { IS_WIN } from '../../domain/reader';
-import { handBack, takeOver } from '../AgentBrowserModal';
+import { handBack, pressedAt, takeOver } from '../AgentBrowserModal';
 import { askPermission, readConfig } from '../../data/tauri';
 import { tr } from '../../i18n';
 import { useAgentTabs } from '../AgentBrowser';
@@ -108,7 +108,7 @@ export function BrowserPane({ live, name, onHide, onClosed, openMenu }: { live: 
   useEffect(() => { if (!popupNow) setPeekFailed(false); }, [popupNow]);
   useEffect(() => {
     if (peekBusy.current) return;
-    const step = peekStep({ popup: popupNow, shown: t.shown, peeked, failed: peekFailed, active: signedAutoPeek(mac), url });
+    const step = peekStep({ popup: popupNow, shown: t.shown, peeked, failed: peekFailed, active: paneWantsPeek({ pressedAt: pressedAt(profile), now: Date.now(), mac }), url });
     if (step === 'peek') {
       peekBusy.current = true;
       void invoke('agent_peek', { profile })
@@ -129,14 +129,24 @@ export function BrowserPane({ live, name, onHide, onClosed, openMenu }: { live: 
   // 사람 손이 아니면(세션이 부른 것도 아니면) 개입부터 — Rust 가 사람 조작만 받는다
   const mine = () => (live.takeover || live.ask ? Promise.resolve() : takeOver(profile, live.pid));
   // 다 했어 = 돌려주기 겸함 — 부름이 그새 바뀌어 못 끝내도 쥔 개입은 돌려준다(안 눌린 것처럼 보이지 않게)
+  // 패스키 단계에서 저절로 꺼낸 창 — 사람이 '다 했어'·돌려주기를 누르면 같이 원래 자리로(2026-11-02 사용자: QR 뒤에도 창이 남아 직접 최소화). 사람이 더보기로 연 창은 그대로
+  // 윈도우 — 세션 부름 카드의 '보이는 창에서 열기'(Windows Hello 등)로 꺼낸 창도 같은 것: 다 했어·돌려주기면 숨은 화면으로(win_desk)
+  const [deskShown, setDeskShown] = useState(false);
+  const unpeekNow = () => {
+    if (!peeked && !deskShown) return;
+    setPeeked(null);
+    setDeskShown(false);
+    void invoke('agent_hide', { profile }).then(() => t.setShown(false), () => {});
+  };
   const done = () => {
     const at = live.ask?.at ?? null;
     if (at != null && at === sentAt) return; // 한 번만 — 같은 부름을 여러 번 보내지 않는다
     setSentAt(at);
+    unpeekNow();
     void invoke('agent_ask_done', { profile, pid: live.pid, at, say: say.trim() || null })
       .catch(() => { setSentAt(null); return live.takeover ? handBack(profile, live.pid) : undefined; }).catch(() => {});
   };
-  const give = () => void handBack(profile, live.pid).catch(() => {});
+  const give = () => { unpeekNow(); void handBack(profile, live.pid).catch(() => {}); };
   const reply = (accept: boolean) => void mine().then(() => invoke('agent_dialog', { profile, pid: live.pid, target: t.current, accept, prompt: card?.kind === 'dialog' && card.prompt ? prompt : null })).catch(() => {});
   // 브라우저 끄기 — 크롬만 닫는다(세션은 그대로, 다음 브라우저 도구가 새로 띄운다). 끄면 칸은 바로 닫힌다(SpaceView 가 직전 탭으로)
   const [asking, setAsking] = useState(false);
@@ -149,6 +159,15 @@ export function BrowserPane({ live, name, onHide, onClosed, openMenu }: { live: 
     void mine().then(() => invoke('agent_close_tab', { profile, pid: live.pid, target: id })).catch(() => {});
   };
   const showChrome = () => void mine().then(() => invoke('agent_focus', { profile })).then(() => t.setShown(true), () => {});
+  // 칸 카드의 '크롬 창 꺼내기' — 패스키 창 때문에 꺼내는 것이라 저절로 길(agent_peek): 창이 닫히거나 페이지가 넘어가면 다시 숨는다(peekStep unpeek).
+  // 그새 창이 사라졌으면(no popup) 크롬에서 보기로
+  const peekNow = () => {
+    if (peekBusy.current) return;
+    peekBusy.current = true;
+    void invoke('agent_peek', { profile })
+      .then(() => { setPeeked({ url }); t.setShown(true); }, () => showChrome())
+      .finally(() => { peekBusy.current = false; });
+  };
   // 파일 고르기 — 사람이 칸에서 파일 칸을 누르면 숨긴 크롬 창 대신 앱 창에 붙는 시트(모달과 같은 길)
   const choosing = useRef(false);
   useEffect(() => {
@@ -202,17 +221,7 @@ export function BrowserPane({ live, name, onHide, onClosed, openMenu }: { live: 
         {t.pinned && <button className="bp-follow" onClick={() => void invoke('agent_pin', { profile, target: null }).catch(() => {})}>{tr('따라가기', 'Follow')}</button>}
         {openMenu && <IconButton size="s" label={tr('더보기', 'More')} onClick={more}><IconMore /></IconButton>}
       </div>
-      <div className="bp-screen" ref={stage}>
-        {still && <img className="bp-still" src={still} alt="" />}
-        <textarea ref={field} className="abm-field bp-field" aria-label={tr(`${name} 브라우저에 입력`, `Type into the ${name} browser`)} autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
-          {...typing.props} />
-        {note && (
-          <div className="bp-note" role="status">
-            <span>{note.text}</span>
-            {note.settings && <button className="cv-btn" onClick={() => void askPermission('screen')}>{tr('권한 열기', 'Open settings')}</button>}
-          </div>
-        )}
-      </div>
+      {/* 사람 차례·끄기 확인·돌려주기는 머리줄 바로 밑(11-02 사용자 — 칸 맨 아래라 못 알아봤다) */}
       {asking && (
         <div className="bp-turn" role="alertdialog" aria-label={tr('브라우저 끄기', 'Close the browser')}>
           <i className="bp-turn-dot" aria-hidden="true" />
@@ -230,19 +239,37 @@ export function BrowserPane({ live, name, onHide, onClosed, openMenu }: { live: 
           {card.kind === 'ask' && <>
             <input className="bp-turn-in" value={say} onChange={(e) => setSay(e.target.value)} placeholder={tr('세션에 한마디', 'A note for the session')} aria-label={tr('세션에 한마디', 'A note for the session')}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); done(); } }} />
-            {deskOffer(card, win) && <button className="cv-btn" onClick={showChrome} title={tr('패스키·Windows Hello·파일 창처럼 창이 필요할 때', 'When a passkey, Windows Hello or file window is needed')}>{tr('보이는 창에서 열기', 'Open in a visible window')}</button>}
+            {deskOffer(card, win) && <button className="cv-btn" onClick={() => { setDeskShown(true); showChrome(); }} title={tr('패스키·Windows Hello·파일 창처럼 창이 필요할 때', 'When a passkey, Windows Hello or file window is needed')}>{tr('보이는 창에서 열기', 'Open in a visible window')}</button>}
             <button className="cv-btn solid" onClick={done} title={tr('세션에 돌려주기', 'Hand back to the session')}>{tr('다 했어', 'Done')}</button>
           </>}
-          {(card.kind === 'passkey' || card.kind === 'window') && !t.shown && <button className="cv-btn solid" onClick={showChrome}>{tr('크롬 창 꺼내기', 'Open Chrome window')}</button>}
+          {(card.kind === 'passkey' || card.kind === 'window') && !t.shown && <button className="cv-btn solid" onClick={peekNow}>{tr('크롬 창 꺼내기', 'Open Chrome window')}</button>}
         </div>
       )}
+      {stat.giveBack && (
+        <div className={`bp-stat ${stat.giveBack ? 'mine' : ''}`}>
+          {live.busy && !stat.giveBack && <span className="cv-spin" aria-hidden="true" />}
+          <span className="bp-doing">{stat.text}</span>
+          {stat.giveBack && <button className="cv-btn solid" onClick={give}>{tr('세션에 돌려주기', 'Hand back to the session')}</button>}
+        </div>
+      )}
+      <div className="bp-screen" ref={stage}>
+        {still && <img className="bp-still" src={still} alt="" />}
+        <textarea ref={field} className="abm-field bp-field" aria-label={tr(`${name} 브라우저에 입력`, `Type into the ${name} browser`)} autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
+          {...typing.props} />
+        {note && (
+          <div className="bp-note" role="status">
+            <span>{note.text}</span>
+            {note.settings && <button className="cv-btn" onClick={() => void askPermission('screen')}>{tr('권한 열기', 'Open settings')}</button>}
+          </div>
+        )}
+      </div>
       {signedNow && (
         <div className="bp-stat bp-signed" role="status">
           <span className="bp-doing">{signedNow}</span>
           <button className="cv-btn" onClick={() => signed(false)} title={tr('참모 브라우저로 다시 열기', 'Reopen in the Chammo browser')}>{tr('돌아오기', 'Go back')}</button>
         </div>
       )}
-      {(stat.text || stat.giveBack) && (
+      {stat.text && !stat.giveBack && (
         <div className={`bp-stat ${stat.giveBack ? 'mine' : ''}`}>
           {live.busy && !stat.giveBack && <span className="cv-spin" aria-hidden="true" />}
           <span className="bp-doing">{stat.text}</span>

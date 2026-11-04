@@ -1521,7 +1521,16 @@ pub fn forget_local(dir: &Path, kc: &dyn Store) -> Result<String, String> {
 
 /// 폰 허브 WebSocket 주소(주인 = 이 기기) — 서명은 쿼리로(서버 connectHub, ADR 0005)
 pub fn hub_url(st: &TeamState, k: &DeviceKeys, ts_ms: u64, nonce: &str) -> Result<String, String> {
-    let path = format!("/v0/hubs/{}/ws", st.device_id);
+    hub_url_for(st, k, &st.device_id, "ws", ts_ms, nonce)
+}
+
+/// 남의 허브 주소 — 같은 계정 다른 컴퓨터에 손님(ws)·기기 두드리기(knock)로(컴퓨터끼리 중계, 계획 2026-11-01-peer-relay C-4).
+/// cap=peer 는 내 허브 주인일 때만 붙는다
+pub fn hub_url_for(st: &TeamState, k: &DeviceKeys, hub: &str, kind: &str, ts_ms: u64, nonce: &str) -> Result<String, String> {
+    if !matches!(kind, "ws" | "knock") || hub.is_empty() || !hub.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        return Err("bad hub".into());
+    }
+    let path = format!("/v0/hubs/{hub}/{kind}");
     if !take(&k.public(), ts_ms, "GET", &path) {
         return Err("서버 429 — 배경 요청 몫을 다 써서 잠시 쉬어요".into());
     }
@@ -1529,7 +1538,9 @@ pub fn hub_url(st: &TeamState, k: &DeviceKeys, ts_ms: u64, nonce: &str) -> Resul
     let s = k.sign_request("GET", &path, b"", ts_ms, nonce);
     let base = server_ok(&st.server).ok_or("team.json 의 서버 주소가 https 가 아니야")?;
     let base = base.replacen("https://", "wss://", 1).replacen("http://", "ws://", 1);
-    Ok(format!("{base}{path}?device={}&ts={}&nonce={}&sig={}", st.device_id, s.ts, s.nonce, s.sig))
+    // cap=peer — 이 앱은 컴퓨터끼리 숫자 확인을 안다(서버가 그때만 컴퓨터 두드리기를 넘긴다, relay ADR 0005 덧붙임). 서명 밖 쿼리, 옛 서버는 무시
+    let cap = if hub == st.device_id && kind == "ws" { "&cap=peer" } else { "" };
+    Ok(format!("{base}{path}?device={}&ts={}&nonce={}&sig={}{cap}", st.device_id, s.ts, s.nonce, s.sig))
 }
 
 /// 폰 입구 주소 — 오리진만(https, 디버그 빌드는 로컬 평문도). CHAMMO_PHONE_WEB → team.json → 기본 입구

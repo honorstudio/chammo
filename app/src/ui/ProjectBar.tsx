@@ -10,10 +10,12 @@ type Props = {
   onDone: (m: string | null) => void;
   /** CLAUDE.md·starter 가 없으면 "하네스 깔기" — 빈 자리만 채운다 */
   needsHarness?: boolean;
+  /** worktree 로 새 세션 칸 — 커밋 있는 git 저장소 + '코드 프로젝트에 git 쓰기' 켬일 때만 */
+  worktree?: boolean;
 };
 
 /** 프로젝트 화면 머리줄: 같은 폴더에 세션 하나 더 / 새 worktree 에서 세션 */
-export function ProjectBar({ project, cwd, count, onDone, needsHarness }: Props) {
+export function ProjectBar({ project, cwd, count, onDone, needsHarness, worktree = true }: Props) {
   const [wt, setWt] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -56,6 +58,8 @@ export function ProjectBar({ project, cwd, count, onDone, needsHarness }: Props)
       <button className="btn" disabled={busy} onClick={() => void spawn()}>
         {tr('같은 폴더에 새 세션', 'New session in same folder')}
       </button>
+      {/* worktree 는 커밋이 있는 git 저장소에서만 — 깃 없는 프로젝트에선 claude -w 가 실패한다(ADR 0024) */}
+      {worktree && <>
       <input
         className="inp"
         placeholder={tr('worktree 이름', 'Worktree name')}
@@ -65,6 +69,7 @@ export function ProjectBar({ project, cwd, count, onDone, needsHarness }: Props)
       <button className="btn" disabled={busy || !wt.trim()} onClick={() => void spawn(wt.trim())}>
         {tr('worktree로 새 세션', 'New session in worktree')}
       </button>
+      </>}
     </div>
   );
 }

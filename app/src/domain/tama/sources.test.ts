@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isGeneratedPath, isTestPath, parseCiRuns, parseCommitLog, taskEvents } from './sources';
+import { isTestPath, parseCiRuns, parseCommitLog, taskEvents } from './sources';
 
 // Rust commit_log 가 저장소마다 붙여 주는 원문: @@C\t해시\t시각(초)\t부모들\t제목 + numstat 줄
 const RAW = [
@@ -50,18 +50,15 @@ describe('parseCommitLog — git log 원문 → 다마고치 기록', () => {
   });
 });
 
-describe('isGeneratedPath — 줄 수에서 빼는 자동 생성 파일 (커밋 크기 규칙의 예외와 같음)', () => {
-  it('lock·빌드 결과·스키마 타입·마이그레이션·스냅샷', () => {
-    for (const p of ['pnpm-lock.yaml', 'app/package-lock.json', 'yarn.lock', 'src-tauri/Cargo.lock', 'ios/Podfile.lock', 'dist/index.js', 'web/build/app.js', 'a.min.js',
-      'src/types/database.types.ts', 'src/api.generated.ts', 'supabase/migrations/20260901_init.sql', 'src/__snapshots__/a.snap'])
-      expect(isGeneratedPath(p), p).toBe(true);
-    for (const p of ['src/ui/A.tsx', 'docs/build-notes.md', 'src/lock.ts', 'sql/query.sql'])
-      expect(isGeneratedPath(p), p).toBe(false);
-  });
-
+describe('줄 수 — 코드 아닌 파일은 뺀다 (표는 domain/codeLines)', () => {
   it('커밋 줄 수에 안 들어간다 — lock 파일만 크게 바뀐 커밋은 똥이 아니다', () => {
     const raw = '@@C\teee\t1790002400\tp6\tchore: 의존성\n2\t1\tpackage.json\n900\t700\tpnpm-lock.yaml';
     expect(parseCommitLog(raw)).toEqual([{ t: 1790002400_000, type: 'commit', lines: 3, hasTest: false }]);
+  });
+
+  it('디자인 파일(.ai·.vectorcraft)만 바뀐 커밋도 똥이 아니다', () => {
+    const raw = '@@C\tfff\t1790003000\tp7\tfeat: 시안\n2043780\t0\tassets/orders/a.ai\n154990\t0\tassets/orders/a.vectorcraft\n4\t0\tREADME.md';
+    expect(parseCommitLog(raw)).toEqual([{ t: 1790003000_000, type: 'commit', lines: 4, hasTest: false }]);
   });
 });
 

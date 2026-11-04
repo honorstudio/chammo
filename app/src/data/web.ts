@@ -2,10 +2,12 @@
 // 이름·모양은 tauri.ts 와 같게 둬서 domain/* 을 그대로 쓴다.
 // 인증 = 이 기기 토큰을 localStorage 에 두고 Authorization: Bearer 로만(쿠키는 포트를 안 가려 같은 호스트 다른 포트 서버로 샌다 — 2026-10-02 재검토).
 // localStorage 는 출처(스킴+호스트+포트)마다 따로라 다른 포트·홈 화면 앱과 안 섞인다
+import { tr } from '../i18n';
 import { makeApi } from './peerApi';
 import { parseCardOpen, type NumberApi } from '../domain/e2eNumber';
 import { readLink } from '../phone-web/link';
 import { tunnelFor } from '../phone-web/hub';
+import { netRetry, retryable } from '../domain/netRetry';
 import { installProxy } from '../phone-web/proxy';
 import { makeTagTail, parseTagChunk } from '../domain/tagTail';
 import { READ_LIMIT_MS, readCheck } from '../domain/readLimit';
@@ -103,7 +105,10 @@ async function call(path: string, init?: RequestInit, retried = false): Promise<
   if (!token) throw new NoKeyError();
   const headers = new Headers(init?.headers);
   headers.set('Authorization', `Bearer ${token}`);
-  const r = await transport(path, { ...init, headers });
+  // 받기(GET)는 망 오류면 조용히 몇 번 더 — 맥↔중계 허브가 몇 초 끊겼다 붙는 동안 화면에 오류가 뜨지 않게(domain/netRetry, 2026-11-02)
+  const send = () => transport(path, { ...init, headers });
+  // 보내기(/api/send)도 cid 가 있으면 — 맥이 같은 cid 는 한 번만 친다(망 오류 = 맥에 갔는지 모름, 11-04)
+  const r = await (retryable(path, init) ? netRetry(send, { signal: init?.signal ?? undefined }) : send());
   if (r.status === 401) {
     // 그사이 다른 탭이 다시 짝지어 열쇠를 바꿔 끼웠으면(옛 열쇠는 맥이 바로 죽인다) 새 열쇠는 지우지 말고 한 번 더
     const now = getToken();
@@ -123,7 +128,7 @@ async function timed<T>(path: string, signal: AbortSignal | undefined, body: (r:
   let t: ReturnType<typeof setTimeout>;
   const check = () => {
     const v = readCheck({ elapsed: Date.now() - t0, sinceRx: relay && !direct ? Date.now() - tunnelFor(relay).lastRx : Infinity, relay: !!relay && !direct });
-    if (v === 'abort') c.abort(new DOMException('연결이 느려서 답을 못 받았어요 — 잠시 뒤 다시 받아요', 'AbortError'));
+    if (v === 'abort') c.abort(new DOMException(tr('연결이 느려요. 저절로 다시 받아요', 'Connection is slow. Retrying automatically'), 'AbortError'));
     else t = setTimeout(check, v);
   };
   t = setTimeout(check, READ_LIMIT_MS);
@@ -209,12 +214,13 @@ export type ThumbSize = 360 | 720 | 1600;
 export const fileUrl = (path: string, thumb = false, size?: ThumbSize) => `/api/file?path=${encodeURIComponent(path)}${thumb ? `&thumb=1${size ? `&size=${size}` : ''}` : ''}`;
 /** 대화 파일 썸네일 — 맥이 풀어 줄인 JPEG(원본은 안 준다). 그림·PDF 만, 그 밖은 서버가 415 → null */
 const teamThumbs = new Map<string, Promise<string | null>>();
-export function teamThumbBlob(team: string, id: string): Promise<string | null> {
+/** at = 그 판을 맥이 이미 풀어 뒀을 때만(팀 홈 최근 파일 줄 — 내려받기를 일으키지 않는다, 11-01). 아직이면 실패 → 확장자 표 */
+export function teamThumbBlob(team: string, id: string, at?: number): Promise<string | null> {
   // 파일마다 한 번만 받는다(대화를 다시 열어도 같은 blob 주소) — 실패는 잊어서 다음에 다시
   const k = `${team}\n${id}`;
   let p = teamThumbs.get(k);
   if (!p) {
-    p = call(`/api/team-file-thumb?team=${encodeURIComponent(team)}&id=${encodeURIComponent(id)}&size=360`).then((r) => r.blob()).then((b) => URL.createObjectURL(b));
+    p = call(`/api/team-file-thumb?team=${encodeURIComponent(team)}&id=${encodeURIComponent(id)}&size=360${at !== undefined ? `&at=${at}` : ''}`).then((r) => r.blob()).then((b) => URL.createObjectURL(b));
     p.catch(() => teamThumbs.delete(k));
     teamThumbs.set(k, p);
   }
@@ -287,7 +293,12 @@ export type TeamPhoneApi = {
   /** 사람이 폰에서 이 방을 seq 까지 봤다 — 같은 계정 읽음으로 중계에(chammo-relay ADR 0012) */
   read: (room: string, seq: number) => Promise<unknown>;
   invite: () => Promise<{ link: string; expiresAt: number }>;
-  create: (team: string) => Promise<unknown>;
+  /** 팀 만들기 — me = 이 팀에서 보일 내 이름(비면 계정 이름). 맥이 지금 팀을 새 팀으로 바꾼다 */
+  create: (team: string, me: string) => Promise<unknown>;
+  /** 지금 팀 바꾸기(폰 머리 팀 줄 — 11-02 팀 여러 개) */
+  use: (team: string) => Promise<unknown>;
+  /** 초대 링크로 들어가기 — me = 이 팀에서 보일 내 이름 */
+  join: (code: string, me: string) => Promise<unknown>;
   /** 내 참모에게 넘기기 — 맥이 거르고 본문 없는 기록 길로 친다(/api/send 아님) */
   handoff: (to: string, text: string) => Promise<{ to: string }>;
   /** 프로필판(별명·사진·상태)·팀 홈 글판 — rev = 폰이 본 판, 그대로면 {same}(맥이 중계를 안 부른다) */
@@ -343,7 +354,9 @@ export const teamViaMac: TeamPhoneApi = {
   agentRefs: (team) => getJson(`/api/team-agent-refs?team=${encodeURIComponent(team)}`),
   read: (room, seq) => post('/api/team-read', { room, seq }),
   invite: () => post('/api/team-invite', {}),
-  create: (team) => post('/api/team-create', { team }),
+  create: (team, me) => post('/api/team-create', { team, me }),
+  use: (team) => post('/api/team-use', { team }),
+  join: (code, me) => post('/api/team-join', { code, me }),
   handoff: (to, text) => post('/api/team-handoff', { to, text }),
   profiles: (team, rev) => getJson(`/api/team-profiles?team=${encodeURIComponent(team)}&rev=${rev}`),
   posts: (team, rev) => getJson(`/api/team-posts?team=${encodeURIComponent(team)}&rev=${rev}`),

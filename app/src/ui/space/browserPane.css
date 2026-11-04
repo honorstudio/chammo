@@ -26,7 +26,7 @@
 .bp-note span { max-width: 420px; }
 .bp-stat { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 4px 12px; border-top: 1px solid var(--line); font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; }
 /* 사람이 쥔 동안 — 옅은 면 + 늘 보이는 '세션에 돌려주기'(칸을 눌러 저절로 켜진 개입도, 2026-10-28) */
-.bp-stat.mine { color: var(--text); background: color-mix(in srgb, #1f9a62 10%, var(--surface)); }
+.bp-stat.mine { min-height: 44px; font-size: 13px; border-top: 0; border-bottom: 1px solid var(--line); color: var(--text); background: color-mix(in srgb, #1f9a62 10%, var(--surface)); }
 .bp-stat .cv-btn.solid { flex: none; }
 .bp-signed .cv-btn { flex: none; }
 .bp-doing { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -34,16 +34,17 @@
 .lk-tab.bdock { position: relative; flex: none; padding: 0 8px; }
 .lk-tab.bdock img { width: 22px; height: 22px; display: block; }
 .lk-bdock-letter { position: absolute; right: 1px; bottom: 1px; min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box; border-radius: 7px; display: grid; place-items: center; font-size: 11px; font-weight: 700; line-height: 1; color: var(--surface); background: var(--text-2); }
-.lk-bdock-dot { position: absolute; top: 5px; right: 4px; width: 7px; height: 7px; border-radius: 50%; box-shadow: 0 0 0 1.5px var(--panel, var(--surface)); }
+.lk-bdock-dot { position: absolute; top: 5px; right: 4px; width: 7px; height: 7px; border-radius: 50%; box-shadow: 0 0 0 var(--ring-w) var(--panel, var(--surface)); }
 .lk-bdock-dot.agent { background: #4c8dff; }
 .lk-bdock-dot.human { background: #1f9a62; }
 .lk-bdock-dot.ask { background: var(--blocked); }
 /* 사람 차례 카드 — 칸과 아래 줄 사이(비추기 층 밖이라 겹치지 않는다). 강조는 옅은 면 색 + 점(왼쪽 띠 말고) */
-.bp-turn { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 10px 6px 12px; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--blocked) 10%, var(--surface)); font-size: 13px; color: var(--text); }
-.bp-turn-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--blocked); }
+/* 사람 차례 — 머리줄 바로 밑, 눈에 띄게(11-02 사용자 시안 승인: 52px·14px·면 진하게) */
+.bp-turn { display: flex; align-items: center; gap: 8px; min-height: 52px; padding: 8px 12px 8px 14px; border-bottom: 1px solid color-mix(in srgb, var(--blocked) 40%, var(--line)); background: color-mix(in srgb, var(--blocked) 16%, var(--surface)); font-size: 14px; color: var(--text); }
+.bp-turn-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--blocked); }
 .bp-turn-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bp-turn-in { flex: 0 1 220px; min-width: 120px; height: 32px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; }
-.bp-turn .cv-btn { flex: none; min-height: 32px; }
+.bp-turn .cv-btn { flex: none; min-height: 36px; padding: 0 14px; font-size: 13px; }
 /* 다 했어 — 사람 차례를 끝내는 주 단추라 색 면·44px(10-28 사용자: 글자 단추라 못 찾았다) */
 /* 끄기 확인 한 줄의 끄기 단추 — 되돌리기 어려운 동작이라 글자 + 위험 색 */
 .bp-turn .cv-btn.danger { background: var(--danger-bg); color: var(--danger-ink); border-color: var(--danger-ink); }

@@ -34,7 +34,7 @@
 .tcal-ev.done, .tcal-lrow.done { opacity: .5; }
 .tcal-ev.done span, .tcal-lrow.done .tcal-lx span { text-decoration: line-through; }
 .tcal-ev.pend, .tcal-lrow.pend { opacity: .55; }
-.tcal-ev.fresh { box-shadow: 0 0 0 1.5px var(--c-blue); }
+.tcal-ev.fresh { box-shadow: 0 0 0 var(--ring-w) var(--c-blue); }
 .tcal-more { border: 0; background: none; padding: 0 5px; font: inherit; font-size: 11px; color: var(--text-3); text-align: left; cursor: pointer; }
 
 /* 월 */
@@ -102,7 +102,7 @@
 .tcal-foot { display: flex; align-items: center; gap: 8px; }
 .tcal-dots { display: inline-flex; gap: 8px; }
 .tcal-dot { width: 18px; height: 18px; border-radius: 50%; border: 0; padding: 0; background: var(--dc); cursor: pointer; }
-.tcal-dot.on { box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--dc); }
+.tcal-dot.on { box-shadow: 0 0 0 2px var(--surface), 0 0 0 calc(2px + var(--ring-w)) var(--dc); }
 .tcal-vbar { display: flex; align-items: center; gap: 6px; }
 .tcal-vbar h3 { margin: 0; font-size: 16px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .tcal-vdot { width: 10px; height: 10px; border-radius: 50%; background: var(--dc); flex: 0 0 auto; }

@@ -134,16 +134,24 @@ pub fn answer(id: &str, pick: &Pick, by: &str) -> Result<(), String> {
     let _one = ANSWER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let log = std::fs::read_to_string(log_path()).unwrap_or_default();
     let ask = check(&log, id).map_err(refuse_text)?;
+    // 회사 정책 아래 권한 창 카드 — 세션에 글을 치지 않고, 같은 창일 때만 그 선택지를 누른다(perm_card)
+    if ask["sub"] == crate::perm_card::PERM_SUB {
+        return crate::perm_card_cmd::answer(&ask, pick, by);
+    }
     // 다른 기기 연결 요청 카드(peer_ask) — 세션에 치지 않고 앱이 그 자리에서 허용·거절을 적는다
     if ask["kind"] == LINK_KIND {
-        let yes = link_pick(pick, by).map_err(refuse_text)?;
+        let yes = if ask["sub"] == crate::device_cards::PEER_LINK_SUB {
+            peer_link_pick(pick, by).map_err(refuse_text)?
+        } else {
+            link_pick(pick, by).map_err(refuse_text)?
+        };
         if ask["sub"] == PHONE_SUB {
             crate::mobile::devices().decide_hold(id, yes)?;
         } else if ask["sub"] == crate::device_cards::DEVICE_SUB || ask["sub"] == crate::device_cards::RECOVER_SUB {
             crate::device_cards::decide(&ask, yes)?;
         } else if ask["sub"] == crate::e2e_cards::SAFETY_SUB {
             crate::e2e_cards::decide(&ask, yes)?;
-        } else if ask["sub"] == crate::device_cards::PHONE_LINK_SUB {
+        } else if ask["sub"] == crate::device_cards::PHONE_LINK_SUB || ask["sub"] == crate::device_cards::PEER_LINK_SUB {
             crate::phone_relay::link_answer(id, yes)?;
         } else if ask["sub"] == ACCOUNT_LOGOUT_SUB {
             // 다른 기기 사람이 요청한 이 기기 계정 로그아웃 — 이 기기 사람이 '로그아웃'을 눌렀을 때만, 10분 안에
@@ -193,6 +201,32 @@ pub fn link_pick(pick: &Pick, by: &str) -> Result<bool, Refuse> {
         Pick::No => Ok(false),
         _ => Err(Refuse::Bad("allow or decline only".into())),
     }
+}
+
+/// 컴퓨터 연결 카드(계획 2026-11-01-peer-relay C-3b) 답 — 두 컴퓨터는 보통 다른 곳에 있어서 A 앞 사람 없이도: 이 앱(desktop)·이 컴퓨터와 짝지은 폰(phone).
+/// 다른 컴퓨터(원격 peer 열쇠 — remote:)는 못 누른다: 짝짓는 B 가 옛 기기 id 로 이어진 줄을 갖고 있으면 '제3의 컴퓨터'인 척 스스로 허용할 수 있고
+/// 그게 B 가 아님을 가를 길이 없다(리뷰 11-01 ⑤). 폰이 없으면 A 앞에서
+pub fn peer_link_pick(pick: &Pick, by: &str) -> Result<bool, Refuse> {
+    if by != "desktop" && by != "phone" {
+        return Err(Refuse::Bad(crate::i18n::tr("이 컴퓨터 연결은 이 컴퓨터나 이 컴퓨터와 짝지은 폰에서만 허용해요", "Allow this link on this computer or a phone paired with it").into()));
+    }
+    link_pick(pick, by)
+}
+
+/// 원격(다른 컴퓨터 peer 열쇠)에게 줄 카드 기록 — 컴퓨터 연결 카드는 뺀다(못 누르는 카드, 짝짓는 B 자신일 수도 있다). 그 줄이 든 행만 풀어 본다
+pub fn hide_peer_links(log: &str) -> String {
+    if !log.contains(crate::device_cards::PEER_LINK_SUB) {
+        return log.to_string();
+    }
+    let mut out = String::with_capacity(log.len());
+    for line in log.split_inclusive('\n') {
+        let hide = line.contains(crate::device_cards::PEER_LINK_SUB)
+            && serde_json::from_str::<Value>(line.trim_end()).ok().is_some_and(|v| v["type"] == "ask" && v["kind"] == LINK_KIND && v["sub"] == crate::device_cards::PEER_LINK_SUB);
+        if !hide {
+            out.push_str(line);
+        }
+    }
+    out
 }
 
 /// 연결 요청 카드 줄 — 이름·테일넷·OS 는 이 기기 tailscale 이 말한 것(요청이 보낸 글이 아니다). until 이 지나면 화면이 '시간 지남'으로
@@ -367,6 +401,27 @@ pub async fn direct_answer(window: tauri::WebviewWindow, id: String, pick: Pick)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // 컴퓨터끼리 숫자 확인 카드(C-3b) — 두 컴퓨터가 다른 곳에 있는 게 보통이라 A 앞 사람 없이도: A 앱·A 와 짝지은 폰.
+    // 다른 컴퓨터(원격 peer 열쇠)는 못 누른다 — 짝짓는 B 가 옛 기기 id 로 이어진 줄을 갖고 있으면 '제3의 컴퓨터'인 척 스스로 허용할 수 있어서(리뷰 ⑤)
+    #[test]
+    fn 컴퓨터_연결_카드는_앱과_폰만_누르고_다른_컴퓨터는_못_누른다() {
+        assert_eq!(peer_link_pick(&Pick::Yes, "desktop"), Ok(true));
+        assert_eq!(peer_link_pick(&Pick::No, "phone"), Ok(false));
+        assert!(peer_link_pick(&Pick::Yes, "remote:사무실 아이맥").is_err());
+        assert!(peer_link_pick(&Pick::Yes, "telegram:1").is_err());
+        assert!(peer_link_pick(&Pick::Yes, "").is_err());
+    }
+
+    #[test]
+    fn 컴퓨터_연결_카드는_다른_컴퓨터에게_목록에서도_뺀다() {
+        let ask = |id: &str, dev: &str| json!({ "type": "ask", "id": id, "kind": LINK_KIND, "sub": crate::device_cards::PEER_LINK_SUB, "dev": dev, "q": "q" }).to_string();
+        let other = json!({ "type": "ask", "id": "cccc0000", "kind": "pay", "q": "결제" }).to_string();
+        let log = [ask("aaaa0000", "dev-b"), other.clone(), json!({ "type": "answer", "id": "aaaa0000" }).to_string()].join("\n") + "\n";
+        let out = hide_peer_links(&log);
+        assert!(!out.contains(crate::device_cards::PEER_LINK_SUB) && out.contains("cccc0000") && out.contains("\"answer\""), "{out}");
+        assert_eq!(hide_peer_links(&other), other, "컴퓨터 연결 카드가 없으면 그대로");
+    }
 
     #[test]
     fn 계정_로그아웃_요청_카드는_사람_길로만_답하는_연결_카드_판() {

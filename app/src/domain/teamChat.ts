@@ -86,7 +86,8 @@ export function roomItems(items: TeamItem[], room: string): TeamItem[] {
 
 /** 반응 접기 — 글 seq → 표식마다 단 사람(달기·떼기 차례대로, 사람마다 표식 하나씩). mine = 내가 단 것 */
 export type Reaction = { mark: string; who: string[]; mine: boolean };
-export function reactionsOf(items: TeamItem[], room: string): Map<number, Reaction[]> {
+/** nameOf = 누른 사람 이름을 프로필 이름으로(teamProfile lookOf — lineOf 와 같은 길), 없으면 명부 이름 */
+export function reactionsOf(items: TeamItem[], room: string, nameOf?: (member: string, roster: string) => string): Map<number, Reaction[]> {
   const seen = new Set<string>();
   const state = new Map<number, Map<string, Map<string, { name: string; mine: boolean }>>>();
   for (const it of [...items].filter((x) => x.room === room && x.react).sort((a, b) => a.seq - b.seq)) {
@@ -97,7 +98,7 @@ export function reactionsOf(items: TeamItem[], room: string): Map<number, Reacti
     const marks = state.get(r.seq) ?? new Map<string, Map<string, { name: string; mine: boolean }>>();
     const who = marks.get(r.mark) ?? new Map<string, { name: string; mine: boolean }>();
     const key = it.member || it.device;
-    if (r.on) who.set(key, { name: it.person || '?', mine: isMine(it) });
+    if (r.on) who.set(key, { name: (it.member && nameOf ? nameOf(it.member, it.person || '?') : it.person) || '?', mine: isMine(it) });
     else who.delete(key);
     marks.set(r.mark, who);
     state.set(r.seq, marks);
@@ -132,7 +133,8 @@ export function withMyReacts(got: Map<number, Reaction[]>, pend: { seq: number; 
 
 /** 부르기 조각 — 아는 이름(긴 이름 먼저)만 @이름 으로 자른다. 이름 뒤에 영문·숫자가 붙으면 다른 이름(Rust team_relay_inbox::mentions_me 와 같은 선) */
 export type Part = { t: 'text'; s: string } | { t: 'mention'; s: string; me: boolean };
-export function mentionParts(text: string, names: string[], myName: string): Part[] {
+/** shown = 계정 이름 → 화면 이름(프로필) 표 — 글엔 계정 이름이 박혀 있고(알림이 그걸로 찾는다) 말풍선엔 프로필 이름으로 보인다 */
+export function mentionParts(text: string, names: string[], myName: string, shown?: Map<string, string>): Part[] {
   const sorted = [...new Set(names.map((n) => n.trim()).filter(Boolean))].sort((a, b) => b.length - a.length);
   const out: Part[] = [];
   let buf = '';
@@ -143,7 +145,7 @@ export function mentionParts(text: string, names: string[], myName: string): Par
       if (hit) {
         if (buf) out.push({ t: 'text', s: buf });
         buf = '';
-        out.push({ t: 'mention', s: `@${hit}`, me: hit === myName.trim() });
+        out.push({ t: 'mention', s: `@${shown?.get(hit) || hit}`, me: hit === myName.trim() });
         i += hit.length + 1;
         continue;
       }
@@ -162,7 +164,8 @@ export const mentionsMe = (text: string, myName: string) => !!myName.trim() && m
 export type MentionAgent = { id: string; name: string; blurb: string; model: string; color: number; clash: boolean };
 export type MentionPick = { kind: 'helper' | 'agent' | 'person' | 'mine'; label: string; insert: string; name: string; orch?: RosterOrch; agent?: MentionAgent };
 export const HELPER_MENTION = tr('@팀참모', '@TeamHelper');
-export function mentionList(q: string, people: { id: string; name: string; me: boolean }[], mine: RosterOrch[] = [], agents: MentionAgent[] = []): MentionPick[] {
+/** people 은 teamProfile lookNames 를 거친 줄이면 name = 프로필 이름, account = 계정 이름 — 보이는 건 프로필, 넣는 글은 계정 이름(없으면 name) */
+export function mentionList(q: string, people: { id: string; name: string; account?: string; me: boolean }[], mine: RosterOrch[] = [], agents: MentionAgent[] = []): MentionPick[] {
   const k = q.trim().toLowerCase();
   const ok = (s: string) => !k || s.toLowerCase().startsWith(k);
   const others = people.filter((p) => !p.me);
@@ -172,7 +175,7 @@ export function mentionList(q: string, people: { id: string; name: string; me: b
   return [
     ...team,
     ...helper,
-    ...others.filter((p) => ok(p.name)).map((p): MentionPick => ({ kind: 'person', label: p.name, insert: `@${p.name}`, name: p.name })),
+    ...others.filter((p) => ok(p.name) || (!!p.account && ok(p.account))).map((p): MentionPick => ({ kind: 'person', label: p.name, insert: `@${p.account || p.name}`, name: p.account || p.name })),
     ...mine.filter((o) => ok(o.label)).map((o): MentionPick => ({ kind: 'mine', label: o.label, insert: `@${o.label}`, name: o.label, orch: o })),
   ];
 }

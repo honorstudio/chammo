@@ -12,7 +12,9 @@ export function chatDropAt(x: number, y: number): ChatDrop | null {
   const id = chatCellAt(cells.map((c) => { const r = c.getBoundingClientRect(); return { id: c.dataset.session ?? '', left: r.left, top: r.top, right: r.right, bottom: r.bottom }; }), x, y);
   const cell = cells.find((c) => c.dataset.session === id);
   if (!id || !cell) return null;
-  return { id, hot: col.querySelector<HTMLElement>(':scope > .och-card') ?? col, color: getComputedStyle(cell).getPropertyValue('--orch').trim() };
+  // 떠 있는 대화창(OrchBubble FloatHost)이면 채팅 카드는 크기 0 으로 숨어 있다 — 떠 있는 창을 빛낸다(2026-11-01 사용자 '어디에 놓아야 누구에게')
+  const hot = col.querySelector<HTMLElement>('.obb-float') ?? col.querySelector<HTMLElement>(':scope > .och-card') ?? col;
+  return { id, hot, color: getComputedStyle(cell).getPropertyValue('--orch').trim() };
 }
 
 // 강조는 한 번에 한 자리 — 끌기(스페이스·띠)와 파인더 끌기가 같은 자리를 쓴다. 색은 받을 세션 참모 색(--drop)

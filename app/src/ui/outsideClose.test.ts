@@ -50,7 +50,8 @@ describe('띠·앱 팝오버 — 같은 규칙(바깥 누름·Esc·창 blur·창
   });
   it('모델 칩·보관함 + 메뉴·프로젝트 칩도 capture 로', () => {
     expect(chip).toMatch(/closeOnOutside\(window, \(t\) => !!\(t as HTMLElement\)\.closest\?\.\('\.mc-pop, \.mc-chip'\), \(\) => setOpen\(false\)\)/);
-    expect((locker.match(/closeOnOutside\(window, \(t\) => !!box\.current\?\.contains\(t as Node\), \(\) => setOpen\(false\)\)/g) ?? []).length).toBe(2);
+    // 보관함 + 메뉴 하나 — '모든 프로젝트' 덮개는 보관함 본문 목록이 됐다(2026-11-01 projects-view A)
+    expect((locker.match(/closeOnOutside\(window, \(t\) => !!box\.current\?\.contains\(t as Node\), \(\) => setOpen\(false\)\)/g) ?? []).length).toBe(1);
   });
 });
 

@@ -1,15 +1,15 @@
 import { useRef, useState } from 'react';
 import type { Limit, Usage } from '../domain/usage';
 import { fmtResetIn, usageLevel } from '../domain/usage';
-import type { RepoToday } from '../data/tauri';
+import type { RepoToday } from '../domain/replay';
 import type { TamaFile } from '../domain/tama/store';
 import { TamaMini } from './tama/TamaMini';
 import type { Features } from '../domain/config';
 import { IconBell, IconOffice, IconReader, IconSpace, IconTerminal } from './Icons';
 import { featureButton, type FeatureProps } from './FeatureButtons';
 import { barItems, type BarItem } from '../domain/topbarMenu';
-import { assistant, tr } from '../i18n';
-import { loadChipShown } from '../domain/load';
+import { assistant, fmtNum, tr } from '../i18n';
+import { LoadChip } from './LoadChip';
 import { ageText, allOut, type AccountsView } from '../domain/accounts';
 import { AccountPopover } from './AccountPopover';
 import { Badge } from './kit/Badge';
@@ -28,14 +28,29 @@ function Meter({ label, l, age }: { label: string; l?: Limit; age?: number | nul
   );
 }
 
+/** Claude 한도 칸 — 5시간 한도가 없는 요금제(Ultra)면 5시간 자리에 요금제 이름(화면에서 대문자, 막대 없이). 못 읽음은 '—' 그대로 */
+export function LimitMeters({ usage, age }: { usage: Usage; age?: number | null }) {
+  const plan = usage.noFive;
+  return (
+    <>
+      <span className="m-label">{tr('Claude 한도', 'Claude limit')}</span>
+      {plan !== undefined && !usage.five
+        ? <span className="meter plan" title={tr(`${plan} 요금제는 5시간 한도가 없어요. 주간 한도만 봐요`, `${plan} has no 5-hour limit. Only the weekly limit applies`)}
+            aria-label={tr(`5시간 한도 없음, ${plan} 요금제`, `No 5-hour limit, ${plan} plan`)}><b>{plan || tr('없음', 'none')}</b></span>
+        : <Meter label={tr('5시간', '5h')} l={usage.five} age={age} />}
+      <Meter label={tr('주간', 'Week')} l={usage.week} age={age} />
+    </>
+  );
+}
+
 /** 앱 맨 위: Claude 사용 한도 · 오늘 커밋 · (오른쪽) 다마고치 자리 */
 type TamaProps = { file: TamaFile | null; widgetShown: boolean; onToggle: () => void };
 
-export function TopBar({ features, usage, usageAge, account, accounts, onSettings, today, tama, inboxCount, onInbox, harnitor, onHarnitor, tools, onTools, review, onReview, voice, onVoice, replayOn, onReplay, office, onOffice, space, onView, reader, onReader, load, onLoad, loadOn, claude, fontSize, fresh = false }: { /** 참모가 하나도 없음(첫 날) — 한도·커밋 숫자를 숨긴다(ux-start M6) */ fresh?: boolean; /** 계정 팝오버 '로그인해서 바꾸기' 터미널 — claude 경로·글자 크기 */ claude?: string | null; fontSize: number; load?: { level: 'ok' | 'warn' | 'high'; load1: number; cores: number; swapGb: number }; onLoad: () => void; loadOn: boolean; features: Features; usage: Usage; usageAge?: number | null; account: { name: string; title: string; known: boolean } | null; accounts: AccountsView | null; onSettings: () => void; today: RepoToday[]; tama: TamaProps; inboxCount: number; onInbox: () => void; harnitor: boolean; onHarnitor: () => void; /** 도구 화면이 지금 탭에 떠 있나 */ tools: boolean; onTools: () => void; /** 리뷰 — on = 리뷰 화면이 떠 있나, confirm = 머지 전에 사람이 볼 PR 수 */ review: { on: boolean; confirm: number }; onReview: () => void; voice: boolean; onVoice: () => void; replayOn: boolean; onReplay: () => void; office: boolean; onOffice: () => void; /** 지금 뷰가 채팅 뷰인가 */ space: boolean; onView: (chat: boolean) => void; reader: boolean; onReader: () => void }) {
+export function TopBar({ features, usage, usageAge, account, accounts, onSettings, today, tama, inboxCount, onInbox, harnitor, onHarnitor, tools, onTools, review, onReview, voice, onVoice, replayOn, onReplay, office, onOffice, space, onView, reader, onReader, load, claude, fontSize, fresh = false }: { /** 참모가 하나도 없음(첫 날) — 한도·커밋 숫자를 숨긴다(ux-start M6) */ fresh?: boolean; /** 계정 팝오버 '로그인해서 바꾸기' 터미널 — claude 경로·글자 크기 */ claude?: string | null; fontSize: number; load?: React.ComponentProps<typeof LoadChip>; features: Features; usage: Usage; usageAge?: number | null; account: { name: string; title: string; known: boolean } | null; accounts: AccountsView | null; onSettings: () => void; today: RepoToday[]; tama: TamaProps; inboxCount: number; onInbox: () => void; harnitor: boolean; onHarnitor: () => void; /** 도구 화면이 지금 탭에 떠 있나 */ tools: boolean; onTools: () => void; /** 리뷰 — on = 리뷰 화면이 떠 있나, confirm = 머지 전에 사람이 볼 PR 수 */ review: { on: boolean; confirm: number }; onReview: () => void; voice: boolean; onVoice: () => void; replayOn: boolean; onReplay: () => void; office: boolean; onOffice: () => void; /** 지금 뷰가 채팅 뷰인가 */ space: boolean; onView: (chat: boolean) => void; reader: boolean; onReader: () => void }) {
   const commits = today.reduce((n, r) => n + r.commits, 0);
   const added = today.reduce((n, r) => n + r.added, 0);
   const deleted = today.reduce((n, r) => n + r.deleted, 0);
-  const detail = today.map((r) => tr(`${r.name} ${r.commits}개 +${r.added} −${r.deleted}`, `${r.name} ${r.commits} commits +${r.added} −${r.deleted}`)).join('\n');
+  const detail = today.map((r) => tr(`${r.name} ${fmtNum(r.commits)}개 +${fmtNum(r.added)} −${fmtNum(r.deleted)}`, `${r.name} ${fmtNum(r.commits)} commits +${fmtNum(r.added)} −${fmtNum(r.deleted)}`)).join('\n');
   const chip = useRef<HTMLButtonElement>(null);
   const [pop, setPop] = useState<DOMRect | null>(null);
   const out = allOut(accounts, Date.now());
@@ -43,9 +58,7 @@ export function TopBar({ features, usage, usageAge, account, accounts, onSetting
     <header className="topbar">
       {/* 첫 날(참모 0명)엔 한도·커밋 숫자를 숨기고, 한도엔 무엇인지 이름(2026-11-01 ux-start M6) */}
       {!fresh && <>
-      <span className="m-label">{tr('Claude 한도', 'Claude limit')}</span>
-      <Meter label={tr('5시간', '5h')} l={usage.five} age={usageAge} />
-      <Meter label={tr('주간', 'Week')} l={usage.week} age={usageAge} />
+      <LimitMeters usage={usage} age={usageAge} />
       </>}
       {account && <button ref={chip} type="button" className={`acct-chip ${account.known ? '' : 'unknown'} ${pop ? 'on' : ''}`} title={[account.title, out].filter(Boolean).join(' — ')}
         aria-haspopup="dialog" aria-expanded={!!pop} onClick={(e) => setPop(pop ? null : e.currentTarget.getBoundingClientRect())}>
@@ -53,25 +66,22 @@ export function TopBar({ features, usage, usageAge, account, accounts, onSetting
         {out && <span className="dim">{tr('다 소진', 'All used')}</span>}
       </button>}
       {pop && accounts && <AccountPopover view={accounts} anchor={pop} chip={chip} claude={claude} fontSize={fontSize} onClose={() => setPop(null)} onSettings={() => { setPop(null); onSettings(); }} />}
-      {!fresh && <>
+      {!fresh && features.git && <>
       <span className="sep" />
       <span className="today" title={detail || tr('오늘(새벽 5시부터) 커밋 없음', 'No commits today (since 5 AM)')}>
         <span className="m-label">{tr('오늘 커밋', 'Commits today')}</span>
-        <b>{commits}</b>
+        <b>{fmtNum(commits)}</b>
         {commits > 0 && (
           <span className="dim">
-            <span className="plus">+{added}</span> <span className="minus">−{deleted}</span> · {tr('저장소', 'repos')} {today.length}
+            <span className="plus">+{fmtNum(added)}</span> <span className="minus">−{fmtNum(deleted)}</span> · {tr('저장소', 'repos')} {today.length}
           </span>
         )}
       </span>
       </>}
-      {load && loadChipShown(load.level, !!loadOn) && <>
+      {load && <>
         {(!fresh || account) && <span className="sep" />}
-        <button type="button" className={`load-chip ${load.level} ${loadOn ? 'on' : ''}`} onClick={onLoad}
-          title={tr(`부하 ${load.load1.toFixed(1)} (코어 ${load.cores}개) · 스왑 ${load.swapGb.toFixed(1)}GB · 누르면 세션별 부하`, `Load ${load.load1.toFixed(1)} on ${load.cores} cores · swap ${load.swapGb.toFixed(1)}GB · click for load per session`)}>
-          {/* 부하 화면을 보는 중이라 보통 부하여도 떠 있으면 '부하'만 */}
-          <b>{load.level === 'high' ? tr('부하 높음', 'High load') : tr('부하', 'Load')}</b>
-        </button>
+        {/* 늘 보인다 — 올리면 카드, 누르면 자세히 보기(2026-11-01 사용자 "내 피씨가 어느 정도 상태인지 팔로우가 안 됨") */}
+        <LoadChip {...load} />
       </>}
       <span className="grow" />
       {(() => {

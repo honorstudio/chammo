@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { browserDock, browserKey, browserOfPick, closeAsk, closeWay, deskOffer, dockTitleOf, hqBrowserHome, paneMenuKeys, paneStatus, browserOwner, paneTarget, signedAutoPeek, signedLine, stillClosed, turnCard, turnCardAfterDone, wentAway } from './browserDock';
+import { browserDock, browserKey, browserOfPick, closeAsk, closeWay, deskOffer, dockTitleOf, hqBrowserHome, paneMenuKeys, paneWantsPeek, paneStatus, browserOwner, paneTarget, signedAutoPeek, signedLine, stillClosed, turnCard, turnCardAfterDone, wentAway } from './browserDock';
 import { peekStep, type Live } from './agentBrowser';
 
 const live = (o: Partial<Live> = {}): Live => ({ profile: 'shop-app', pid: 10, sessionPid: 100, url: 'http://localhost:3000/admin', title: '주문 — shop-app', tabs: [], tool: '', toolAt: 0, busy: false, ts: 0, ...o });
@@ -273,5 +273,23 @@ describe('패스키로 바꾼 구글 크롬 — 시트 꺼내기', () => {
   it('띠 한 줄은 크롬 창에서 Touch ID', () => {
     const c = turnCard(live({ popup: true, popupKind: 'passkey' }), { dialog: null, chooser: null }, { signable: true, signed: true, auto: true });
     expect(c?.text).toBe('패스키 — 크롬 창에서 Touch ID');
+  });
+});
+
+// 2026-11-02 사용자(구글 로그인 QR) — 알림·카드를 눌러 칸으로 왔는데 칸은 패스키 창이 떠도 크롬을 안 꺼냈다(구글 크롬 자동 전환 때만).
+// '화면 받는 중' → 칸 아래 작은 '크롬 창 꺼내기'를 찾아 눌러야 했고, 그건 사람이 직접 연 것으로 쳐서 QR 뒤에도 안 숨었다
+describe('paneWantsPeek — 칸이 크롬 자체 창을 저절로 꺼낼 때', () => {
+  const now = 100_000;
+  it('사람이 알림·카드·칸 단추로 막 이 브라우저를 불렀으면(30초 안) 꺼낸다', () => {
+    expect(paneWantsPeek({ pressedAt: now - 1000, now })).toBe(true);
+    expect(peekStep({ popup: true, shown: false, peeked: null, failed: false, active: paneWantsPeek({ pressedAt: now - 1000, now }), url: 'https://accounts.google.com/' })).toBe('peek');
+  });
+  it('누른 지 오래됐거나 안 눌렀으면 안 꺼낸다 — 세션 혼자 돌다 뜬 창을 사용자 화면에 저절로 띄우지 않게(카드로)', () => {
+    expect(paneWantsPeek({ pressedAt: now - 31_000, now })).toBe(false);
+    expect(paneWantsPeek({ pressedAt: undefined, now })).toBe(false);
+  });
+  it('래퍼가 패스키 때문에 구글 크롬으로 바꾼 동안은 누르지 않아도(전과 같이)', () => {
+    expect(paneWantsPeek({ pressedAt: undefined, now, mac: { signable: true, signed: true, auto: true } })).toBe(true);
+    expect(paneWantsPeek({ pressedAt: undefined, now, mac: { signable: true, signed: true } })).toBe(false);
   });
 });

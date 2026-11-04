@@ -1,6 +1,6 @@
 // 팀 보관함 화면 계산(chammo-relay ADR 0009) — Rust team_locker_list 의 줄을 폴더 칩·자리·크기 글로. 화면(ui/team/TeamLocker)과 따로 시험한다
 import { tr } from '../i18n';
-import { kindOf, pageDoc } from './reader';
+import { cardThumb, kindOf, pageDoc } from './reader';
 import { readSortOf, sortList, type SortState } from './sortList';
 
 export type LockerItem = {
@@ -42,6 +42,17 @@ export function usageText(u: LockerUsage): { text: string; ratio: number } {
 
 /** 화면에 보이는 줄 = 사람이 올린 파일만. 프로필·사진·팀 홈 글·팀 참모 정의 같은 앱 안쪽 줄(kind ≠ file)과 빈 폴더 표시 줄은 안 보인다 */
 const shown = (i: LockerItem) => i.kind === 'file' && !i.dir;
+
+/** 이 기기 몫 열쇠를 기다리는 파일 수 — 보관함에 보이는 살아 있는 파일 중 why 가 있는 것(11-02 새 팀원: 전부 '잠긴 파일'이었다) */
+export const lockedFiles = (items: LockerItem[]) => items.filter((i) => shown(i) && i.state === 'live' && i.deletedAt == null && !!i.why).length;
+
+/** 새로 든 팀원 기기 — 팀 열쇠는 켜져 있는 다른 팀원 앱이 넘겨준다. 빈 홈·잠긴 보관함·빈 캘린더가 '없음'처럼 안 보이게 셋이 같은 한 줄 */
+export function keyWaitNote(n: number, what: 'post' | 'file' | 'event'): string {
+  if (n <= 0) return '';
+  const ko = what === 'post' ? `글 ${n}개` : what === 'file' ? `파일 ${n}개` : `일정 ${n}개`;
+  const en = what === 'post' ? `${n} post${n > 1 ? 's' : ''}` : what === 'file' ? `${n} file${n > 1 ? 's' : ''}` : `${n} event${n > 1 ? 's' : ''}`;
+  return tr(`${ko}는 이 기기 열쇠를 받으면 보여요 — 다른 팀원 앱이 켜져 있으면 곧 열려요`, `${en} will show once this device gets the team key — it arrives when another teammate's app is open`);
+}
 
 /** 팀 보관함 올리는 중 줄 — 사람이 올린 팀 파일만(kind 없으면 옛 앱 줄 = 파일). 휴지통·대화 파일 보기에선 없다(대화 첨부는 채팅 칸이 그린다).
  *  10-28 사용자 "프로필 바꾸면 profile.json 112B 카드" — 프로필·사진·글 올리기가 이 줄로 샜다 */
@@ -113,12 +124,15 @@ export function inRoom(items: LockerItem[], room: string, trash = false): Locker
   return items.filter((i) => shown(i) && i.room === room && i.state === (trash ? 'trash' : 'live')).sort((a, b) => b.at - a.at);
 }
 
-/** 썸네일 종류 — 대화 말풍선·대화 파일 보기·팀 보관함 카드가 같이 쓴다. 그림은 그대로, PDF 는 첫 장(QuickLook).
- *  크기 상한: 그림 20MB(말풍선마다 풀어 두니), PDF 50MB(맥 peek 상한). 크기 모름(0)은 받아 본다 */
-export function thumbKind(name: string, size: number): 'image' | 'pdf' | null {
-  const k = kindOf(name);
-  if (k === 'image') return size <= 20 * 1024 * 1024 ? 'image' : null;
-  if (k === 'pdf') return size <= 50 * 1024 * 1024 ? 'pdf' : null;
+/** 썸네일 종류 — 대화 말풍선·대화 파일 보기·팀 보관함 카드가 같이 쓴다. 그림은 그대로, page 는 맥 QuickLook 첫 장
+ *  (PDF·워드·엑셀·PPT·영상·.ai·.psd·hwpx — 11-01 넓힘, 채팅 카드와 같은 cardThumb). 남이 올린 html 은 바깥 주소를 부를 수 있어 뺀다.
+ *  크기 상한: 그림 20MB(말풍선마다 풀어 두니), page 50MB(맥 peek 상한). 크기 모름(0)은 받아 본다 */
+export function thumbKind(name: string, size: number): 'image' | 'page' | null {
+  const way = cardThumb(name);
+  if (way === 'image') return size <= 20 * 1024 * 1024 ? 'image' : null;
+  // 영상은 첫 프레임 하나에 통째로 풀어야 해서 20MB 까지(문서는 맥 peek 상한 50MB)
+  if (way === 'shot' && kindOf(name) === 'video') return size <= 20 * 1024 * 1024 ? 'page' : null;
+  if (way === 'shot' && kindOf(name) !== 'html') return size <= 50 * 1024 * 1024 ? 'page' : null;
   return null;
 }
 

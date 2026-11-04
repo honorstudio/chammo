@@ -196,11 +196,11 @@ fn 올린_파일을_팀원이_받아_같은_바이트로_연다() {
     assert_eq!((f.size, f.parts), (5016, 1));
     let o = open_file(&Me { keys: &w.b, device: "dB" }, &w.people, "t1", &f).unwrap();
     assert_eq!(o.meta.name, "보고서.pdf");
-    let out = download(&nb, "t1", &f, &o, &dir.join("받음"), &mut |_, _| {}).unwrap();
+    let out = download(&nb, "t1", &f, &o, &dir.join("받음"), &mut |_, _| Ok(())).unwrap();
     assert_eq!(std::fs::read(&out).unwrap(), data(5000));
     assert_eq!(out.file_name().unwrap(), "보고서.pdf");
     // 같은 이름이 있으면 겹치지 않게
-    let again = download(&nb, "t1", &f, &o, &dir.join("받음"), &mut |_, _| {}).unwrap();
+    let again = download(&nb, "t1", &f, &o, &dir.join("받음"), &mut |_, _| Ok(())).unwrap();
     assert_eq!(again.file_name().unwrap(), "보고서 2.pdf");
 }
 
@@ -217,7 +217,7 @@ fn 바로가기_파일은_가리키는_진짜_내용을_올린다() {
     let nb = w.net("dB");
     let f = find(&nb, &r.id);
     let o = open_file(&Me { keys: &w.b, device: "dB" }, &w.people, "t1", &f).unwrap();
-    let out = download(&nb, "t1", &f, &o, &dir.join("받음"), &mut |_, _| {}).unwrap();
+    let out = download(&nb, "t1", &f, &o, &dir.join("받음"), &mut |_, _| Ok(())).unwrap();
     assert_eq!(std::fs::read(&out).unwrap(), std::fs::read(&real).unwrap());
     assert!(!std::fs::symlink_metadata(&out).unwrap().file_type().is_symlink());
 }
@@ -233,7 +233,7 @@ fn 큰_파일은_8MiB_조각으로_나눠_올리고_받는다() {
     assert_eq!(f.parts, 2);
     assert_eq!(w.srv.borrow().parts[&(r.id.clone(), 0)].len() as u64, PART);
     let o = open_file(&Me { keys: &w.b, device: "dB" }, &w.people, "t1", &f).unwrap();
-    let out = download(&nb, "t1", &f, &o, &dir.join("o"), &mut |_, _| {}).unwrap();
+    let out = download(&nb, "t1", &f, &o, &dir.join("o"), &mut |_, _| Ok(())).unwrap();
     assert_eq!(std::fs::read(out).unwrap(), data(CHUNK + 100));
 }
 
@@ -528,4 +528,28 @@ fn 남의_파일_영구_지우기_거절은_파일_이야기로() {
     assert!(e.contains("올린 사람") && !e.contains("초대"), "{e}");
     // 다른 거절은 그대로(서버 이유)
     assert!(!act(&Always(403, json!({ "error": "forbidden" })), "t1", "f1", "trash").unwrap_err().contains("올린 사람"));
+}
+
+// 11-01 사용자 "받는데 어느 정도 되었는지 인디케이터도 없고" — 조각마다 (받은, 전체)를 알리고, 멈추기(Err)면 임시 파일을 안 남긴다
+#[test]
+fn 큰_파일_받기는_조각마다_진행을_알리고_멈추면_임시_파일이_안_남는다() {
+    let w = world();
+    let dir = tmp("prog");
+    let total = (CHUNK * 2 + 100) as u64;
+    let src = write(&dir, "모음.zip", &data(CHUNK * 2 + 100));
+    let r = upload(&w.net("dA"), &Me { keys: &w.a, device: "dA" }, &w.people.recipients, "t1", "", "file", "", &src, "모음.zip", &mut |_, _| {}).unwrap();
+    let nb = w.net("dB");
+    let f = find(&nb, &r.id);
+    let o = open_file(&Me { keys: &w.b, device: "dB" }, &w.people, "t1", &f).unwrap();
+    let mut seen = vec![];
+    let out = download(&nb, "t1", &f, &o, &dir.join("받음"), &mut |d, t| { seen.push((d, t)); Ok(()) }).unwrap();
+    assert_eq!(seen, vec![(0, total), (CHUNK as u64, total), (CHUNK as u64 * 2, total), (total, total)]);
+    assert_eq!(std::fs::read(&out).unwrap().len() as u64, total);
+    // 첫 조각 뒤 멈추기 — 오류로 끝나고, 받던 자리엔 임시 파일도 반쪽 파일도 없다
+    let to = dir.join("멈춤");
+    let mut n = 0;
+    let e = download(&nb, "t1", &f, &o, &to, &mut |_, _| { n += 1; if n > 1 { Err("멈춤".into()) } else { Ok(()) } }).unwrap_err();
+    assert_eq!(e, "멈춤");
+    let left: Vec<_> = std::fs::read_dir(&to).unwrap().flatten().map(|e| e.file_name()).collect();
+    assert!(left.is_empty(), "남은 것: {left:?}");
 }

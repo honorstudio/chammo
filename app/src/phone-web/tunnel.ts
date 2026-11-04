@@ -9,6 +9,8 @@ const M2P = enc.encode('mac->phone');
 const CONFIRM = 'chammo-ok';
 export const HELLO = 1;
 export const DATA = 2;
+/** 맥 → 폰: 그 세션을 모른다(맥이 허브에 다시 붙음 등) — 봉하지 않은 1바이트. 폰은 끊고 새로 악수한다 */
+export const RESET = 3;
 export const NONCE_LEN = 16;
 
 const subtle = () => globalThis.crypto.subtle;

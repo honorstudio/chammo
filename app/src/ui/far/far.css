@@ -67,7 +67,7 @@
 .far-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; }
 .far-dot.d-run { background: var(--working); }
 .far-dot.d-ask { background: var(--blocked); }
-.far-dot.d-rest { box-shadow: inset 0 0 0 1.5px var(--text-3); }
+.far-dot.d-rest { box-shadow: inset 0 0 0 var(--ring-w) var(--text-3); }
 .far-rows { display: flex; flex-direction: column; border-radius: 12px; box-shadow: 0 0 0 1px var(--line); overflow: hidden; }
 .far-row { all: unset; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 0 12px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--text-2); }
 .far-group:first-child > .far-row:first-child { border-top: 0; }

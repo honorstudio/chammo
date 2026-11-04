@@ -649,6 +649,10 @@ pub fn ensure(dir: &Path) {
         for t in &refresh {
             let _ = team_relay::refresh_members(&dd, &kc, &team_relay::Curl, t);
         }
+        // 팀원이 들고 났다 — 새 사람 몫 열쇠를 화면과 상관없이 뒤에서 끝까지(11-02 새 팀원 시연: 기존 팀원 앱이 팀 화면을 안 열면 0개)
+        for t in changed.iter().filter(|t| teams.contains(t)) {
+            crate::team_locker_app::catch_up_spawn(&dd, t);
+        }
         if me {
             // 종단 암호 준비(chammo-relay ADR 0007) — 받는 열쇠 올리기·사슬 시작. 실패해도 평문 전환기라 메신저는 돈다
             if let Err(e) = crate::e2e_flow::ensure(&dd, &kc, &team_relay::Curl) {

@@ -398,6 +398,29 @@ describe('git 이름·메일 — 새 PC 는 비어 있어 새 프로젝트마다
     expect(gitIdentityRow(ok)).toBe('hidden');
     expect(setupReady({ ...ok, clt: false, gitName: '', gitEmail: '' }, ['clt'])).toBe(true);
   });
+  it('회사 PC 처럼 지금 못 정하면 이름·메일도 나중에 하기로 넘긴다 — 0.4.7 2차 검증(첫 설정을 막지 않게)', () => {
+    const blank = { ...ok, gitName: '', gitEmail: '' };
+    expect(setupReady(blank)).toBe(false);
+    expect(setupReady(blank, ['gitId'])).toBe(true);
+    expect(canNext('check', blank, undefined, null, ['gitId'])).toBe(true);
+    expect(nextWhy('check', blank, undefined, null, false, ['gitId'])).toBeNull();
+    // 넘겨도 Claude 설치·로그인은 그대로 필수
+    expect(setupReady({ ...blank, loggedIn: false }, ['gitId'])).toBe(false);
+  });
+  // 깃은 선택(ADR 0024) — '코드 프로젝트에 git 쓰기'를 끈 사람에겐 이름·메일을 묻지도 막지도 않는다
+  it('git 스위치가 꺼져 있으면 이름·메일 줄은 숨고 다음을 막지 않는다', () => {
+    const blank = { ...ok, gitName: '', gitEmail: '' };
+    expect(gitIdentityRow(blank, false)).toBe('hidden');
+    expect(gitIdentityRow(blank, true)).toBe('need');
+    expect(setupReady(blank, [], false)).toBe(true);
+    expect(canNext('check', blank, undefined, null, [], false)).toBe(true);
+    expect(nextWhy('check', blank, undefined, null, false, [], false)).toBeNull();
+  });
+  it('다음이 꺼진 까닭(맥)에 git 이름·메일 말은 없다 — 명령줄 도구는 파이썬 때문에 그대로 필수', () => {
+    const why = nextWhy('check', { ...ok, clt: false }, undefined, null, false, [], false) ?? '';
+    expect(why).toMatch(/명령줄 도구/);
+    expect(why).not.toMatch(/이름·메일/);
+  });
   it('입력 검사 — 이름 빈칸·메일 모양', () => {
     expect(gitIdentityError('Kim', 'k@x.com')).toBeNull();
     expect(gitIdentityError('  ', 'k@x.com')).toBe('name');

@@ -4,7 +4,12 @@
 import { tr } from '../i18n';
 
 export type Proc = { pid: number; ppid: number; cpu: number; rssKb: number; etime: string; cmd: string };
-export type SysLoad = { cores: number; load1: number; load5: number; load15: number; swapUsedMb: number; swapTotalMb: number; memTotalMb: number; /** 부팅 시각(ms, kern.boottime) — 윈도우·옛 앱엔 없음 */ bootAt?: number };
+export type SysLoad = {
+  cores: number; load1: number; load5: number; load15: number; swapUsedMb: number; swapTotalMb: number; memTotalMb: number;
+  /** 부팅 시각(ms, kern.boottime) — 윈도우·옛 앱엔 없음 */ bootAt?: number;
+  /** 메모리 여유 %(kern.memorystatus_level)·압박 단계 1 정상·2 주의·4 위험 — 맥만 */ memFreePct?: number; memPressure?: number;
+  /** 데이터 볼륨 남은·전체 GB(Rust statvfs 60초 캐시) — 맥만 */ diskFreeGb?: number; diskTotalGb?: number;
+};
 export type SessionLoad = { id: string; name: string; project: string; cpu: number; rssKb: number; top: Proc[] };
 export type Orphan = Proc & { count: number; claudePid: number };
 export type Bucket = { cpu: number; rssKb: number; top: Proc[] };
@@ -76,15 +81,25 @@ export function procLabel(cmd: string): string {
   return bin;
 }
 
-/** sysctl -n hw.ncpu vm.loadavg vm.swapusage hw.memsize 네 줄 */
-export function parseSys(text: string): SysLoad | null {
-  const [ncpu, avg, swap, mem, boot] = text.split('\n');
+/** sysctl -n hw.ncpu vm.loadavg vm.swapusage hw.memsize kern.boottime kern.memorystatus_level kern.memorystatus_vm_pressure_level,
+ *  disk = "남은바이트 전체바이트"(load_sample 의 disk) */
+export function parseSys(text: string, disk = ''): SysLoad | null {
+  const [ncpu, avg, swap, mem, boot, memFree, pressure] = text.split('\n');
   const cores = Number(ncpu);
   const la = /\{\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)/.exec(avg ?? '');
   if (!cores || !la) return null;
   const sw = (k: string) => Number(new RegExp(`${k} = ([\\d.]+)M`).exec(swap ?? '')?.[1] ?? 0);
   const bootSec = /sec = (\d+)/.exec(boot ?? '')?.[1];
-  return { cores, load1: Number(la[1]), load5: Number(la[2]), load15: Number(la[3]), swapUsedMb: sw('used'), swapTotalMb: sw('total'), memTotalMb: Math.round(Number(mem ?? 0) / 1024 / 1024), ...(bootSec ? { bootAt: Number(bootSec) * 1000 } : {}) };
+  const num = (t?: string) => (t && /^\d+$/.test(t.trim()) ? Number(t.trim()) : undefined);
+  const [free, total] = disk.trim().split(/\s+/).map((x) => num(x));
+  const gb = (b: number) => Math.round((b / 1024 ** 3) * 10) / 10;
+  return {
+    cores, load1: Number(la[1]), load5: Number(la[2]), load15: Number(la[3]), swapUsedMb: sw('used'), swapTotalMb: sw('total'), memTotalMb: Math.round(Number(mem ?? 0) / 1024 / 1024),
+    ...(bootSec ? { bootAt: Number(bootSec) * 1000 } : {}),
+    ...(num(memFree) !== undefined ? { memFreePct: num(memFree) } : {}),
+    ...(num(pressure) !== undefined ? { memPressure: num(pressure) } : {}),
+    ...(free !== undefined && total ? { diskFreeGb: gb(free), diskTotalGb: gb(total) } : {}),
+  };
 }
 
 /** `ps -E -ww -o pid=,command= -p …` → pid → 그 프로세스를 띄운 Claude 세션 pid */
@@ -183,12 +198,30 @@ export function attribute(procs: Proc[], sessions: { id: string; name: string; p
   };
 }
 
-/** 상단 바 색 — 1분 부하가 코어 수를 넘으면 주의, 두 배면 높음. 스왑 4GB·8GB */
-export function level(s: SysLoad): 'ok' | 'warn' | 'high' {
+export type Lv = 'ok' | 'warn' | 'high';
+const RANK: Record<Lv, number> = { ok: 0, warn: 1, high: 2 };
+export const worst = (...l: Lv[]): Lv => l.reduce((a, b) => (RANK[b] > RANK[a] ? b : a), 'ok' as Lv);
+
+/** 자원별 상태(부하 칩·카드). CPU = 1분 부하가 코어 수 1배 주의·2배 높음. 메모리 = macOS 압박 단계, 스왑 4GB·8GB(옛 상단 바 기준).
+ *  저장공간 = 남은 게 10%·30GB 밑 주의, 5%·15GB 밑 높음. 저장공간을 모르면(윈도우) disk 없음 */
+export function resources(s: SysLoad) {
   const r = s.load1 / s.cores;
-  if (r >= 2 || s.swapUsedMb >= 8 * 1024) return 'high';
-  if (r >= 1 || s.swapUsedMb >= 4 * 1024) return 'warn';
-  return 'ok';
+  const cpu: Lv = r >= 2 ? 'high' : r >= 1 ? 'warn' : 'ok';
+  const p = s.memPressure ?? 1;
+  const mem: Lv = p >= 4 || s.swapUsedMb >= 8 * 1024 ? 'high' : p >= 2 || s.swapUsedMb >= 4 * 1024 ? 'warn' : 'ok';
+  let disk: { lv: Lv; freeGb: number; totalGb: number; usedPct: number } | undefined;
+  if (s.diskFreeGb !== undefined && s.diskTotalGb) {
+    const left = s.diskFreeGb / s.diskTotalGb;
+    const lv: Lv = left < 0.05 || s.diskFreeGb < 15 ? 'high' : left < 0.1 || s.diskFreeGb < 30 ? 'warn' : 'ok';
+    disk = { lv, freeGb: s.diskFreeGb, totalGb: s.diskTotalGb, usedPct: Math.round((1 - left) * 100) };
+  }
+  return { cpu: { lv: cpu, ratio: r }, mem: { lv: mem, freePct: s.memFreePct }, disk };
+}
+
+/** 상단 바 색 — 셋(CPU·메모리·저장공간) 중 제일 나쁜 것 */
+export function level(s: SysLoad): Lv {
+  const r = resources(s);
+  return worst(r.cpu.lv, r.mem.lv, r.disk?.lv ?? 'ok');
 }
 
 export type LoadSummary = {
@@ -226,6 +259,3 @@ export function summarize(sys: SysLoad, r: LoadReport, at: Date): LoadSummary {
   };
 }
 
-/** 위 띠 부하 칩을 보일까 — 빨강(high)일 때만, 부하 화면을 보고 있으면 돌아갈 자리로 늘. 처음 쓰는 사람에게 '부하 70.5 / 10 · 스왑'이 늘 떠
- *  경고처럼 보였다(2026-11-01 ux-start M6, 사용자 "부하 높음"으로 짧고 평범하게 — 숫자는 title) */
-export const loadChipShown = (lv: 'ok' | 'warn' | 'high', onPage: boolean): boolean => lv === 'high' || onPage;

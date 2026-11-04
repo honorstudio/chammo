@@ -208,15 +208,36 @@ describe('참모 모드 호스트 — 모드 하나당 claude 프로세스 하�
   });
 });
 
-describe('위 띠 부하 칩은 높을 때만(2026-11-01 ux-start M6, 사용자 "부하 높음"으로 짧고 평범하게)', () => {
-  it('빨강(high)일 때만 보인다 — 보통·주의는 숨김', async () => {
-    const { loadChipShown } = await import('./load');
-    expect(loadChipShown('high', false)).toBe(true);
-    expect(loadChipShown('warn', false)).toBe(false);
-    expect(loadChipShown('ok', false)).toBe(false);
+describe('부하 칩 카드 — 메모리·저장공간(11-01 사용자 "CPU인지 메모리인지 스토리지인지")', () => {
+  const SYS = '10\n{ 24.94 24.68 17.80 }\ntotal = 7168.00M  used = 5703.75M  free = 1464.25M  (encrypted)\n25769803776\n{ sec = 1793026211, usec = 918347 } Mon Oct 26 23:50:11 2026\n46\n1';
+  it('여섯·일곱째 줄 = 메모리 여유 %·압박 단계, disk = "남은 전체" 바이트', () => {
+    const s = parseSys(SYS, '21305425920 494384795648');
+    expect(s?.memFreePct).toBe(46);
+    expect(s?.memPressure).toBe(1);
+    expect(s?.diskFreeGb).toBeCloseTo(19.8, 1);
+    expect(s?.diskTotalGb).toBeCloseTo(460.4, 1);
   });
-  it('부하 화면을 보고 있으면 돌아갈 자리로 늘 보인다', async () => {
-    const { loadChipShown } = await import('./load');
-    expect(loadChipShown('ok', true)).toBe(true);
+  it('줄이 없으면(윈도우·옛 앱) 비운다 — 카드는 그 칸만 숨긴다', () => {
+    const s = parseSys('8\n{ 1.0 1.0 1.0 }\n\n0');
+    expect(s?.memFreePct).toBeUndefined();
+    expect(s?.diskFreeGb).toBeUndefined();
+  });
+  it('자원별 상태 — CPU 는 코어 대비, 메모리는 압박·스왑, 저장공간은 남은 % 와 GB', async () => {
+    const { resources } = await import('./load');
+    const r = resources(parseSys(SYS, '21305425920 494384795648')!);
+    expect(r.cpu.lv).toBe('high');
+    expect(r.mem.lv).toBe('warn'); // 압박은 정상이지만 스왑 5.6GB ≥ 4GB — 옛 상단 바 기준 그대로
+    expect(r.disk?.lv).toBe('high'); // 4.3% 남음
+    const base = parseSys('10\n{ 2.0 2.0 2.0 }\ntotal = 0.00M  used = 0.00M  free = 0.00M\n25769803776\n\n60\n1', '200000000000 494384795648')!;
+    expect(resources(base)).toMatchObject({ cpu: { lv: 'ok' }, mem: { lv: 'ok' }, disk: { lv: 'ok' } });
+    expect(resources({ ...base, memPressure: 2 }).mem.lv).toBe('warn');
+    expect(resources({ ...base, memPressure: 4 }).mem.lv).toBe('high');
+    expect(resources({ ...base, diskFreeGb: 25 }).disk?.lv).toBe('warn'); // 30GB 밑
+    expect(resources({ ...base, diskFreeGb: 12 }).disk?.lv).toBe('high'); // 15GB 밑
+    expect(resources({ ...base, diskFreeGb: undefined }).disk).toBeUndefined();
+  });
+  it('level = 셋 중 제일 나쁜 것 — 저장공간만 부족해도 빨강', () => {
+    const s = parseSys('10\n{ 2.0 2.0 2.0 }\ntotal = 0.00M  used = 0.00M  free = 0.00M\n25769803776\n\n60\n1', '10000000000 494384795648')!;
+    expect(level(s)).toBe('high');
   });
 });

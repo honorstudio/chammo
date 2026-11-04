@@ -12,8 +12,9 @@ import { IconButton } from './kit/IconButton';
  * ~/.claude 가 바뀌면(Rust 가 window.__harnitorChanged) · 4초마다 세션 목록을 하니터 이벤트로 넘긴다. 색은 참모 테마 토큰으로 덮는다.
  * 자리: 채팅 뷰면 스페이스(왼쪽) 칸 — 오른쪽 채팅은 그대로라 보면서 참모에게 "이거 꺼 줘" 한다(2026-10-01 사용자). float = 스페이스가 없을 때 탑바 아래 전체
  */
-/** restore = 이 탭에서 전에 고른 프로젝트·항목(돌아오면 되살린다), onView = 고른 게 바뀔 때마다 — 참모가 지금 보는 화면을 안다(2026-10-02 사용자) */
-export function HarnitorPanel({ onClose, float = false, restore, onView }: { onClose: () => void; float?: boolean; restore?: HarnitorSel; onView?: (v: HarnitorSel) => void }) {
+/** restore = 이 탭에서 전에 고른 프로젝트·항목(돌아오면 되살린다), onView = 고른 게 바뀔 때마다 — 참모가 지금 보는 화면을 안다(2026-10-02 사용자)
+ *  own = 자기 X·Esc — 스페이스 기능 화면은 공통 닫기(space/PaneClose)가 대신해 끈다(2026-11-01) */
+export function HarnitorPanel({ onClose, float = false, own = true, restore, onView }: { onClose: () => void; float?: boolean; own?: boolean; restore?: HarnitorSel; onView?: (v: HarnitorSel) => void }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
@@ -73,7 +74,7 @@ export function HarnitorPanel({ onClose, float = false, restore, onView }: { onC
       const typing = !!el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.isContentEditable);
       if (e.key === 'Escape' && !e.defaultPrevented && !typing && !document.querySelector('.od-back')) closeRef.current();
     };
-    window.addEventListener('keydown', key);
+    if (own) window.addEventListener('keydown', key);
     return () => {
       window.removeEventListener('message', on);
       window.removeEventListener('keydown', key);
@@ -89,7 +90,7 @@ export function HarnitorPanel({ onClose, float = false, restore, onView }: { onC
         <b className="hn-title">{tr('하니터', 'Harnitor')}</b>
         <span className="hn-sub">{tr('스킬·훅·MCP·플러그인을 보고 끄고 켜요. 바꾼 설정은 새로 켜는 세션부터 적용돼요', 'View and toggle skills, hooks, MCP and plugins. Changes apply to newly started sessions')}</span>
         <span className="hn-sp" />
-        <IconButton tone="line" className="hn-close" label={tr('닫기', 'Close')} title={tr('닫기 (Esc)', 'Close (Esc)')} onClick={onClose}><IconClose /></IconButton>
+        {own && <IconButton tone="line" className="hn-close" label={tr('닫기', 'Close')} title={tr('닫기 (Esc)', 'Close (Esc)')} onClick={onClose}><IconClose /></IconButton>}
       </header>
       <iframe ref={frame} className="hn-frame" src={harnitorUrl()} title={tr('하니터', 'Harnitor')} />
     </div>

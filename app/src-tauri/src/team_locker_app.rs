@@ -348,6 +348,41 @@ impl ShareJob {
     }
 }
 
+/// 팀원이 들고 났을 때(소켓 team_changed) 뒤에서 — 화면을 안 열어도 새 사람 몫 봉투를 다 더할 때까지 목록·더하기를 되풀이(한 바퀴 MAX_SHARE_POSTS).
+/// 11-02 새 팀원 시연: 봉투 더하기가 화면 목록(보관함·홈·캘린더)에만 붙어 있어, 기존 팀원 앱이 참모 화면에 있으면 새 팀원은 빈 홈·잠긴 보관함·빈 캘린더였다
+pub(crate) const CATCH_UP_ROUNDS: usize = 15;
+
+pub(crate) fn catch_up_at(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, now: std::time::Instant, rounds: usize) -> usize {
+    let mut total = 0;
+    for _ in 0..rounds {
+        let Ok((_, job)) = list_split_at(dir, kc, http, team, now) else { break };
+        let n = job.run_at(dir, kc, http, now);
+        if n == 0 {
+            break;
+        }
+        total += n;
+    }
+    total
+}
+
+/// 팀마다 하나만 — 바뀜 알림이 몰려도 겹쳐 돌지 않게
+static CATCHING: Mutex<std::collections::BTreeSet<String>> = Mutex::new(std::collections::BTreeSet::new());
+
+/// 뒤 스레드로(진짜 데이터 폴더·열쇠·중계). 이 기기가 팀 보관함을 못 쓰면(로그인 전) 목록이 실패해 바로 끝난다
+pub fn catch_up_spawn(dir: &Path, team: &str) {
+    if team.is_empty() || !CATCHING.lock().unwrap_or_else(|e| e.into_inner()).insert(team.to_string()) {
+        return;
+    }
+    let (dir, team) = (dir.to_path_buf(), team.to_string());
+    std::thread::spawn(move || {
+        let n = catch_up_at(&dir, &crate::team_relay_keys::store(), &crate::team_relay::Curl, &team, std::time::Instant::now(), CATCH_UP_ROUNDS);
+        if n > 0 {
+            crate::claude::log_out("team", &format!("팀 {} 바뀜 — 새 사람 몫 열쇠 {n}개 넘김(화면 없이)", team.chars().take(8).collect::<String>()));
+        }
+        CATCHING.lock().unwrap_or_else(|e| e.into_inner()).remove(&team);
+    });
+}
+
 /// 한 팀 봉투 더하기는 한 번에 하나
 struct Sharing(String);
 static SHARING: Mutex<std::collections::BTreeSet<String>> = Mutex::new(std::collections::BTreeSet::new());
@@ -811,29 +846,38 @@ pub fn mine(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, id: &str) -
     Ok(f.by.device == st.device_id)
 }
 
-/// 내려받기 — 팀 폴더(~/Documents/Chammo/<팀>, 대화 파일은 그 안 '대화 파일')에. 이미 받은 같은 파일은 그대로 쓴다('이 기기에 저장'·scripts/team locker get)
+/// 내려받기 — 팀 폴더(~/Documents/Chammo/<팀>, 대화 파일은 그 안 '대화 파일')에. 이미 받은 같은 파일은 그대로 쓴다('내 폴더에 저장'·scripts/team locker get)
 pub fn fetch(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, id: &str) -> Result<PathBuf, String> {
+    fetch_with(dir, kc, http, team, id, &mut |_, _| Ok(()))
+}
+
+/// fetch — 조각마다 progress(받은, 전체), Err 면 멈춘다(화면 '내 폴더에 저장' 진행 막대, team_down)
+pub fn fetch_with(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, id: &str, progress: &mut dyn FnMut(u64, u64) -> Result<(), String>) -> Result<PathBuf, String> {
     let st = relay::load_state(dir);
     let (tid, name) = team_of(&st, team)?;
     let root = crate::locker_fs::app_ctx().root;
     let folder = crate::locker_fs::owner_dir(&root, &format!("team-{tid}"), &name)?;
-    fetch_to(dir, kc, http, &tid, id, &folder)
+    fetch_to_with(dir, kc, http, &tid, id, &folder, progress)
 }
 
 /// 내려받기 — folder(대화 파일은 folder/대화 파일)에
 pub fn fetch_to(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, id: &str, folder: &Path) -> Result<PathBuf, String> {
+    fetch_to_with(dir, kc, http, team, id, folder, &mut |_, _| Ok(()))
+}
+
+fn fetch_to_with(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, id: &str, folder: &Path, progress: &mut dyn FnMut(u64, u64) -> Result<(), String>) -> Result<PathBuf, String> {
     let memo = ctx(dir, kc).ok().and_then(|(st, _)| team_of(&st, team).ok()).filter(|(tid, _)| recall(tid, id).is_some());
-    match fetch_found(dir, kc, http, team, id, folder) {
+    match fetch_found(dir, kc, http, team, id, folder, progress) {
         // 기억한 줄로 못 받았으면(그새 지워짐 등) 목록을 새로 받아 한 번 더 — 진짜 이유는 새 목록이 말한다
         Err(_) if memo.is_some() => {
             forget(&memo.map(|(t, _)| t).unwrap_or_default());
-            fetch_found(dir, kc, http, team, id, folder)
+            fetch_found(dir, kc, http, team, id, folder, progress)
         }
         r => r,
     }
 }
 
-fn fetch_found(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, id: &str, folder: &Path) -> Result<PathBuf, String> {
+fn fetch_found(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, id: &str, folder: &Path, progress: &mut dyn FnMut(u64, u64) -> Result<(), String>) -> Result<PathBuf, String> {
     let (st, k, team, f, o) = find(dir, kc, http, team, id)?;
     let mut cache: BTreeMap<String, String> = std::fs::read_to_string(dir.join(CACHE)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
     let key = format!("{id}:{}:{}", o.meta.at, folder.display());
@@ -846,7 +890,7 @@ fn fetch_found(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, id: &str
     }
     let to = if f.room.as_deref().is_some_and(|r| !r.is_empty()) { folder.join(core::CHAT_FOLDER) } else if o.meta.folder.is_empty() { folder.to_path_buf() } else { folder.join(core::safe_path(&o.meta.folder)) };
     let net = RelayNet { http, server: st.server.clone(), device: st.device_id.clone(), keys: &k };
-    let at = core::download(&net, &team, &f, &o, &to, &mut |_, _| {})?;
+    let at = core::download(&net, &team, &f, &o, &to, progress)?;
     if at.starts_with(dir.join(VIEW_DIR)) {
         crate::team_revise::record(dir, &at); // 받은 그대로의 지문 — 사람이 고쳐 저장하면 '수정본 올리기'
     }
@@ -928,10 +972,15 @@ fn sweep_now(dir: &Path) {
 
 /// 열기 — 크기 제한 없이 풀어 둔 자리에(스페이스·기본 앱이 이 경로를 연다)
 pub fn view(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, id: &str) -> Result<PathBuf, String> {
+    view_with(dir, kc, http, team, id, &mut |_, _| Ok(()))
+}
+
+/// view — 조각마다 progress(눌러서 여는 큰 파일도 막대, team_down)
+pub fn view_with(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, id: &str, progress: &mut dyn FnMut(u64, u64) -> Result<(), String>) -> Result<PathBuf, String> {
     let st = relay::load_state(dir);
     let (tid, _) = team_of(&st, team)?;
     sweep_now(dir);
-    fetch_to(dir, kc, http, &tid, id, &view_dir(dir, &tid)?)
+    fetch_to_with(dir, kc, http, &tid, id, &view_dir(dir, &tid)?, progress)
 }
 
 /// 미리보기·카드 썸네일 — 같은 자리에, 50MiB 까지
@@ -948,6 +997,21 @@ pub fn peek(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, id: &str) -
     }
     sweep_now(dir);
     fetch_to(dir, kc, http, &tid, id, &view_dir(dir, &tid)?)
+}
+
+/// 이미 풀어 둔 그 판만(망을 안 탄다) — 팀 홈 '최근 파일' 줄 썸네일(11-01). 줄마다 peek 하면 첫 화면에 내려받기가 줄줄이 붙었다.
+/// at = 화면 목록의 그 판(Item.at = meta.at) — 판이 바뀌었으면 None(확장자 표)
+pub fn peeked(dir: &Path, team: &str, id: &str, at: u64) -> Option<PathBuf> {
+    let (tid, _) = team_of(&relay::load_state(dir), team).ok()?;
+    peeked_in(dir, &tid, id, at)
+}
+
+/// peeked 의 판단 — 풀어 둔 자리 기억(CACHE)에서 '<id>:<at>:<팀 풀어 둔 자리>' 줄, 그 파일이 아직 있으면
+pub(crate) fn peeked_in(dir: &Path, tid: &str, id: &str, at: u64) -> Option<PathBuf> {
+    let cache: BTreeMap<String, String> = serde_json::from_str(&std::fs::read_to_string(dir.join(CACHE)).ok()?).ok()?;
+    let folder = dir.join(VIEW_DIR).join(tid); // view_dir 와 같은 자리(만들지는 않는다)
+    let p = PathBuf::from(cache.get(&format!("{id}:{at}:{}", folder.display()))?);
+    p.is_file().then_some(p)
 }
 
 /// 스페이스 탭 내려받기 — 풀어 둔 자리 안 파일만 out(다운로드 폴더)에 겹치지 않는 이름으로 복사

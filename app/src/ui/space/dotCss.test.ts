@@ -29,7 +29,7 @@ describe('상태 점 모양', () => {
     expect(rule('.lk-dot.d-off')).toMatch(/border:\s*1\.6px dashed/);
   });
   it('띠 프사 쉼 = 빈 고리', () => {
-    expect(rule('.lk-pip.p-rest')).toMatch(/inset 0 0 0 1\.6px var\(--text-3\)/);
+    expect(rule('.lk-pip.p-rest')).toMatch(/inset 0 0 0 var\(--ring-w\) var\(--text-3\)/);
   });
   it('옛 초록 쉼 점(d-idle)·초록 띠 점(p-run)은 남지 않는다', () => {
     expect(css).not.toMatch(/\.d-idle/);

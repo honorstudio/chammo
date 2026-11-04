@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import page from './SessionPage.tsx?raw';
 import view from './SpaceView.tsx?raw';
-import locker from './LockerPage.tsx?raw';
+import projectView from './ProjectView.tsx?raw';
 
 // 2026-10-12 패널 하나로 S4·S6 — 세션 '크게' = 가운데 탭(옛 프로젝트 대시보드 o:/s: 대신): 큰 터미널 + 오른쪽 할 일·최근 결정
 describe('옛 대시보드·메뉴는 지웠다(패널 하나로 7)', () => {
   it('스페이스에 옛 대시보드·옛 왼쪽 메뉴가 없다', () => {
     expect(view).not.toMatch(/DashboardView \b|<DashboardView|SpaceNav/);
   });
-  it('옛 메뉴 \'프로젝트 폴더 더하기\'는 \'모든 프로젝트\' 펼침 맨 아래로', () => expect(locker).toMatch(/className="lk-pop-add"/));
+  it('옛 메뉴 \'프로젝트 폴더 더하기\'는 \'모든 프로젝트\' 목록의 + 메뉴로(2026-11-01 projects-view)', () => expect(projectView).toMatch(/label: tr\('있는 폴더 고르기…', 'Choose an existing folder…'\), run: onAddProject/));
 });
 
 describe('세션 탭', () => {
@@ -19,7 +19,7 @@ describe('세션 탭', () => {
     expect(page).toMatch(/tr\('할 일', 'To do'\)/);
     expect(page).toMatch(/tr\('최근 결정', 'Recent decisions'\)/);
   });
-  it('진행 중 칩 머리줄에도 크게(아이콘, 이름은 aria-label)', () => expect(locker).toMatch(/onBigProject && <IconButton[^>]*label=\{tr\('크게', 'Open large'\)\}[^\n]*><IconMaximize \/>/));
+  it('프로젝트 화면 머리줄에 세션 탭으로 가는 아이콘(이름은 aria-label)', () => expect(projectView).toMatch(/p\.session && onBig && <IconButton[^>]*label=\{tr\('대화 크게 열기', 'Open conversation'\)\}[^\n]*><IconChat \/>/));
 });
 
 // 191.png — 우클릭(맥 웹뷰는 우클릭 뒤에 click 을 하나 더 보낸다)이 먼저 열기로 처리되던 것: 우클릭 메뉴를 열면 뒤따라오는 click 을 삼키고, 끌기도 안 시작

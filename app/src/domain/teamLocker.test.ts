@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allFolders, canPurge, othersOf, folderFiles, crumbsOf, dirId, dropPlan, lockerUps, kidFolders, moveTargets, renamedPath, fmtBytes, inPlace, inRoom, thumbKind, phoneView, isTeamCache, opensInSpace, readSort, sortItems, SORTS, usageText, whenText, type LockerItem, type LockerUpload } from './teamLocker';
+import { keyWaitNote, lockedFiles, allFolders, canPurge, othersOf, folderFiles, crumbsOf, dirId, dropPlan, lockerUps, kidFolders, moveTargets, renamedPath, fmtBytes, inPlace, inRoom, thumbKind, phoneView, isTeamCache, opensInSpace, readSort, sortItems, SORTS, usageText, whenText, type LockerItem, type LockerUpload } from './teamLocker';
 
 const it0 = (o: Partial<LockerItem>): LockerItem => ({ id: 'x', name: 'a.pdf', size: 1, cipher: 17, at: 0, state: 'live', kind: 'file', room: '', folder: '', by: '사용자', byMember: 'm1', mine: false, why: '', deletedAt: null, ...o });
 
@@ -165,13 +165,18 @@ describe('폰 팀 보관함 — 중계 목록 그대로, 대화 파일은 안 �
 describe('썸네일 — 대화 말풍선·대화 파일 보기·팀 보관함 카드가 같이 쓴다(10-28 사용자 "썸네일 없이 빈 네모")', () => {
   it('그림(png·jpg·heic·gif·webp)은 그림, PDF 는 첫 장, 그 밖은 없음', () => {
     for (const n of ['a.png', 'b.JPG', 'c.jpeg', 'd.heic', 'e.gif', 'f.webp']) expect(thumbKind(n, 79 * 1024), n).toBe('image');
-    expect(thumbKind('회의.pdf', 2 * 1024 ** 2)).toBe('pdf');
-    for (const n of ['logo.ai', 'a.zip', 'b.md', 'noext']) expect(thumbKind(n, 10), n).toBeNull();
+    expect(thumbKind('회의.pdf', 2 * 1024 ** 2)).toBe('page');
+    // 11-01: 워드·엑셀·PPT·영상·.ai·.psd 도 첫 장(맥 QuickLook)
+    for (const n of ['제안서.docx', '단가.xlsx', '발표.pptx', 'c.mov', 'logo.ai', '표지.psd', '신청서.hwpx']) expect(thumbKind(n, 10), n).toBe('page');
+    // 남이 올린 html 은 QuickLook 이 바깥 주소를 부를 수 있어 안 그린다 — zip·md·확장자 없음도 없음
+    for (const n of ['시안.html', 'a.zip', 'b.md', 'noext', 'bgm.mp3', '옛.hwp']) expect(thumbKind(n, 10), n).toBeNull();
   });
   it('큰 파일은 안 받는다 — 그림 20MB·PDF 50MB(맥 peek 상한) 넘으면 없음, 크기 모름(0)은 받는다', () => {
     expect(thumbKind('a.png', 20 * 1024 ** 2)).toBe('image');
     expect(thumbKind('a.png', 20 * 1024 ** 2 + 1)).toBeNull();
     expect(thumbKind('a.pdf', 50 * 1024 ** 2 + 1)).toBeNull();
+    expect(thumbKind('a.mp4', 20 * 1024 ** 2)).toBe('page');
+    expect(thumbKind('a.mp4', 20 * 1024 ** 2 + 1)).toBeNull(); // 영상은 첫 프레임 하나에 통째로 풀어 20MB 까지
     expect(thumbKind('a.png', 0)).toBe('image');
   });
 });
@@ -223,5 +228,20 @@ describe('폰에서 누르면 보는 팀 파일(11-01 사용자 "팀 홈 최근 
   });
   it('못 여는 줄(why — 열쇠 없음 등)은 null', () => {
     expect(phoneView(it0({ name: 'a.png', why: '열쇠 없음' }))).toBeNull();
+  });
+});
+
+// 11-02 새 팀원: 열쇠를 기다리는 게 '없음·빈 칸'처럼 보였다 — 홈·보관함·캘린더 같은 문구
+describe('열쇠 기다림 안내', () => {
+  it('0 이면 없음, 있으면 몇 개가 무엇을 기다리는지', () => {
+    expect(keyWaitNote(0, 'post')).toBe('');
+    expect(keyWaitNote(3, 'post')).toContain('글 3개');
+    expect(keyWaitNote(3, 'post')).toContain('팀원 앱');
+    expect(keyWaitNote(12, 'file')).toContain('파일 12개');
+    expect(keyWaitNote(2, 'event')).toContain('일정 2개');
+  });
+  it('잠긴 파일 수 — 지운 것·휴지통·폴더 표시 줄·파일 아닌 줄(글·열쇠·프로필)은 빼고', () => {
+    const f = (id: string, why = '', o: Partial<LockerItem> = {}) => ({ id, name: id, folder: '', size: 1, at: 1, kind: 'file', state: 'live', by: 'a', byMember: 'm', mine: false, why, deletedAt: null, ...o }) as LockerItem;
+    expect(lockedFiles([f('a'), f('b', '열쇠 없음'), f('c', '열쇠 없음', { deletedAt: 5 }), f('d', '열쇠 없음', { dir: true }), f('e', '열쇠 없음', { kind: 'post' }), f('g', '열쇠 없음', { state: 'trash' })])).toBe(1);
   });
 });

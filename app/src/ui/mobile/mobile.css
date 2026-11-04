@@ -235,7 +235,7 @@ button { font: inherit; color: inherit; }
    쉼 = 빈 고리 · 꺼짐 = 점선. 색만으로 안 가르게(쉼이 초록이라 '켜짐·좋음'으로 읽혀 일함과 안 갈렸다) */
 .st-dot { position: relative; box-sizing: border-box; width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; background: var(--line-strong); }
 .st-dot.st-work { background: var(--working); }
-.st-dot.st-work::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; box-shadow: 0 0 0 1.5px var(--working); animation: m-breathe 1.8s ease-out infinite; pointer-events: none; }
+.st-dot.st-work::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; box-shadow: 0 0 0 var(--ring-w) var(--working); animation: m-breathe 1.8s ease-out infinite; pointer-events: none; }
 .st-dot.st-wait { background: var(--blocked); box-shadow: 0 0 0 3px color-mix(in srgb, var(--blocked) 30%, transparent); }
 .st-dot.st-done { background: transparent; border: 1.6px solid var(--text-3); }
 .st-dot.st-off { background: transparent; border: 1.6px dashed var(--line-strong); }
@@ -418,7 +418,7 @@ button { font: inherit; color: inherit; }
 .m-off .m-orch-name { font-weight: 600; color: var(--text-2); }
 .m-new { display: flex; flex-direction: column; gap: 8px; padding: 4px 0 8px; }
 .m-new .m-sect { margin: 8px 0 0; }
-.m-new-input { height: 44px; padding: 0 14px; border-radius: 12px; border: 0; box-shadow: 0 0 0 1px var(--line); background: var(--surface); color: var(--text); font: inherit; font-size: 16px; }
+.m-new-input { height: 44px; padding: 0 14px; border-radius: 12px; border: 0; box-shadow: var(--hair-in) var(--line); background: var(--surface); color: var(--text); font: inherit; font-size: 16px; }
 .m-new-row { display: flex; justify-content: flex-end; gap: 8px; }
 .m-home > .m-brand { align-self: flex-start; }
 .m-home { height: 100%; overflow-y: auto; padding: calc(env(safe-area-inset-top) + 24px) 16px calc(24px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 10px; }
@@ -626,6 +626,7 @@ a.m-file { color: inherit; text-decoration: none; }
 /* 맥에 못 닿음 — 모찌 + 이유 + 다시 시도(아이콘). 누르면 받는 동안 돈다 */
 .m-unreach { display: flex; flex-direction: column; align-items: center; gap: 8px; padding-top: calc(env(safe-area-inset-top) + 96px); }
 .m-unreach p { margin: 4px 0 0; max-width: 300px; overflow-wrap: anywhere; }
+.m-unreach .m-unreach-why { margin: 0; font-size: 13px; color: var(--text-3); }
 .m-retrying svg { animation: m-spin .8s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .m-retrying svg { animation: none; } }
 
@@ -850,7 +851,7 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-lk-fold .tab { position: absolute; top: 11px; left: 12px; width: 26px; height: 8px; border-radius: 3px; background: var(--line); }
 .m-lk-fold b { font-size: 14px; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .m-lk-fold span { font-size: 12px; color: var(--text-3); }
-.m-lk-addf { width: 56px; padding: 0; align-items: center; justify-content: center; background: transparent; color: var(--text-3); box-shadow: inset 0 0 0 1.5px var(--line); }
+.m-lk-addf { width: 56px; padding: 0; align-items: center; justify-content: center; background: transparent; color: var(--text-3); box-shadow: inset 0 0 0 var(--ring-w) var(--line); }
 .m-lk-addf svg { width: 20px; height: 20px; }
 .m-lk-card, .m-lk-row { -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
 .m-lk-card img, .m-lk-row img { pointer-events: none; }
@@ -923,7 +924,7 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-mode-rowtext { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .m-mode-rowtext b { font-size: 14.5px; font-weight: 600; }
 .m-mode-rowtext small { font-size: 12px; color: var(--text-3); }
-.m-mode-check { flex: none; width: 24px; height: 24px; border-radius: 999px; box-shadow: inset 0 0 0 1.5px var(--line-strong); display: flex; align-items: center; justify-content: center; }
+.m-mode-check { flex: none; width: 24px; height: 24px; border-radius: 999px; box-shadow: inset 0 0 0 var(--ring-w) var(--line-strong); display: flex; align-items: center; justify-content: center; }
 .m-mode-row.m-on .m-mode-check { background: var(--text); color: var(--surface); box-shadow: none; }
 .m-mode-check svg { width: 14px; height: 14px; stroke-width: 2.2; }
 .m-mode-go { width: 100%; background: var(--text); color: var(--surface); border-color: var(--text); }
@@ -973,7 +974,7 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-far-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; }
 .m-far-dot.d-run { background: var(--working); }
 .m-far-dot.d-ask { background: var(--blocked); }
-.m-far-dot.d-rest { box-shadow: inset 0 0 0 1.5px var(--text-3); }
+.m-far-dot.d-rest { box-shadow: inset 0 0 0 var(--ring-w) var(--text-3); }
 .m-far-row span.m-far-ext, .m-far-ext { flex: none; min-width: 34px; padding: 3px 5px; border-radius: 4px; background: var(--tag-bg); color: var(--text-2); font: 700 12px/1 ui-monospace, Menlo, monospace; text-align: center; }
 .m-far-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 40px 12px; text-align: center; color: var(--text-3); }
 .m-far-empty b { color: var(--text); font-size: 16px; }
@@ -997,6 +998,19 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-team-switch b { font-size: 20px; font-weight: 800; letter-spacing: -.01em; }
 .m-team-beta { margin-left: 10px; }
 .m-team-switch svg { width: 18px; height: 18px; color: var(--text-3); }
+/* 팀 머리 팀 줄(11-02 팀 여러 개, 시안 team-add v1 B2) — 데스크톱 레일을 눕힌 모양: 팀 표 가로 + 끝에 +, 아래 지금 팀 이름 줄 */
+.m-team-head2 { flex-direction: column; align-items: stretch; padding: 4px 0 0; min-height: 0; }
+.m-team-strip { display: flex; align-items: center; gap: 8px; padding: 6px 16px 4px; overflow-x: auto; scrollbar-width: none; }
+.m-team-strip::-webkit-scrollbar { display: none; }
+.m-team-mk { all: unset; flex: none; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; border-radius: 14px; cursor: pointer; }
+.m-team-mk.on .tmx-tm { outline: 2px solid var(--rail-on, var(--accent)); outline-offset: 3px; }
+.m-team-mk:focus-visible, .m-team-add:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.m-team-add { all: unset; flex: none; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 12px; color: var(--text-3); box-shadow: inset 0 0 0 1px var(--line-strong); cursor: pointer; }
+.m-team-add svg { width: 20px; height: 20px; }
+.m-team-name { display: flex; align-items: center; min-height: 48px; padding: 0 12px 0 16px; }
+.m-team-none { font-size: 20px; font-weight: 800; }
+.m-ts-head { display: flex; align-items: center; margin-left: -8px; }
+.m-ts-go { height: 44px; justify-content: center; margin-top: 4px; }
 .m-seg { display: flex; gap: 2px; margin: 0 16px 8px; padding: 3px; border-radius: 12px; background: var(--surface-2); }
 .m-seg button { all: unset; flex: 1; min-height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 9px; font-size: 14px; font-weight: 600; color: var(--text-3); cursor: pointer; }
 .m-seg button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }

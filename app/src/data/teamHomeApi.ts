@@ -6,6 +6,7 @@ import { teamViewMemo } from '../domain/teamViewMemo';
 import { openTeamFile } from '../ui/team/openTeamFile';
 import { openTarget } from './tauri';
 import { teamAgents, teamAgentsCached } from './teamAgentApi';
+import { teamPeekedThumb } from './teamApi';
 import { teamProfileChanged } from './teamProfileApi';
 
 export const teamHome = (team: string) => invoke<HomeBoard>('team_home', { team });
@@ -27,4 +28,5 @@ export const desktopSources: HomeSources = {
   files: async (team, fresh) => ((fresh ? null : await invoke<LockerView | null>('team_locker_cached', { team }).catch(() => null)) ?? (await invoke<LockerView>('team_locker_list', { team }))).items,
   openFile: (team, i) => void openTeamFile((external) => invoke<string>('team_locker_open', { team, id: i.id, external }), i.name).catch(() => {}),
   openUrl: (url) => void openTarget('url', url).catch(() => {}),
+  thumb: (team, i) => teamPeekedThumb(team, i),
 };

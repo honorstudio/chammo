@@ -23,6 +23,7 @@ export const FEATURE_TAB: Record<FeatureSwitch, SettingsTab> = {
   tama: 'features',
   gacha: 'features',
   review: 'features',
+  git: 'features',
   voice: 'voice',
   autoRevive: 'agent',
   autoTidy: 'features',

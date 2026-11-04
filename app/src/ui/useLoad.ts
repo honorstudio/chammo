@@ -10,9 +10,9 @@ import { feedLoad } from './calm';
 
 /**
  * 부하 모니터 — mine = Chammo 세션(프로젝트·HQ·루틴), others = 이 맥의 나머지 Claude 세션.
- * 상단 바만 볼 땐 10초, 부하 화면을 열면(fast) 3초. 잴 때마다 참모용 요약(load.json)도 남긴다
+ * 평소 10초, 칩 카드·자세히 보기가 열려 있을 때만(fast) fastMs(카드 2초·창 3초). 잴 때마다 참모용 요약(load.json)도 남긴다
  */
-export function useLoad(mine: Session[], others: Session[], fast: boolean) {
+export function useLoad(mine: Session[], others: Session[], fast: boolean, fastMs = 3000) {
   const [sys, setSys] = useState<SysLoad | null>(null);
   const [report, setReport] = useState<LoadReport | null>(null);
   const ref = useRef({ mine, others });
@@ -23,7 +23,7 @@ export function useLoad(mine: Session[], others: Session[], fast: boolean) {
     busy.current = true;
     try {
       const raw = await loadSample();
-      const s = parseSys(raw.sys);
+      const s = parseSys(raw.sys, raw.disk);
       const procs = parsePs(raw.ps);
       const sessions = ref.current.mine.filter((x) => x.procPid).map((x) => ({ id: x.id, name: x.name, project: x.project, pid: x.procPid! }));
       const env = parseClaudePids(await loadEnv(envCandidates(procs, sessions.map((x) => x.pid))));
@@ -43,7 +43,7 @@ export function useLoad(mine: Session[], others: Session[], fast: boolean) {
   }, []);
   useEffect(() => {
     void sample();
-    return every(() => void sample(), fast ? 3000 : 10_000);
-  }, [fast, sample]);
+    return every(() => void sample(), fast ? fastMs : 10_000);
+  }, [fast, fastMs, sample]);
   return { sys, report, refresh: sample };
 }

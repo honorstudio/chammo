@@ -7,6 +7,8 @@ import phone from '../mobile/PhoneTeam.tsx?raw';
 import locker from '../mobile/PhoneTeamLocker.tsx?raw';
 import web from '../../data/web.ts?raw';
 import domain from '../../domain/teamHome.ts?raw';
+import sources from '../../data/teamHomeApi.ts?raw';
+import teamApi from '../../data/teamApi.ts?raw';
 
 describe('폰 팀 홈 최근 파일 — 볼 수 있는 파일만 누르면 보기', () => {
   it('폰 블록 출처가 openFile 을 준다 — 전엔 없어서 줄이 그냥 div 였다', () => {
@@ -38,5 +40,22 @@ describe('폰 팀 대화 PDF 칸 — 첫 장 그림이 있으면 누르면 첫 �
   });
   it('PDF 는 썸네일 길 큰 판(1600)으로 — 그림 길은 PDF 를 거절한다', () => {
     expect(web).toContain('/api/team-file-thumb?team=${encodeURIComponent(team)}&id=${encodeURIComponent(id)}&size=1600');
+  });
+});
+
+describe('팀 홈 최근 파일·폰 팀 보관함 줄 — 확장자 네모 자리에 첫 장(11-01 시안 2)', () => {
+  it('블록 출처가 썸네일 길을 준다 — 데스크톱은 teamFileThumb, 폰은 그릴 수 있는 것만 맥이 줄인 JPEG', () => {
+    expect(domain).toContain('thumb?: (team: string, i: LockerItem) => Promise<string | null>');
+    // 홈 줄은 이미 풀어 둔 판만(망 안 탐) — 홈을 열 때마다 내려받기가 붙지 않게(11-01 성능 관문)
+    expect(sources).toContain('thumb: (team, i) => teamPeekedThumb(team, i)');
+    expect(teamApi).toContain("invoke<string | null>('team_locker_peeked', { team, id: i.id, at: i.at })");
+    expect(phone).toMatch(/thumb: \(team, i\) => \(thumbKind\(i\.name, i\.size\) && !i\.why \? teamThumbBlob\(team, i\.id, i\.at\) : Promise\.resolve\(null\)\)/);
+    expect(web).toContain('&size=360${at !== undefined ? `&at=${at}` : \'\'}');
+    expect(home).toContain('thumb: sources.thumb');
+  });
+  it('줄은 FileMini — 그림이 오면 작은 첫 장, 못 그리면 확장자 그대로', () => {
+    expect(bits).toContain('export function FileMini(');
+    expect(blocks).toContain('<FileMini');
+    expect(locker).toContain('<FileMini');
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildReplay, dayWindow, parseDayCommits, shiftDay } from './replay';
+import { buildReplay, dayWindow, parseDayCommits, repoToday, shiftDay } from './replay';
 import type { TaskEvent } from './tasks';
 
 // 2026-09-27 새벽 5시(로컬) 기준 하루
@@ -26,11 +26,36 @@ describe('parseDayCommits — 저장소 표시가 붙은 커밋 기록', () => {
   ].join('\n');
   it('저장소·시각·제목·줄 수(자동 생성 파일 뺌)·머지', () => {
     expect(parseDayCommits(raw)).toEqual([
-      { hash: 'aaa', repo: 'todo-api', t: at(9), subject: '결제 붙이기', lines: 150, merge: false },
-      { hash: 'bbb', repo: 'todo-api', t: at(10), subject: 'Merge pull request #3', lines: 0, merge: true },
-      { hash: 'ccc', repo: 'pixel-blog', t: at(11), subject: '화면 고침', lines: 410, merge: false },
+      { hash: 'aaa', repo: 'todo-api', t: at(9), subject: '결제 붙이기', lines: 150, added: 120, deleted: 30, merge: false },
+      { hash: 'bbb', repo: 'todo-api', t: at(10), subject: 'Merge pull request #3', lines: 0, added: 0, deleted: 0, merge: true },
+      { hash: 'ccc', repo: 'pixel-blog', t: at(11), subject: '화면 고침', lines: 410, added: 400, deleted: 10, merge: false },
     ]);
   });
+});
+
+describe('repoToday — 위 막대 오늘 커밋 (저장소별)', () => {
+  const raw = [
+    '@@R\tsign-shop',
+    `@@C\ta1\t${sec(at(9))}\tp1\t시안 v3`,
+    '2043780\t0\tassets/orders/1101/sign.ai',
+    '154990\t49881\tassets/orders/1101/sign.vectorcraft',
+    '12\t3\tdocs/starter.md',
+    `@@C\ta2\t${sec(at(10))}\tp1\t발주 정리`,
+    '1\t1\tREADME.md',
+    '@@R\tmy-app',
+    `@@C\tb1\t${sec(at(11))}\tp1\t고침`,
+    '40\t5\tsrc/a.ts',
+    `@@C\tb2\t${sec(at(12))}\tp1 p2\tMerge branch x`,
+  ].join('\n');
+
+  it('디자인 파일 줄은 빼고, 머지 커밋은 개수에서 빼고, 커밋 많은 저장소 먼저', () => {
+    expect(repoToday(parseDayCommits(raw))).toEqual([
+      { name: 'sign-shop', commits: 2, added: 13, deleted: 4 },
+      { name: 'my-app', commits: 1, added: 40, deleted: 5 },
+    ]);
+  });
+
+  it('커밋 없으면 빈 목록', () => expect(repoToday(parseDayCommits('@@R\tx\n'))).toEqual([]));
 });
 
 describe('buildReplay — 하루를 한 화면으로', () => {

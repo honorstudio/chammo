@@ -261,7 +261,7 @@ body > .dash-preview .bar { height: 44px; box-sizing: border-box; padding: 0 10p
 .space-mode .chat-term { margin: 0 12px; border-radius: 10px; background: color-mix(in srgb, var(--orch, var(--accent)) 8%, var(--surface)); }
 /* 입력 — 떠 있는 카드, 보내기는 둥근 버튼 */
 .space-mode .chat-input { margin: 6px 12px 12px; padding: 6px; gap: 6px; border: 0; border-radius: 16px; background: var(--surface); box-shadow: 0 2px 10px rgba(0, 0, 0, .06), 0 0 0 1px var(--line); align-items: flex-end; }
-.space-mode .chat-input:focus-within { box-shadow: 0 2px 12px rgba(0, 0, 0, .08), 0 0 0 1.5px var(--orch, var(--accent)); }
+.space-mode .chat-input:focus-within { box-shadow: 0 2px 12px rgba(0, 0, 0, .08), 0 0 0 var(--ring-w) var(--orch, var(--accent)); }
 .space-mode .chat-field { background: transparent; }
 /* 한 줄 = 글 13.5px×1.45 + 위아래 8 = 36(테두리 없음) — 작은 보내기 버튼은 이 높이의 가운데(chat.css --send-h) */
 .space-mode .chat-input { --send-h: 36px; }
@@ -364,13 +364,13 @@ body > .dash-preview .box > .content { border-radius: 0 0 14px 14px; overflow: h
 .cv-pane-tog svg { width: 14px; height: 14px; }
 .cv-pane-term { flex: 1; min-height: 0; display: flex; }
 .cv-pane-term > .pane { flex: 1; border: 0; border-radius: 0; }
-.cv-pane.live { box-shadow: 0 0 0 1.5px var(--accent); }
+.cv-pane.live { box-shadow: 0 0 0 var(--ring-w) var(--accent); }
 .cv-panes.tall { flex-basis: 380px; }
 .cv-pane-term .pane-head { display: none; }
 /* ═══ 보낼 것 — 종이비행기 알약, 올리면 모서리에서 카드가 쫙 펼쳐진다 ═══ */
 .sfab { position: absolute; right: 20px; bottom: 20px; z-index: calc(var(--z-panel) + 4); display: flex; flex-direction: column; align-items: flex-end; gap: 10px; font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif; }
 .sfab-pill { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 8px 0 14px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: 13px; font-weight: 700; box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 40%, transparent), 0 2px 6px rgba(0, 0, 0, .12); transition: transform .2s, box-shadow .2s, padding .25s; }
-.sfab:not(.has):not(.open) .sfab-pill { width: 40px; padding: 0; justify-content: center; background: var(--surface); color: var(--text-3); box-shadow: 0 0 0 1px var(--line), 0 2px 6px rgba(0, 0, 0, .08); } /* 보낼 게 없을 땐 흐린 동그라미 — 메모만 보낼 수 있게 늘 둔다 */
+.sfab:not(.has):not(.open) .sfab-pill { width: 40px; padding: 0; justify-content: center; background: var(--surface); color: var(--text-3); box-shadow: var(--hair-in) var(--line), 0 2px 6px rgba(0, 0, 0, .08); } /* 보낼 게 없을 땐 흐린 동그라미 — 메모만 보낼 수 있게 늘 둔다 */
 .sfab-pill:hover { transform: translateY(-2px); box-shadow: 0 12px 28px color-mix(in srgb, var(--accent) 50%, transparent), 0 2px 6px rgba(0, 0, 0, .12); }
 .sfab-plane { display: inline-flex; width: 18px; height: 18px; }
 .sfab-plane svg { width: 18px; height: 18px; }
@@ -447,7 +447,7 @@ body > .dash-preview:not(.max) { padding: 20px; }
 .cv-page-head .cv-titles { padding-top: 4px; }
 .cv-head-aside { margin-left: auto; width: min(560px, 55%); min-width: 320px; }
 .np { display: flex; flex-direction: column; max-height: 220px; border-radius: 14px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); overflow: clip; /* hidden 이면 줄에 포커스가 갈 때 판 자체가 스크롤돼 위가 잘렸다 */ font-size: 12.5px; }
-.np.dirty { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--blocked) 55%, transparent); }
+.np.dirty { box-shadow: inset 0 0 0 var(--ring-w) color-mix(in srgb, var(--blocked) 55%, transparent); }
 .np-empty { padding: 14px; color: var(--text-3); }
 .np-tabs { flex: 0 0 auto; display: flex; align-items: center; gap: 2px; padding: 6px 8px 4px; }
 .np-tabs button { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 8px; font-weight: 700; color: var(--text-3); }
@@ -470,11 +470,11 @@ body > .dash-preview:not(.max) { padding: 20px; }
 .np-grip { flex: 0 0 10px; height: 16px; margin: 2px -2px 0; border-radius: 3px; opacity: 0; cursor: grab; touch-action: none; background: radial-gradient(circle, var(--text-3) 1px, transparent 1.5px) 1px 0 / 4px 4px; }
 .np-grip:hover { background-color: var(--hover); }
 .np-row:hover .np-grip { opacity: .7; }
-.np-check { all: unset; cursor: pointer; flex: 0 0 14px; width: 14px; height: 14px; margin-top: 3px; border-radius: 4px; box-shadow: inset 0 0 0 1.5px var(--line-strong); box-sizing: border-box; }
+.np-check { all: unset; cursor: pointer; flex: 0 0 14px; width: 14px; height: 14px; margin-top: 3px; border-radius: 4px; box-shadow: inset 0 0 0 var(--ring-w) var(--line-strong); box-sizing: border-box; }
 .np-check.on { background: #22a06b; box-shadow: none; }
 .np-dot { flex: 0 0 6px; width: 6px; height: 6px; margin: 7px 4px 0 2px; border-radius: 50%; background: var(--accent); opacity: .6; }
 .np-text { flex: 1; min-width: 0; outline: none; border-radius: 4px; cursor: text; }
-.np-text:focus { background: var(--surface); box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--accent) 35%, transparent); }
+.np-text:focus { background: var(--surface); box-shadow: 0 0 0 var(--ring-w) color-mix(in srgb, var(--accent) 35%, transparent); }
 .np-x { all: unset; cursor: pointer; flex: 0 0 18px; width: 18px; height: 18px; margin-top: 1px; display: inline-flex; align-items: center; justify-content: center; border-radius: 5px; color: var(--text-3); opacity: 0; }
 .np-x svg { width: 10px; height: 10px; }
 .np-row:hover .np-x { opacity: 1; }
@@ -675,7 +675,7 @@ body > .dash-preview:not(.placed) { transition: none !important; }
 .cur-mark:not(.open):hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0, 0, 0, .08), 0 0 0 1px var(--line-strong); }
 .cur-mark.open { background: color-mix(in srgb, var(--accent) 6%, var(--surface)); box-shadow: 0 6px 18px rgba(0, 0, 0, .08), 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent); }
 .cur-mark-h { all: unset; cursor: pointer; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: 10px; padding: 11px 12px; }
-.cur-mark-h .st { flex: 0 0 22px; width: 22px; height: 22px; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; color: #fff; background: transparent; box-shadow: inset 0 0 0 1.5px var(--line-strong); }
+.cur-mark-h .st { flex: 0 0 22px; width: 22px; height: 22px; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; color: #fff; background: transparent; box-shadow: inset 0 0 0 var(--ring-w) var(--line-strong); }
 .cur-mark-h .st.pick { background: #2f7a57; box-shadow: none; } .cur-mark-h .st.maybe { background: #c98a00; box-shadow: none; } .cur-mark-h .st.drop { background: #c0392b; box-shadow: none; }
 .cur-mark-h .st svg { width: 12px; height: 12px; }
 .cur-mark-h .nm { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 700; line-height: 1.4; color: var(--text); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -691,7 +691,7 @@ body > .dash-preview:not(.placed) { transition: none !important; }
 .cur-mark-body .btns button.maybe.on { background: #c98a00; color: #fff; box-shadow: none; }
 .cur-mark-body .btns button.drop.on { background: #c0392b; color: #fff; box-shadow: none; }
 .cur-mark-body textarea { resize: none; field-sizing: content; min-height: 34px; max-height: 140px; box-sizing: border-box; width: 100%; padding: 8px 10px; border: 0; border-radius: 9px; font: inherit; font-size: 12.5px; line-height: 1.45; color: var(--text); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); outline: none; }
-.cur-mark-body textarea:focus { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 55%, transparent); }
+.cur-mark-body textarea:focus { box-shadow: inset 0 0 0 var(--ring-w) color-mix(in srgb, var(--accent) 55%, transparent); }
 
 /* 보내기 — 우리 핵심 기능답게: 도는 빛 테두리, 진행 고리, 날갯짓. 다 표시하면 더 크게 숨 쉰다 */
 @property --cur-a { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
@@ -864,6 +864,24 @@ body > .dash-preview:not(.placed) { transition: none !important; }
 /* 탭 줄이 있는 화면(홈 — 패널 하나로)에선 세 칸을 탭 줄 오른쪽 끝에 — 내용 위에 겹치지 않게 */
 .cv-main.has-viewseg:has(.lk-tabs) > .cv-viewseg { top: 4px; right: 10px; }
 .cv-main.has-viewseg .lk-tabs { padding-right: calc(var(--vs-w) + 20px); }
+/* 기능 화면 닫기(PaneClose, 2026-11-01 사용자) — 예약·리플레이·도구·하니터·리뷰 다섯 화면이 같은 X 하나를 같은 자리·같은 크기로.
+   자리는 하니터 머리 X 자리 그대로, 각 화면 머리 줄은 오른쪽을 비워 새로고침 같은 다른 단추가 X 왼쪽에 선다 */
+.cv-main { --pclose-top: 12px; --pclose-right: 14px; --pclose-room: 52px; }
+.cv-main > .pane-close { position: absolute; top: var(--pclose-top); right: var(--pclose-right); z-index: calc(var(--z-panel) + 8); border-color: var(--line); background: var(--surface); }
+/* 리뷰는 두 칸이면 X 가 오른쪽 상세 위 — 목록 머리는 그대로, 상세 첫 줄만 비운다 */
+.cv-main.has-pclose .rv:not(.panes-split) .rv-head,
+.cv-main.has-pclose .routine > .bar,
+.cv-main.has-pclose .hn-top { padding-right: var(--pclose-room); }
+.cv-main.has-pclose .rp-head,
+.cv-main.has-pclose .rl-head { padding-right: calc(var(--pclose-room) - 18px); }
+.cv-main.has-pclose .cv-dash > .cv-page-head { padding-right: var(--pclose-room); }
+/* 머리 줄 가운데를 X 가운데(위에서 26px)에 — 새로고침이 X 와 한 줄에 선다(하니터는 X 가 빠져 낮아진 머리를 그대로, 예약·도구는 위 여백만) */
+.cv-main.has-pclose .hn-top,
+.cv-main.has-pclose .routine > .bar { min-height: 52px; }
+.cv-main.has-pclose .rl-page { padding-top: 13px; }
+.cv-main.has-pclose .cv-dash.tl > .cv-page-head { padding-top: 12px; }
+.cv-main.has-pclose .rv-dbar,
+.cv-main.has-pclose .rv.panes-split .rv-meta { padding-right: var(--pclose-room); }
 .cv-side button { height: 26px; min-width: 32px; }
 .cv-side button.on { background: var(--surface-2); color: var(--text); }
 

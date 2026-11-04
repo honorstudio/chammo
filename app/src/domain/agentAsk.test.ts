@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ASK_EMPTY, askCardKey, readAskCardKey, askClose, askPlaced, askTarget, askNotice, askWakeLine, askWakes, askOpen, askShown, askStep, askWaiting, openLive, pickLive, popupLabel, popupLine, popupNotice, popupStep, type AskState } from './agentAsk';
+import { ASK_EMPTY, askCardKey, readAskCardKey, askClose, askPlaced, askTarget, popupTarget, askNotice, askWakeLine, askWakes, askOpen, askShown, askStep, askWaiting, openLive, pickLive, popupLabel, popupLine, popupNotice, popupStep, type AskState } from './agentAsk';
 import { askName, type Live } from './agentBrowser';
 import { readNoteTarget } from './notify';
 import type { Session } from './session';
@@ -274,6 +274,26 @@ describe('askPlaced·askTarget — 사람 부르기를 맡긴 참모 채팅에(�
   });
   it('이름은 워크트리 폴더 말고 프로젝트 — "binance-secrets-ignore · binance-setup" 이 아니라 "project-t · binance-setup"', () => {
     expect(askName(asking('project-t', 5, { sessionPid: 77 }), everyone)).toBe('project-t · binance-setup');
+  });
+});
+
+// 2026-11-02 사용자 — 패스키 창 알림이 session:<프로필> 로 가서 세션 화면('화면 받는 중')만 열리고 크롬 창은 안 나왔다
+describe('popupTarget — 패스키·크롬 창 알림을 누르면 그 브라우저(부름 카드와 같은 card:<참모>:b:<프로필>:<래퍼>)', () => {
+  const sess = (id: string, o: Partial<Session> = {}): Session => ({ id, name: id, cwd: `/d/${id}`, kind: 'background', state: 'idle', project: id, workspace: null, startedAt: 0, ...o });
+  const front = sess('o1', { name: '참모', cwd: '/hq', project: 'hq' });
+  const two = sess('o2', { name: '참모-2', cwd: '/hq', project: 'hq' });
+  const helper = sess('h1', { name: 'login-check', cwd: '/hq', project: 'hq', procPid: 77 });
+  const events: TaskEvent[] = [{ ts: '2026-11-02T03:00:00Z', type: 'send', task: 't1', target: 'h1', from: 'o2', fromName: '참모-2' } as TaskEvent];
+  it('부름이 없어도(패스키 창만 뜸) 맡긴 참모 채팅의 그 브라우저로', () => {
+    const l = live('acme-login', { pid: 41, sessionPid: 77, popup: true, popupKind: 'passkey' });
+    const go = popupTarget(l, [front, two, helper], events, [front, two], front);
+    expect(go).toBe('card:o2:b:acme-login:41');
+    expect(readNoteTarget(go!)).toEqual({ to: 'card', orch: 'o2', card: 'b:acme-login:41' });
+  });
+  it('세션을 못 찾으면 맨 앞 참모, 참모가 아무도 없으면 없음(예전 session: 길)', () => {
+    const l = live('ghost', { pid: 5, sessionPid: 999, popup: true });
+    expect(popupTarget(l, [front], [], [front], front)).toBe('card:o1:b:ghost:5');
+    expect(popupTarget(l, [], [], [], undefined)).toBeUndefined();
   });
 });
 

@@ -58,6 +58,9 @@ describe('PUSH_HINT — 종을 눌렀는데 못 켤 때 까닭(QA 2차)', () => 
   it('http 안내는 데스크톱 설정의 실제 탭 이름(기기 관리)을 가리킨다 — \'모바일\' 탭은 없다', () => {
     expect(PUSH_HINT.insecure).toContain('기기 관리');
     expect(PUSH_HINT.insecure).not.toContain('설정 > 모바일');
+    // 11-01 사용자: 테일스케일 설정을 고치라고 하지 않는다 — 폰 추가 QR(중계)로
+    expect(PUSH_HINT.insecure).not.toContain('테일스케일');
+    expect(PUSH_HINT.insecure).toContain('폰 추가');
   });
   it('막힘 안내는 브라우저 탭으로 연 경우(사이트 설정)도 말한다 — 홈 화면 앱이 아니면 설정 > 알림에 참모가 없다', () => {
     expect(PUSH_HINT.denied).toMatch(/사이트 설정/);

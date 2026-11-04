@@ -141,18 +141,74 @@ fn io(e: impl std::fmt::Display) -> Error {
     Error::Io(e.to_string())
 }
 
-/// 요금제 등급 글 → (보이는 이름, 작은 순 번호)
+/// 등급 글자 → (보이는 이름, 작은 순 번호). Claude Code 가 받은 이름(planDisplayName)이 없을 때만 쓴다 — 이름이 바뀌면 여기 한 줄만.
+/// 2026-11 Max 20x 가 Ultra 로 바뀌었는데 등급 글자는 그대로 max_20x 였다. 위에서부터 처음 맞는 것
+const TIERS: &[(&str, &str, u32)] = &[("max_20x", "Ultra", 3), ("max_5x", "Max 5x", 2), ("pro", "Pro", 1)];
+
+/// Claude Code 가 프로필(organization.plan_display_name)에서 받아 oauthAccount.planDisplayName 에 적은 이름 — Claude Code 와 같은 검사
+/// (글자·숫자로 시작, 글자·숫자·+ 로 끝, 가운데는 글자·숫자·빈칸·.+-, 40자까지). 안 맞으면 버린다
+fn shown_name(oauth: &Value) -> Option<&str> {
+    let n = oauth.get("planDisplayName")?.as_str()?;
+    let c: Vec<char> = n.chars().collect();
+    let (first, last) = (*c.first()?, *c.last()?);
+    let ok = c.len() <= 40
+        && first.is_alphanumeric()
+        && (last.is_alphanumeric() || last == '+')
+        && c.iter().all(|&x| x.is_alphanumeric() || matches!(x, ' ' | '.' | '+' | '-'));
+    ok.then_some(n)
+}
+
+/// 모르는 등급 — "default_claude_max_40x" → "Max 40x"
+fn readable(tier: &str) -> String {
+    let t = tier.strip_prefix("default_").unwrap_or(tier);
+    let t = t.strip_prefix("claude_").unwrap_or(t);
+    t.split('_')
+        .filter(|w| !w.is_empty())
+        .map(|w| {
+            let mut c = w.chars();
+            c.next().map(|f| f.to_uppercase().chain(c).collect::<String>()).unwrap_or_default()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// 요금제 → (보이는 이름, 작은 순 번호). 이름은 Claude Code 가 받은 것 먼저, 없으면 등급 표, 표에도 없으면 등급 글자를 읽을 모양으로
 pub fn plan_of(oauth: &Value) -> (String, u32) {
     let tier = oauth.get("organizationRateLimitTier").or_else(|| oauth.get("userRateLimitTier")).and_then(Value::as_str).unwrap_or("");
-    if tier.contains("max_20x") {
-        ("Max 20x".into(), 3)
-    } else if tier.contains("max_5x") {
-        ("Max 5x".into(), 2)
-    } else if tier.contains("pro") {
-        ("Pro".into(), 1)
-    } else {
-        (tier.to_string(), 4)
+    let (name, rank) = match TIERS.iter().find(|(k, ..)| tier.contains(k)) {
+        Some((_, n, r)) => (n.to_string(), *r),
+        None => (readable(tier), 4),
+    };
+    (shown_name(oauth).map(str::to_string).unwrap_or(name), rank)
+}
+
+/// 칸에 보일 요금제 — 지금 로그인과 같은 계정이면 그쪽 이름(Claude Code 가 막 받은 것)부터. 옛 기록("Max 20x")도 다시 계산한다
+pub fn plan_name(a: &Account, live: Option<&Value>) -> String {
+    let same = live.filter(|o| key(o).is_some() && key(o) == key(&a.oauth));
+    if let Some(n) = same.and_then(shown_name) {
+        return n.to_string();
     }
+    Some(plan_of(&a.oauth).0).filter(|p| !p.is_empty()).unwrap_or_else(|| a.plan.clone())
+}
+
+/// 칸 기록의 요금제 이름을 지금 것으로 — 지금 로그인의 planDisplayName 은 같은 계정 칸 oauth 에도 옮긴다(바꿔 끼울 때 그대로 돌아가게). 바뀌었나
+pub fn refresh_plans(pool: &mut Pool, live: Option<&Value>) -> bool {
+    let mut changed = false;
+    for a in pool.accounts.iter_mut() {
+        let name = live.filter(|o| key(o).is_some() && key(o) == key(&a.oauth)).and_then(shown_name);
+        if let (Some(n), Some(o)) = (name, a.oauth.as_object_mut()) {
+            if o.get("planDisplayName").and_then(Value::as_str) != Some(n) {
+                o.insert("planDisplayName".into(), n.into());
+                changed = true;
+            }
+        }
+        let p = plan_name(a, live);
+        if a.plan != p {
+            a.plan = p;
+            changed = true;
+        }
+    }
+    changed
 }
 
 /// 같은 계정인가 — 사람 하나가 조직 여럿에 있을 수 있어 둘 다 본다
@@ -275,7 +331,8 @@ pub fn reconcile(store: &dyn Store, live: &Live, list: &Path, pool: &mut Pool) -
             ambiguous = true;
         }
     }
-    let live_key = read_oauth(&live.claude_json).as_ref().and_then(key);
+    let live_oauth = read_oauth(&live.claude_json);
+    let live_key = live_oauth.as_ref().and_then(key);
     // 사람이 밖에서 로그인을 바꿨으면(claude auth login) 지금 칸은 모른다
     if let Some(c) = pool.current.clone() {
         if now.is_none() || slot(pool, &c).and_then(|a| key(&a.oauth)) != live_key {
@@ -298,6 +355,7 @@ pub fn reconcile(store: &dyn Store, live: &Live, list: &Path, pool: &mut Pool) -
             }
         }
     }
+    refresh_plans(pool, live_oauth.as_ref());
     if *pool != before {
         save(list, pool)?;
     }

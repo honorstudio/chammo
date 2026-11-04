@@ -12,7 +12,7 @@ export type MyDevice = {
   /** human | auto(24시간 지나 서버가 허용) | '' */
   approvedBy?: string;
 };
-export type DeviceRowView = { id: string; name: string; me: boolean; pending: boolean; online: boolean; meta: string };
+export type DeviceRowView = { id: string; name: string; me: boolean; pending: boolean; online: boolean; meta: string; /** 맥·윈도우 — 컴퓨터끼리 잇기(peerLink) 줄 */ computer: boolean };
 
 /** 이만큼 안에 서버에 닿았으면 '붙음' */
 const ONLINE_MS = 3 * 60_000;
@@ -29,7 +29,7 @@ export function deviceRows(list: MyDevice[], now: number): DeviceRowView[] {
     const meta = pending
       ? [tr('허용 대기', 'Waiting for approval'), kindWord(x.kind), place].filter(Boolean).join(' · ')
       : [online ? tr('붙음', 'Online') : tr('꺼짐', 'Offline'), kindWord(x.kind), !online && x.lastSeen ? tr(`마지막 ${day(x.lastSeen)}`, `Last ${day(x.lastSeen)}`) : '', x.approvedBy === 'auto' ? tr('자동 허용', 'Auto-allowed') : ''].filter(Boolean).join(' · ');
-    return { id: x.id, name: x.name, me: x.current, pending, online, meta };
+    return { id: x.id, name: x.name, me: x.current, pending, online, meta, computer: x.kind === 'mac' || x.kind === 'win' };
   });
 }
 

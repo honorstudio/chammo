@@ -1,9 +1,10 @@
 // 폰 팀 보관함 — 중계 팀 보관함 그대로(데스크톱 TeamLocker 와 같은 목록·폴더 구조, 10-28 사용자 "모바일 팀 보관함이 비어 있다"·"폰에서도 관리").
 // 전엔 데스크톱에 '이 기기에 저장'한 팀 폴더만 봐서 늘 비었다. 읽기는 폰 서버(/api/team-locker — 본 판 그대로면 same, 보는 동안 4초),
 // 바꾸기·올리기도 데스크톱과 같은 길로 서버가 한다. 영구 지우기는 데스크톱 팀 보관함 휴지통에서만
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type { PhoneLockerOp, PhoneTeamLocker as View, PhoneTeamUps, TeamPhoneApi } from '../../data/web';
-import { baseOf, crumbsOf, extOf, fmtBytes, inPlace, kidFolders, moveTargets, parentOf, phoneView, renamedPath, usageText, whenText, type LockerItem } from '../../domain/teamLocker';
+import { useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { teamThumbBlob, type PhoneLockerOp, type PhoneTeamLocker as View, type PhoneTeamUps, type TeamPhoneApi } from '../../data/web';
+import { FileMini } from '../team/RoomBits';
+import { keyWaitNote, lockedFiles, baseOf, crumbsOf, extOf, fmtBytes, thumbKind, inPlace, kidFolders, moveTargets, parentOf, phoneView, renamedPath, usageText, whenText, type LockerItem } from '../../domain/teamLocker';
 import { partsOf } from '../../domain/teamPhoneUp';
 import { teamViewMemo } from '../../domain/teamViewMemo';
 import { machine, tr } from '../../i18n';
@@ -12,6 +13,8 @@ import { IconFolder, IconMore, IconPlus, IconTrash } from '../Icons';
 import { BottomSheet } from './BottomSheet';
 import { IconBtn } from './kit';
 import { usePress } from './PhoneLockerParts';
+import { ProfilesCtx } from '../team/useProfiles';
+import { lookOf } from '../../domain/teamProfile';
 
 /** 팀마다 마지막 목록 — 대화·팀 홈 칸을 갔다 와도 바로 그린다 */
 const memo = teamViewMemo<View>();
@@ -42,15 +45,21 @@ export function PhoneTeamLocker({ api, teamId, onOpen }: { api: TeamPhoneApi; te
   const [ask, setAsk] = useState<Ask | null>(null);
   const [adding, setAdding] = useState(false);
   const rev = useRef(0);
-  const busy = useRef(false);
+  /** 읽는 중인 팀 id(빈 값 = 쉼) — 팀마다 따로라 앞 팀을 읽는 중에도 새 팀은 바로 읽는다 */
+  const busy = useRef('');
+  // 지금 보는 팀 — 읽는 사이 팀이 바뀌면(머리 팀 줄) 늦게 온 앞 팀 목록·판 번호를 새 팀 화면에 앉히지 않는다(11-02 팀 여러 개:
+  // 앞 팀 판 번호를 들고 새 팀을 물으면 맥이 '그대로'로 답해 앞 팀 목록이 굳었다)
+  const cur = useRef(teamId);
+  cur.current = teamId;
   /** 받는 중에 '꼭 새로'가 오면(바꾼 직후) 끝난 뒤 한 번 더 */
   const again = useRef(false);
   const going = useRef(0);
 
   const read = useCallback((force = false) => {
-    if (busy.current) { if (force) again.current = true; return; }
-    busy.current = true;
+    if (busy.current === teamId) { if (force) again.current = true; return; }
+    busy.current = teamId;
     void api.locker(teamId, force ? 0 : rev.current).then((x) => {
+      if (cur.current !== teamId) return;
       setUps(x.uploads ?? []);
       const live = (x.uploads ?? []).filter((u) => !u.error).length;
       const finished = live < going.current;
@@ -61,8 +70,9 @@ export function PhoneTeamLocker({ api, teamId, onOpen }: { api: TeamPhoneApi; te
       rev.current = x.rev;
       setV(memo.get(teamId)?.v ?? x);
       setErr('');
-    }, (e: unknown) => setErr(errText(e))).finally(() => {
-      busy.current = false;
+    }, (e: unknown) => { if (cur.current === teamId) setErr(errText(e)); }).finally(() => {
+      if (busy.current !== teamId) return; // 앞 팀 읽기 — 새 팀 읽기를 건드리지 않는다
+      busy.current = '';
       if (again.current) { again.current = false; read(true); }
     });
   }, [api, teamId]);
@@ -117,6 +127,7 @@ export function PhoneTeamLocker({ api, teamId, onOpen }: { api: TeamPhoneApi; te
         {!trash && <IconBtn label={tr('추가', 'Add')} onClick={() => setAdding(true)}><IconPlus /></IconBtn>}
       </div>
       {!trash && place && <PathCrumbs root={tr('팀 보관함', 'Team locker')} crumbs={crumbsOf(place)} onGo={setPlace} dropOf={() => ({})} back={() => setPlace(parentOf(place))} />}
+      {!trash && keyWaitNote(lockedFiles(v.items), 'file') && <span className="tmx-hint m-tlk-note">{keyWaitNote(lockedFiles(v.items), 'file')}</span>}
       {(note || (err && v)) && <span className="tmx-hint m-tlk-note" role="alert" onClick={() => setNote('')}>{note || tr(`새로 못 받았어요 — ${err}`, `Couldn't refresh — ${err}`)}</span>}
       {folders.length > 0 && (
         <div className="lk-fgrid m-team-lk-folders">
@@ -127,7 +138,7 @@ export function PhoneTeamLocker({ api, teamId, onOpen }: { api: TeamPhoneApi; te
         <div className="tmx-lk-rows m-team-lk">
           {!trash && sending.map((s) => <div key={s.key} className="tmx-lk-row tlk-up"><span className="tmx-ext">{extOf(s.name) || tr('파일', 'File')}</span><b>{s.name}</b><span className="d">{tr(`보내는 중 ${s.total ? Math.floor((s.sent / s.total) * 100) : 0}%`, `Sending ${s.total ? Math.floor((s.sent / s.total) * 100) : 0}%`)}</span></div>)}
           {!trash && ups.map((u, k) => <div key={`u${k}`} className="tmx-lk-row tlk-up"><span className="tmx-ext">{extOf(u.name) || tr('파일', 'File')}</span><b>{u.name}</b><span className="d">{u.error ? tr(`못 올렸어요 — ${u.error}`, `Couldn't upload — ${u.error}`) : tr(`올리는 중 ${u.total ? Math.floor((u.done / u.total) * 100) : 0}%`, `Uploading ${u.total ? Math.floor((u.done / u.total) * 100) : 0}%`)}</span></div>)}
-          {files.map((i) => <Row key={i.id} item={i} trash={trash} onOpen={onOpen} onMenu={() => setMenu({ kind: 'file', item: i })} />)}
+          {files.map((i) => <Row key={i.id} teamId={teamId} item={i} trash={trash} onOpen={onOpen} onMenu={() => setMenu({ kind: 'file', item: i })} />)}
         </div>
       )}
       {!here && <div className="tmx-none">{trash ? tr('휴지통이 비었어요', 'Trash is empty') : place ? tr('비어 있어요', 'Empty') : tr('팀 보관함이 비었어요 — 위 더하기로 사진·파일을 올려요', 'The team locker is empty — use the plus above to add photos and files')}</div>}
@@ -173,13 +184,16 @@ export function PhoneTeamLocker({ api, teamId, onOpen }: { api: TeamPhoneApi; te
 }
 
 /** 파일 한 줄 — 그림·PDF 는 누르면 크게 보기, 길게 누르면 메뉴. 볼 길이 없는 파일(문서·엑셀)·휴지통은 눌러도 메뉴 */
-function Row({ item, trash, onOpen, onMenu }: { item: LockerItem; trash: boolean; onOpen?: (i: LockerItem) => void; onMenu: () => void }) {
+function Row({ teamId, item, trash, onOpen, onMenu }: { teamId: string; item: LockerItem; trash: boolean; onOpen?: (i: LockerItem) => void; onMenu: () => void }) {
   const open = !trash && onOpen && phoneView(item) ? () => onOpen(item) : onMenu;
   const press = usePress(open, onMenu);
-  const d = [fmtBytes(item.size), whenText(item.at), item.by].filter(Boolean).join(' · ');
+  // 올린 사람 = 프로필 이름(데스크톱 TeamLocker 와 같은 lookOf)
+  const { board } = useContext(ProfilesCtx);
+  const by = item.byMember ? lookOf(board, item.byMember, item.by).name : item.by;
+  const d = [fmtBytes(item.size), whenText(item.at), by].filter(Boolean).join(' · ');
   return (
     <button type="button" className={`tmx-lk-row ${item.why ? 'tlk-locked' : ''}`} title={item.why || undefined} {...press}>
-      <span className="tmx-ext">{extOf(item.name) || tr('파일', 'File')}</span><b>{nameOf(item)}</b><span className="d">{d}</span>
+      <FileMini className="tmx-ext" id={item.id} name={item.name} get={thumbKind(item.name, item.size) && !item.why && !trash ? () => teamThumbBlob(teamId, item.id) : undefined} /><b>{nameOf(item)}</b><span className="d">{d}</span>
     </button>
   );
 }

@@ -106,6 +106,18 @@ switch (cmd) {
     login.runLogin(o).then((r) => process.exit(r.code), (e) => { console.error(e.message); process.exit(1); });
     break;
   }
+  case 'signin-bubble': {
+    // 이미 뜬 크롬 로그인 권유 버블('나만의 Chrome 만들기')을 '계정 없이 Chrome 사용'으로 닫는다 — 앱 칸에선 안 눌리는 크롬 자체 화면(src/features.js).
+    // 새로 띄우는 크롬은 설정으로 아예 안 뜬다. 한 줄 JSON {ok, profile, closed}
+    const p = profileArg('chammo-browser signin-bubble <프로필>');
+    const port = require('../src/live').readPort(paths.profileDir(p));
+    if (!port) { console.log(JSON.stringify({ ok: false, profile: p, error: '그 프로필 크롬이 안 떠 있어요(CDP 포트 없음)' })); process.exit(1); }
+    require('../src/features').dismissSigninBubble(port).then((closed) => {
+      console.log(JSON.stringify({ ok: true, profile: p, closed }));
+      process.exit(0);
+    });
+    break;
+  }
   case 'release': {
     // 그 스크립트가 다 썼다 — 명부에서 빼면 마지막 사용자일 때 지킴이가 1초 안에 크롬을 닫고 락을 돌려준다
     const p = profileArg('chammo-browser release <프로필> [--owner <pid>]');
@@ -138,6 +150,7 @@ switch (cmd) {
                                        스크립트용 크롬 — 락·앱 화면 연결까지 하고 CDP 주소를 한 줄 JSON 으로.
                                        주인(--owner, 기본 부른 프로세스)이 끝나면 저절로 닫고 락을 돌려준다
   chammo-browser release <프로필> [--owner <pid>]   다 썼다(마지막이면 크롬을 닫는다)
+  chammo-browser signin-bubble <프로필>  떠 있는 크롬 로그인 권유 버블을 '계정 없이 Chrome 사용'으로 닫는다(한 줄 JSON)
   chammo-browser login <프로필> <로그인 주소> [--account <칸 이름>] [--from <CLAUDE.local.md>] [--done <주소 조각>] [--wait <초>]
                                        사이트 로그인 — 계정 칸(제목 + '아이디:'·'비밀번호:')에서 읽어 친다. 값은 출력에 안 남는다.
                                        종료 0 됨 · 3 사람 차례(2단계·패스키·캡차) · 4 계정 칸 없음 · 5 사이트가 안 받음(다시 치지 않음)

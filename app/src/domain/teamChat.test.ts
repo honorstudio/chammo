@@ -177,6 +177,18 @@ describe('시안 msg-rooms v2 — 부르기·반응·팀 참모·파일', () => 
     expect(mentionList('하', ppl, mine)[1]!.orch?.id).toBe('s2');
     expect(mentionList('팀', ppl)[0]!.kind).toBe('helper');
   });
+  it('부르기 목록 사람 — 보이는 이름은 프로필 이름, 넣는 글은 계정 이름(알림·강조가 계정 이름으로 찾는다), 어느 이름으로 쳐도 찾는다', () => {
+    const ppl = [{ id: 'm1', name: '지우', account: '지우', me: true }, { id: 'm2', name: 'Chris', account: '샘플상회', me: false }];
+    const got = mentionList('', ppl).filter((x) => x.kind === 'person');
+    expect(got.map((x) => [x.label, x.insert, x.name])).toEqual([['Chris', '@샘플상회', '샘플상회']]);
+    expect(mentionList('ch', ppl).some((x) => x.insert === '@샘플상회')).toBe(true);
+    expect(mentionList('샘플', ppl).some((x) => x.insert === '@샘플상회')).toBe(true);
+  });
+  it('부른 이름 보이기 — 글엔 계정 이름, 말풍선엔 프로필 이름(shown 표가 있으면)', () => {
+    const shown = new Map([['샘플상회', 'Chris']]);
+    expect(mentionParts('@샘플상회 봐 줘', ['샘플상회'], '', shown)[0]).toEqual({ t: 'mention', s: '@Chris', me: false });
+    expect(mentionParts('@샘플상회 봐 줘', ['샘플상회'], '샘플상회', shown)[0]).toEqual({ t: 'mention', s: '@Chris', me: true });
+  });
   it('내 참모에게 보내는 글 — 부른 이름은 빼고, 어느 대화에서 내가 보냈는지 한 줄', () => {
     expect(toMineText('@하린 담당 이거 해 줘', '하린 담당', '디자인 회의')).toBe('이거 해 줘\n\n(팀 메신저 · 디자인 회의에서 보냄)');
     expect(toMineText('정리 @참모 부탁', '참모', '하린')).toBe('정리 부탁\n\n(팀 메신저 · 하린에서 보냄)');
@@ -192,6 +204,8 @@ describe('시안 msg-rooms v2 — 부르기·반응·팀 참모·파일', () => 
     const r = (seq: number, member: string, mark: string, on: boolean, person = member) => it0({ seq, member, person, note: member === 'm1' ? 'sent' : 'delivered', body: '', react: { seq: 1, mark, on } });
     const items = [it0({ seq: 1 }), r(2, 'm2', 'like', true, '하린'), r(3, 'm1', 'like', true, '지우'), r(4, 'm3', 'check', true, '도윤'), r(5, 'm3', 'check', false, '도윤')];
     expect(reactionsOf(items, 'r1').get(1)).toEqual([{ mark: 'like', who: ['하린', '지우'], mine: true }]);
+    // 누른 사람 이름도 프로필 이름(nameOf = lookOf) — 명부 이름은 못 찾을 때만
+    expect(reactionsOf(items, 'r1', (m, roster) => (m === 'm2' ? 'Chris' : roster)).get(1)![0]!.who).toEqual(['Chris', '지우']);
     expect(roomItems(items, 'r1').map((x) => x.seq)).toEqual([1]);
     expect(convos(members, rooms, items, {}).find((c) => c.room === 'r1')!.unread).toBe(1);
   });

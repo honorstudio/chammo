@@ -363,7 +363,8 @@ pub fn send_all(title: &str, body: &str, target: &str) {
     }
     keep_last(&dir, target, now_ms());
     let pair = crate::mobile_pair::Devices::open(&dir);
-    let devices: Vec<String> = pair.list().into_iter().map(|d| d.id).collect();
+    // 폰 줄만 — 컴퓨터 peer 줄(중계 id = 그 컴퓨터 계정 기기)엔 푸시를 안 부탁한다(리뷰 11-01 ③)
+    let devices: Vec<String> = pair.list().into_iter().filter(|d| !d.peer).map(|d| d.id).collect();
     // 중계로 짝지은 폰은 중계 VAPID 로 구독해서 이 컴퓨터 열쇠로는 못 보낸다 — 중계에 부탁하되, 폰이 알려 준 구독 열쇠로 봉한 본문을 싣는다(ADR 0013)
     let all = read_subs(&dir);
     let msg = payload(title, body, target);

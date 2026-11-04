@@ -102,12 +102,16 @@ fn data_from_another_device_or_unknown_connection_is_dropped() {
     let mut w = world();
     let mut s = connect(&mut w, "c1");
     let f = s.seal(b"{}");
-    assert_eq!(w.t.on_frame(&w.lines, "r9", "c1", &f), vec![Ev::Drop("no session".into())]);
-    assert_eq!(w.t.on_frame(&w.lines, "r1", "c2", &f), vec![Ev::Drop("no session".into())]);
-    // 틀린 틀 하나면 그 세션을 버린다
+    // 모르는 세션 — 버리고 그 연결에 RESET 한 바이트(폰이 끊고 새로 악수, 11-04 03:07 허브 다시 붙은 뒤 2분 먹통)
+    let reset = || vec![Ev::Drop("no session".into()), Ev::Send(vec![tun::RESET])];
+    assert_eq!(w.t.on_frame(&w.lines, "r9", "c1", &f), reset());
+    assert_eq!(w.t.on_frame(&w.lines, "r1", "c2", &f), reset());
+    // 틀린 틀 하나면 그 세션을 버리고 RESET — 그 틀이 요청 끝 조각이면 폰이 답 없이 기다리기만 했다
     let mut bad = s.seal(b"{}");
     *bad.last_mut().unwrap() ^= 1;
-    assert!(matches!(w.t.on_frame(&w.lines, "r1", "c1", &bad)[0], Ev::Drop(_)));
+    let ev = w.t.on_frame(&w.lines, "r1", "c1", &bad);
+    assert!(matches!(ev[0], Ev::Drop(_)));
+    assert_eq!(ev[1], Ev::Send(vec![tun::RESET]));
     assert_eq!(w.t.line("c1"), None);
 }
 
@@ -370,4 +374,30 @@ fn gzip_request_header_passes_the_tunnel() {
     let Ev::Run(t) = &w.t.on_frame(&w.lines, "r1", "c1", &f[0])[0] else { panic!() };
     assert!(t.headers.iter().any(|(k, v)| k == "x-chammo-gz" && v == "1"));
     assert!(!t.headers.iter().any(|(k, _)| k == "x-other"));
+}
+
+// 컴퓨터끼리 중계(C-3a) — 터널로 온 다른 컴퓨터 참모 줄은 peer 길만 열린다(폰 서버가 peer 열쇠에 거는 문 그대로), 짝짓기 길은 그대로 404
+#[test]
+fn peer_line_over_the_tunnel_gets_peer_paths_but_not_pairing() {
+    let mut w = world();
+    let now = SystemTime::now();
+    let tok = "f".repeat(64);
+    let pid = w.gate.devices.add_peer_relay(&tok, "사무실 아이맥", Relay { device: "r1".into(), x: tun::b64(&tun::public_of(&w.phone)) }, now).unwrap();
+    w.lines.lines = vec![("r1".into(), pid.clone(), tun::public_of(&w.phone))];
+    let mut s = connect(&mut w, "c1");
+    let h = || json!({ "authorization": format!("Bearer {tok}"), "content-type": "application/json" });
+    for p in ["/api/pair", "/api/hello", "/api/link-request", "/api/link-status", "/api/link-check"] {
+        let (r, be) = run(&mut w, &mut s, "c1", "POST", p, h(), b"{}");
+        assert_eq!(r.status, 404, "{p}");
+        assert!(be.calls().is_empty());
+    }
+    // peer 길은 폰 서버 문까지 간다(몸통이 빈 {} 라 400 이어도 404 는 아님)
+    let (r, _) = run(&mut w, &mut s, "c1", "POST", "/api/peer-say", h(), b"{}");
+    assert_ne!(r.status, 404, "peer-say 는 터널에서 열린다");
+    let (r, _) = run(&mut w, &mut s, "c1", "GET", "/api/peer-reply", h(), b"");
+    assert_ne!(r.status, 404);
+    // peer 열쇠로 폰 전용 길은 폰 서버가 403
+    let (r, be) = run(&mut w, &mut s, "c1", "POST", "/api/send", h(), b"{}");
+    assert_eq!(r.status, 403, "{}", String::from_utf8_lossy(&r.body));
+    assert!(be.calls().is_empty());
 }

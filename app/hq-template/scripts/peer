@@ -7,6 +7,8 @@ echo "python not found — install Python 3 (winget install Python.Python.3.12)"
 ':'''
 __doc__ = """Talk to the assistant on another device of the same Tailscale account, through the Chammo app.
 같은 테일스케일 계정의 다른 기기 참모에게 앱을 거쳐 말을 넣고 답을 받는다.
+Without Tailscale (the default) use scripts/team self-say — same Chammo account, through the relay. Never ask the user to install Tailscale.
+테일스케일이 없으면(기본) scripts/team self-say — 같은 Chammo 계정, 중계로. 사용자에게 테일스케일을 깔라고 하지 않는다.
 
   scripts/peer list                                    devices with Chammo on your tailnet: connected / not connected,
                                                        the Chammo account it is signed in to (other data folders too)

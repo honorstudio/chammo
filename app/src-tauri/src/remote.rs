@@ -22,6 +22,8 @@ pub fn can_link(os: &str) -> bool {
 }
 
 pub const FILE: &str = "remote-peers.json";
+/// 이 기기에 테일스케일(CLI)이 없다 — 오류가 아니라 '테일넷 덤 길이 없음'. 화면·scripts/peer 가 이 값을 보고 중계 길로 안내한다(11-01)
+pub const NO_TAILSCALE: &str = "no-tailscale";
 const PORT: u16 = 47123;
 
 /// 다른 기기 폰 서버 포트 — 본판은 늘 47123. 개발판만 CHAMMO_PEER_PORT 로 바꿀 수 있다(같은 기기에 본판이 47123 을 쥔 채 시험 앱을 붙일 때)
@@ -74,6 +76,9 @@ pub struct Saved {
     pub paired_at: u64,
     #[serde(default)]
     pub last_ok: Option<u64>,
+    /// 중계로 짝지은 컴퓨터(테일스케일 없이, C-4) — 그 터널 공개 열쇠 b64. 이때 id = `relay:<중계 기기 id>`(키체인 칸과 같은 이름), ip 는 0.0.0.0
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay_x: Option<String>,
 }
 
 /// 화면 한 줄 — status: connected(열쇠 통함) · pair(참모는 있는데 열쇠 없음/끊김) · offline(짝지은 기기가 안 닿음)
@@ -302,7 +307,12 @@ pub fn unpair(kc: &dyn Store, dir: &Path, id: &str) -> Result<(), String> {
 
 /// 끊기 — 이 기기 열쇠 + 그 기기가 이 기기에 쓰던 줄(양방향으로 이었으니 끊기도 양쪽)
 pub fn unpair_with(kc: &dyn Store, dir: &Path, lines: &crate::mobile_pair::Devices, id: &str) -> Result<(), String> {
-    lines.remove_node(id).map_err(|e| format!("기기 줄을 못 지웠어요({e})"))?;
+    match id.strip_prefix("relay:") {
+        // 중계로 이은 컴퓨터 — 그 컴퓨터가 이 기기를 부르던 peer 줄(같은 중계 id). 계정에선 안 끊는다(mobile_pair relays_of)
+        Some(hub) => lines.remove_relay_peer(hub),
+        None => lines.remove_node(id),
+    }
+    .map_err(|e| format!("기기 줄을 못 지웠어요({e})"))?;
     unpair(kc, dir, id)
 }
 
@@ -321,7 +331,7 @@ fn hex64(s: &str) -> bool {
 fn upsert_saved(dir: &Path, id: &str, name: &str, ip: Ipv4Addr) -> std::io::Result<()> {
     mutate(dir, |list| {
         list.retain(|s| s.id != id);
-        list.push(Saved { id: id.into(), name: name.into(), ip, port: peer_port(), paired_at: now_ms(), last_ok: Some(now_ms()) });
+        list.push(Saved { id: id.into(), name: name.into(), ip, port: peer_port(), paired_at: now_ms(), last_ok: Some(now_ms()), relay_x: None });
     })
 }
 
@@ -521,6 +531,36 @@ pub async fn remote_devices() -> Result<DevicesOut, String> {
 
 /// 지금 테일넷의 기기 칸 — 같은 계정 온라인 기기마다 hello(+짝지은 기기는 열쇠로 /api/env)
 pub fn devices_now() -> Result<DevicesOut, String> {
+    let relay = relay_views(&load(&data_dir()));
+    if !crate::mobile::tailscale_installed() {
+        // 테일스케일 없이가 기본 — 중계로 이은 컴퓨터만(없으면 안내용 NO_TAILSCALE)
+        return if relay.is_empty() { Err(NO_TAILSCALE.into()) } else { Ok(DevicesOut { me: String::new(), devices: relay }) };
+    }
+    combine(devices_tailnet(), relay)
+}
+
+/// 테일넷 목록 + 중계 줄 — 테일넷이 실패해도(테일스케일이 깔렸지만 꺼진 맥, C-6 재실측) 중계 줄이 있으면 그것만이라도. 없으면 테일넷 오류 그대로
+pub fn combine(tail: Result<DevicesOut, String>, relay: Vec<DeviceView>) -> Result<DevicesOut, String> {
+    match tail {
+        Ok(mut out) => {
+            out.devices = merge_relay(std::mem::take(&mut out.devices), relay);
+            Ok(out)
+        }
+        Err(_) if !relay.is_empty() => Ok(DevicesOut { me: String::new(), devices: relay }),
+        Err(e) => Err(e),
+    }
+}
+
+/// 중계로 이은 컴퓨터 줄(C-4) — 묻지 않고 '연결됨'으로(꺼져 있으면 부를 때 '연결 끊김'). id = relay:<중계 기기 id>
+pub fn relay_views(saved: &[Saved]) -> Vec<DeviceView> {
+    saved
+        .iter()
+        .filter(|s| s.relay_x.is_some() && s.id.starts_with("relay:"))
+        .map(|s| DeviceView { id: s.id.clone(), name: s.name.clone(), os: String::new(), status: "connected", paired: true, old: false, link: true, version: None, last_ok: s.last_ok })
+        .collect()
+}
+
+fn devices_tailnet() -> Result<DevicesOut, String> {
     {
         let (route, json) = tailnet()?;
         let (me, peers) = same_user_peers(&json).ok_or("테일스케일이 꺼져 있거나 로그인 전이에요")?;
@@ -559,6 +599,56 @@ pub fn remote_saved() -> Vec<serde_json::Value> {
     load(&data_dir()).into_iter().map(|s| serde_json::json!({ "id": s.id, "name": s.name })).collect()
 }
 
+/// 중계로 짝지은 다른 컴퓨터를 부를 열쇠 — 키체인(윈도우는 자격 증명 관리자) 칸 `relay:<중계 기기 id>`(테일넷 노드 칸과 안 섞이게). C-3b
+pub fn relay_key_account(relay: &str) -> String {
+    format!("relay:{relay}")
+}
+
+/// 중계 줄 끊기(C-5 실측 ②) — 상대에게 먼저 알리고(되는 만큼만 — 꺼져 있어도) 이쪽 목록·열쇠·그쪽이 이쪽을 부르던 줄을 지운다
+pub fn relay_unlink(kc: &dyn Store, dir: &Path, lines: &crate::mobile_pair::Devices, id: &str, send: &SendFn) -> Result<(), String> {
+    if id.starts_with("relay:") {
+        let _ = call_any(kc, dir, id, Some(Ipv4Addr::UNSPECIFIED), "POST", "/api/peer-unlink", Some("{}"), send);
+    }
+    unpair_with(kc, dir, lines, id)
+}
+
+/// 상대가 끊었다고 알려 왔다 — 그 컴퓨터 목록 줄·열쇠·peer 줄을 지운다(열쇠 칸이 없어도 나머지는 지운다)
+pub fn forget_relay(relay: &str) -> Result<(), String> {
+    let id = relay_key_account(relay);
+    let _ = keychain().remove(&service(), &id);
+    crate::mobile::devices().remove_relay_peer(relay).map_err(|e| e.to_string())?;
+    mutate(&data_dir(), |l| l.retain(|s| s.id != id)).map_err(|e| e.to_string())
+}
+
+/// 테일넷 줄 + 중계 줄 — 같은 이름의 안 닿는 테일넷 줄(옛 짝·꺼짐)은 빼서 한 기기가 두 번 안 보이게(C-5 실측 ③). 닿는 테일넷 줄은 남긴다(빠른 길)
+pub fn merge_relay(tail: Vec<DeviceView>, relay: Vec<DeviceView>) -> Vec<DeviceView> {
+    let names: std::collections::HashSet<String> = relay.iter().map(|d| d.name.clone()).collect();
+    tail.into_iter().filter(|d| d.status == "connected" || !names.contains(&d.name)).chain(relay).collect()
+}
+
+/// 중계로 이은 컴퓨터를 목록에 — id = relay:<중계 기기 id>, 열쇠는 store_relay_key 로 같은 칸에
+pub fn save_relay_peer(dir: &Path, hub: &str, name: &str, x: &str) -> std::io::Result<()> {
+    let id = relay_key_account(hub);
+    let name: String = name.chars().filter(|c| !c.is_control()).take(40).collect();
+    mutate(dir, |l| {
+        l.retain(|s| s.id != id);
+        l.push(Saved { id: id.clone(), name, ip: Ipv4Addr::UNSPECIFIED, port: 0, paired_at: now_ms(), last_ok: Some(now_ms()), relay_x: Some(x.to_string()) });
+    })
+}
+
+/// 반대 방향 열쇠 넘기기(C-3b-3) — 앱끼리 짝짓기 마무리라 참모·스크립트 허용 목록(allowed)을 안 지난다
+pub fn key_back_now(id: &str, token: &str) -> Result<(), String> {
+    let x = relay_x_of(id).ok_or("중계로 이은 컴퓨터가 아니에요")?;
+    let body = serde_json::json!({ "token": token }).to_string();
+    let r = call_any(&keychain(), &data_dir(), id, Some(Ipv4Addr::UNSPECIFIED), "POST", "/api/peer-key-back", Some(&body), &relay_send(id, x))?;
+    if r.status == 200 { Ok(()) } else { Err(format!("HTTP {}", r.status)) }
+}
+
+pub fn store_relay_key(relay: &str, token: &str) -> Result<(), String> {
+    keychain().set(&service(), &relay_key_account(relay), &Secret::new(token.to_string())).map_err(|e| format!("{e:?}"))
+}
+
+
 /// 짝짓기(실제 테일넷·키체인) — 앱 화면과 scripts/peer(appctl) 가 같이 쓴다
 pub fn pair_now(id: &str, code: &str) -> Result<(), String> {
     let (route, json) = tailnet()?;
@@ -568,6 +658,9 @@ pub fn pair_now(id: &str, code: &str) -> Result<(), String> {
 }
 
 pub fn unpair_now(id: &str) -> Result<(), String> {
+    if let Some(x) = relay_x_of(id) {
+        return relay_unlink(&keychain(), &data_dir(), &crate::mobile::devices(), id, &relay_send(id, x));
+    }
     unpair_with(&keychain(), &data_dir(), &crate::mobile::devices(), id)
 }
 
@@ -657,9 +750,33 @@ fn route_and_peers() -> Result<(Route, Vec<TsPeer>), String> {
 }
 
 pub fn call_now(id: &str, method: &str, path: &str, body: Option<&str>) -> Result<CallOut, String> {
+    if let Some(x) = relay_x_of(id) {
+        return call(&keychain(), &data_dir(), id, Some(Ipv4Addr::UNSPECIFIED), method, path, body, &relay_send(id, x));
+    }
     let (route, peers) = route_and_peers()?;
     let here = peers.iter().find(|p| p.id == id).map(|p| p.ip);
     call(&keychain(), &data_dir(), id, here, method, path, body, &real_send(route))
+}
+
+/// 중계로 짝지은 컴퓨터면 그 터널 열쇠 — 테일넷을 안 본다(테일스케일 없이가 기본, 11-01)
+fn relay_x_of(id: &str) -> Option<String> {
+    id.starts_with("relay:").then(|| load(&data_dir()).into_iter().find(|s| s.id == id).and_then(|s| s.relay_x)).flatten()
+}
+
+/// 테일넷 대신 중계 손님 소켓으로 보내는 길(peer_conn) — 받는 쪽 폰 서버 문·응답 상한은 테일넷과 같다
+fn relay_send(id: &str, x: String) -> impl Fn(&Target, &Request, Duration, usize) -> Result<Response, NetErr> {
+    let hub = id.trim_start_matches("relay:").to_string();
+    move |_t, r, wait, max| {
+        let resp = crate::peer_conn::call_relay(&hub, &x, r.token.unwrap_or_default(), r.method, r.path, r.body, wait).map_err(|e| match e.as_str() {
+            crate::peer_conn::OFFLINE => NetErr::Refused,
+            "timeout" => NetErr::Timeout,
+            _ => NetErr::Io(e),
+        })?;
+        if resp.body.len() > max {
+            return Err(NetErr::TooBig);
+        }
+        Ok(resp)
+    }
 }
 
 /// 메인 창만 — 모드·리더·웹 페이지 창은 다른 기기 참모 길을 못 부른다
@@ -684,9 +801,14 @@ pub fn human_body(mut v: serde_json::Value, cid: &str, now: u64) -> Result<Strin
 pub(crate) fn human_now(id: &str, path: &str, v: serde_json::Value) -> Result<serde_json::Value, String> {
     let cid = format!("h-{}", crate::mobile_pair::random_hex(8).map_err(|e| e.to_string())?);
     let body = human_body(v, &cid, now_ms())?;
-    let (route, peers) = route_and_peers()?;
-    let here = peers.iter().find(|p| p.id == id).map(|p| p.ip);
-    let r = call_human(&keychain(), &data_dir(), id, here, path, &body, &real_send(route))?;
+    let r = match relay_x_of(id) {
+        Some(x) => call_human(&keychain(), &data_dir(), id, Some(Ipv4Addr::UNSPECIFIED), path, &body, &relay_send(id, x))?,
+        None => {
+            let (route, peers) = route_and_peers()?;
+            let here = peers.iter().find(|p| p.id == id).map(|p| p.ip);
+            call_human(&keychain(), &data_dir(), id, here, path, &body, &real_send(route))?
+        }
+    };
     let text = r.text.unwrap_or_default();
     if !(200..300).contains(&r.status) {
         return Err(if text.trim().is_empty() { format!("HTTP {}", r.status) } else { text });

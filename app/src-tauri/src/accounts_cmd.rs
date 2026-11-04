@@ -50,7 +50,7 @@ fn same(a: &Value, b: &Value) -> bool {
 pub fn view(pool: &Pool, live_oauth: Option<&Value>) -> View {
     let active = live_oauth.and_then(|o| pool.accounts.iter().find(|a| same(&a.oauth, o))).map(|a| a.id.clone());
     View {
-        accounts: pool.accounts.iter().map(|a| Row { id: a.id.clone(), name: a.name.clone(), email: a.email.clone(), plan: a.plan.clone() }).collect(),
+        accounts: pool.accounts.iter().map(|a| Row { id: a.id.clone(), name: a.name.clone(), email: a.email.clone(), plan: accounts::plan_name(a, live_oauth) }).collect(),
         active,
         live_email: live_oauth.and_then(|o| o.get("emailAddress")).and_then(Value::as_str).map(str::to_string),
         live_plan: live_oauth.map(|o| accounts::plan_of(o).0).filter(|p| !p.is_empty()),
@@ -118,6 +118,9 @@ fn phone_auto(auto: &Value, ids: &[String]) -> Value {
                 }
             }
         }
+        if s.get("noFive") == Some(&Value::Bool(true)) {
+            o.insert("noFive".into(), true.into());
+        }
         if let Some(w) = s.get("why").and_then(Value::as_str).filter(|w| matches!(*w, "five" | "week" | "limit")) {
             o.insert("why".into(), w.into());
         }
@@ -131,7 +134,7 @@ pub fn phone_view(pool: &Pool, live_oauth: Option<&Value>) -> PhoneView {
     let v = view(pool, live_oauth);
     let ids: Vec<String> = pool.accounts.iter().map(|a| a.id.clone()).collect();
     PhoneView {
-        accounts: pool.accounts.iter().map(|a| PhoneRow { id: a.id.clone(), name: phone_name(&a.name, &a.email), plan: a.plan.clone() }).collect(),
+        accounts: pool.accounts.iter().map(|a| PhoneRow { id: a.id.clone(), name: phone_name(&a.name, &a.email), plan: accounts::plan_name(a, live_oauth) }).collect(),
         live_name: if v.active.is_none() { v.live_email.as_deref().map(|e| phone_name("", e)).filter(|n| !n.is_empty()) } else { None },
         active: v.active,
         live_plan: v.live_plan,
@@ -515,7 +518,7 @@ mod tests {
         let o2 = json!({ "accountUuid": "u2", "organizationUuid": "o2", "emailAddress": "side@mail.com" });
         let auto = json!({
             "on": true, "pinned": "a2", "switchedAt": 5, "allOutUntil": 9, "v": 2,
-            "slots": { "a1": { "five": { "used": 40.0, "resetsAt": 100 }, "week": { "used": 96.0, "resetsAt": 200 }, "seenAt": 7, "blockedUntil": 300, "why": "week", "fp": 1, "blockFp": 1, "openedAt": 2, "secret": "x" }, "gone": { "seenAt": 1 } },
+            "slots": { "a1": { "five": { "used": 40.0, "resetsAt": 100 }, "week": { "used": 96.0, "resetsAt": 200 }, "seenAt": 7, "blockedUntil": 300, "why": "week", "fp": 1, "blockFp": 1, "openedAt": 2, "secret": "x" }, "a2": { "noFive": true, "week": { "used": 3.0, "resetsAt": 200 } }, "gone": { "seenAt": 1 } },
             "nudged": { "f00d-session": 1 }, "learn": { "for": "a1", "fp": 1, "first": 1, "n": 1, "lastAt": 1 }
         });
         let pool = Pool {
@@ -543,6 +546,9 @@ mod tests {
         assert_eq!(v.auto["slots"]["a1"]["week"]["used"], json!(96.0));
         assert_eq!(v.auto["slots"]["a1"]["blockedUntil"], json!(300));
         assert_eq!(v.auto["slots"]["a1"]["why"], json!("week"));
+        // 5시간 한도 없음(Ultra)도 폰에 — 없으면 '못 읽음'과 같아 보인다
+        assert_eq!(v.auto["slots"]["a2"]["noFive"], json!(true));
+        assert_eq!(v.auto["slots"]["a1"].get("noFive"), None);
         assert!(!v.switching);
         // 칸에 없는 로그인 — 이메일 앞부분만
         let other = json!({ "accountUuid": "u9", "emailAddress": "who.else@x.org" });
@@ -565,6 +571,11 @@ mod tests {
         let v = view(&pool, Some(&a));
         assert_eq!(v.active.as_deref(), Some("a1"));
         assert_eq!(v.live_plan.as_deref(), Some("Max 5x"));
+        // 옛 기록에 "Max 20x" 로 남은 칸도 보일 땐 지금 이름으로
+        let b = json!({ "accountUuid": "u3", "organizationUuid": "o3", "organizationRateLimitTier": "default_claude_max_20x" });
+        let old = Pool { accounts: vec![Account { id: "a3".into(), plan: "Max 20x".into(), oauth: b, ..Default::default() }], ..pool.clone() };
+        assert_eq!(view(&old, None).accounts[0].plan, "Ultra");
+        assert_eq!(phone_view(&old, None).accounts[0].plan, "Ultra");
         let other = json!({ "accountUuid": "u2", "emailAddress": "b@x.com" });
         let v = view(&pool, Some(&other));
         assert_eq!((v.active, v.live_email.as_deref()), (None, Some("b@x.com")));

@@ -92,9 +92,11 @@ fn 심볼릭_링크로_밖을_가리키면_거절() {
 
 #[test]
 fn 스크립트가_도는_형식은_글로() {
-    for p in ["a.html", "a.htm", "a.svg", "a.xhtml", "a.js", "a.md", "noext"] {
+    for p in ["a.html", "a.htm", "a.xhtml", "a.js", "a.md", "noext"] {
         assert_eq!(kind_of(Path::new(p)), Kind::Text, "{p}");
     }
+    // svg 는 디자인 파일 — 원본은 아예 안 나가고(그림으로 그려 스크립트가 돌 일이 없다) QuickLook JPEG 썸네일만(11-01)
+    assert_eq!(kind_of(Path::new("a.svg")), Kind::Design);
     assert_eq!(kind_of(Path::new("a.PNG")), Kind::Image("image/png"));
     assert_eq!(kind_of(Path::new("a.heic")), Kind::Heic);
     assert_eq!(kind_of(Path::new("a.pdf")), Kind::Pdf);
@@ -722,4 +724,68 @@ fn 데이터_폴더는_다른_철자로도_못_빠져나간다() {
     assert!(!shareable(&d.join("CHAMMODATA/sub/../push-vapid.json"), &r));
     std::fs::write(d.join("note.md"), "x").unwrap();
     assert!(shareable(&d.join("note.md"), &r), "데이터 폴더 밖은 그대로");
+}
+
+#[test]
+fn 디자인_파일은_썸네일_길에서만_보인다() {
+    // 11-01: svg·ai·eps·psd — pick_thumb(썸네일)만, pick(원본)은 그대로 막힌다
+    let r = rules(nd(), "");
+    for p in ["/u/logo.svg", "/u/간판.AI", "/u/a.eps", "/u/표지.psd"] {
+        assert_eq!(kind_of(Path::new(p)), Kind::Design, "{p}");
+        assert!(wants_quicklook(Path::new(p)), "{p}");
+        assert!(!shareable(Path::new(p), &r), "{p} 원본은 안 나간다");
+        assert!(thumb_shareable(Path::new(p), &r), "{p}");
+    }
+    // 이름·자리 거름은 그대로
+    for p in ["/u/token.psd", "/u/.secret/a.ai", "/nonexistent-data/x.svg"] {
+        assert!(!thumb_shareable(Path::new(p), &r), "{p}");
+    }
+    // htm 은 html 과 같다
+    assert!(shareable(Path::new("/u/v1.htm"), &r));
+}
+
+#[test]
+fn 팀_파일_첫_장은_남이_올린_html_svg_를_빼고() {
+    for p in ["a.pdf", "a.docx", "a.xlsx", "a.pptx", "a.mov", "a.ai", "a.eps", "a.psd", "a.hwpx"] {
+        assert!(team_page(Path::new(p)), "{p}");
+    }
+    for p in ["a.html", "a.htm", "a.svg", "a.png", "a.zip", "a.md", "a.hwp"] {
+        assert!(!team_page(Path::new(p)), "{p}");
+    }
+}
+
+#[test]
+fn 한글_hwpx_는_속_첫_장_그림을_꺼내고_흰_장은_버린다() {
+    // 11-01 실측: QuickLook 이 hwpx 에서 20초 헛돈다 — 한글이 넣어 둔 Preview/PrvImage.png 를 쓴다
+    let d = tmp("hwpx");
+    std::fs::create_dir_all(&d).unwrap();
+    let png = |w: u32, h: u32, len: usize| {
+        let mut b = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        b.extend_from_slice(&w.to_be_bytes());
+        b.extend_from_slice(&h.to_be_bytes());
+        b.resize(len, 7);
+        b
+    };
+    let hwpx = |name: &str, img: Option<Vec<u8>>| {
+        let p = d.join(name);
+        let mut z = zip::ZipWriter::new(std::fs::File::create(&p).unwrap());
+        let o: zip::write::SimpleFileOptions = Default::default();
+        z.start_file("Contents/section0.xml", o).unwrap();
+        std::io::Write::write_all(&mut z, b"<hs:sec/>").unwrap();
+        if let Some(b) = img {
+            z.start_file("Preview/PrvImage.png", o).unwrap();
+            std::io::Write::write_all(&mut z, &b).unwrap();
+        }
+        z.finish().unwrap();
+        p
+    };
+    let real = png(724, 1024, 40_000);
+    assert_eq!(hwpx_preview(&hwpx("신청서.hwpx", Some(real.clone()))), Some(real));
+    // 도구가 만든 흰 장(724×1024 에 4.4KB — 시험 파일 실측)은 None
+    assert_eq!(hwpx_preview(&hwpx("흰장.hwpx", Some(png(724, 1024, 4485)))), None);
+    assert_eq!(hwpx_preview(&hwpx("없음.hwpx", None)), None);
+    // hwpx 가 아니면 안 본다
+    let docx = d.join("a.docx");
+    std::fs::copy(d.join("신청서.hwpx"), &docx).unwrap();
+    assert_eq!(hwpx_preview(&docx), None);
 }

@@ -4,12 +4,12 @@ import { useContext, useState } from 'react';
 import { personColor } from '../../domain/teamChat';
 import { blankContent, GOALS_MAX, goalFix, LINKS_MAX, linkProblem, NOTE_MAX, recentFiles, specOf, type Content, type ContentDraft, type HomeBlock } from '../../domain/teamHome';
 import type { AgentShown } from '../../domain/teamAgent';
-import { extOf, whenText, type LockerItem } from '../../domain/teamLocker';
+import { whenText, type LockerItem } from '../../domain/teamLocker';
 import { lookOf, statusLine } from '../../domain/teamProfile';
 import { tr } from '../../i18n';
 import { IconClose, IconPencil, IconPlus } from '../Icons';
 import { IconButton } from '../kit/IconButton';
-import { AgentFace } from './RoomBits';
+import { AgentFace, FileMini } from './RoomBits';
 import { PersonOf } from './TeamFaces';
 import { ProfilesCtx } from './useProfiles';
 
@@ -22,6 +22,8 @@ export type BlockData = {
   onTalk?: (text: string) => void;
   openFile?: (i: LockerItem) => void;
   canOpen?: (i: LockerItem) => boolean;
+  /** 줄 앞 작은 첫 장 — 없거나 null 이면 확장자 표 */
+  thumb?: (i: LockerItem) => Promise<string | null>;
   openUrl: (url: string) => void;
   saveContent: (block: string, c: ContentDraft) => Promise<unknown>;
   nameOf: (member: string) => string;
@@ -70,7 +72,7 @@ function Files({ d, n }: { d: BlockData; n: number }) {
   return (
     <div className="hb-rows">
       {list.map((i) => {
-        const inner = <><span className="hb-ext" aria-hidden="true">{extOf(i.name)}</span><span className="hb-tx"><b>{i.name}</b><span>{[d.nameOf(i.byMember), whenText(i.at)].filter(Boolean).join(' · ')}</span></span></>;
+        const inner = <><FileMini className="hb-ext" id={i.id} name={i.name} get={d.thumb && (() => d.thumb!(i))} /><span className="hb-tx"><b>{i.name}</b><span>{[d.nameOf(i.byMember), whenText(i.at)].filter(Boolean).join(' · ')}</span></span></>;
         return d.openFile && (d.canOpen?.(i) ?? true) ? <button key={i.id} className="hb-row" onClick={() => d.openFile!(i)}>{inner}</button> : <div key={i.id} className="hb-row">{inner}</div>;
       })}
     </div>

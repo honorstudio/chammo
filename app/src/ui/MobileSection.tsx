@@ -1,4 +1,5 @@
 // 설정 > 기기 관리 > 폰 — 폰에서 참모를 여는 서버 켜기/끄기, 폰 연결 QR(10분 한 번짜리 짝짓기), 연결된 기기·끊기(Rust mobile.rs). 기본 꺼짐.
+// 11-01: 계정이 있으면 켜고 끄기는 위 '내 기기' 칸의 폰 연결 스위치 하나 — 여긴 테일스케일 덤 칸이라 같은 스위치를 또 두지 않는다
 // 목록은 폰 단위 — 사파리·홈 화면 앱(열쇠 둘)을 한 줄로 묶고 칸은 작은 글로(domain/mobileDevices)
 import { useEffect, useState } from 'react';
 import { mobileApi, openTarget, writeClipboard, type MobileStatus, type PairQr } from '../data/tauri';
@@ -7,6 +8,7 @@ import { kindLabels, lastPaired, phoneGroups } from '../domain/mobileDevices';
 import { IconClose, IconPower, IconUnlink } from './Icons';
 import { IconButton } from './kit/IconButton';
 import { tr } from '../i18n';
+import { teamStatus } from '../data/teamApi';
 import { phoneReachHint } from './phoneReach';
 
 const day = (ms: number) => { const d = new Date(ms); return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
@@ -26,7 +28,9 @@ export function MobileSection({ title, onAccount }: { title: string; onAccount?:
   // 모두 끊기는 두 번 — 웹뷰 confirm 창 대신 그 자리에서 한 번 더 묻는다
   const [clearing, setClearing] = useState(false);
 
-  useEffect(() => { void mobileApi.status().then(setSt, (e: unknown) => setErr(String(e))); }, []);
+  // Chammo 계정에 로그인했나 — 그러면 켜기·끄기는 위 내 기기 칸에서(테일스케일 없이 붙는 길이 기본)
+  const [hasAccount, setHasAccount] = useState(false);
+  useEffect(() => { void mobileApi.status().then(setSt, (e: unknown) => setErr(String(e))); void teamStatus().then((v) => setHasAccount(!!v.account), () => {}); }, []);
   // QR 이 떠 있는 동안 — 남은 시간을 세고, 기기가 붙으면(열쇠를 새로 내줬으면 — 같은 폰은 줄이 안 는다) QR 을 거둔다
   useEffect(() => {
     if (!qr) return;
@@ -45,7 +49,10 @@ export function MobileSection({ title, onAccount }: { title: string; onAccount?:
     void f().then(setSt, (e: unknown) => setErr(String(e))).finally(() => setBusy(false));
   };
   const phones = phoneGroups(st?.devices ?? []);
-  const reach = st ? phoneReachHint(st.relayReady) : null;
+  // 켜짐 = 테일넷 서버를 켰거나 중계 길이 준비됨(계정 + 끄지 않음)
+  const on = !!st && (st.on || st.relayReady);
+  // 계정이 있는데 꺼 둔 상태면 로그인 권유 대신 아래 '꺼져 있어요' 한 줄만
+  const reach = st && !(hasAccount && !st.relayReady) ? phoneReachHint(st.relayReady) : null;
   const kindWords = { safari: tr('사파리', 'Safari'), browser: tr('브라우저', 'Browser'), home: tr('홈 화면 앱', 'Home Screen app'), peer: tr('다른 기기 참모', 'Chammo on another device') };
   const newQr = () => {
     setErr(null);
@@ -56,7 +63,7 @@ export function MobileSection({ title, onAccount }: { title: string; onAccount?:
     <section className="su-sec">
       <div className="su-sec-head">
         <h2>{title}</h2>
-        {st && (
+        {!hasAccount && st && (
           <IconButton size="l" tone={st.on ? 'line' : 'pri'} pressed={st.on} label={st.on ? tr('끄기', 'Turn off') : tr('켜기', 'Turn on')} disabled={busy} onClick={() => { setQr(null); act(() => mobileApi.set(!st.on)); }}><IconPower /></IconButton>
         )}
       </div>
@@ -64,15 +71,15 @@ export function MobileSection({ title, onAccount }: { title: string; onAccount?:
         {tr('폰에서 참모와 채팅하고 세션·예약을 봐요. 폰마다 연결 QR을 한 번 찍으면 그 폰 전용 열쇠가 생겨요. QR은 10분 안에 한 번만 써요',
           'Chat with your assistant and check sessions and routines from your phone. Scan a connect QR once per phone and it gets its own key. A QR works once, within 10 minutes.')}
       </p>
-      {st && <span className="su-hint">{reach!.text}</span>}
-      {st && reach!.login && onAccount && <div className="su-inline"><button className="btn" onClick={onAccount}>{tr('Chammo 계정에 로그인', 'Sign in to Chammo account')}</button></div>}
-      {st && !st.on && <span className="su-hint">{tr('꺼져 있어요 — 오른쪽 위 단추로 켜요.', 'Off — turn it on with the button at the top right.')}</span>}
-      {st?.relayReady && st.on && (
+      {reach && <span className="su-hint">{reach.text}</span>}
+      {reach && reach.login && onAccount && <div className="su-inline"><button className="btn" onClick={onAccount}>{tr('Chammo 계정에 로그인', 'Sign in to Chammo account')}</button></div>}
+      {st && !on && <span className="su-hint">{hasAccount ? tr('꺼져 있어서 폰이 이 컴퓨터에 붙지 않아요.', "Off, so phones can't connect to this computer.") : tr('꺼져 있어요 — 오른쪽 위 단추로 켜요.', 'Off — turn it on with the button at the top right.')}</span>}
+      {st?.relayReady && (
         <span className="su-hint">{st.relay.connected
           ? tr(`중계 연결됨 — 지금 폰 ${st.relay.phones}대`, `Relay connected — ${st.relay.phones} phone(s) now`)
           : tr(`중계에 붙는 중… ${st.relay.error ?? ''}`, `Connecting to the relay… ${st.relay.error ?? ''}`)}</span>
       )}
-      {st?.on && (st.running || st.relayReady) && (
+      {on && st && (st.running || st.relayReady) && (
         <>
           {qr ? (
             <div className="su-mobile">

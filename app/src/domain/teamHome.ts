@@ -31,6 +31,8 @@ export type HomeSources = {
   openFile?: (team: string, i: LockerItem) => void;
   /** 이 줄을 열 수 있나 — 없으면 다(데스크톱). 폰은 그림·PDF 만 */
   canOpen?: (i: LockerItem) => boolean;
+  /** 줄 앞 작은 첫 장(11-01) — 그림 주소, 못 그리면 null(확장자 표) */
+  thumb?: (team: string, i: LockerItem) => Promise<string | null>;
   openUrl: (url: string) => void;
 };
 

@@ -98,21 +98,21 @@ pub async fn team_ui_join(window: tauri::WebviewWindow, invite: String, me: Stri
     if code.is_empty() || code.len() > 400 {
         return Err("초대 링크가 비었거나 너무 길어".into());
     }
-    human_job(move |d, _, _| {
-        let st = crate::team_relay::load_state(d);
-        // 링크 안 서버를 쓴다 — 로그인 안 한 기기는 서버가 없으니 링크가 서버를 준다
-        let mut req = match team_arg(&st, "join", &me, json!({ "code": code })) {
-            Ok(r) => r,
-            Err(_) if crate::team_relay::parse_invite(&code).0.is_some() => {
-                let me = name_ok(&me).ok_or("내 이름이 비었어")?;
-                TeamReq { id: "ui".into(), verb: "join".into(), arg: json!({ "verb": "join", "server": "", "me": me, "device": crate::team_account::default_device_name(), "code": code }) }
-            }
-            Err(e) => return Err(e),
-        };
-        req.arg["server"] = json!(if st.server.is_empty() { String::new() } else { st.server.clone() });
-        run(d, &req)
-    })
-    .await
+    human_job(move |d, _, _| run(d, &join_req(&crate::team_relay::load_state(d), &code, &me)?)).await
+}
+
+/// 초대로 들어오기 요청 — 데스크톱 겹창·폰 + 시트가 같이 쓴다. 링크 안 서버를 쓴다(로그인 안 한 기기는 서버가 없으니 링크가 서버를 준다)
+pub fn join_req(st: &crate::team_relay::TeamState, code: &str, me: &str) -> Result<TeamReq, String> {
+    let mut req = match team_arg(st, "join", me, json!({ "code": code })) {
+        Ok(r) => r,
+        Err(_) if crate::team_relay::parse_invite(code).0.is_some() => {
+            let me = name_ok(me).ok_or("내 이름이 비었어")?;
+            TeamReq { id: "ui".into(), verb: "join".into(), arg: json!({ "verb": "join", "server": "", "me": me, "device": crate::team_account::default_device_name(), "code": code }) }
+        }
+        Err(e) => return Err(e),
+    };
+    req.arg["server"] = json!(if st.server.is_empty() { String::new() } else { st.server.clone() });
+    Ok(req)
 }
 
 /// 초대 링크 만들기(팀장 기기만 — 서버가 가른다)
@@ -536,9 +536,14 @@ fn clipboard_text() -> Option<String> {
 }
 
 /// 폰 팀 시트(초대 링크·팀 만들기) — 데스크톱 화면과 같은 길(scripts/team answer)
-pub fn phone_job(verb: &str, extra: Value) -> Result<Value, String> {
+pub fn phone_job(verb: &str, me: &str, extra: Value) -> Result<Value, String> {
     let dir = crate::config::data_dir();
-    let req = if verb == "invite" { TeamReq { id: "ui".into(), verb: "invite".into(), arg: json!({ "verb": "invite" }) } } else { team_arg(&crate::team_relay::load_state(dir), verb, "", extra)? };
+    let st = crate::team_relay::load_state(dir);
+    let req = match verb {
+        "invite" => TeamReq { id: "ui".into(), verb: "invite".into(), arg: json!({ "verb": "invite" }) },
+        "join" => join_req(&st, extra["code"].as_str().unwrap_or(""), me)?,
+        _ => team_arg(&st, verb, me, extra)?,
+    };
     run(dir, &req)
 }
 

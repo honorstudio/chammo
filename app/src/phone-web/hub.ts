@@ -1,6 +1,6 @@
 // 폰 → 중계 허브 → 컴퓨터 터널 (ADR 0013). fetch 와 같은 모양(Response)으로 돌려줘서 data/web.ts 의 call() 이 그대로 쓴다.
 // 틀 봉하기·열기는 번호 차례가 생명이라 줄(queue) 하나로만. 끊기면 기다리던 요청은 망 오류(fetch 처럼 TypeError)로 끝나고 다음 요청이 다시 붙는다
-import { agree, b64, DATA, HELLO, helloFrame, NONCE_LEN, Session, unb64 } from './tunnel';
+import { agree, b64, DATA, HELLO, helloFrame, NONCE_LEN, RESET, Session, unb64 } from './tunnel';
 import { phoneKeys } from './keys';
 import { wsUrl } from './relayClient';
 import type { RelayLink } from './link';
@@ -20,8 +20,17 @@ const dec = new TextDecoder();
 
 /** 컴퓨터가 허브에 없다(꺼짐·잠듦·앱 꺼짐) */
 export class OfflineError extends TypeError {
+  override name = 'OfflineError'; // 화면 글은 이름으로 가른다(domain/unreach netText)
   constructor() {
     super('컴퓨터 Chammo 가 꺼져 있어요');
+  }
+}
+
+/** 붙은 상대가 QR 의 그 컴퓨터인지 확인이 안 됨 — 다시 짝지어야 한다 */
+export class TrustError extends TypeError {
+  override name = 'TrustError';
+  constructor() {
+    super('컴퓨터 확인 실패');
   }
 }
 
@@ -115,7 +124,10 @@ export class HubTunnel {
           this.ownerOn = !!m.on;
           this.onOwner?.(!!m.on);
           if (!m.on) { done(new OfflineError()); this.fail(new OfflineError()); return; }
-          if (!this.session) ws.send(JSON.stringify({ t: 'f', d: b64(helloFrame(unb64(k.xPub), nP)) }));
+          // 세션이 있는데 on 이 또 옴 = 맥이 허브에 다시 붙어 터널 세션을 다 잊었다 — 옛 세션으로 보내면 맥이 버린다(11-04 03:07, 2분 넘게 먹통).
+          // 끊고 다음 요청이 새로 악수한다(받기는 netRetry, 보내기는 같은 cid 로 다시)
+          if (this.session) { if (this.ws === ws) this.fail(new TypeError('Load failed')); return; }
+          ws.send(JSON.stringify({ t: 'f', d: b64(helloFrame(unb64(k.xPub), nP)) }));
           return;
         }
         if (m.t !== 'f' || typeof m.d !== 'string') return;
@@ -127,9 +139,12 @@ export class HubTunnel {
               done();
             } catch (e) {
               // 확인이 안 풀림 = QR 의 컴퓨터 열쇠와 다른 상대 — 바로 끊는다
-              done(new TypeError('컴퓨터 확인 실패'));
+              done(new TrustError());
               this.fail(e);
             }
+          } else if (frame[0] === RESET) {
+            // 맥이 이 세션을 모른다 — owner 알림을 놓쳐도(중계가 맥 끊김을 못 봄) 여기서 알아챈다. 지금 소켓 것만
+            if (this.ws === ws) this.fail(new TypeError('Load failed'));
           } else if (frame[0] === DATA && this.session) {
             try { this.take(await this.session.open(frame)); } catch (e) { this.fail(e); }
           }

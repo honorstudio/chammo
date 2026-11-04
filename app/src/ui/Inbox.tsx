@@ -10,6 +10,8 @@ const KIND = (): Record<InboxItem['kind'], string> => ({
   ask: tr('물어봄', 'Question'), blocked: tr('확인창', 'Prompt'), decide: tr('결정', 'Decision'),
 });
 
+const PLAIN_HINT = () => tr('답을 적어 주세요', 'Type your answer');
+
 const time = (iso: string) => {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleString(tr('ko-KR', 'en-US'), { hour: '2-digit', minute: '2-digit' });
@@ -35,7 +37,8 @@ type Props = {
 };
 
 /** 물음 한 줄 — 결정 대기함과 홈 결정 펼침(그 자리에서 답장)이 같이 쓴다 */
-export function InboxRow({ item, onReply, onOpen, onDismiss, blockedWhy }: { item: InboxItem } & Pick<Props, 'onReply' | 'onOpen' | 'onDismiss' | 'blockedWhy'>) {
+/** plain = 보관함 프로젝트 '내가 볼 차례' 카드 안 — 머리줄(종류·폴더 이름·시각)은 카드 제목이 대신하고 자리글은 사람 말로 */
+export function InboxRow({ item, onReply, onOpen, onDismiss, blockedWhy, plain }: { item: InboxItem; plain?: boolean } & Pick<Props, 'onReply' | 'onOpen' | 'onDismiss' | 'blockedWhy'>) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [fail, setFail] = useState('');
@@ -60,11 +63,13 @@ export function InboxRow({ item, onReply, onOpen, onDismiss, blockedWhy }: { ite
   };
   return (
     <div className="inbox-item">
-      <div className="card-top">
-        <span className="tag needsInput">{KIND()[item.kind]}</span>
-        <b>{item.project}{item.where && <span className="dim"> · {item.where}</span>}</b>
-        <span className="dim">{time(item.ts)}</span>
-      </div>
+      {!plain && (
+        <div className="card-top">
+          <span className="tag needsInput">{KIND()[item.kind]}</span>
+          <b>{item.project}{item.where && <span className="dim"> · {item.where}</span>}</b>
+          <span className="dim">{time(item.ts)}</span>
+        </div>
+      )}
       {item.lead && <div className="inbox-lead">{item.lead}</div>}
       <div className={`inbox-text${open ? ' open' : ''}`}>
         <div className="inbox-q">{note.head}</div>
@@ -78,7 +83,7 @@ export function InboxRow({ item, onReply, onOpen, onDismiss, blockedWhy }: { ite
         <div className="inbox-reply">
           <input
             className="inp"
-            placeholder={replyHint(item)}
+            placeholder={plain ? PLAIN_HINT() : replyHint(item)}
             value={text}
             disabled={busy}
             onChange={(e) => setText(e.target.value)}

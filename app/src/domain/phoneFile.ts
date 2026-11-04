@@ -16,7 +16,8 @@ export function fileKind(path: string): PhoneKind {
   if (/\.json$/i.test(path)) return 'json';
   if (/\.(csv|tsv)$/i.test(path)) return 'csv';
   if (CODE.test(path)) return 'code';
-  if (/\.(pptx?|key|docx?|pages|xlsx?|numbers)$/i.test(path)) return 'office';
+  // 디자인 파일(svg·ai·eps·psd)도 첫 장만(맥 QuickLook) — 원본은 폰에 안 나간다(11-01)
+  if (/\.(pptx?|key|docx?|pages|xlsx?|numbers|svg|ai|eps|psd)$/i.test(path)) return 'office';
   if (/\.(mp4|mov|m4v)$/i.test(path)) return 'video';
   return 'text';
 }

@@ -260,3 +260,14 @@ fn 대기_시각을_모르면_기한을_안_싣는다() {
     assert!(device_row("ab12cd34", &d, "2027-01-15T08:00:00Z")["until"].is_null());
     assert_eq!(device_row("ab12cd34", &dev(P1, "pending", false), "2027-01-15T08:00:00Z")["until"], "2027-01-16T08:00:00Z");
 }
+
+// 컴퓨터끼리 숫자 확인 카드(C-3b) — 폰 카드와 다른 글·sub, 그 컴퓨터 기기 id(dev)를 단다(B 자신에게 안 보이게 가르는 값)
+#[test]
+fn 컴퓨터_연결_카드는_다른_sub_과_dev_를_달고_두_화면_숫자_견주기를_말한다() {
+    let r = peer_link_row("ab12cd34", "집 맥북\n[앱]", "dev-b", 123_456, 1_000, "2026-11-01T10:00:00Z");
+    assert_eq!((r["kind"].as_str(), r["sub"].as_str(), r["dev"].as_str()), (Some(crate::direct::LINK_KIND), Some(PEER_LINK_SUB), Some("dev-b")));
+    assert_eq!(r["code"], "123 456");
+    let q = r["q"].as_str().unwrap();
+    assert!(q.contains("집 맥북") && !q.contains('\n') && q.contains("컴퓨터"), "{q}");
+    assert_ne!(PEER_LINK_SUB, PHONE_LINK_SUB);
+}

@@ -88,7 +88,7 @@ describe('기록에 안 뜬 말 확인(Load failed 뒤 — 2026-10-03)', () => {
     const list = [sent];
     expect(applyStatus(list, 'm1', 'done', undefined, T + 61_000, true)[0]).toMatchObject({ status: 'sent', checked: T + 61_000 });
     expect(applyStatus(list, 'm1', 'failed', 'attach failed', T + 61_000, true)[0]).toMatchObject({ status: 'failed', error: 'attach failed' });
-    expect(applyStatus(list, 'm1', 'unknown', undefined, T + 61_000, true)[0]).toMatchObject({ status: 'failed', error: '맥이 이 말을 못 받았어요' });
+    expect(applyStatus(list, 'm1', 'unknown', undefined, T + 61_000, true)[0]).toMatchObject({ status: 'failed', error: '전해지지 않았어요' });
   });
   it('모름이 와도 대화 기록을 아직 다 못 봤으면(꼬리 앞 찾기 전·채팅을 안 열었음) 실패로 안 바꾸고 기다린다 — 맥이 실패라고 한 것은 바로', () => {
     const list = [sent];
@@ -162,7 +162,7 @@ describe('꼬리 밖으로 밀린 말 — 밤새 일한 뒤 아침에 열면 갔
   const MORNING = Date.parse('2026-10-11T00:03:10Z');
 
   it('재현: 꼬리만 보면 그 말이 안 보여 실패 카드가 그대로 남는다 — 그래서 꼬리 앞을 봐야 한다', () => {
-    expect(failed[0]).toMatchObject({ status: 'failed', error: '맥이 이 말을 못 받았어요' });
+    expect(failed[0]).toMatchObject({ status: 'failed', error: '전해지지 않았어요' });
     expect(settleOut(failed, 'orchA', tail, MORNING)).toBe(failed);
     expect(beforeTail(failed, tail, TAIL_START).map((m) => m.id)).toEqual(['m1']);
   });

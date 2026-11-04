@@ -22,6 +22,7 @@ const users = require('../src/users');
 const { createShare, scriptHolder } = require('../src/share');
 const { createDialogAnswer } = require('../src/dialogs');
 const { createWinShow, SIGNED } = require('../src/winshow');
+const { quietSignin } = require('../src/features');
 
 const profile = process.argv[2];
 if (!profile) {
@@ -194,6 +195,11 @@ relay = createRelay({
   profile,
   acquire: () => {
     const r = lock.acquire(profile, { lockDir: paths.locksDir });
+    // 락을 잡았다 = 이 도구 부름에 플레이라이트가 크롬을 띄운다 — 그 전에 구글 로그인 뒤 크롬 로그인 권유 버블 끄기(src/features.js)
+    if (r.ok) {
+      const q = quietSignin(userDataDir, { running: !!require('../src/script').singletonPid(userDataDir) });
+      if (q !== 'set' && q !== 'already') console.error(`[chammo-browser-mcp] 로그인 권유 끄기 못 함(${q}) — 크롬이 로그인 권유 버블을 띄울 수 있습니다`);
+    }
     if (r.ok || !scriptHolder(r) || !share.start(r.holder)) return r;
     console.error(`[chammo-browser-mcp] '${profile}' 를 스크립트(pid ${r.holder.pid})가 쓰고 있어 그 크롬을 같이 씁니다.`);
     return { ok: true, shared: true };

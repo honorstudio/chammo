@@ -7,8 +7,8 @@ import { remember, remembered } from './memo';
 
 export const isImage = (p: string) => p.startsWith('data:image/') || /\.(png|jpe?g|gif|webp|heic|heif)$/i.test(p);
 
-/** 썸네일 종류 — 그림은 sips, PDF·HTML 시안·오피스·영상은 맥 QuickLook 첫 장, 글(md·txt)은 앞부분을 글로 */
-const QL = /\.(pdf|html?|pptx?|key|docx?|pages|xlsx?|numbers|mp4|mov|m4v)$/i;
+/** 썸네일 종류 — 그림은 sips, PDF·HTML 시안·오피스·영상·디자인 파일은 맥 QuickLook 첫 장, 글(md·txt)은 앞부분을 글로 */
+const QL = /\.(pdf|html?|pptx?|key|docx?|pages|xlsx?|numbers|mp4|mov|m4v|svg|ai|eps|psd)$/i; // 디자인 파일은 첫 장만(11-01)
 const TEXT = /\.(md|markdown|txt|log|json|csv|tsv|ya?ml|toml|tsx?|jsx?|mjs|py|rs|sh|swift|kt|css|sql)$/i;
 const CODE = /\.(json|csv|tsv|ya?ml|toml|tsx?|jsx?|mjs|py|rs|sh|swift|kt|css|sql|log)$/i;
 

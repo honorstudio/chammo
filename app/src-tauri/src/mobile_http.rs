@@ -121,11 +121,19 @@ pub trait Backend: Send + Sync {
     fn team_handoff(&self, _to: &str, _text: &str) -> Result<serde_json::Value, String> {
         Err("not supported".into())
     }
-    /// 폰 팀 시트 — 초대 링크 만들기·팀 만들기
+    /// 폰 팀 시트 — 초대 링크 만들기·팀 만들기(me = 이 팀에서 보일 내 이름, 비면 계정 이름)
     fn team_invite(&self) -> Result<serde_json::Value, String> {
         Err("not supported".into())
     }
-    fn team_create(&self, _team: &str) -> Result<serde_json::Value, String> {
+    fn team_create(&self, _team: &str, _me: &str) -> Result<serde_json::Value, String> {
+        Err("not supported".into())
+    }
+    /// 폰 머리 팀 줄 — 지금 팀 바꾸기(11-02 팀 여러 개)
+    fn team_use(&self, _team: &str) -> Result<serde_json::Value, String> {
+        Err("not supported".into())
+    }
+    /// 폰 + 시트 — 초대 링크로 들어가기(me = 이 팀에서 보일 내 이름, 비면 계정 이름)
+    fn team_join(&self, _code: &str, _me: &str) -> Result<serde_json::Value, String> {
         Err("not supported".into())
     }
     /// 폰 팀 프로필판(별명·사진·상태) — seen = 폰이 본 판. 그 판 그대로면 {"same":true}(중계 안 부름)
@@ -161,7 +169,8 @@ pub trait Backend: Send + Sync {
         Err("not supported".into())
     }
     /// 폰 대화 파일 썸네일 — 이 맥이 풀어(팀 보관함 peek) 줄인 JPEG 만(원본은 안 준다). 그림·PDF 가 아니면 Err
-    fn team_file_thumb(&self, _team: &str, _id: &str, _size: u32) -> Result<Vec<u8>, String> {
+    /// only_at = 그 판을 이미 풀어 뒀을 때만(망 안 탐 — 팀 홈 최근 파일 줄, 11-01), None 이면 필요하면 받는다
+    fn team_file_thumb(&self, _team: &str, _id: &str, _size: u32, _only_at: Option<u64>) -> Result<Vec<u8>, String> {
         Err("not supported".into())
     }
     /// 폰 대화 그림 크게 보기(11-01) — 이 맥이 풀어(팀 보관함 peek) view 면 보기용(view_plan), 아니면 원본. 그림이 아니면 Err
@@ -188,6 +197,15 @@ pub trait Backend: Send + Sync {
     fn direct_answer_by(&self, _id: &str, _pick: &crate::direct::Pick, _by: &str) -> Result<(), String> {
         Err("not supported".into())
     }
+    /// 상대 컴퓨터가 중계 연결을 끊었다(C-5 실측 ②) — 그 컴퓨터 목록 줄·열쇠·peer 줄을 지운다. 기본은 못 받음
+    fn peer_unlink(&self, _relay: &str) -> Result<(), String> {
+        Err("not supported".into())
+    }
+    /// 반대 방향 열쇠(C-3b-3) — 중계로 짝지은 그 컴퓨터(relay)를 이 컴퓨터가 부를 열쇠를 키체인에. 기본은 못 받음
+    fn peer_key_back(&self, _relay: &str, _name: &str, _x: &str, _token: &str) -> Result<(), String> {
+        Err("not supported".into())
+    }
+
     /// 뒤에서 보내고 끝나면 done — 폰엔 받자마자 답한다(글자를 다 치는 동안 연결을 붙잡지 않게). 맥은 스레드, 시험은 그 자리에서
     fn send_later(&self, id: &str, text: &str, done: Box<dyn FnOnce(Result<(), String>) + Send>) {
         done(self.send(id, text));
@@ -285,6 +303,13 @@ pub trait Backend: Send + Sync {
     fn jpeg(&self, path: &Path, max: Option<u32>) -> Option<Vec<u8>>;
     /// QuickLook 첫 장 썸네일(JPEG, 긴 변 size) — PDF·HTML 시안·오피스·영상. 맥 qlmanage
     fn ql_thumb(&self, path: &Path, size: u32) -> Option<Vec<u8>>;
+    /// 썸네일 캐시 찾기(thumbs — 원본 경로·수정 시각·크기·px) — Some(Some) 만들어 둔 JPEG, Some(None) 전에 못 만듦, None 없음.
+    /// 폰이 열 때마다 sips·qlmanage 를 다시 돌리던 걸 막는다(2026-11-01). 시험 백엔드는 캐시 없음
+    fn thumb_get(&self, _src: &Path, _size: u32) -> Option<Option<Vec<u8>>> {
+        None
+    }
+    /// 만든 썸네일(None = 못 만듦)을 캐시에
+    fn thumb_put(&self, _src: &Path, _size: u32, _jpeg: Option<&[u8]>) {}
     /// `claude agents --json --all` 원문(꺼진 세션까지)
     fn sessions_all(&self) -> Result<String, String>;
     /// 꺼진 대화를 그대로 다시 켠다(respawn, 안 되면 이어 띄우기 — claude::resume_blocking). 폴더는 문지기가 HQ 로 골랐다
@@ -591,7 +616,8 @@ fn peer_of(req: &Req, gate: &Gate) -> Option<(String, String)> {
 fn peer_allowed(method: &str, path: &str) -> bool {
     match method {
         "GET" | "HEAD" => crate::remote::GETS.contains(&path),
-        "POST" => crate::remote::POSTS.contains(&path) || crate::remote::HUMAN_POSTS.contains(&path),
+        // peer-key-back 은 앱끼리 짝짓기 마무리 — 참모·스크립트 길(remote::allowed)엔 없다
+        "POST" => crate::remote::POSTS.contains(&path) || crate::remote::HUMAN_POSTS.contains(&path) || path == "/api/peer-key-back" || path == "/api/peer-unlink",
         _ => false,
     }
 }
@@ -713,6 +739,29 @@ fn peer_direct_answer(req: &Req, gate: &Gate, be: &dyn Backend, dev: &str, name:
     }
 }
 
+#[derive(Deserialize)]
+struct KeyBackBody {
+    token: String,
+}
+
+/// 반대 방향 열쇠(C-3b-3) — 숫자 확인으로 짝지은 컴퓨터(B)가 '이 컴퓨터가 B 를 부를 열쇠'를 넘긴다. 칸 이름은 몸통이 아니라
+/// 이 열쇠 줄의 중계 기기 id(남의 칸을 못 덮게). 중계 peer 줄만 — 테일넷 peer 줄은 중계 id 가 없다
+fn peer_key_back(req: &Req, gate: &Gate, be: &dyn Backend, dev: &str) -> Resp {
+    // 여기 온 dev 는 이미 peer 줄(peer_of) — 중계 id 가 있는 줄만
+    let Some(relay) = gate.devices.relay_of(dev).filter(|r| !r.is_empty()) else { return Resp::text(403, "relay peer only") };
+    let b: KeyBackBody = match body(req) { Ok(b) => b, Err(r) => return r };
+    if b.token.len() != 64 || !b.token.bytes().all(|c| c.is_ascii_hexdigit()) {
+        return Resp::text(400, "bad token");
+    }
+    // 그 줄의 이름·터널 열쇠도 — 받는 쪽 목록에 넣어야 이 컴퓨터에서 그쪽을 부른다(C-5 실측 ①)
+    let x = gate.devices.relay_peer_line(&relay).map(|(_, x)| x).unwrap_or_default();
+    let name = gate.devices.list().into_iter().find(|d| d.id == dev).map(|d| d.name).unwrap_or_default();
+    match be.peer_key_back(&relay, &name, &x, &b.token) {
+        Ok(()) => Resp::json(&serde_json::json!({ "ok": true })),
+        Err(e) => Resp::text(500, &e),
+    }
+}
+
 /// 짝지은 기기 앱 화면에서 사람이 '이 기기 Chammo 계정 끊기'를 눌렀다 — 끊지는 않고 이 기기 사람에게 카드만 띄운다(답은 이 기기 앱·폰에서만, direct::link_pick)
 fn peer_logout_ask(req: &Req, gate: &Gate, be: &dyn Backend, dev: &str, name: &str) -> Resp {
     if let Some(r) = human_door(req, gate) {
@@ -816,7 +865,8 @@ fn phone_show_log(be: &dyn Backend) -> String {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
         let Some(p) = v["path"].as_str() else { continue };
         let web = (p.starts_with("https://") || p.starts_with("http://")) && !p.chars().any(|c| c.is_whitespace() || c.is_control());
-        if web || (Path::new(p).is_absolute() && mobile_files::shareable(Path::new(p), &rules)) {
+        // 디자인 파일(svg·ai·psd)도 카드로 — 폰은 첫 장만 받는다(pick_thumb)
+        if web || (Path::new(p).is_absolute() && mobile_files::thumb_shareable(Path::new(p), &rules)) {
             out.push_str(&phone_show_line(line));
             out.push('\n');
         }
@@ -1038,11 +1088,17 @@ fn phone_team_home(req: &Req, be: &dyn Backend) -> Resp {
     }
 }
 
-/// 폰 팀 메신저 쓰기 — 말 보내기(사람 말, cid 는 이 기기가 붙인다)·초대 링크·팀 만들기. 몸통에 모르는 칸이 있으면 400
+/// 폰 팀 메신저 쓰기 — 말 보내기(사람 말, cid 는 이 기기가 붙인다)·초대 링크·팀 만들기·바꾸기·들어가기. 몸통에 모르는 칸이 있으면 400
 fn phone_team(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
     struct B {
+        /// 이 팀에서 보일 내 이름(만들기·들어가기) — 비면 계정 이름
+        #[serde(default)]
+        me: String,
+        /// 받은 초대 링크(또는 코드) — 들어가기
+        #[serde(default)]
+        code: String,
         #[serde(default)]
         to: String,
         #[serde(default)]
@@ -1112,10 +1168,30 @@ fn phone_team(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             be.team_handoff(b.to.trim(), &b.text)
         }
         "/api/team-invite" => be.team_invite(),
-        _ => match crate::team_ui::name_ok(&b.team) {
-            Some(t) => be.team_create(&t),
-            None => return Resp::text(400, "bad team name"),
-        },
+        "/api/team-use" if team_id_ok(&b.team) => be.team_use(&b.team),
+        "/api/team-use" => return Resp::text(400, "bad team"),
+        _ => {
+            // 내 이름 — 비었으면 계정 이름(Rust team_arg), 적었으면 팀 이름과 같은 규칙(1~40자·제어 글자 없음)
+            let me = match b.me.is_empty() {
+                true => String::new(),
+                false => match crate::team_ui::name_ok(&b.me) {
+                    Some(m) => m,
+                    None => return Resp::text(400, "bad name"),
+                },
+            };
+            if req.path == "/api/team-join" {
+                let code = b.code.trim();
+                if code.is_empty() || code.len() > 400 || code.chars().any(char::is_control) {
+                    return Resp::text(400, "bad invite");
+                }
+                be.team_join(code, &me)
+            } else {
+                match crate::team_ui::name_ok(&b.team) {
+                    Some(t) => be.team_create(&t, &me),
+                    None => return Resp::text(400, "bad team name"),
+                }
+            }
+        }
     };
     match r {
         Ok(v) => Resp::json(&v),
@@ -1282,12 +1358,14 @@ fn file_resp(req: &Req, be: &dyn Backend) -> Resp {
             vec![path.to_string()]
         }
     };
-    let real = match mobile_files::pick(&path, &allowed, &rules) {
+    let thumb = req.param("thumb") == Some("1");
+    // 썸네일이면 디자인 파일(svg·ai·eps·psd)도 — 원본은 아래 '썸네일만' 문에서 막힌다
+    let picked = if thumb { mobile_files::pick_thumb(&path, &allowed, &rules) } else { mobile_files::pick(&path, &allowed, &rules) };
+    let real = match picked {
         Pick::Ok(p) => p,
         Pick::Forbidden => return Resp::text(403, "not allowed"),
         Pick::NotFound => return Resp::text(404, "not found"),
     };
-    let thumb = req.param("thumb") == Some("1");
     // 보기용(view=1) — 그림이 크거나 무거우면 JPEG 2560 으로 줄여서(mobile_files::view_plan), 원본은 view 없이
     let view = req.param("view") == Some("1");
     let kind = mobile_files::kind_of(&real);
@@ -1327,10 +1405,25 @@ fn file_resp(req: &Req, be: &dyn Backend) -> Resp {
         };
     }
     // 오피스·영상 원본은 안 낸다 — 오피스는 첫 장(QuickLook)·워드 글, 영상은 표 주소(/api/media, Range)
-    if matches!(kind, Kind::Office | Kind::Video) && !ql {
+    if matches!(kind, Kind::Office | Kind::Video | Kind::Design) && !ql {
         return Resp::text(403, "preview only");
     }
     let img = matches!(kind, Kind::Image(_) | Kind::Heic);
+    // 썸네일 캐시 — 있으면 원본을 안 읽고 바로(중계 길 폰이 열 때마다 맥이 다시 그리던 것), 전에 못 만든 QuickLook 은 바로 502
+    let size = mobile_files::thumb_size(req.param("size"));
+    let thumbing = ql || (thumb && img);
+    let known = if thumbing { be.thumb_get(&real, size) } else { None };
+    match known {
+        Some(Some(b)) => {
+            let mut r = Resp::new(200, "image/jpeg", b);
+            r.headers.push(("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; frame-ancestors 'none'".into()));
+            return r;
+        }
+        Some(None) if ql || kind == Kind::Heic => return Resp::text(502, "convert failed"),
+        _ => {}
+    }
+    // 그림인데 전에 못 줄였다(윈도우엔 sips 가 없다) — 또 바꿔 보지 않고 아래에서 원본 그대로
+    let skip_convert = matches!(known, Some(None));
     let cap = if ql || (thumb && img) { mobile_files::MAX_THUMB_SRC } else if kind == Kind::Text { mobile_files::MAX_TEXT_FILE } else { mobile_files::MAX_BIN_FILE };
     // 고른 뒤 바꿔치기 막기 — 경로로 다시 열지 않고 확인된 fd 에서 읽는다(S9)
     let bytes = match mobile_files::read_verified(&path, cap) {
@@ -1345,8 +1438,12 @@ fn file_resp(req: &Req, be: &dyn Backend) -> Resp {
     }
     let dims = if img { mobile_files::image_dims(&bytes) } else { None };
     // 줄일 크기 — 썸네일(그림·QuickLook)은 size, 보기용은 view_plan, HEIC 원본은 그대로 크기로 JPEG 만
-    let size = mobile_files::thumb_size(req.param("size"));
-    let shrink: Option<Option<u32>> = if ql || (thumb && img) {
+    if skip_convert && bytes.len() as u64 > mobile_files::MAX_BIN_FILE {
+        return Resp::text(502, "convert failed");
+    }
+    let shrink: Option<Option<u32>> = if thumbing && skip_convert {
+        None
+    } else if thumbing {
         Some(Some(size))
     } else if view && img {
         mobile_files::view_plan(&kind, bytes.len() as u64, dims).map(Some).or((kind == Kind::Heic).then_some(None))
@@ -1362,6 +1459,9 @@ fn file_resp(req: &Req, be: &dyn Backend) -> Resp {
         let tmp = std::env::temp_dir().join(format!("chammo-mobile-src-{}-{nanos}.{ext}", std::process::id()));
         let out = mobile_files::write_private_tmp(&tmp, &bytes).ok().and_then(|_| if ql { be.ql_thumb(&tmp, size) } else { be.jpeg(&tmp, max) });
         let _ = std::fs::remove_file(&tmp);
+        if thumbing {
+            be.thumb_put(&real, size, out.as_deref());
+        }
         match (out, &kind) {
             (Some(b), _) => Resp::new(200, "image/jpeg", b),
             // 바꾸기가 없다(윈도우엔 sips 가 없다, 공개 이슈 #15) — 폰이 그릴 수 있는 그림이면 원본 그대로(원본 상한까지)
@@ -1629,7 +1729,7 @@ struct ModeNameBody {
 }
 
 /// 폰 홈·보관함 v1 에 더한 쓰기 길 — 같은 출처 문지기·head_check 몸통 목록·405 가 이 목록 하나를 본다
-const PHONE_POSTS: &[&str] = &["/api/device-number", "/api/login-terms-retry", "/api/gacha", "/api/peer-human-say", "/api/team-say", "/api/team-read", "/api/team-invite", "/api/team-create", "/api/team-handoff", "/api/team-post", "/api/team-agent-confirm", "/api/team-agent-save", "/api/team-agent-remove", "/api/team-agent-try", "/api/team-home-save", "/api/team-home-content", "/api/team-cal-put", "/api/team-locker-op", "/api/locker-alias", "/api/locker-unalias", "/api/locker-new", "/api/locker-mkdir", "/api/locker-write", "/api/mode-act", "/api/mode-open", "/api/mode-close", "/api/mode-remove", "/api/mode-restore"];
+const PHONE_POSTS: &[&str] = &["/api/device-number", "/api/login-terms-retry", "/api/gacha", "/api/peer-human-say", "/api/team-say", "/api/team-read", "/api/team-invite", "/api/team-create", "/api/team-use", "/api/team-join", "/api/team-handoff", "/api/team-post", "/api/team-agent-confirm", "/api/team-agent-save", "/api/team-agent-remove", "/api/team-agent-try", "/api/team-home-save", "/api/team-home-content", "/api/team-cal-put", "/api/team-locker-op", "/api/locker-alias", "/api/locker-unalias", "/api/locker-new", "/api/locker-mkdir", "/api/locker-write", "/api/mode-act", "/api/mode-open", "/api/mode-close", "/api/mode-remove", "/api/mode-restore"];
 const PHONE_GETS: &[&str] = &["/api/gacha", "/api/office", "/api/modes", "/api/mode-view", "/api/mode-card", "/api/peer-get", "/api/peer-devices", "/api/team", "/api/team-profiles", "/api/team-posts", "/api/team-home", "/api/team-cal", "/api/team-cal-poll", "/api/team-agents", "/api/team-agent-usage", "/api/team-agent-refs", "/api/team-file-thumb", "/api/team-file-image", "/api/team-locker", "/api/team-locker-put"];
 /// 폰 md 글 칸 저장만 몸통을 크게(글 512KB + JSON)
 const MAX_WRITE_BODY: usize = crate::locker_fs::MAX_PHONE_MD + 64 * 1024;
@@ -2262,7 +2362,7 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
     }
     // 다른 기기 참모 열쇠(peer 줄)는 보기 + 이름표 붙는 말 넣기만 — 사람 길(이름표 없이 치기·카드 답)과 파일·계정·짝짓기 코드는 못 쓴다(ADR 0007)
     let peer = peer_of(req, gate);
-    let peer_path = matches!(req.path.as_str(), "/api/peer-say" | "/api/peer-reply" | "/api/peer-human" | "/api/peer-direct-answer" | "/api/peer-locker" | "/api/peer-logout-ask");
+    let peer_path = matches!(req.path.as_str(), "/api/peer-say" | "/api/peer-reply" | "/api/peer-human" | "/api/peer-direct-answer" | "/api/peer-locker" | "/api/peer-logout-ask" | "/api/peer-key-back" | "/api/peer-unlink");
     match &peer {
         Some(_) if !peer_allowed(&req.method, &req.path) => return Resp::text(403, "not for a peer key"),
         None if peer_path => return Resp::text(403, "peer key only"),
@@ -2286,6 +2386,16 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         }
         if req.path == "/api/peer-logout-ask" {
             return peer_logout_ask(req, gate, be, dev, name);
+        }
+        if req.path == "/api/peer-key-back" {
+            return peer_key_back(req, gate, be, dev);
+        }
+        if req.path == "/api/peer-unlink" {
+            let Some(relay) = gate.devices.relay_of(dev).filter(|r| !r.is_empty()) else { return Resp::text(403, "relay peer only") };
+            return match be.peer_unlink(&relay) {
+                Ok(()) => Resp::json(&serde_json::json!({ "ok": true })),
+                Err(e) => Resp::text(500, &e),
+            };
         }
     }
     // 홈 화면 앱 연결 코드 — 이미 연결된 기기(열쇠)가 새 일회용 코드를 받는다. 홈 화면 앱은 QR(카메라 → 사파리)로 못 열려서
@@ -2943,7 +3053,11 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             Ok(()) => Resp::json(&serde_json::json!({ "ok": true })),
             Err(e) => Resp::text(502, &e),
         },
-        ("GET", "/api/direct") => Resp::new(200, "text/plain; charset=utf-8", be.direct_log()),
+        // 다른 컴퓨터(peer 열쇠)에겐 컴퓨터 연결 카드를 뺀다(못 누르는 카드 — direct::hide_peer_links)
+        ("GET", "/api/direct") => match peer_of(req, gate) {
+            Some(_) => Resp::new(200, "text/plain; charset=utf-8", crate::direct::hide_peer_links(&be.direct_log())),
+            None => Resp::new(200, "text/plain; charset=utf-8", be.direct_log()),
+        },
         ("POST", "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry") => {
             #[derive(serde::Deserialize)]
             #[serde(rename_all = "camelCase")]
@@ -2980,7 +3094,7 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         ("GET", "/api/peer-devices") => Resp::json(&be.peer_devices()),
         ("POST", "/api/peer-human-say") => phone_peer_say(req, be),
         ("GET", "/api/team") => Resp::json(&be.team_feed()),
-        ("POST", "/api/team-say" | "/api/team-invite" | "/api/team-create" | "/api/team-handoff" | "/api/team-post") => phone_team(req, gate, be),
+        ("POST", "/api/team-say" | "/api/team-invite" | "/api/team-create" | "/api/team-use" | "/api/team-join" | "/api/team-handoff" | "/api/team-post") => phone_team(req, gate, be),
         ("POST", "/api/team-read") => phone_team_read(req, be),
         ("GET", "/api/team-locker") => {
             let team = req.param("team").unwrap_or("");
@@ -3079,7 +3193,9 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             if !team_file_ok(team, id) {
                 return Resp::text(400, "bad team or id");
             }
-            match be.team_file_thumb(team, id, mobile_files::thumb_size(req.param("size"))) {
+            // at=<판> — 이미 풀어 둔 것만(팀 홈 줄). 없으면 415 → 폰은 확장자 표
+            let only_at = req.param("at").and_then(|a| a.parse::<u64>().ok());
+            match be.team_file_thumb(team, id, mobile_files::thumb_size(req.param("size")), only_at) {
                 Ok(b) => {
                     let mut r = Resp::new(200, "image/jpeg", b);
                     r.headers.push(("Content-Security-Policy", "sandbox; default-src 'none'; frame-ancestors 'none'".into()));
@@ -3330,7 +3446,7 @@ pub fn head_check(req: &Req, gate: &Gate) -> Option<Resp> {
     if req.method != "POST" && !has_body {
         return None;
     }
-    if !matches!(req.path.as_str(), "/api/send" | "/api/attach" | "/api/voice-mode" | "/api/voice-beat" | "/api/model" | "/api/routine" | "/api/interrupt" | "/api/respawn" | "/api/spawn" | "/api/stop" | "/api/html-ticket" | "/api/curation" | "/api/media-ticket" | "/api/dl-ticket" | "/api/open-mac" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/pair-code" | "/api/pair" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/role" | "/api/avatar" | "/api/account-switch" | "/api/account-auto" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry" | "/api/diag" | "/api/locker-add" | "/api/peer-say" | "/api/peer-human" | "/api/peer-direct-answer" | "/api/peer-logout-ask" | "/api/peer-card-answer" | "/api/link-request" | "/api/team-locker-put") && !PHONE_POSTS.contains(&req.path.as_str()) {
+    if !matches!(req.path.as_str(), "/api/send" | "/api/attach" | "/api/voice-mode" | "/api/voice-beat" | "/api/model" | "/api/routine" | "/api/interrupt" | "/api/respawn" | "/api/spawn" | "/api/stop" | "/api/html-ticket" | "/api/curation" | "/api/media-ticket" | "/api/dl-ticket" | "/api/open-mac" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/pair-code" | "/api/pair" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/role" | "/api/avatar" | "/api/account-switch" | "/api/account-auto" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry" | "/api/diag" | "/api/locker-add" | "/api/peer-say" | "/api/peer-human" | "/api/peer-direct-answer" | "/api/peer-logout-ask" | "/api/peer-key-back" | "/api/peer-unlink" | "/api/peer-card-answer" | "/api/link-request" | "/api/team-locker-put") && !PHONE_POSTS.contains(&req.path.as_str()) {
         return Some(Resp::text(404, "not found"));
     }
     // 짝짓기는 코드가 열쇠, 연결 요청은 되묻기와 사람 카드가 문 — 출처·JSON 만 본다

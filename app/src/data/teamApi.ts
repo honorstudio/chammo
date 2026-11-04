@@ -67,8 +67,8 @@ export type SayExtra = { react?: { seq: number; mark: string; on: boolean }; fil
 export const teamFileAttach = (team: string, room: string, paths: string[]) => invoke<TeamFile[]>('team_file_attach', { team, room, paths });
 /** 받아서 데이터 폴더 자리(team-locker-peek)에 풀기 — 푼 경로. external 이면 맥 기본 앱으로도 연다(스페이스가 못 그리는 형식·'다른 앱으로 열기') */
 export const teamFileOpen = (team: string, id: string, external = false) => invoke<string>('team_file_open', { team, id, external });
-/** 이 기기 팀 폴더(~/Documents/Chammo/<팀>/대화 파일)에 저장하고 파인더에서 보이기 — 받은 경로 */
-export const teamFileSave = (team: string, id: string) => invoke<string>('team_file_save', { team, id }).then((path) => invoke('locker_reveal', { path }).then(() => path));
+/** 내 폴더에 저장 — 이 기기 팀 폴더(~/Documents/Chammo/<팀>/대화 파일)에 받은 경로. 진행·폴더에서 보기는 말풍선(TeamDownBits)이 그린다 */
+export const teamFileSave = (team: string, id: string) => invoke<string>('team_file_save', { team, id });
 /** 썸네일 주소 — 말풍선·대화 파일 보기·팀 보관함 카드. 그림은 풀어 둔 그림 그대로, PDF 는 첫 장(QuickLook). 그 밖·너무 큰 건 null.
  *  풀기(peek)는 파일마다 한 번만 — 대화 칸이 4초마다 다시 그려도 또 안 받는다. 그림이 안 열리면(오래돼 청소됨) forgetTeamThumb 로 다시 */
 const thumbs = new Map<string, Promise<string | null>>();
@@ -80,12 +80,22 @@ export function teamFileThumb(team: string, id: string, name: string, size: numb
   let p = thumbs.get(k);
   if (!p) {
     p = invoke<string>('team_locker_peek', { team, id })
-      .then((path) => (kind === 'pdf' ? invoke<string>('ql_thumb', { path }) : path))
+      .then((path) => (kind === 'page' ? invoke<string>('ql_thumb', { path, px: 480 }) : path))
       .then((path) => docUrl(path));
     p.catch(() => thumbs.delete(k));
     thumbs.set(k, p);
   }
   return p;
+}
+/** 팀 홈 '최근 파일' 줄 — 이미 풀어 둔 그 판만(망 안 탐, 11-01). 줄마다 peek 하면 홈을 열 때 내려받기가 줄줄이 붙었다.
+ *  처음 보는 파일은 null(확장자 표) — 대화·보관함에서 한 번 보면 그 뒤로 그림. 첫 장 만들기는 Rust 문(동시에 둘)을 지난다 */
+export function teamPeekedThumb(team: string, i: { id: string; name: string; size: number; at: number; why?: string }): Promise<string | null> {
+  const kind = thumbKind(i.name, i.size);
+  if (!kind || !team || i.why) return Promise.resolve(null);
+  return invoke<string | null>('team_locker_peeked', { team, id: i.id, at: i.at }).then((p) => {
+    if (!p) return null;
+    return (kind === 'page' ? invoke<string>('ql_thumb', { path: p, px: 480 }) : Promise.resolve(p)).then((x) => docUrl(x));
+  });
 }
 export const forgetTeamThumb = (team: string, id: string) => { thumbs.delete(thumbKey(team, id)); };
 

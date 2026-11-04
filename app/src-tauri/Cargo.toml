@@ -1,6 +1,6 @@
 [package]
 name = "honor-orchestrator"
-version = "0.4.7"
+version = "0.4.8"
 edition = "2021"
 license = "AGPL-3.0-only"
 
@@ -65,7 +65,8 @@ tauri-plugin-deep-link = "=2.4.10"
 tauri-plugin-single-instance = "=2.4.5"
 tauri-winrt-notification = "0.7"
 # 토스트를 직접 만든다 — 누르면 chammo://notify 를 열어(protocol) 알림 센터에서 눌러도 숨은 앱이 뜨게. 위 크레이트가 쓰는 같은 판(락에 있는 0.61)에 기능만 더한다
-windows = { version = "0.61", features = ["UI_Notifications", "Data_Xml_Dom"] }
+# 파일 썸네일(win_thumb.rs) — 셸 썸네일(IShellItemImageFactory)·PDF 첫 장(Windows.Data.Pdf). 같은 판에 기능만 더한다(새 크레이트 없음)
+windows = { version = "0.61", features = ["UI_Notifications", "Data_Xml_Dom", "Data_Pdf", "Storage", "Storage_Streams", "Foundation", "Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell", "Win32_Graphics_Gdi"] }
 # 부하 보기 — 윈도우엔 ps·sysctl 이 없다. 맥 ps 모양 글로 만들어 넘긴다(load.rs)
 sysinfo = { version = "0.37", default-features = false, features = ["system"] }
 # 다른 기기 참모 짝 열쇠 — 자격 증명 관리자(wincred.rs) · 팀 초대 클립보드 읽기(team_ui.rs). 이미 락에 있던 판(tokio·mio 가 쓰는 0.61)에 기능만 더한다

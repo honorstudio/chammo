@@ -718,6 +718,9 @@ pub struct DirEntry {
     pub name: String,
     pub path: String,
     pub dir: bool,
+    /// 고친 때(ms) — 보관함 프로젝트 화면 폴더 칸이 날짜를 붙인다
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mtime: Option<u64>,
 }
 
 pub fn skip_entry(name: &str) -> bool {
@@ -734,7 +737,8 @@ pub fn list_dir(dir: String) -> Vec<DirEntry> {
             let name = e.file_name().to_string_lossy().into_owned();
             if skip_entry(&name) { return None; }
             let path = e.path();
-            Some(DirEntry { dir: path.is_dir(), path: path.to_string_lossy().into_owned(), name })
+            let mtime = e.metadata().ok().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64);
+            Some(DirEntry { dir: path.is_dir(), path: path.to_string_lossy().into_owned(), name, mtime })
         })
         .collect();
     v.sort_by(|a, b| b.dir.cmp(&a.dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
@@ -813,28 +817,21 @@ pub async fn page_doc(path: String) -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
-/// 엑셀·키노트·PSD 같은 건 QuickLook 이 그린 첫 장 그림(PNG) — 앱 데이터 폴더/ql 에 두고 경로를 돌려준다(hodoc 으로 보인다)
-/// 썸네일 폴더 — 원본 전체 경로마다 따로(<ql>/<경로 FNV-1a 해시>). 파일 이름으로만 두면 다른 폴더의
-/// 같은 이름(v2.html 등)이 서로의 썸네일을 받아 갔다(2026-10-02 사용자: 대시보드 카드와 연 파일이 다름)
-fn ql_dir(base: &std::path::Path, p: &std::path::Path) -> std::path::PathBuf {
-    let mut h: u64 = 0xcbf29ce484222325;
-    for b in p.to_string_lossy().as_bytes() {
-        h ^= *b as u64;
-        h = h.wrapping_mul(0x100000001b3);
-    }
-    base.join(format!("{h:016x}"))
-}
-
+#[cfg_attr(windows, allow(dead_code))] // 맥 첫 장 길(mac_thumb)만 쓴다
+/// 엑셀·키노트·PSD 같은 건 QuickLook 이 그린 첫 장 그림(PNG) — 썸네일 캐시(thumbs)에 두고 경로를 돌려준다(hodoc 으로 보인다).
+/// 캐시 이름에 원본 전체 경로가 들어간다 — 파일 이름으로만 두면 다른 폴더의 같은 이름(v2.html 등)이 서로의 썸네일을 받아 갔다(2026-10-02)
 /// 변환기 한 번의 시간 한도 — 큰 엑셀·키노트 첫 장도 몇 초면 끝난다
 const THUMB_LIMIT: std::time::Duration = std::time::Duration::from_secs(20);
 /// 슬라이드·페이지 미리보기(page_doc) 한도 — 큰 발표 파일은 페이지마다 그려 더 걸린다
 const PAGE_DOC_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
 
+#[cfg_attr(windows, allow(dead_code))] // 맥 첫 장 길(mac_thumb)만 쓴다
 /// 참모 벡터 엔진에 맡길 수 있는 확장자 — 그중 PostScript 로 된 것만 엔진으로(ps_scale), 나머지는 QuickLook
 fn vector_thumb(p: &Path) -> bool {
     p.extension().and_then(|e| e.to_str()).is_some_and(|e| ["ai", "ait", "eps"].contains(&e.to_ascii_lowercase().as_str()))
 }
 
+#[cfg_attr(windows, allow(dead_code))] // 맥 첫 장 길(mac_thumb)만 쓴다
 /// 받아 둔 창 없는 엔진 중 최신 판 — scripts/craft ensure_cli 와 같은 자리(<craft>/<앱>/cli/<판>/<앱>-cli)·같은 순서(판은 숫자로).
 /// 안 받았으면 None — 미리보기 때문에 받지는 않는다(QuickLook 으로 넘어간다)
 fn craft_cli(root: &Path, app: &str) -> Option<PathBuf> {
@@ -848,9 +845,10 @@ fn craft_cli(root: &Path, app: &str) -> Option<PathBuf> {
         .map(|v| d.join(v).join(exe))
 }
 
+#[cfg_attr(windows, allow(dead_code))] // 맥 첫 장 길(mac_thumb)만 쓴다
 /// PostScript 로 된 .ai·.eps(PDF 부분 없음 — QuickLook 이 못 그리고 영영 안 돌아온다)면 엔진으로 그릴 배율, PDF 로 된 .ai 는 None(QuickLook 이 그린다).
 /// 긴 변이 1600px 쯤(QuickLook -s 1600 과 같은 크기) — 고정 배율이면 1:1 간판 도면(1만 pt)이 2만 px 그림이 된다. 상자를 모르면 1배
-fn ps_scale(head: &[u8]) -> Option<f64> {
+fn ps_scale(head: &[u8], px: u32) -> Option<f64> {
     if !(head.starts_with(b"%!PS") || head.starts_with(&[0xC5, 0xD0, 0xD3, 0xC6])) {
         return None;
     }
@@ -859,9 +857,10 @@ fn ps_scale(head: &[u8]) -> Option<f64> {
         let n: Vec<f64> = r.split_whitespace().filter_map(|x| x.parse().ok()).collect();
         (n.len() == 4).then(|| (n[2] - n[0]).abs().max((n[3] - n[1]).abs())).filter(|m| *m > 0.0)
     });
-    Some(bbox.map_or(1.0, |m| (1600.0 / m).clamp(0.05, 4.0)))
+    Some(bbox.map_or(1.0, |m| (px as f64 / m).clamp(0.05, 4.0)))
 }
 
+#[cfg_attr(windows, allow(dead_code))] // 맥 첫 장 길(mac_thumb)만 쓴다
 /// 그림 한 장 — 길(변환기)을 차례대로 해 보고 그림(out)이 생긴 첫 길에서 제자리(png)로 옮긴다. 길마다 시간 한도:
 /// PDF 호환 없는 .ai 에서 qlmanage 가 몇 분째 안 돌아와 웹이 '미리보기 만드는 중'에 영영 멈췄다(2026-10-29 간판 제작도 .ai — 걸린 qlmanage 4개).
 /// out 은 부를 때마다 따로인 자리 — 대시보드 카드와 미리보기가 같은 파일을 같이 불러도 서로의 그림을 지우지 않게
@@ -883,42 +882,71 @@ fn thumb_by(out: &Path, png: &Path, steps: Vec<std::process::Command>, limit: st
 }
 
 #[tauri::command]
-pub async fn ql_thumb(path: String) -> Result<String, String> {
-    if !cfg!(target_os = "macos") {
+pub async fn ql_thumb(path: String, px: Option<u32>) -> Result<String, String> {
+    // 윈도우도 — GDI+·Windows.Data.Pdf·셸 썸네일(win_thumb, 11-01 H). 그 밖 OS 만 안 된다
+    if !cfg!(any(target_os = "macos", windows)) {
         return Err(mac_only_preview());
     }
     let p = user_path(&path).ok_or(tr("홈 폴더나 프로젝트 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder or a project folder can be opened. The same message appears if the file is missing."))?;
+    // 카드는 480(2배 화면 240칸), 리더(크게 보기)는 1600 — 카드가 1600 PNG 를 풀어 그리던 걸 줄였다(2026-11-01)
+    let px = thumb_px(px);
     tauri::async_runtime::spawn_blocking(move || {
-        let dir = ql_dir(&crate::config::data_file("ql"), &p);
-        let _ = std::fs::create_dir_all(&dir);
-        // 원본보다 새 그림이 이미 있으면 그대로(앱을 다시 켤 때마다 qlmanage 를 돌리지 않게)
-        let png = dir.join(format!("{}.png", p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
-        let newer = |a: &std::path::Path, b: &std::path::Path| matches!((a.metadata().and_then(|m| m.modified()), b.metadata().and_then(|m| m.modified())), (Ok(x), Ok(y)) if x >= y);
-        if newer(&png, &p) { return Ok(png.to_string_lossy().into_owned()); }
-        // 부를 때마다 따로 그리는 자리 — 같은 파일을 동시에 불러도 서로 안 지운다(thumb_by)
-        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let work = dir.join(format!(".work-{}-{}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
-        std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
-        let out = work.join(png.file_name().unwrap_or_default());
-        let mut steps = Vec::new();
-        let head = || { use std::io::Read; let mut b = Vec::new(); std::fs::File::open(&p).and_then(|f| f.take(64 * 1024).read_to_end(&mut b)).map(|_| b).unwrap_or_default() };
-        if let Some(scale) = vector_thumb(&p).then(|| ps_scale(&head())).flatten() {
-            if let Some(cli) = craft_cli(&crate::config::data_file("craft"), "vectorcraft") {
-                let mut c = crate::platform::command(cli);
-                c.arg("convert").arg(&p).arg(&out).args(["--scale", &format!("{scale:.3}")]);
-                steps.push(c);
+        // 캐시(thumbs) — 원본 경로·수정 시각·크기·px 이 이름이라 고친 파일은 새로, 못 그린 것도 기억, 동시에 둘까지
+        // 맥은 QuickLook 이 그린 PNG, 윈도우는 win_thumb 의 JPEG
+        let ext = if cfg!(windows) { "jpg" } else { "png" };
+        crate::thumbs::cached(&crate::thumbs::dir(), &p, px, ext, |out| {
+            // 한글(hwpx)은 속 첫 장 그림 — QuickLook 은 못 그리고 20초 헛돈다(2026-11-01). 없거나 흰 장이면 맥은 실패(확장자 표), 윈도우는 셸 썸네일로
+            if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("hwpx")) {
+                match crate::mobile_files::hwpx_preview(&p) {
+                    Some(png) => return std::fs::write(out, png).map_err(|e| e.to_string()),
+                    None if !cfg!(windows) => return Err("한글 파일 속 미리보기 그림이 없어".into()),
+                    None => {}
+                }
             }
-        }
-        // QuickLook 은 그림을 <work>/<원본 이름>.png 로 — 엔진과 같은 자리
-        let mut q = crate::platform::command("/usr/bin/qlmanage");
-        q.args(["-t", "-s", "1600", "-o"]).arg(&work).arg(&p);
-        steps.push(q);
-        let r = thumb_by(&out, &png, steps, THUMB_LIMIT);
-        let _ = std::fs::remove_dir_all(&work);
-        r.map(|_| png.to_string_lossy().into_owned())
+            #[cfg(windows)]
+            return crate::win_thumb::first_page_jpeg(&p, px)
+                .ok_or_else(|| tr("미리보기를 못 만들었어 — 이 PC 에 이 형식의 썸네일 처리기가 없어요", "Couldn't make a preview — no thumbnail handler for this file type on this PC").to_string())
+                .and_then(|b| std::fs::write(out, b).map_err(|e| e.to_string()));
+            #[cfg(not(windows))]
+            return mac_thumb(&p, px, out);
+        })
+        .map(|png| png.to_string_lossy().into_owned())
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// 맥 첫 장 — PostScript .ai·.eps 는 참모 벡터 엔진 먼저, 그다음 QuickLook(길마다 THUMB_LIMIT)
+#[cfg(not(windows))]
+fn mac_thumb(p: &Path, px: u32, out: &Path) -> Result<(), String> {
+    let work = out.with_extension("work");
+    std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
+    let drawn = work.join(format!("{}.png", p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
+    let mut steps = Vec::new();
+    let head = || { use std::io::Read; let mut b = Vec::new(); std::fs::File::open(&p).and_then(|f| f.take(64 * 1024).read_to_end(&mut b)).map(|_| b).unwrap_or_default() };
+    if let Some(scale) = vector_thumb(&p).then(|| ps_scale(&head(), px)).flatten() {
+        if let Some(cli) = craft_cli(&crate::config::data_file("craft"), "vectorcraft") {
+            let mut c = crate::platform::command(cli);
+            c.arg("convert").arg(&p).arg(&drawn).args(["--scale", &format!("{scale:.3}")]);
+            steps.push(c);
+        }
+    }
+    // QuickLook 은 그림을 <work>/<원본 이름>.png 로 — 엔진과 같은 자리
+    let mut q = crate::platform::command("/usr/bin/qlmanage");
+    q.args(["-t", "-s", &px.to_string(), "-o"]).arg(&work).arg(&p);
+    steps.push(q);
+    let r = thumb_by(&drawn, out, steps, THUMB_LIMIT);
+    let _ = std::fs::remove_dir_all(&work);
+    r
+}
+
+/// 썸네일 긴 변 — 안 주면 리더 크기(1600), 주면 120~1600 안으로(아무 값이나 캐시 이름이 갈리지 않게 카드 크기 둘로 접는다)
+fn thumb_px(px: Option<u32>) -> u32 {
+    match px {
+        None => 1600,
+        Some(n) if n <= 480 => 480,
+        Some(_) => 1600,
+    }
 }
 
 /// 시안 검토 파일 이름 — <폴더>-<시안>.<ext>(폴더가 없으면 <시안>.<ext>)
@@ -1211,15 +1239,14 @@ mod stamp_tests {
 }
 
 #[cfg(test)]
-mod ql_dir_tests {
+mod thumb_px_tests {
     #[test]
-    fn 이름이_같아도_경로가_다르면_썸네일_폴더가_다르다() {
-        let base = std::path::Path::new("/d/ql");
-        let a = super::ql_dir(base, std::path::Path::new("/h/a/avatar/v2.html"));
-        let b = super::ql_dir(base, std::path::Path::new("/h/b/oms-first-mail/v2.html"));
-        assert_ne!(a, b);
-        assert_eq!(a, super::ql_dir(base, std::path::Path::new("/h/a/avatar/v2.html")));
-        assert!(a.starts_with(base));
+    fn 카드는_480_리더는_1600_둘로_접는다() {
+        assert_eq!(super::thumb_px(None), 1600);
+        assert_eq!(super::thumb_px(Some(240)), 480);
+        assert_eq!(super::thumb_px(Some(480)), 480);
+        assert_eq!(super::thumb_px(Some(720)), 1600);
+        assert_eq!(super::thumb_px(Some(99999)), 1600);
     }
 }
 
@@ -1301,17 +1328,19 @@ mod thumb_tests {
     fn 포스트스크립트만_엔진으로_긴_변_1600px() {
         // 참모 벡터가 쓴 간판 제작도 .ai — %!PS + %%BoundingBox: 44 56 1134 792 → 긴 변 1090pt
         let ps = b"%!PS-Adobe-3.0\n%%Creator: VectorCraft 0.13.4\n%%BoundingBox: 44 56 1134 792\n";
-        assert!((super::ps_scale(ps).unwrap() - 1600.0 / 1090.0).abs() < 1e-9);
+        assert!((super::ps_scale(ps, 1600).unwrap() - 1600.0 / 1090.0).abs() < 1e-9);
         // 1:1 간판 도면(1만 pt)도 2만 px 그림을 만들지 않는다, 명함처럼 작은 건 4배까지
-        assert!((super::ps_scale(b"%!PS-Adobe-3.0 EPSF-3.0\r%%BoundingBox: 0 0 10035 3260\r").unwrap() - 1600.0 / 10035.0).abs() < 1e-9);
-        assert_eq!(super::ps_scale(b"%!PS\n%%BoundingBox: 0 0 100 50\n"), Some(4.0));
+        assert!((super::ps_scale(b"%!PS-Adobe-3.0 EPSF-3.0\r%%BoundingBox: 0 0 10035 3260\r", 1600).unwrap() - 1600.0 / 10035.0).abs() < 1e-9);
+        assert_eq!(super::ps_scale(b"%!PS\n%%BoundingBox: 0 0 100 50\n", 1600), Some(4.0));
         // 상자를 모르면 1배
-        assert_eq!(super::ps_scale(b"%!PS-Adobe-3.0\n%%BoundingBox: (atend)\n"), Some(1.0));
-        assert_eq!(super::ps_scale(b"%!PS-Adobe-3.0\n"), Some(1.0));
+        assert_eq!(super::ps_scale(b"%!PS-Adobe-3.0\n%%BoundingBox: (atend)\n", 1600), Some(1.0));
+        assert_eq!(super::ps_scale(b"%!PS-Adobe-3.0\n", 1600), Some(1.0));
         // DOS 머리 붙은 EPS 도 PostScript
-        assert_eq!(super::ps_scale(&[0xC5, 0xD0, 0xD3, 0xC6, 0, 0]), Some(1.0));
+        assert_eq!(super::ps_scale(&[0xC5, 0xD0, 0xD3, 0xC6, 0, 0], 1600), Some(1.0));
         // PDF 로 된 .ai(일러스트레이터 기본)는 QuickLook 이 그린다
-        assert_eq!(super::ps_scale(b"%PDF-1.7\n%%BoundingBox: 0 0 10 10"), None);
+        assert_eq!(super::ps_scale(b"%PDF-1.7\n%%BoundingBox: 0 0 10 10", 1600), None);
+        // 카드 크기(480)면 그만큼 작게
+        assert!((super::ps_scale(ps, 480).unwrap() - 480.0 / 1090.0).abs() < 1e-9);
     }
 
     #[test]
@@ -1338,7 +1367,7 @@ mod thumb_tests {
         let Ok(f) = std::env::var("CHAMMO_THUMB_SAMPLE") else { return };
         assert!(std::env::var("CHAMMO_HOME").is_ok(), "진짜 데이터 폴더에 그리지 않게 CHAMMO_HOME 을 준다");
         let t = Instant::now();
-        let r = tauri::async_runtime::block_on(super::ql_thumb(f));
+        let r = tauri::async_runtime::block_on(super::ql_thumb(f, None));
         println!("ql_thumb {:?} → {r:?}", t.elapsed());
         assert!(t.elapsed() < Duration::from_secs(45), "웹 한도(PREVIEW_WAIT_MS) 안에 답한다");
     }

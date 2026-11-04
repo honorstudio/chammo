@@ -5,13 +5,15 @@
 // 읽기·쓰기는 TeamPhoneApi 하나로만 — 지금은 맥 폰 서버(/api/team*), 중계 직결이 생기면 그것만 바꾼다
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { teamFileView, teamThumbBlob, type TeamPhoneApi } from '../../data/web';
-import { phoneView } from '../../domain/teamLocker';
-import { keepBoard, namedConvos, type ProfileBoard } from '../../domain/teamProfile';
+import { phoneView, thumbKind } from '../../domain/teamLocker';
+import { keepBoard, lookNames, namedConvos, type ProfileBoard } from '../../domain/teamProfile';
 import type { PostApi } from '../../domain/teamPosts';
 import type { HomeApi, HomeSources } from '../../domain/teamHome';
 import type { TeamFeed } from '../../data/teamApi';
 import { sendAllowed } from '../../domain/remoteChat';
-import { convos as buildConvos, roomConvos, markRead, unreadTotal, type Convo, type TeamFile, type TeamItem } from '../../domain/teamChat';
+import { convos as buildConvos, roomConvos, markRead, teamUnread, unreadTotal, type Convo, type TeamFile, type TeamItem } from '../../domain/teamChat';
+import { teamStack } from '../../domain/teamAdd';
+import { PhoneTeamStrip, TeamAddSheet } from './PhoneTeamAdd';
 import { ImageViewer } from './ImageViewer';
 import { mergedRead, pushRead } from '../../domain/teamReads';
 import { IconCheck, IconChevronDown, IconCopy, IconShare } from '../Icons';
@@ -65,7 +67,7 @@ export function usePhoneTeam(api: TeamPhoneApi, active: boolean) {
     const seq = feed && me ? pushRead(room, feed.items, feed.reads?.[room] ?? {}, me, document.visibilityState === 'visible') : null;
     if (seq) void api.read(room, seq).catch(() => {});
   };
-  return { feed, cs, rs, unread: unreadTotal([...rs, ...cs]), refresh, markRoom };
+  return { feed, cs, rs, read, unread: unreadTotal([...rs, ...cs]), refresh, markRoom };
 }
 
 /** 프로필판 — 본 판 번호(rev)를 들고 4초마다. 실패는 아는 판 둔 채 다음에 다시(맥 재시작 한 번에 기본값으로 굳지 않게) */
@@ -74,10 +76,14 @@ function usePhoneProfiles(api: TeamPhoneApi, teamId: string): Profiles {
   const known = useRef<ProfileBoard | null>(null);
   const rev = useRef(0);
   const busy = useRef(false);
+  // 지금 팀 — 팀을 바꾸는 사이 늦게 온 앞 팀 판은 버린다(데스크톱 useProfiles 와 같은 까닭)
+  const cur = useRef(teamId);
+  cur.current = teamId;
   const read = useCallback(() => {
     if (!teamId || busy.current) return;
     busy.current = true;
     void api.profiles(teamId, rev.current).then((x) => {
+      if (cur.current !== teamId) return;
       const n = keepBoard(known.current, x, teamId);
       if (!n || n === known.current) return;
       known.current = n;
@@ -135,6 +141,8 @@ export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: Re
     files: (team) => api.locker(team, 0).then((v) => ('items' in v ? v.items : [])),
     openFile: (team, i) => openPic(team, i),
     canOpen: (i) => !!phoneView(i),
+    // 줄 앞 작은 첫 장 — 그릴 수 있는 것만, 맥이 이미 풀어 둔 판만(at — 홈을 열 때마다 내려받기가 붙지 않게). 아니면 확장자 표
+    thumb: (team, i) => (thumbKind(i.name, i.size) && !i.why ? teamThumbBlob(team, i.id, i.at) : Promise.resolve(null)),
     openUrl: (url) => { window.open(url, '_blank', 'noopener'); },
   }), [api, openPic]);
   const [seg, setSeg] = useState<'chat' | 'home' | 'cal' | 'locker'>('chat');
@@ -147,6 +155,13 @@ export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: Re
     return () => document.removeEventListener('visibilitychange', f);
   }, []);
   const [sheet, setSheet] = useState(false);
+  // 팀 추가 시트(머리 줄 끝 +) — 새 팀 만들기·초대 링크로 들어가기
+  const [adding, setAdding] = useState(false);
+  // 내 팀 줄(데스크톱 레일과 같은 순서) — 다른 팀 안 읽은 수는 그 팀 방들. 바꾸면 고른 대화는 앞 팀 것이라 비운다
+  // (프로필판·보관함·홈·캘린더는 teamId 로 다시 읽는다 — 보관함 늦은 응답은 PhoneTeamLocker 가 버린다)
+  const stack = teamStack(view);
+  const unreadOf = (id: string) => (id === teamId ? t.unread : view ? teamUnread(view.rooms, t.feed?.items ?? [], t.read, id) : 0);
+  const pickTeam = (id: string) => void api.use(id).then(() => { setSel(null); setZoom(null); t.refresh(); }, () => {});
   // 팀 참모 화면(ADR 0017 — 폰은 팀 시트에서 연다). edit = 고치는 참모(a null = 새로)
   const [agentPage, setAgentPage] = useState<{ edit?: { a: AgentShown | null; list: AgentList }; key: number } | null>(null);
   const [opened, setOpened] = useState(0);
@@ -182,7 +197,7 @@ export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: Re
       <SheetHostProvider kb={kb}>
       <div className="m-team m-team-agents">
         {agentPage.edit
-          ? <TeamAgentEdit team={view.teamId} list={agentPage.edit.list} editing={agentPage.edit.a} people={view.members.map((m) => m.name)} rooms={rooms} api={agentEdit}
+          ? <TeamAgentEdit team={view.teamId} list={agentPage.edit.list} editing={agentPage.edit.a} people={lookNames(view.members, profiles.board).flatMap((m) => [m.name, m.account])} rooms={rooms} api={agentEdit}
               onBack={() => setAgentPage((p) => p && { key: p.key })} onSaved={() => setAgentPage((p) => ({ key: (p?.key ?? 0) + 1 }))} />
           : <>
               <header className="m-team-head"><IconBtn label={tr('뒤로', 'Back')} onClick={() => setAgentPage(null)}><IconBack /></IconBtn><b>{tr('팀 참모', 'Team agents')}</b></header>
@@ -200,7 +215,7 @@ export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: Re
         <TeamConvo convo={cur} items={t.feed.items} team={view.team} myName={view.me} handed={handed} drafts={phoneDrafts} agentsApi={agentsApi} focused={shown} onRead={t.markRoom} reads={t.feed.reads} onSent={t.refresh} safety={t.feed.safety} held={t.feed.held} phone members={view.members}
           onHanded={(it: TeamItem, to: string) => setHanded((h) => { const n = { ...h, [`${it.room}:${it.seq}`]: to }; keep(HANDED_KEY, n); return n; })}
           handoff={{ name: seenName(orch.name), send: (text) => api.handoff(orch.id, text).then(() => {}) }} say={say} viewing={() => {}} back={() => { setZoom(null); setSel(null); }}
-          teamId={view.teamId} thumb={teamThumbBlob} viewImage={(f: TeamFile) => openPic(f.team || view.teamId, f)} />
+          teamId={view.teamId} thumb={(team: string, id: string) => teamThumbBlob(team, id)} viewImage={(f: TeamFile) => openPic(f.team || view.teamId, f)} />
         {viewer}
       </div>
       </SheetHostProvider>
@@ -212,12 +227,14 @@ export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: Re
     {/* 시트 자리 — 팀 시트·팀 홈 글쓰기가 칸(.tmh position:relative) 안에 갇히지 않게 */}
     <SheetHostProvider kb={kb}>
     <div className="m-team">
-      <header className="m-team-head">
-        <button className="m-team-switch" onClick={() => setSheet(true)} aria-label={tr('팀 바꾸기·만들기·초대', 'Switch, create or invite to a team')}>
-          {view?.joined ? <><TeamMarkIcon name={view.team} size={30} img={profiles.board?.teamIcon || undefined} /><b>{view.team}</b></> : <b>{tr('팀', 'Team')}</b>}
-          <IconChevronDown />
-        </button>
-        <BetaTag className="m-team-beta" />
+      <header className="m-team-head m-team-head2">
+        <PhoneTeamStrip stack={stack} icon={profiles.board?.teamIcon || undefined} unreadOf={unreadOf} onPick={pickTeam} onCurrent={() => setSheet(true)} onAdd={() => setAdding(true)} />
+        <div className="m-team-name">
+          {view?.joined
+            ? <button className="m-team-switch" onClick={() => setSheet(true)} aria-label={tr(`${view.team} — 팀 참모·초대 링크`, `${view.team} — team agents and invite link`)}><b>{view.team}</b><IconChevronDown /></button>
+            : <b className="m-team-none">{tr('팀', 'Team')}</b>}
+          <BetaTag className="m-team-beta" />
+        </div>
       </header>
       {view?.joined && (
         <div className="m-seg" role="tablist">
@@ -228,29 +245,28 @@ export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: Re
         </div>
       )}
       <div className="m-team-body">
-        {!view?.joined ? <div className="tmx-none">{tr(`아직 팀이 없어요 — 위 팀 이름을 눌러 만들거나, ${machine()} 설정 > 계정에서 Chammo 계정에 로그인해요`, `No team yet — tap the team name above to create one, or sign in to your Chammo account in ${machine()} Settings > Account`)}</div>
+        {!view?.joined ? <div className="tmx-none">{tr(`아직 팀이 없어요 — 위 + 를 눌러 만들거나 초대 링크로 들어가요. 처음이면 ${machine()} 설정 > 계정에서 Chammo 계정에 로그인해요`, `No team yet — tap + above to create one or join with an invite link. First time? Sign in to your Chammo account in ${machine()} Settings > Account`)}</div>
           : seg === 'chat' ? <div className="tmx-list"><TeamList convos={cs} rooms={t.rs} sel={null} onPick={(c: Convo) => setSel(c.key)} /></div>
-          : seg === 'home' ? <div className="m-team-home"><TeamHome teamId={view.teamId} team={view.team} members={view.members} icon={profiles.board?.teamIcon || undefined} api={posts} Dialog={HomeSheet} homeApi={homeApi} sources={homeSources} phone
+          : seg === 'home' ? <div className="m-team-home"><TeamHome key={view.teamId} teamId={view.teamId} team={view.team} members={view.members} icon={profiles.board?.teamIcon || undefined} api={posts} Dialog={HomeSheet} homeApi={homeApi} sources={homeSources} phone
               calBlock={(_b, editing) => <CalBlock teamId={view.teamId} wide={false} editing={editing} api={api.cal} onOpen={() => setSeg('cal')} />} /></div>
           : seg === 'cal' ? <div className="m-team-cal"><TeamCal key={view.teamId} teamId={view.teamId} members={view.members} api={api.cal} Dialog={HomeSheet} phone /></div>
-          : <PhoneTeamLocker api={api} teamId={view.teamId} onOpen={(i) => openPic(view.teamId, i)} />}
+          : <PhoneTeamLocker key={view.teamId} api={api} teamId={view.teamId} onOpen={(i) => openPic(view.teamId, i)} />}
       </div>
       {viewer}
       {sheet && <TeamSheet api={api} t={t} onClose={() => setSheet(false)} onAgents={() => { setSheet(false); setAgentPage({ key: 0 }); }} />}
+      {adding && <TeamAddSheet api={api} view={view} onClose={() => setAdding(false)} onChanged={() => { setSel(null); t.refresh(); }} />}
     </div>
     </SheetHostProvider>
     </ProfilesCtx.Provider>
   );
 }
 
-/** 팀 시트 — 팀 바꾸기(지금은 팀 하나)·팀 만들기·초대 링크(팀장만) */
+/** 지금 팀 시트(이름 줄 꺾쇠) — 팀 참모·초대 링크(팀장만). 바꾸기는 머리 팀 줄, 만들기·들어가기는 + 시트(11-02) */
 function TeamSheet({ api, t, onClose, onAgents }: { api: TeamPhoneApi; t: ReturnType<typeof usePhoneTeam>; onClose: () => void; onAgents: () => void }) {
   const view = t.feed?.view ?? null;
   const [link, setLink] = useState<string | null>(null);
   /** 실패 — 화면엔 한국어 한 줄(msg), 원문은 이름표(raw) */
   const [err, setErr] = useState<{ msg: string; raw: string } | null>(null);
-  const [making, setMaking] = useState(false);
-  const [name, setName] = useState('');
   const [copied, setCopied] = useState(false);
   useEffect(() => { if (view?.joined && view.role === 'owner') void api.invite().then((l) => setLink(l.link), (e: unknown) => setErr({ msg: tr('초대 링크를 못 만들었어요', "Couldn't make the invite link"), raw: String(e) })); }, [api, view?.joined, view?.role]);
   return (
@@ -259,10 +275,6 @@ function TeamSheet({ api, t, onClose, onAgents }: { api: TeamPhoneApi; t: Return
         {view?.joined && (
           <div className="m-ts-row on"><TeamMarkIcon name={view.team} size={36} /><span className="tmx-tx"><b>{view.team}</b><span>{tr(`사람 ${view.members.length}`, `${view.members.length} people`)}</span></span><i className="m-ts-ck"><IconCheck /></i></div>
         )}
-        {!view?.joined && (making
-          ? <div className="m-ts-make"><input value={name} onChange={(e) => setName(e.target.value)} placeholder={tr('팀 이름', 'Team name')} aria-label={tr('팀 이름', 'Team name')} autoFocus />
-              <button className="tmx-btn pri" disabled={!name.trim()} onClick={() => void api.create(name).then(() => { t.refresh(); onClose(); }, (e: unknown) => setErr({ msg: tr('팀을 못 만들었어요', "Couldn't create the team"), raw: String(e) }))}>{tr('만들기', 'Create')}</button></div>
-          : <button className="m-ts-act" onClick={() => setMaking(true)}>{tr('팀 만들기', 'Make a team')}</button>)}
         {view?.joined && <button className="m-ts-act" onClick={onAgents}>{tr('팀 참모', 'Team agents')}</button>}
         {view?.joined && <span className="m-ts-sec">{tr(`${view.team} 초대 링크`, `${view.team} invite link`)}</span>}
         {view?.joined && view.role !== 'owner' && <span className="tmx-hint">{tr('초대 링크는 팀장 기기에서 만들어요', 'Only the team owner can make invite links')}</span>}

@@ -8,7 +8,7 @@ import type { TaskEvent } from '../domain/tasks';
 import type { TamaFile } from '../domain/tama/store';
 import { drawSprite, spriteOf } from './tama/lcd';
 import { IconNext, IconPause, IconPlay, IconPrev } from './Icons';
-import { tr } from '../i18n';
+import { fmtNum, tr } from '../i18n';
 
 const HOUR = 3600_000;
 const PLAY_MS_PER_HOUR = 3000; // 재생: 한 시간 = 3초
@@ -84,7 +84,7 @@ export function ReplayPage({ devRoot, author, tasks, tama }: Props) {
       </header>
 
       <section className="rp-stats">
-        <Stat n={r.stats.commits} label={tr('커밋', 'Commits')} sub={tr(`${r.stats.lines.toLocaleString()}줄 · 머지 ${r.stats.merges}`, `${r.stats.lines.toLocaleString()} lines · ${r.stats.merges} merges`)} />
+        <Stat n={r.stats.commits} label={tr('커밋', 'Commits')} sub={tr(`${fmtNum(r.stats.lines)}줄 · 머지 ${r.stats.merges}`, `${fmtNum(r.stats.lines)} lines · ${r.stats.merges} merges`)} />
         <Stat n={r.stats.sent} label={tr('시킨 일', 'Delegated')} sub={tr(`끝남 ${r.stats.done}`, `${r.stats.done} done`)} />
         <Stat n={r.stats.decisions} label={tr('결정', 'Decisions')} sub={tr('나한테 물은 것', 'Asked of you')} />
         <Stat n={r.stats.allows} label={tr('자동 허용', 'Auto-allowed')} sub={tr('권한 창', 'Permission prompts')} />
@@ -134,7 +134,7 @@ export function ReplayPage({ devRoot, author, tasks, tama }: Props) {
           {!r.decisions.length && <Empty />}
         </Part>
         <Part title={tr('가장 큰 커밋', 'Biggest commits')}>
-          {r.biggest.map((c) => <Row key={c.hash} t={c.t} head={tr(`${c.repo} · ${c.lines.toLocaleString()}줄`, `${c.repo} · ${c.lines.toLocaleString()} lines`)} text={c.subject} />)}
+          {r.biggest.map((c) => <Row key={c.hash} t={c.t} head={tr(`${c.repo} · ${fmtNum(c.lines)}줄`, `${c.repo} · ${fmtNum(c.lines)} lines`)} text={c.subject} />)}
           {!r.biggest.length && <Empty />}
         </Part>
         <Part title={tr(`내일로 넘길 일 ${r.carryover.length}`, `Carry over to tomorrow ${r.carryover.length}`)}>
@@ -154,7 +154,7 @@ export function ReplayPage({ devRoot, author, tasks, tama }: Props) {
 function Stat({ n, label, sub }: { n: number | string; label: string; sub: string }) {
   return (
     <div className="rp-stat">
-      <b>{typeof n === 'number' ? n.toLocaleString() : n}</b>
+      <b>{typeof n === 'number' ? fmtNum(n) : n}</b>
       <span>{label}</span>
       <span className="dim">{sub}</span>
     </div>
@@ -167,7 +167,7 @@ function Card({ e, fresh }: { e: ReplayEvent; fresh: boolean }) {
       <span className="rp-card-t">{hhmm(e.t)}</span>
       <span className={`tag rp-tag ${e.kind}`}>{KIND()[e.kind]}</span>
       <span className="rp-card-lane">{e.lane}</span>
-      <span className="rp-card-text">{e.text}{e.lines ? tr(` · ${e.lines.toLocaleString()}줄`, ` · ${e.lines.toLocaleString()} lines`) : ''}</span>
+      <span className="rp-card-text">{e.text}{e.lines ? tr(` · ${fmtNum(e.lines)}줄`, ` · ${fmtNum(e.lines)} lines`) : ''}</span>
     </li>
   );
 }

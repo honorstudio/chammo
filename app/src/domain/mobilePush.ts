@@ -59,7 +59,7 @@ export const autoResubscribe = (o: { can: PushSupport; permission: string; hasSu
 export const PUSH_HINT: Record<string, string> = {
   'need-home': tr('아이폰은 홈 화면에 추가한 앱에서만 알림을 받아요 — 사파리 공유 → 홈 화면에 추가한 뒤, 아래 \'홈 화면 앱 연결\' 코드를 그 앱에 붙여 넣어요', "iPhone only gets notifications in an app added to the Home Screen — in Safari tap Share, then Add to Home Screen, and paste the 'Connect Home Screen app' code below into that app"),
   denied: tr('알림이 막혀 있어요 — 폰 설정 > 알림에서 참모를 허용해 주세요(브라우저 탭으로 열었으면 그 브라우저의 사이트 설정에서)', 'Notifications are blocked — allow Chammo in Phone settings > Notifications (or in the browser site settings if opened in a browser tab)'),
-  insecure: tr('http 주소로 열려서 알림·앱 설치·마이크가 안 돼요 — 컴퓨터 Chammo 설정 > 기기 관리 안내대로 테일스케일 HTTPS 를 켠 뒤 새 QR 로 다시 열어 주세요', 'Opened over http, so notifications, app install and the microphone do not work — turn on Tailscale HTTPS as described in Chammo settings > Devices on your computer, then reopen with a new QR code'),
+  insecure: tr("폰이 옛 http 주소로 열려 알림·앱 설치·마이크가 안 돼요. 컴퓨터 Chammo 설정 > 기기 관리의 '폰 추가' QR 로 다시 열어 주세요", 'This phone opened an old http link, so alerts, app install and mic are off. Rescan the Add phone QR in Chammo settings > Devices on your computer.'),
 };
 
 /** 종 켜기 실패 글 — 브라우저 오류는 영어라(iOS 'User denied push permission') 우리말로. 우리가 만든 한글 오류는 그대로(QA 2차) */

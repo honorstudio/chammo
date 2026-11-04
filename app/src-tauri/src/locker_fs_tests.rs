@@ -1103,3 +1103,24 @@ fn windows_mixed_separators_are_plain_after_os_sep() {
 fn owner_id_of_test(d: &Path) -> String {
     std::fs::read_to_string(d.join(ID_FILE)).unwrap().trim().to_string()
 }
+
+// 11-01 윈도우 시험 PC 실측: 맥에서 올린 '사진?.png'·'견적<최종>.pdf' 는 윈도우에서 만들 수가 없어(os error 123) 받기가 통째로 실패했다.
+// 끝 점·끝 공백은 윈도우가 말없이 떼서 다른 이름이 되고, CON 같은 장치 이름은 파일 대신 장치로 써져 사라진다
+#[test]
+fn windows_names_are_cleaned_only_on_windows() {
+    use super::safe_name_for;
+    assert_eq!(safe_name_for("사진?.png", "파일", true), "사진-.png");
+    assert_eq!(safe_name_for("견적<최종>.pdf", "파일", true), "견적-최종-.pdf");
+    assert_eq!(safe_name_for("따옴\"표|별*.txt", "파일", true), "따옴-표-별-.txt");
+    assert_eq!(safe_name_for("끝점.", "파일", true), "끝점");
+    assert_eq!(safe_name_for("끝공백 . ", "파일", true), "끝공백");
+    assert_eq!(safe_name_for("...", "파일", true), "파일");
+    assert_eq!(safe_name_for("CON.txt", "파일", true), "_CON.txt");
+    assert_eq!(safe_name_for("con", "파일", true), "_con");
+    assert_eq!(safe_name_for("Lpt9.tar.gz", "파일", true), "_Lpt9.tar.gz");
+    assert_eq!(safe_name_for("CONSOLE.txt", "파일", true), "CONSOLE.txt", "장치 이름과 앞만 같으면 그대로");
+    assert_eq!(safe_name_for("사진 모음.zip", "파일", true), "사진 모음.zip");
+    // 맥은 그대로 — 이미 받아 둔 이름·참모 폴더 이름이 바뀌지 않게
+    assert_eq!(safe_name_for("사진?.png", "파일", false), "사진?.png");
+    assert_eq!(safe_name_for("CON.txt", "파일", false), "CON.txt");
+}

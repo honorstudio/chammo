@@ -1,6 +1,7 @@
 // 설정 > 기기 관리 — Chammo 계정에 묶인 내 기기 한 목록(시안 device-manage A, ADR 0014). 넣기 단추 없음: 같은 계정으로 로그인하면 들어온다.
 // 허용 대기 줄의 허용·거절은 그 기기 카드로 답한다(Rust direct_answer — 사람 클릭에서만, 카드와 같은 길). 이 기기 빼기 = 로그아웃.
-// 테일넷으로 직접 잇기(폰 QR·다른 기기 참모)는 맨 아래 접힘 대피로
+// 폰 연결 스위치(폰을 받나)는 이 칸에 — 11-01 사용자: 테일스케일 없이 도는 게 기본이라 맨 아래 접힘에 숨기지 않는다.
+// 테일넷으로 직접 잇기(옛 폰 QR·다른 기기 참모)는 맨 아래 '테일스케일이 있는 분만' 접힘 — 있으면 쓰는 덤
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { chammoHere, teamDeviceRename, teamDeviceRevoke, teamLogout, teamStatus, type TeamView } from '../data/teamApi';
@@ -10,11 +11,17 @@ import { directCards } from '../domain/directAsk';
 import { deviceCounts, deviceRows, pendingCardFor } from '../domain/myDevices';
 import { tr } from '../i18n';
 import { gateErrText } from '../domain/loginGate';
-import { IconChevronDown, IconChevronUp, IconClose, IconPencil, IconRefresh, IconUnlink } from './Icons';
+import { IconChat, IconChevronDown, IconChevronUp, IconClose, IconPencil, IconRefresh, IconUnlink } from './Icons';
 import { IconButton } from './kit/IconButton';
+import { phoneReachHint } from './phoneReach';
 import { BetaTag } from './kit/BetaTag';
 import { desktopNumber, NumberEntry, outsideHint, useCardNumber } from './e2e/NumberEntry';
 import { NumberWait } from './e2e/NumberWait';
+import { remoteApi, remoteSaved, remoteUnpair } from '../data/remote';
+import { remoteAssistants, type RemoteAssistant } from '../domain/remoteChat';
+import { REMOTE_CHAT_EVENT, type RemoteChatTarget } from './chat/RemoteChat';
+import { peerLink, peerLinkError, type PeerPending } from '../domain/peerLink';
+import { seenName } from '../domain/session';
 
 const hm = (ms: number) => { const t = new Date(ms); return `${t.getMonth() + 1}/${t.getDate()} ${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`; };
 
@@ -38,12 +45,21 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
   const loadHere = () => void chammoHere().then(setHere, () => {});
   // 로그인 화면 단계(Rust e2e_self_step) — outside(허용됐지만 사슬 밖)면 대기 기기처럼 숫자 칸을 여기서도 다시 본다
   const [step, setStep] = useState('');
+  // 컴퓨터끼리 잇기(테일스케일 없이 중계, 시안 peer-relay 안 A) — 이어진 줄(relay:<id>)·연결 중 숫자·그 컴퓨터 참모들
+  const [linked, setLinked] = useState<Set<string>>(new Set());
+  const [peer, setPeer] = useState<Record<string, PeerPending>>({});
+  const [agents, setAgents] = useState<Record<string, RemoteAssistant[]>>({});
+  const loadPeer = () => {
+    void remoteSaved().then((l) => setLinked(new Set(l.map((x) => x.id).filter((id) => id.startsWith('relay:')))), () => {});
+    void invoke<Record<string, PeerPending>>('peer_relay_state').then(setPeer, () => {});
+  };
 
   const load = () => {
     void teamStatus().then(setV, (e: unknown) => setErr(String(e)));
     void invoke<string>('direct_log').then(setLog, () => {});
     void mobileApi.status().then((m) => setPhoneOff(!!m.off), () => {});
     void invoke<string>('e2e_self_step').then(setStep, () => {});
+    loadPeer();
   };
   useEffect(() => {
     load();
@@ -52,6 +68,30 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
     const t = window.setInterval(load, 5000);
     return () => window.clearInterval(t);
   }, []);
+  // 연결 중이면 1초마다 — 숫자가 뜨고 끝나는 걸 따라간다
+  const waitingPeer = Object.keys(peer).some((k) => !peer[k]?.error);
+  useEffect(() => {
+    if (!waitingPeer) return;
+    const t = window.setInterval(loadPeer, 1000);
+    return () => window.clearInterval(t);
+  }, [waitingPeer]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 이어진 컴퓨터의 참모 — 이어진 목록이 바뀔 때만(중계로 묻는 길이라 5초 고리에 안 넣는다)
+  const linkedKey = [...linked].sort().join(',');
+  useEffect(() => {
+    for (const id of linked) {
+      const api = remoteApi(id);
+      void Promise.all([api.getEnv(), api.listSessionsRaw()]).then(([env, raw]) => setAgents((m) => ({ ...m, [id]: remoteAssistants(raw, env.hqDir) })), () => {});
+    }
+  }, [linkedKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const connectPeer = (e: React.MouseEvent, id: string) => {
+    if (!e.nativeEvent.isTrusted) return;
+    setPeer((m) => ({ ...m, [id]: {} }));
+    void invoke('peer_relay_connect', { hub: id }).catch((x: unknown) => setPeer((m) => ({ ...m, [id]: { error: String(x) } })));
+  };
+  const chatPeer = (id: string, devName: string, a: RemoteAssistant) => {
+    const detail: RemoteChatTarget = { dev: id, devName, agent: a.id, name: a.name || a.id };
+    window.dispatchEvent(new CustomEvent(REMOTE_CHAT_EVENT, { detail }));
+  };
   const act = (f: () => Promise<unknown>) => {
     setBusy(true);
     setErr(null);
@@ -99,6 +139,16 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
             {v?.pendingAutoAt ? <span>{tr(`${hm(v.pendingAutoAt)}까지 거절이 없으면 접속은 열리지만, 메시지는 숫자 확인 뒤에 읽어요.`, `If nobody declines by ${hm(v.pendingAutoAt)} it can connect, but messages need the number check.`)}</span> : null}
           </div>
         )}
+        {acc && !v?.pending && (
+          <div className="su-row dev-row dm-phone">
+            <div className="su-row-text">
+              <b>{tr('폰 연결', 'Phone link')}</b>
+              <span>{phoneOff ? tr('꺼져 있어서 폰이 이 컴퓨터에 붙지 않아요.', "Off, so phones can't connect to this computer.") : phoneReachHint(true).text}</span>
+            </div>
+            <input type="checkbox" role="switch" className="cfg-sw" aria-label={tr('폰 연결', 'Phone link')} checked={!phoneOff} disabled={busy}
+              onChange={(e) => { const on = e.target.checked; act(() => mobileApi.set(on).then((m) => setPhoneOff(!!m.off))); }} />
+          </div>
+        )}
         {acc && !v?.pending && !phoneOff && (entry ? (
           <div className="su-mobile">
             {entry.qrSvg && <img className="su-qr" alt={tr('폰 추가 QR', 'Add phone QR')} src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(entry.qrSvg)}`} />}
@@ -112,7 +162,6 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
         ) : (
           <div className="su-inline"><button className="btn" onClick={() => void mobileApi.entryQr().then(setEntry, (e: unknown) => setErr(String(e)))}>{tr('폰 추가', 'Add phone')}</button></div>
         ))}
-        {acc && phoneOff && <span className="su-hint">{tr('이 컴퓨터는 폰을 받지 않아요 — 아래 테일스케일로 직접 잇기의 폰 연결을 켜면 받아요', 'This computer does not accept phones — turn on phone connection below to allow it')}</span>}
         {acc && (
           <>
             {/* 기기 목록이 비었으면(허용 대기·확인 중 403) '이 기기' 줄의 로그아웃이 없다 — 따로 둔다(10-26 아이맥) */}
@@ -149,12 +198,15 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
                     </div>
                   );
                 }
+                const pl = peerLink(r, linked, peer);
                 return (
-                  <div key={r.id} className="su-row dev-row">
+                  <div key={r.id} className="su-row dev-row dm-peer">
                     <div className="su-row-text">
                       <b title={r.name}>{r.name}{r.me && <span className="dm-me">{tr('이 기기', 'This device')}</span>}</b>
-                      <span><i className={`dm-dot${r.online ? ' on' : ''}${r.pending ? ' wait' : ''}`} />{r.meta}</span>
+                      <span><i className={`dm-dot${r.online ? ' on' : ''}${r.pending ? ' wait' : ''}`} />{r.meta}{pl.mode === 'linked' ? tr(' · 이어짐', ' · Linked') : pl.mode === 'pending' ? tr(' · 확인 중', ' · Checking') : ''}</span>
                     </div>
+                    {pl.mode === 'connect' && !v?.pending && <button className="btn pri su-row-act" disabled={busy} onClick={(e) => connectPeer(e, r.id)}>{tr('연결', 'Connect')}</button>}
+                    {pl.mode === 'pending' && <button className="btn su-row-act" onClick={() => void invoke('peer_relay_clear', { hub: r.id }).then(loadPeer)}>{tr('취소', 'Cancel')}</button>}
                     {/* 허용하고 4자리를 띄운 줄은 대기가 끝나도 그대로(R7) */}
                     {(r.pending || numbering === r.id) && !v?.pending ? (
                       card
@@ -167,6 +219,25 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
                         {!r.pending && <IconButton size="m" tone="line" label={tr(`${r.name} 이름 바꾸기`, `Rename ${r.name}`)} disabled={busy} onClick={() => { setRenaming(r.id); setNewName(r.name); }}><IconPencil /></IconButton>}
                         <button className="ib danger su-row-act" aria-label={r.me ? tr('이 기기 빼기(로그아웃)', 'Remove this device (sign out)') : tr(`${r.name} 빼기`, `Remove ${r.name}`)} title={r.me ? tr('이 기기 빼기(로그아웃)', 'Remove this device (sign out)') : tr('빼기', 'Remove')} disabled={busy} onClick={() => setRemoving(r.id)}><IconUnlink /></button>
                       </>
+                    )}
+                    {pl.mode === 'pending' && (
+                      <div className="dm-peer-pend">
+                        {pl.sas && <div className="dm-peer-code" aria-label={tr(`확인 숫자 ${pl.sas}`, `Check number ${pl.sas}`)}>{pl.sas}</div>}
+                        <span>{tr(`이 숫자가 ${r.name} 카드 숫자와 같은지 폰에서 확인하고 허용해 주세요`, `Check on your phone that this matches the number on ${r.name}'s card, then allow it.`)}</span>
+                        <span className="su-hint">{tr(`폰이 없으면 ${r.name} 앞에서 카드를 눌러 주세요`, `No phone? Press the card at ${r.name} in person.`)}</span>
+                      </div>
+                    )}
+                    {pl.error && <div className="su-error dm-peer-err">{peerLinkError(pl.error, r.name)}</div>}
+                    {pl.mode === 'linked' && (
+                      <div className="peer-agents">
+                        {(agents[`relay:${r.id}`] ?? []).map((a) => (
+                          <div key={a.id} className="peer-agent">
+                            <span>{seenName(a.name) || a.id}</span>
+                            <IconButton size="m" tone="line" label={tr(`${seenName(a.name) || a.id}와 채팅`, `Chat with ${seenName(a.name) || a.id}`)} onClick={() => chatPeer(`relay:${r.id}`, r.name, a)}><IconChat /></IconButton>
+                          </div>
+                        ))}
+                        <button className="peer-alt" disabled={busy} onClick={() => act(() => remoteUnpair(`relay:${r.id}`).then(loadPeer))}>{tr('연결 끊기', 'Unlink')}</button>
+                      </div>
                     )}
                   </div>
                 );
@@ -194,10 +265,10 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
       </section>
       <section className="su-sec">
         <div className="su-sec-head">
-          <div className="su-title"><h2 className="dm-fold-h">{tr('테일스케일로 직접 잇기', 'Connect directly over Tailscale')}</h2><BetaTag /></div>
+          <div className="su-title"><h2 className="dm-fold-h">{tr('테일스케일이 있는 분만', 'Only if you use Tailscale')}</h2><BetaTag /></div>
           <IconButton size="l" tone="line" label={fold ? tr('접기', 'Collapse') : tr('펼치기', 'Expand')} pressed={fold} onClick={() => setFold(!fold)}>{fold ? <IconChevronUp /> : <IconChevronDown />}</IconButton>
         </div>
-        {!fold && <span className="su-hint">{tr('계정 없이, 또는 옛 버전 기기와 연결해요(폰 QR, 같은 테일넷의 다른 기기)', 'Without an account, or with older versions: phone QR and Chammo on your tailnet')}</span>}
+        {!fold && <span className="su-hint">{tr('테일스케일을 이미 쓰는 분을 위한 예전 연결 방법이에요.', 'Older connection methods for people who already use Tailscale.')}</span>}
       </section>
       {fold && fallback}
     </>

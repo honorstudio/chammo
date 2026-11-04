@@ -12,25 +12,46 @@ use std::time::{Duration, Instant};
 pub const COMMIT_TAG: &[u8] = b"chammo-link-commit/1";
 pub const SAS_TAG: &[u8] = b"chammo-link-sas/1";
 pub const COMMIT_M_TAG: &[u8] = b"chammo-link-commit-m/1";
+/// 컴퓨터끼리(계획 2026-11-01-peer-relay C-3b) — 같은 5단계, 표식만 따로(도메인 분리: 폰 짝짓기 기록을 컴퓨터 짝짓기로 되쓸 수 없게).
+/// 어느 갈래인지는 허브가 찍은 plat(서버 DB 값)으로만 고른다
+pub const PEER_COMMIT_TAG: &[u8] = b"chammo-peer-commit/1";
+pub const PEER_SAS_TAG: &[u8] = b"chammo-peer-sas/1";
+pub const PEER_COMMIT_M_TAG: &[u8] = b"chammo-peer-commit-m/1";
 /// 두드리기 하나·카드 하나의 수명
 pub const LINK_TTL: Duration = Duration::from_secs(600);
 /// 동시에 기다리는 두드리기 상한 — 남이 두드려 대도 메모리가 안 붓게
 const MAX_LINKS: usize = 16;
 
-/// commit = SHA256(표식 ‖ 폰 터널 공개 열쇠 ‖ nP)
+/// commit = SHA256(표식 ‖ 폰 터널 공개 열쇠 ‖ nP) — 폰 갈래 줄임(시험)
+#[cfg(test)]
 pub fn commit(pt: &[u8], np: &[u8]) -> [u8; 32] {
-    Sha256::new().chain_update(COMMIT_TAG).chain_update(pt).chain_update(np).finalize().into()
+    commit_for(false, pt, np)
 }
 
-/// 컴퓨터 commit = SHA256(표식 ‖ 컴퓨터 터널 공개 열쇠 ‖ nM) — 폰이 nP 를 열기 전에 받는다
+/// 컴퓨터 commit = SHA256(표식 ‖ 컴퓨터 터널 공개 열쇠 ‖ nM) — 폰이 nP 를 열기 전에 받는다(폰 갈래 줄임, 시험)
+#[cfg(test)]
 pub fn commit_m(mt: &[u8], nm: &[u8]) -> [u8; 32] {
-    Sha256::new().chain_update(COMMIT_M_TAG).chain_update(mt).chain_update(nm).finalize().into()
+    commit_m_for(false, mt, nm)
+}
+
+/// peer = 컴퓨터끼리 갈래(표식만 다름)
+pub fn commit_for(peer: bool, pt: &[u8], np: &[u8]) -> [u8; 32] {
+    Sha256::new().chain_update(if peer { PEER_COMMIT_TAG } else { COMMIT_TAG }).chain_update(pt).chain_update(np).finalize().into()
+}
+
+pub fn commit_m_for(peer: bool, mt: &[u8], nm: &[u8]) -> [u8; 32] {
+    Sha256::new().chain_update(if peer { PEER_COMMIT_M_TAG } else { COMMIT_M_TAG }).chain_update(mt).chain_update(nm).finalize().into()
 }
 
 /// 확인 숫자 = SHA256(표식 ‖ Pt ‖ Mt ‖ 폰 서명 열쇠 ‖ 폰 기기 id(utf8) ‖ nP ‖ nM) 앞 4바이트 mod 10⁶.
 /// 앞뒤 칸 길이가 고정(65·65·32 … 16·16)이라 가운데 기기 id 의 경계가 하나로 정해진다
+#[cfg(test)]
 pub fn sas(pt: &[u8], mt: &[u8], sign: &[u8], dev: &[u8], np: &[u8], nm: &[u8]) -> u32 {
-    let h = Sha256::new().chain_update(SAS_TAG).chain_update(pt).chain_update(mt).chain_update(sign).chain_update(dev).chain_update(np).chain_update(nm).finalize();
+    sas_for(false, pt, mt, sign, dev, np, nm)
+}
+
+pub fn sas_for(peer: bool, pt: &[u8], mt: &[u8], sign: &[u8], dev: &[u8], np: &[u8], nm: &[u8]) -> u32 {
+    let h = Sha256::new().chain_update(if peer { PEER_SAS_TAG } else { SAS_TAG }).chain_update(pt).chain_update(mt).chain_update(sign).chain_update(dev).chain_update(np).chain_update(nm).finalize();
     u32::from_be_bytes([h[0], h[1], h[2], h[3]]) % 1_000_000
 }
 
@@ -50,6 +71,8 @@ pub struct Hello {
     pub name: String,
     /// 중계 기기 id(허브가 서명으로 확인해 넘긴 것)
     pub dev: String,
+    /// 컴퓨터끼리 갈래(허브 plat 이 mac|win) — 표식·카드·줄이 다르다
+    pub peer: bool,
     commit: [u8; 32],
 }
 
@@ -96,13 +119,26 @@ impl Links {
     }
 
     /// ① link1 — first_replacing 에서 닫은 카드는 버린다(시험용 짧은 길)
+    #[cfg(test)]
     pub fn first(&self, k: &str, hello: &Value, hub_key: &str, dev: &str, mt: &[u8], now: Instant) -> Result<[u8; 32], String> {
         self.first_replacing(k, hello, hub_key, dev, mt, now).map(|(cm, _)| cm)
     }
 
     /// ① link1 — 허브가 확인한 열쇠(hub_key)·기기 id(dev) 와 상자 속 인사(sign·dev)를 대조하고 nM 을 뽑아 봉한 것(cM)만 돌려준다(② link2).
     /// 같은 기기의 옛 두드리기는 닫고, 거기 띄운 카드 id 를 돌려준다(카드를 닫으라고). nM 내주기는 컴퓨터 전체로 10분에 5번
+    #[cfg(test)]
     pub fn first_replacing(&self, k: &str, hello: &Value, hub_key: &str, dev: &str, mt: &[u8], now: Instant) -> Result<([u8; 32], Option<String>), String> {
+        self.first_kind_replacing(k, hello, hub_key, dev, mt, false, now)
+    }
+
+    /// 컴퓨터끼리 갈래 포함 ① link1 (시험용 짧은 길)
+    #[cfg(test)]
+    pub fn first_kind(&self, k: &str, hello: &Value, hub_key: &str, dev: &str, mt: &[u8], peer: bool, now: Instant) -> Result<[u8; 32], String> {
+        self.first_kind_replacing(k, hello, hub_key, dev, mt, peer, now).map(|(cm, _)| cm)
+    }
+
+    /// peer = 허브가 찍은 plat 이 컴퓨터(mac|win) — 상자 속 글로 고르지 않는다
+    pub fn first_kind_replacing(&self, k: &str, hello: &Value, hub_key: &str, dev: &str, mt: &[u8], peer: bool, now: Instant) -> Result<([u8; 32], Option<String>), String> {
         let s = |f: &str| hello[f].as_str().unwrap_or_default();
         if !id_ok(k) || !id_ok(dev) {
             return Err("bad id".into());
@@ -131,9 +167,11 @@ impl Links {
         let mut nm = [0u8; 16];
         getrandom::fill(&mut nm).map_err(|e| e.to_string())?;
         g.issued.push(now);
-        let hello = Hello { sign: s("sign").to_string(), x, name: crate::mobile_pair::device_name(s("ua")), dev: dev.to_string(), commit };
+        // 컴퓨터 이름은 브라우저 UA 가 아니라 그 앱이 보낸 이름(제어 글자 빼고) — 카드엔 서버 기기 목록 이름을 다시 쓴다(phone_relay)
+        let name = if peer { s("ua").chars().filter(|c| !c.is_control()).take(40).collect() } else { crate::mobile_pair::device_name(s("ua")) };
+        let hello = Hello { sign: s("sign").to_string(), x, name, dev: dev.to_string(), peer, commit };
         g.links.insert(k.to_string(), Link { hello, nm, sas: None, card: None, started: now, dead: false });
-        Ok((commit_m(mt, &nm), closed))
+        Ok((commit_m_for(peer, mt, &nm), closed))
     }
 
     /// ③ link3 — nP 를 commit 과 대조하고 숫자와 nM 을 낸다(한 번만 — 부른 쪽이 카드를 먼저 띄우고 ④ nM 을 보낸다). 틀리면 그 두드리기는 끝. 기기마다 10분에 3장까지
@@ -146,7 +184,7 @@ impl Links {
             l.dead = true;
             return Err("out of order".into());
         }
-        if np.len() != 16 || !crate::mobile_http::ct_eq(&commit(&l.hello.x, np), &l.hello.commit) {
+        if np.len() != 16 || !crate::mobile_http::ct_eq(&commit_for(l.hello.peer, &l.hello.x, np), &l.hello.commit) {
             l.dead = true;
             return Err("commit".into());
         }
@@ -156,7 +194,7 @@ impl Links {
             return Err("too many checks".into());
         }
         let sign = tun::unb64(&l.hello.sign).map_err(|_| "bad sign")?;
-        let n = sas(&l.hello.x, mt, &sign, l.hello.dev.as_bytes(), np, &l.nm);
+        let n = sas_for(l.hello.peer, &l.hello.x, mt, &sign, l.hello.dev.as_bytes(), np, &l.nm);
         seen.push(now);
         l.sas = Some(n);
         Ok((n, l.hello.clone(), l.nm))
@@ -205,6 +243,62 @@ impl Links {
     /// 두드리기가 닫혔다(폰이 나감·허브 끊김)
     pub fn drop_knock(&self, k: &str) -> Option<String> {
         self.0.lock().unwrap_or_else(|e| e.into_inner()).links.remove(k).and_then(|l| l.card)
+    }
+}
+
+/// 거는 쪽(B 컴퓨터, C-3b-2) — 폰 입구 sas.ts LinkRun 을 Rust 로, 컴퓨터 표식으로. 단계를 차례로만:
+/// ① link1(cP 만) → ② cM 받고 ③ nP 열기 → ④ nM 이 cM 과 맞아야 숫자 → ⑤ 토큰은 숫자를 낸 뒤에만
+pub struct Initiator {
+    pt: Vec<u8>,
+    mt: Vec<u8>,
+    sign: Vec<u8>,
+    dev: String,
+    np: [u8; 16],
+    sent1: bool,
+    cm: Option<[u8; 32]>,
+    done: bool,
+}
+
+impl Initiator {
+    /// pt = 내 터널 공개 열쇠, mt = 그 컴퓨터 터널 공개 열쇠(서버가 준 값 — 숫자로 확인), sign = 내 서명 공개 열쇠(32), dev = 내 중계 기기 id
+    pub fn new(pt: Vec<u8>, mt: Vec<u8>, sign: Vec<u8>, dev: String) -> Self {
+        let mut np = [0u8; 16];
+        getrandom::fill(&mut np).expect("OS 난수");
+        Self::with_nonce(pt, mt, sign, dev, np)
+    }
+
+    pub fn with_nonce(pt: Vec<u8>, mt: Vec<u8>, sign: Vec<u8>, dev: String, np: [u8; 16]) -> Self {
+        Initiator { pt, mt, sign, dev, np, sent1: false, cm: None, done: false }
+    }
+
+    /// ① 인사 — name = 이 컴퓨터 이름(받는 쪽은 카드에 서버 기기 목록 이름을 쓴다)
+    pub fn link1(&mut self, name: &str) -> Value {
+        self.sent1 = true;
+        serde_json::json!({ "step": "link1", "sign": tun::b64(&self.sign), "x": tun::b64(&self.pt), "ua": name, "commit": tun::b64(&commit_for(true, &self.pt, &self.np)), "dev": self.dev })
+    }
+
+    /// ② cM → ③ nP
+    pub fn link2(&mut self, cm: &[u8]) -> Result<Value, String> {
+        if !self.sent1 || self.cm.is_some() {
+            return Err("order".into());
+        }
+        self.cm = Some(cm.try_into().map_err(|_| "bad cM")?);
+        Ok(serde_json::json!({ "step": "link3", "nP": tun::b64(&self.np) }))
+    }
+
+    /// ④ nM — 봉해 둔 cM 과 맞아야 숫자
+    pub fn link4(&mut self, nm: &[u8]) -> Result<u32, String> {
+        let cm = self.cm.filter(|_| !self.done).ok_or("order")?;
+        if nm.len() != 16 || !crate::mobile_http::ct_eq(&commit_m_for(true, &self.mt, nm), &cm) {
+            return Err("commit".into());
+        }
+        self.done = true;
+        Ok(sas_for(true, &self.pt, &self.mt, &self.sign, self.dev.as_bytes(), &self.np, nm))
+    }
+
+    /// ⑤ 토큰을 받아도 되나 — 숫자를 낸 뒤에만
+    pub fn can_finish(&self) -> bool {
+        self.done
     }
 }
 

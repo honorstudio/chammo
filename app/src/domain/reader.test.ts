@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { docUrl, isDocUrl, dropIndex, inStrip, kindOf, titleOf, pageDoc, pathOfDocUrl, docFileUrl, isSheet, spacePage, isPlainDoc, notUtf8 } from './reader';
+import { cardThumb, docUrl, isDocUrl, dropIndex, inStrip, kindOf, titleOf, pageDoc, pathOfDocUrl, docFileUrl, isSheet, spacePage, isPlainDoc, notUtf8 } from './reader';
 import table from './editableExt.json';
 
 describe('kindOf — 확장자로 어떻게 보여줄지', () => {
@@ -164,5 +164,34 @@ describe('UTF-8 이 아닌 글 파일(11-01 QA H11)', () => {
     expect(notUtf8('NOT_UTF8')).toBe(true);
     expect(notUtf8('Error: NOT_UTF8')).toBe(true);
     expect(notUtf8('홈 폴더 밖이거나 없는 파일')).toBe(false);
+  });
+});
+
+describe('cardThumb — 파일 카드 썸네일 길(채팅 카드·보관함 카드가 같이)', () => {
+  it('PDF·영상도 첫 장(11-01 PDF 카드가 회색 칸에 PDF 글자만)', () => {
+    expect(cardThumb('/a/발주서.pdf')).toBe('shot');
+    expect(cardThumb('/a/clip.MP4')).toBe('shot');
+    expect(cardThumb('/a/clip.mov')).toBe('shot');
+  });
+  it('오피스·디자인 파일·시안 html 은 첫 장', () => {
+    for (const p of ['a.docx', 'a.xlsx', 'a.pptx', 'a.key', 'a.numbers', 'a.pages', 'a.ai', 'a.eps', 'a.psd', 'a.html', 'a.hwpx']) expect(cardThumb(`/x/${p}`), p).toBe('shot');
+  });
+  it('그림은 그대로, 글은 앞부분', () => {
+    expect(cardThumb('/a/shot.png')).toBe('image');
+    expect(cardThumb('/a/logo.svg')).toBe('image');
+    expect(cardThumb('/a/starter.md')).toBe('text');
+    expect(cardThumb('/a/log.txt')).toBe('text');
+  });
+  it('못 그리는 것은 확장자 표 — 오디오(QuickLook 은 음표 아이콘뿐)·hwp(20초 헛돎)·zip', () => {
+    for (const p of ['a.mp3', 'a.m4a', 'a.hwp', 'a.zip', 'a.dmg']) expect(cardThumb(`/x/${p}`), p).toBe('none');
+  });
+  it('윈도우는 HEIC·TIFF 를 첫 장 길로(웹뷰가 못 그린다), 맥은 그대로 그림', () => {
+    expect(cardThumb('/a/폰.HEIC', true)).toBe('shot');
+    expect(cardThumb('/a/scan.tif', true)).toBe('shot');
+    expect(cardThumb('/a/a.png', true)).toBe('image');
+    expect(cardThumb('/a/폰.heic', false)).toBe('image');
+  });
+  it('붙인 그림(data:)은 그림', () => {
+    expect(cardThumb('data:image/png;base64,AAAA')).toBe('image');
   });
 });

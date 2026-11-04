@@ -77,7 +77,7 @@ pub fn team_locker_dismiss(window: tauri::WebviewWindow, local: String) -> Resul
 pub async fn team_locker_open(window: tauri::WebviewWindow, team: String, id: String, external: Option<bool>) -> Result<String, String> {
     ui_only(&window)?;
     human_job(move |d, kc, h| {
-        let p = app::view(d, kc, h, &team, &id)?;
+        let p = crate::team_down::track(&team, &id, "open", |tick| app::view_with(d, kc, h, &team, &id, tick))?;
         if external.unwrap_or(false) {
             crate::platform::open_path(&p.to_string_lossy()).map_err(|e| format!("못 열었어: {e}"))?;
         }
@@ -142,7 +142,7 @@ fn tell_give(app_handle: &tauri::AppHandle, window: &tauri::WebviewWindow, orch:
     crate::craft_window::to_main(app_handle, "__teamGive", json!({ "orch": orch, "paths": paths }));
 }
 
-/// 스페이스 탭 내려받기 — 풀어 둔 팀 파일을 다운로드 폴더로 복사하고 파인더에서 보인다. 복사한 경로
+/// 스페이스 탭 내려받기 — 풀어 둔 팀 파일을 다운로드 폴더로 복사하고 파일 관리자에서 보인다. 복사한 경로
 #[tauri::command]
 pub async fn team_locker_download(window: tauri::WebviewWindow, path: String) -> Result<String, String> {
     ui_only(&window)?;
@@ -153,10 +153,7 @@ pub async fn team_locker_download(window: tauri::WebviewWindow, path: String) ->
         }
         let out = PathBuf::from(home).join("Downloads");
         let p = app::copy_out(crate::config::data_dir(), Path::new(&path), &out)?;
-        #[cfg(target_os = "macos")]
-        let _ = crate::platform::command("open").arg("-R").arg(&p).status();
-        #[cfg(windows)]
-        let _ = crate::platform::command("explorer").arg(format!("/select,{}", p.display())).status();
+        let _ = crate::platform::reveal(&p);
         Ok(p.to_string_lossy().into_owned())
     })
     .await
@@ -184,6 +181,13 @@ pub async fn team_locker_peek(window: tauri::WebviewWindow, team: String, id: St
     bg_job(move |d, kc, h| app::peek(d, kc, h, &team, &id).map(|p| p.to_string_lossy().into_owned())).await
 }
 
+/// 이미 풀어 둔 판만 — 망 없이(팀 홈 최근 파일 줄 썸네일). 없으면 None
+#[tauri::command]
+pub fn team_locker_peeked(window: tauri::WebviewWindow, team: String, id: String, at: u64) -> Result<Option<String>, String> {
+    ui_only(&window)?;
+    Ok(app::peeked(crate::config::data_dir(), &team, &id, at).map(|p| p.to_string_lossy().into_owned()))
+}
+
 /// + 단추 — 파일 창(앱 창에 붙는 시트)으로 골라 올린다. 고른 개수
 #[tauri::command]
 pub async fn team_locker_pick(app_handle: tauri::AppHandle, window: tauri::WebviewWindow, team: String, folder: Option<String>) -> Result<usize, String> {
@@ -198,11 +202,46 @@ pub async fn team_locker_pick(app_handle: tauri::AppHandle, window: tauri::Webvi
     Ok(n)
 }
 
-/// 내려받기만(파인더에서 보이게) — 받은 경로
+/// 내 폴더에 저장 — 팀 폴더에 받고 그 경로. 받는 동안 진행은 team_down_list(말풍선·카드 막대), 멈추기는 team_down_stop
 #[tauri::command]
 pub async fn team_locker_save(window: tauri::WebviewWindow, team: String, id: String) -> Result<String, String> {
     ui_only(&window)?;
-    human_job(move |d, kc, h| app::fetch(d, kc, h, &team, &id).map(|p| p.to_string_lossy().into_owned())).await
+    human_job(move |d, kc, h| crate::team_down::track(&team, &id, "save", |tick| app::fetch_with(d, kc, h, &team, &id, tick)).map(|p| p.to_string_lossy().into_owned())).await
+}
+
+/// 받기 줄 — 받는 중·다 받음·실패(메모리만, 망 안 씀). 화면이 받는 중일 때 0.5초마다
+#[tauri::command]
+pub fn team_down_list(window: tauri::WebviewWindow, team: String) -> Result<Vec<crate::team_down::Down>, String> {
+    ui_only(&window)?;
+    Ok(crate::team_down::list(&team))
+}
+
+/// 받기 멈추기 — 다음 조각에서 끊고 받던 임시 파일을 지운다. 멈출 게 있었나
+#[tauri::command]
+pub fn team_down_stop(window: tauri::WebviewWindow, team: String, id: String) -> Result<bool, String> {
+    ui_only(&window)?;
+    Ok(crate::team_down::stop(&team, &id))
+}
+
+/// 다 받은 파일 — how = open(기본 앱으로 열기) | reveal(폴더에서 보기). 경로는 받기 기록에서만(화면이 경로를 못 고른다)
+#[tauri::command]
+pub async fn team_down_show(window: tauri::WebviewWindow, team: String, id: String, how: String) -> Result<(), String> {
+    ui_only(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let p = crate::team_down::saved(&team, &id).ok_or("받은 파일이 없어요 — 다시 받아 주세요")?;
+        let r = if how == "reveal" { crate::platform::reveal(&p) } else { crate::platform::open_path(&p.to_string_lossy()) };
+        r.map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 다 받음·실패 줄 치우기
+#[tauri::command]
+pub fn team_down_dismiss(window: tauri::WebviewWindow, team: String, id: String) -> Result<(), String> {
+    ui_only(&window)?;
+    crate::team_down::dismiss(&team, &id);
+    Ok(())
 }
 
 /// 팀 탭에 연 풀어 둔 파일 — 사람이 고쳐 저장했나(받은 그대로와 지문이 다른가)와 원본(팀 id·파일 id). 팀 파일이 아니면 edited false

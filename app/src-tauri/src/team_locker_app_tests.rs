@@ -391,3 +391,32 @@ fn 팀_폴더째_주기는_맨_위_빈_목록_팀_폴더_참모를_거절() {
     assert!(give_folder(&d, &kc, &r, "tV", "주간회의", &one, &root, "team-tV", "참모").is_err(), "팀 폴더는 참모가 아니다");
     assert!(!root.join("참모").exists(), "거절하면 참모 폴더도 안 만든다");
 }
+
+#[test]
+fn 팀_홈_줄은_이미_풀어_둔_그_판만_망_없이() {
+    // 11-01: 팀 홈 최근 파일 줄마다 peek(내려받기)를 하면 첫 화면에 내려받기가 줄줄이 — 풀어 둔 기억만 본다
+    let d = tmpd("peeked");
+    let folder = d.join(VIEW_DIR).join("t1");
+    std::fs::create_dir_all(&folder).unwrap();
+    let f = folder.join("발주.pdf");
+    std::fs::write(&f, b"%PDF").unwrap();
+    let mut cache = BTreeMap::new();
+    cache.insert(format!("F1:42:{}", folder.display()), f.to_string_lossy().into_owned());
+    cache.insert(format!("F2:42:{}", d.join("elsewhere").display()), f.to_string_lossy().into_owned()); // 다른 자리(내 참모에게 등)
+    std::fs::write(d.join(CACHE), serde_json::to_string(&cache).unwrap()).unwrap();
+    assert_eq!(peeked_in(&d, "t1", "F1", 42), Some(f.clone()));
+    assert_eq!(peeked_in(&d, "t1", "F1", 43), None, "판이 바뀌면 없음");
+    assert_eq!(peeked_in(&d, "t1", "F2", 42), None, "풀어 둔 자리 밖 사본은 안 쓴다");
+    assert_eq!(peeked_in(&d, "t2", "F1", 42), None, "다른 팀");
+    std::fs::remove_file(&f).unwrap();
+    assert_eq!(peeked_in(&d, "t1", "F1", 42), None, "청소로 지워졌으면 없음");
+}
+
+#[test]
+fn 팀_바뀜_알림이면_방_찾기가_새_사람_몫_열쇠_넘기기를_뒤에서_돌린다() {
+    // 화면 목록에만 붙어 있으면 기존 팀원 앱이 참모 화면에 있을 때 새 팀원은 계속 잠김(11-02)
+    let ws = include_str!("team_relay_ws.rs");
+    let body = &ws[ws.find("let discover: Discover").unwrap()..];
+    let body = &body[..body.find("std::thread::spawn(move || Loop::new").unwrap()];
+    assert!(body.contains("for t in changed.iter().filter(|t| teams.contains(t)) {\n            crate::team_locker_app::catch_up_spawn(&dd, t);"), "바뀐 팀마다");
+}

@@ -124,6 +124,10 @@ pub struct Features {
     pub bubble: bool,
     /// 앱을 내려도(최소화·⌘H·창 닫기) 참모 배지를 바탕 위에(orch_bubble.rs watch). 기본 켬, bubble 을 끄면 같이 안 뜬다(2026-10-28 사용자)
     pub bubble_desk: bool,
+    /// 코드 프로젝트에 git 쓰기(ADR 0024) — None = 옛 설치·아직 안 고름: 전역 git 메일이 있으면 켬(with_git_guess). 끄면 새 프로젝트는 깃 없이,
+    /// 앱의 개발자 화면(오늘 커밋·PR 리뷰·GitHub 아이디·워크트리 새 세션)이 숨는다. scripts/new-project 도 같은 규칙으로 읽는다
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git: Option<bool>,
     /// 애니메이션 "auto"(OS 동작 줄이기·맥 부하가 높으면 저절로 줄이기) | "reduce" | "off" — 앱(TS)만 읽는다(domain/animCalm).
     /// 여기 없으면 저장 때 사라진다(2026-10-12 사용자 "부하 심하면 애니메이션 때문에 끊긴다")
     pub animation: String,
@@ -131,7 +135,7 @@ pub struct Features {
 
 impl Default for Features {
     fn default() -> Self {
-        Features { office: true, tama: true, gacha: true, review: true, voice: true, auto_revive: false, auto_tidy: true, agent_view: true, computer_use: false, usage_ping: true, craft_basics: false, bubble: true, bubble_desk: true, animation: "auto".into() }
+        Features { office: true, tama: true, gacha: true, review: true, voice: true, auto_revive: false, auto_tidy: true, agent_view: true, computer_use: false, usage_ping: true, craft_basics: false, bubble: true, bubble_desk: true, git: None, animation: "auto".into() }
     }
 }
 
@@ -151,6 +155,8 @@ pub struct Config {
     /// devRoot 밖에 따로 둔 프로젝트 폴더들(`~/…` 모양). devRoot 아래 폴더와 똑같이 프로젝트로 본다
     /// (아이맥 ~/automation/… 처럼 옮길 수 없는 폴더, 2026-09-28 사용자)
     pub extra_projects: Vec<String>,
+    /// 보관함 프로젝트 목록에서 뺀 폴더들(`~/…` 모양) — 목록에서만 숨긴다, 폴더·세션은 그대로('뺀 것'에서 되돌림, 2026-11-01 사용자)
+    pub hidden_projects: Vec<String>,
     pub github_user: String,
     /// 음성 모드로 읽을 명령. 글자를 마지막 인자로 받는다
     pub tts_command: String,
@@ -188,6 +194,7 @@ pub fn default_config(home: &str, data: &Path, lang: &str, exists: impl Fn(&str)
         dev_root: format!("~/{dev}"),
         hq_dir: under(&data, "hq"),
         extra_projects: Vec::new(),
+        hidden_projects: Vec::new(),
         github_user: String::new(),
         tts_command: "say".into(),
         memo_dir: under(&data, "memo"),
@@ -208,6 +215,7 @@ pub fn owner_config() -> Config {
         dev_root: "~/Desktop/dev".into(),
         hq_dir: "~/Desktop/dev/honor-orchestrator".into(),
         extra_projects: Vec::new(),
+        hidden_projects: Vec::new(),
         github_user: "honorstudio".into(),
         tts_command: "~/bin/local-say".into(),
         memo_dir: "~/.config/holo/memo".into(),
@@ -345,7 +353,20 @@ pub fn assistant_name() -> String {
 /// (예전엔 여기서 `gh api user` 를 불러 첫 화면이 몇 초 늦었다)
 #[tauri::command]
 pub fn read_config() -> Config {
-    current()
+    with_git_guess(current(), git_guess)
+}
+
+/// 화면에 줄 땐 git 칸을 채운다 — 비었으면 guess(전역 git 메일 있음). 저장하면 그 값이 그대로 적힌다(scripts 와 같은 결과)
+pub fn with_git_guess(mut c: Config, guess: impl FnOnce() -> bool) -> Config {
+    if c.features.git.is_none() {
+        c.features.git = Some(guess());
+    }
+    c
+}
+
+/// 전역 git 메일이 있나 — 명령줄 도구가 없으면 git 을 안 부른다(claude::git 가드)
+pub fn git_guess() -> bool {
+    !crate::claude::git(Path::new(&home()), &["config", "--global", "user.email"]).is_empty()
 }
 
 /// 설정 파일을 다시 읽는다 — 참모(scripts/app project)가 config.json 을 직접 고친 뒤 앱이 부른다
@@ -397,6 +418,19 @@ pub fn write_config<R: tauri::Runtime>(app: tauri::AppHandle<R>, config: Config)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn git_칸은_없으면_비워_두고_화면엔_짐작으로() {
+        // 옛 설정 파일(칸 없음)은 None — 저장해도 칸을 안 만든다. 화면엔 전역 git 메일 짐작으로 채워 준다(ADR 0024)
+        let c: Config = serde_json::from_str(r#"{"features":{"tama":false}}"#).unwrap();
+        assert_eq!(c.features.git, None);
+        assert!(!serde_json::to_string(&c).unwrap().contains("\"git\""));
+        assert_eq!(with_git_guess(c.clone(), || true).features.git, Some(true));
+        assert_eq!(with_git_guess(c, || false).features.git, Some(false));
+        let off: Config = serde_json::from_str(r#"{"features":{"git":false}}"#).unwrap();
+        assert_eq!(with_git_guess(off.clone(), || panic!("고른 값이 있으면 짐작 안 함")).features.git, Some(false));
+        assert!(serde_json::to_string(&off).unwrap().contains("\"git\":false"));
+    }
 
     #[test]
     fn 윈도우_경로만_슬래시로_드라이브는_대문자로() {
@@ -481,7 +515,8 @@ mod tests {
         // 앱 화면(domain/config.ts ALL_ON)이 아는 기능 = 설정 파일(Rust Features)이 저장하는 기능, 기본값까지
         let ts = include_str!("../../src/domain/config.ts");
         let all_on = ts_keys(ts_block(ts, "export const ALL_ON: Features = {", "};"));
-        let rust = serde_json::to_value(Features::default()).unwrap();
+        // git 은 Rust 기본이 None(아직 안 고름 — 화면엔 짐작으로 채워 준다, ADR 0024). TS 가 설정을 못 읽은 동안의 끔과 맞춰 본다
+        let rust = serde_json::to_value(Features { git: Some(false), ..Features::default() }).unwrap();
         let rust = rust.as_object().unwrap();
         let ts_names: Vec<&str> = all_on.iter().map(|(k, _)| k.as_str()).collect();
         let rust_names: Vec<&str> = rust.keys().map(|k| k.as_str()).collect();
@@ -502,6 +537,14 @@ mod tests {
         ts_names.sort();
         rust_names.sort();
         assert_eq!(ts_names, rust_names, "TS Config 와 Rust Config 칸이 다르다");
+    }
+
+    #[test]
+    fn 뺀_프로젝트_칸은_옛_파일에_없어도_빈_목록() {
+        let c: Config = serde_json::from_str(r#"{"devRoot":"~/dev"}"#).unwrap();
+        assert!(c.hidden_projects.is_empty());
+        let c: Config = serde_json::from_str(r#"{"devRoot":"~/dev","hiddenProjects":["~/dev/old"]}"#).unwrap();
+        assert_eq!(c.hidden_projects, vec!["~/dev/old".to_string()]);
     }
 
     #[test]

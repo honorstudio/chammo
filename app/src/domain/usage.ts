@@ -3,7 +3,8 @@
 import { tr } from '../i18n';
 
 export type Limit = { left: number; resetIn: number | null };
-export type Usage = { five?: Limit; week?: Limit };
+/** noFive = 5시간 한도가 없는 요금제의 이름(2026-11 Ultra) — five 가 없는 '못 읽음'과 다르다. 계정 칸 기록(사용량 주소)에서만 온다 */
+export type Usage = { five?: Limit; week?: Limit; noFive?: string };
 
 type RawLimit = { used_percentage?: number; resets_at?: number };
 

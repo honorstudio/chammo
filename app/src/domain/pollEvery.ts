@@ -28,3 +28,28 @@ export function makeEvery(vis: Vis, now: () => number = Date.now): Every {
     };
   };
 }
+
+/** 두 보임을 함께 — 둘 다 보여야 보임(앱 창이 앞 + 이 칸이 안 덮임). 합친 값이 바뀔 때만 알린다 */
+export function bothShown(a: Vis, b: Vis): Vis {
+  const now = () => a.isShown() && b.isShown();
+  return {
+    isShown: now,
+    onShown: (f) => {
+      let last = now();
+      const ping = () => { const v = now(); if (v !== last) { last = v; f(v); } };
+      const x = a.onShown(ping), y = b.onShown(ping);
+      return () => { x(); y(); };
+    },
+  };
+}
+
+/** 손으로 켜고 끄는 보임(칸이 덮였나 같은 것) */
+export function flagVis(start: boolean): Vis & { set: (v: boolean) => void } {
+  let v = start;
+  const subs = new Set<(s: boolean) => void>();
+  return {
+    isShown: () => v,
+    onShown: (f) => { subs.add(f); return () => { subs.delete(f); }; },
+    set: (s) => { if (s === v) return; v = s; subs.forEach((f) => f(s)); },
+  };
+}

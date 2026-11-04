@@ -1198,12 +1198,12 @@ pub(crate) fn git(dir: &std::path::Path, args: &[&str]) -> String {
 pub async fn project_scan(dev_root: String) -> Vec<ProjectDoc> {
     tauri::async_runtime::spawn_blocking(move || {
         let mut out = Vec::new();
-        // 직접 추가한 폴더는 git 이 아니어도 프로젝트로 보인다(사용자가 골랐으니까). devRoot 아래는 git 저장소만
+        // 직접 추가한 폴더는 git 이 아니어도 프로젝트로 보인다(사용자가 골랐으니까). devRoot 아래는 git 저장소나 하네스 폴더(깃은 선택, ADR 0024)
         let extra = crate::project::dirs(&crate::config::home(), "", &crate::config::current().extra_projects);
         for (name, dir) in crate::project::dirs_now(&dev_root) {
             let picked = extra.iter().any(|(_, p)| p == &dir);
             let last_commit = if dir.join(".git").exists() { git(&dir, &["log", "-1", "--format=%cs"]) } else { String::new() };
-            if last_commit.is_empty() && !picked {
+            if last_commit.is_empty() && !picked && !crate::project::is_project_dir(&dir) {
                 continue;
             }
             let starter = dir.join("docs/starter.md");
@@ -1917,48 +1917,13 @@ pub fn read_usage_at() -> UsageAt {
     UsageAt { json: std::fs::read_to_string(&p).unwrap_or_default(), at }
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RepoToday {
-    pub name: String,
-    pub commits: u32,
-    pub added: u32,
-    pub deleted: u32,
-}
-
-/// 오늘(since 부터 — 프론트가 새벽 5시 기준으로 준다) 내가 한 커밋 — dev 아래 저장소마다, 모든 브랜치, 머지 커밋 제외, 작성자 이메일로 거른다
-#[tauri::command]
-pub async fn today_commits(dev_root: String, author: String, since: String) -> Vec<RepoToday> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut out = Vec::new();
-        // .git 이 파일이면 다른 저장소의 worktree(형제 폴더) — 본체에서 이미 --all 로 센다
-        let repos: Vec<_> = crate::project::dirs_now(&dev_root).into_iter().filter(|(_, dir)| dir.join(".git").is_dir()).collect();
-        let logs = par_map(&repos, git_workers(), |(_, dir)| git(dir, &["log", "--all", "--no-merges", &format!("--since={since}"), &format!("--author={author}"), "--shortstat", "--format=format:@@C"]));
-        for ((name, _), log) in repos.into_iter().zip(logs) {
-            let commits = log.matches("@@C").count() as u32;
-            if commits == 0 {
-                continue;
-            }
-            let (mut added, mut deleted) = (0, 0);
-            for line in log.lines().filter(|l| l.contains("changed")) {
-                for part in line.split(',') {
-                    let n: u32 = part.trim().split(' ').next().and_then(|x| x.parse().ok()).unwrap_or(0);
-                    if part.contains("insertion") { added += n } else if part.contains("deletion") { deleted += n }
-                }
-            }
-            out.push(RepoToday { name, commits, added, deleted });
-        }
-        out.sort_by(|a, b| b.commits.cmp(&a.commits));
-        out
-    })
-    .await
-    .unwrap_or_default()
-}
-
-/// 다마고치 먹이·하루 리플레이: since(~until) 내 커밋 원문 — 저장소마다 모든 브랜치, 머지 커밋 포함(부모 수로 PR 머지를 가린다).
-/// 저장소마다 `@@R\t이름` 한 줄, 커밋마다 `@@C\t해시\t시각\t부모들\t제목` + --numstat. 파싱은 domain/tama/sources.ts·domain/replay.ts
+/// 위 막대 오늘 커밋·다마고치 먹이·하루 리플레이: since(~until) 내 커밋 원문 — 저장소마다 모든 브랜치, 머지 커밋 포함(부모 수로 PR 머지를 가린다).
+/// 저장소마다 `@@R\t이름` 한 줄, 커밋마다 `@@C\t해시\t시각\t부모들\t제목` + --numstat. 파싱은 domain/tama/sources.ts·domain/replay.ts, 줄 수에 넣을 파일 표는 domain/codeLines.ts
 #[tauri::command]
 pub async fn commit_log(dev_root: String, author: String, since: String, until: Option<String>) -> String {
+    if author.trim().is_empty() {
+        return String::new(); // 빈 --author= 는 모든 사람 커밋을 센다
+    }
     tauri::async_runtime::spawn_blocking(move || {
         let mut args = vec!["log".to_string(), "--all".into(), format!("--since={since}"), format!("--author={author}"), "--numstat".into(), "--format=format:@@C%x09%H%x09%ct%x09%P%x09%s".into()];
         if let Some(u) = &until {
@@ -2044,6 +2009,11 @@ fn with_attach(id: &str, keys: Option<&[u8]>) -> Result<String, String> {
         }
         Ok(())
     })
+}
+
+/// 지금 세션 화면 글자 — 회사 정책 아래 권한 카드(perm_card)가 띄울 때·누르기 직전에 읽는다
+pub(crate) fn screen_of(id: &str) -> Result<String, String> {
+    with_attach(id, None)
 }
 
 /// 선택지 답(화살표·Enter)을 누른다 — 윈도우 scripts/choice 가 app.jsonl 로 부탁한다(appctl)
@@ -2746,6 +2716,20 @@ mod tests {
         std::fs::remove_file(b.join("s1.jsonl")).unwrap();
         assert_eq!(super::transcript_in(&base, "s1", &cache), None);
         std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    // 실측(깃은 선택, ADR 0024): scripts/new-project --git/--no-git 로 만든 시험 devRoot 를 앱의 프로젝트 목록이 다 보나
+    // SCAN_DEV=<시험 devRoot> SCAN_WANT=a,b cargo test --bin honor-orchestrator claude::tests::실측_프로젝트_목록 -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn 실측_프로젝트_목록() {
+        let dev = std::env::var("SCAN_DEV").expect("SCAN_DEV");
+        let docs = tauri::async_runtime::block_on(super::project_scan(dev));
+        let names: Vec<_> = docs.iter().map(|d| (d.name.clone(), d.last_commit.clone(), d.has_claude)).collect();
+        println!("{names:?}");
+        for want in std::env::var("SCAN_WANT").unwrap_or_default().split(',').filter(|w| !w.is_empty()) {
+            assert!(docs.iter().any(|d| d.name == want), "{want} 이 목록에 없다");
+        }
     }
 
     // 실측(진짜 세션 필요, 2026-10-28 chat-speed): 앱 보내기 길(type_text_tagged = 배지 대화창·폰·스페이스)로 5번 — 돌아온 시각·기록에 사람 말이 써진 시각(ms)

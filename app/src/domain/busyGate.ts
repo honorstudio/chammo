@@ -2,7 +2,7 @@
 // 2026-10-26 23:50 강제 재부팅 뒤 부하 35→70: 앱이 참모 칸들을 한꺼번에 attach 하고(칸마다 claude 프로세스 하나), 끊긴 칸은 2.5초마다
 // claude agents 를 새로 띄웠다. 화면을 12초 안에 못 그린 참모를 Claude Code 데몬이 '응답 없음'으로 두 번 죽였다 켰고(daemon.log
 // 23:53:29·43 settled killed → claimed-spare respawn), 그 사이 친 채팅 말은 '전달 안 됨'이 됐다. 한가할 땐 예전 그대로다
-import { josa, tr } from '../i18n';
+import { josa, machine, tr } from '../i18n';
 import { REATTACH_POLL, type AttachPhase, type LinkState } from './attachExit';
 
 export type Busy = 'ok' | 'busy' | 'boot';
@@ -82,7 +82,7 @@ export function slowLinks(link: Record<string, LinkState>, since: Map<string, nu
   return { slow, wait };
 }
 
-const busyLead = (b: Busy) => (b === 'boot' ? tr('맥이 막 켜져 바빠서 ', 'The Mac just started and is busy, so ') : b === 'busy' ? tr('맥이 바빠서 ', 'The Mac is busy, so ') : '');
+const busyLead = (b: Busy) => (b === 'boot' ? tr(`${josa(machine(), '이', '가')} 막 켜져 바빠서 `, `The ${machine()} just started and is busy, so `) : b === 'busy' ? tr(`${josa(machine(), '이', '가')} 바빠서 `, `The ${machine()} is busy, so `) : '');
 
 /** 채팅 칸 위 한 줄 — 붙어 있으면 null. who = '참모'·'세션' */
 export function linkNotice(o: { link: LinkState | undefined; phase?: AttachPhase; listUnknown?: boolean; kicked?: boolean; busy: Busy; who?: string }): string | null {
@@ -92,7 +92,7 @@ export function linkNotice(o: { link: LinkState | undefined; phase?: AttachPhase
     case undefined: case 'live': return null;
     case 'gone':
       // 다른 창에 쫓겨남(윈도우) — 세션은 산다. 보내면 칸이 되찾는다(attachExit sendOnLink)
-      if (o.kicked) return tr(`윈도우는 ${who} 연결이 한 번에 한 곳만 돼서 다른 창이 열면 끊겨 — 그냥 말을 보내면 여기로 다시 붙어서 가`, `Windows allows one connection per ${who} at a time, so another window can drop this one — just send, and it reconnects here`);
+      if (o.kicked) return tr(`${who} 연결은 한 번에 한 곳만 돼서 다른 창이 열면 끊겨 — 그냥 말을 보내면 여기로 다시 붙어서 가`, `Only one connection per ${who} works at a time, so another window can drop this one — just send, and it reconnects here`);
       return tr('세션이 꺼진 것 같아 — 다시 켜지면 안 간 말을 다시 보내 줘', 'The session seems to have stopped — send again once it is back');
     case 'reattaching':
       if (!o.listUnknown) return tr('세션 연결이 끊겨서 다시 붙는 중 — 보낸 말은 붙으면 바로 가', 'Lost the session link — reattaching; your message goes as soon as it is back');

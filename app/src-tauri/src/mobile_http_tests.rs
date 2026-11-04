@@ -43,6 +43,8 @@ pub(crate) struct Fake {
     human: Mutex<Vec<String>>,
     /// 그림 바꾸기(sips·qlmanage)가 없다 — 윈도우(공개 이슈 #15)
     no_convert: bool,
+    /// 썸네일 캐시(thumbs)를 흉내 — None 이면 캐시 없음(진짜 앱 밖 시험). 열쇠 "<경로> <px>", 값 None = 못 만듦
+    thumbs: Option<Mutex<std::collections::HashMap<String, Option<Vec<u8>>>>>,
 }
 
 impl Fake {
@@ -73,6 +75,14 @@ impl Backend for Fake {
     }
     fn direct_answer_by(&self, id: &str, pick: &crate::direct::Pick, by: &str) -> Result<(), String> {
         self.log(format!("direct_answer_by {id} {pick:?} {by}"));
+        Ok(())
+    }
+    fn peer_unlink(&self, relay: &str) -> Result<(), String> {
+        self.log(format!("peer_unlink {relay}"));
+        Ok(())
+    }
+    fn peer_key_back(&self, relay: &str, name: &str, x: &str, token: &str) -> Result<(), String> {
+        self.log(format!("peer_key_back {relay} {name} {x} {token}"));
         Ok(())
     }
     fn logout_card(&self, from: &str) -> Result<String, String> {
@@ -159,16 +169,27 @@ impl Backend for Fake {
         self.log("team_invite".into());
         Ok(serde_json::json!({ "link": "chammo://join?code=x" }))
     }
-    fn team_create(&self, team: &str) -> Result<serde_json::Value, String> {
-        self.log(format!("team_create {team}"));
+    fn team_create(&self, team: &str, me: &str) -> Result<serde_json::Value, String> {
+        self.log(format!("team_create {team} [{me}]"));
+        Ok(serde_json::json!({ "joined": true }))
+    }
+    fn team_use(&self, team: &str) -> Result<serde_json::Value, String> {
+        self.log(format!("team_use {team}"));
+        if team == "nope" { Err("모르는 팀".into()) } else { Ok(serde_json::json!({ "joined": true, "teamId": team })) }
+    }
+    fn team_join(&self, code: &str, me: &str) -> Result<serde_json::Value, String> {
+        self.log(format!("team_join {code} [{me}]"));
         Ok(serde_json::json!({ "joined": true }))
     }
     fn team_profiles(&self, team: &str, seen: u64) -> Result<serde_json::Value, String> {
         self.log(format!("team_profiles {team} {seen}"));
         Ok(if seen == 7 { serde_json::json!({ "same": true }) } else { serde_json::json!({ "team": team, "rev": 7, "people": {}, "teamIcon": "" }) })
     }
-    fn team_file_thumb(&self, team: &str, id: &str, size: u32) -> Result<Vec<u8>, String> {
-        self.log(format!("team_file_thumb {team} {id} {size}"));
+    fn team_file_thumb(&self, team: &str, id: &str, size: u32, only_at: Option<u64>) -> Result<Vec<u8>, String> {
+        self.log(format!("team_file_thumb {team} {id} {size}{}", only_at.map(|a| format!(" at={a}")).unwrap_or_default()));
+        if only_at == Some(1) {
+            return Err("아직 안 풀어 둔 판".into());
+        }
         if id == "nope" { Err("그림이 아니야".into()) } else { Ok(b"\xFF\xD8\xFFteam".to_vec()) }
     }
     fn team_file_image(&self, team: &str, id: &str, view: bool) -> Result<crate::mobile_http::TeamImage, String> {
@@ -380,6 +401,14 @@ impl Backend for Fake {
             return None;
         }
         Some(b"\xFF\xD8\xFFql".to_vec())
+    }
+    fn thumb_get(&self, src: &Path, size: u32) -> Option<Option<Vec<u8>>> {
+        self.thumbs.as_ref()?.lock().unwrap().get(&format!("{} {size}", src.display())).cloned()
+    }
+    fn thumb_put(&self, src: &Path, size: u32, jpeg: Option<&[u8]>) {
+        if let Some(t) = &self.thumbs {
+            t.lock().unwrap().insert(format!("{} {size}", src.display()), jpeg.map(<[u8]>::to_vec));
+        }
     }
     fn jpeg(&self, path: &Path, max: Option<u32>) -> Option<Vec<u8>> {
         self.log(format!("jpeg {} {max:?}", path.file_name()?.to_string_lossy()));
@@ -4197,7 +4226,7 @@ fn tm_폰_팀_메신저는_짝지은_폰만_읽고_쓰고_cid_는_이_기기가_
     assert_eq!(json_of(&r)["seq"], 3);
     assert_eq!(handle(&post("/api/team-invite", "{}"), &g, &f).status, 200);
     assert_eq!(handle(&post("/api/team-create", r#"{"team":" 모래알 "}"#), &g, &f).status, 200);
-    assert_eq!(f.calls(), vec!["team_say m2 안녕", "team_invite", "team_create 모래알"]);
+    assert_eq!(f.calls(), vec!["team_say m2 안녕", "team_invite", "team_create 모래알 []"]);
     for p in ["/api/team-say", "/api/team-invite", "/api/team-create"] {
         assert!(head_check(&post(p, "{}"), &g).is_none(), "몸통 길 목록에 있다: {p}");
         assert_eq!(handle(&set(post(p, "{}"), "origin", Some("http://evil.example")), &g, &f).status, 403, "{p}");
@@ -4212,6 +4241,48 @@ fn tm_폰_팀_메신저는_짝지은_폰만_읽고_쓰고_cid_는_이_기기가_
     }
     assert_eq!(handle(&post("/api/team-create", r#"{"team":""}"#), &g, &f).status, 400);
     assert_eq!(f.calls().len(), 3, "막힌 것은 뒤로 안 넘어간다");
+}
+
+#[test]
+fn tm_폰_팀_여러_개_바꾸기_들어가기_만들기_내_이름은_짝지은_폰만() {
+    // 11-02 사용자 "여러 팀을 굴릴 수 있게" — 폰 머리 팀 줄(누르면 바꾸기)·+ 시트(만들기·초대 링크로 들어가기, 이 팀에서 보일 내 이름)
+    let g = peer_gate("tm000001");
+    let f = Fake::default();
+    let ok = |p: &str, b: &str| handle(&post(p, b), &g, &f);
+    assert_eq!(ok("/api/team-use", r#"{"team":"t-b2"}"#).status, 200);
+    assert_eq!(json_of(&ok("/api/team-use", r#"{"team":"t_c3"}"#))["teamId"], "t_c3");
+    assert_eq!(ok("/api/team-join", r#"{"code":" https://chammo.app/join#Ab12 ","me":" 사용자 "}"#).status, 200);
+    assert_eq!(ok("/api/team-join", r#"{"code":"Ab12"}"#).status, 200, "내 이름은 비면 계정 이름(Rust team_arg)");
+    assert_eq!(ok("/api/team-create", r#"{"team":"마케팅","me":"사용자"}"#).status, 200);
+    assert_eq!(f.calls(), vec!["team_use t-b2", "team_use t_c3", "team_join https://chammo.app/join#Ab12 [사용자]", "team_join Ab12 []", "team_create 마케팅 [사용자]"]);
+    // 모르는 팀은 맥이 거절 — 502 로 이유를 돌려준다(폰이 한 줄로 보여 준다)
+    assert_eq!(ok("/api/team-use", r#"{"team":"nope"}"#).status, 502);
+    let n = f.calls().len();
+    let long_code = serde_json::json!({ "code": "a".repeat(401) }).to_string();
+    let long_me = serde_json::json!({ "team": "x", "me": "가".repeat(41) }).to_string();
+    for (p, bad) in [
+        ("/api/team-use", r#"{"team":""}"#),
+        ("/api/team-use", r#"{"team":"../t1"}"#),
+        ("/api/team-use", r#"{"team":"t 1"}"#),
+        ("/api/team-join", r#"{"code":"   "}"#),
+        ("/api/team-join", long_code.as_str()),
+        ("/api/team-join", r#"{"code":"Ab","me":"a\u0007b"}"#),
+        ("/api/team-create", long_me.as_str()),
+        ("/api/team-create", r#"{"team":"x","me":"   "}"#),
+        ("/api/team-join", r#"{"code":"Ab","server":"http://evil.example"}"#),
+    ] {
+        assert_eq!(ok(p, bad).status, 400, "{p} {bad}");
+    }
+    assert_eq!(f.calls().len(), n, "막힌 것은 뒤로 안 넘어간다");
+    for p in ["/api/team-use", "/api/team-join"] {
+        assert!(head_check(&post(p, "{}"), &g).is_none(), "몸통 길 목록에 있다: {p}");
+        assert!(team_human_post("POST", p), "사람 몫: {p}");
+        assert_eq!(handle(&set(post(p, r#"{"team":"t1","code":"Ab"}"#), "origin", Some("http://evil.example")), &g, &f).status, 403, "{p}");
+        assert_eq!(handle(&set(post(p, r#"{"team":"t1","code":"Ab"}"#), "authorization", None), &g, &f).status, 401, "{p}");
+        assert_eq!(handle(&as_peer(post(p, r#"{"team":"t1","code":"Ab"}"#)), &g, &f).status, 403, "다른 기기 참모 열쇠로는 안 된다: {p}");
+        assert_eq!(handle(&with_cookie(get(p)), &g, &f).status, 405, "{p}");
+    }
+    assert_eq!(f.calls().len(), n);
 }
 
 #[test]
@@ -4275,6 +4346,10 @@ fn tm_폰_대화_파일_썸네일은_짝지은_폰만_jpeg_만_받는다() {
     assert_eq!(handle(&set(with_cookie(get(&format!("{p}?team=t-1&id=AbC"))), "authorization", None), &g, &f).status, 401);
     assert_eq!(handle(&post(p, "{}"), &g, &f).status, 405);
     assert_eq!(f.calls().len(), 3, "막힌 것은 뒤로 안 넘어간다");
+    // 팀 홈 줄(11-01) — at=<판> 이면 맥이 이미 풀어 둔 판만, 아니면 415(폰은 확장자 표). 숫자가 아니면 그냥 받기
+    assert_eq!(handle(&with_cookie(get(&format!("{p}?team=t-1&id=AbC&size=360&at=5"))), &g, &f).status, 200);
+    assert_eq!(handle(&with_cookie(get(&format!("{p}?team=t-1&id=AbC&size=360&at=1"))), &g, &f).status, 415, "안 풀어 둔 판");
+    assert_eq!(f.calls()[3..5], ["team_file_thumb t-1 AbC 360 at=5".to_string(), "team_file_thumb t-1 AbC 360 at=1".to_string()]);
 }
 
 #[test]
@@ -4771,4 +4846,119 @@ fn 데스크톱_결정_답은_아직_기다릴_때만() {
     let answered = format!("{ask}\n{{\"ts\":\"2026-11-01T03:02:00Z\",\"type\":\"answer\",\"task\":\"{t}\",\"note\":\"A\",\"by\":\"phone\"}}");
     assert!(!task_waiting_in(&answered, t)); // 폰이 먼저 답했다 — 같은 답이어도 다시 치지 않는다
     assert!(!task_waiting_in(&ask, "1101-1200-ffff")); // 없는 일
+}
+
+#[test]
+fn 폰_디자인_파일은_첫_장_썸네일만_원본은_어디서도_안_나간다() {
+    // 11-01: svg·ai·eps·psd 를 폰 카드에 첫 장으로 — 원본(/api/file·내려받기·md 속 그림)은 계속 막는다
+    let d = tmp("design");
+    let ai = d.join("간판.ai");
+    let psd = d.join("표지.psd");
+    let svg = d.join("logo.svg");
+    let key = d.join("api-key.psd");
+    std::fs::write(&ai, b"%PDF-1.5 ai").unwrap();
+    std::fs::write(&psd, b"8BPS").unwrap();
+    std::fs::write(&svg, b"<svg xmlns='http://www.w3.org/2000/svg'/>").unwrap();
+    std::fs::write(&key, b"8BPS").unwrap();
+    let show: String = [&ai, &psd, &svg, &key].iter().map(|p| format!("{{\"path\":\"{}\"}}\n", p.display())).collect();
+    let fake = || Fake { show: show.clone(), data: d.join("data"), ..Default::default() };
+    let file = |p: &Path, extra: &str| with_cookie(get(&format!("/api/file?path={}{extra}", enc(&p.to_string_lossy()))));
+    // 보여 준 목록엔 카드로 뜬다(비밀 이름은 빼고)
+    let (_, _, r) = run_with(with_cookie(get("/api/shows")), fake());
+    let list = String::from_utf8_lossy(&r.body).into_owned();
+    for p in [&ai, &psd, &svg] {
+        assert!(list.contains(&p.display().to_string()), "{list}");
+    }
+    assert!(!list.contains("api-key.psd"), "{list}");
+    // 썸네일은 QuickLook 첫 장(JPEG)
+    for (p, ext) in [(&ai, "ai"), (&psd, "psd"), (&svg, "svg")] {
+        let (s, f, r) = run_with(file(p, "&thumb=1&size=360"), fake());
+        assert_eq!((s, ctype(&r).as_str(), f.calls()), (200, "image/jpeg", vec![format!("ql {ext} 360")]), "{ext}");
+        // 원본은 403 — 보기용(view)·그냥 열기 둘 다
+        assert_eq!(run_with(file(p, ""), fake()).0, 403, "{ext} 원본");
+        assert_eq!(run_with(file(p, "&view=1"), fake()).0, 403, "{ext} 보기용");
+    }
+    // 비밀 이름은 썸네일도 안 된다
+    assert_eq!(run_with(file(&key, "&thumb=1"), fake()).0, 403);
+    // 내려받기 표도 안 나온다
+    let (g, f) = (gate(), fake());
+    let r = handle(&post("/api/dl-ticket", &serde_json::json!({ "path": ai.to_string_lossy() }).to_string()), &g, &f);
+    let blocked = r.status != 200 || {
+        let j: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+        handle(&get(j["url"].as_str().unwrap()), &g, &f).status != 200
+    };
+    assert!(blocked, "디자인 원본을 내려받기로 받으면 안 된다");
+}
+
+#[test]
+fn 폰_썸네일은_한_번_만들면_다시_안_만들고_실패도_기억한다() {
+    // 11-01: 폰이 열 때마다 맥이 sips·qlmanage 를 다시 돌렸다(중계 길에서 더 아프다)
+    let d = tmp("tcache");
+    let pdf = d.join("발주.pdf");
+    let png = d.join("shot.png");
+    std::fs::write(&pdf, b"%PDF-1.4").unwrap();
+    std::fs::write(&png, b"\x89PNG\r\n\x1a\n").unwrap();
+    let show: String = [&pdf, &png].iter().map(|p| format!("{{\"path\":\"{}\"}}\n", p.display())).collect();
+    let f = Fake { show, data: d.join("data"), thumbs: Some(Mutex::new(Default::default())), ..Default::default() };
+    let g = gate();
+    let file = |p: &Path, extra: &str| with_cookie(get(&format!("/api/file?path={}{extra}", enc(&p.to_string_lossy()))));
+    let a = handle(&file(&pdf, "&thumb=1&size=360"), &g, &f);
+    let b = handle(&file(&pdf, "&thumb=1&size=360"), &g, &f);
+    assert_eq!((a.status, b.status), (200, 200));
+    assert_eq!(a.body, b.body);
+    assert_eq!(f.calls(), vec!["ql pdf 360"], "두 번째는 캐시에서");
+    // 크기가 다르면 따로
+    handle(&file(&pdf, "&thumb=1&size=720"), &g, &f);
+    assert_eq!(f.calls().len(), 2);
+    // 못 만든 QuickLook 은 기억 — 다시 안 돌리고 502
+    let bad = Fake { show: f.show.clone(), data: d.join("data"), no_convert: true, thumbs: Some(Mutex::new(Default::default())), ..Default::default() };
+    assert_eq!(handle(&file(&pdf, "&thumb=1"), &g, &bad).status, 502);
+    assert_eq!(handle(&file(&pdf, "&thumb=1"), &g, &bad).status, 502);
+    assert_eq!(bad.calls(), vec!["ql pdf 480"]);
+    // 못 줄인 그림(윈도우)은 원본 그대로 — 두 번째부턴 바꿔 보지도 않는다
+    assert_eq!(handle(&file(&png, "&thumb=1"), &g, &bad).status, 200);
+    let r = handle(&file(&png, "&thumb=1"), &g, &bad);
+    assert_eq!((r.status, ctype(&r).as_str()), (200, "image/png"));
+    assert_eq!(bad.calls().iter().filter(|c| c.starts_with("jpeg")).count(), 1);
+}
+
+// 컴퓨터끼리 중계(C-3b-3) — 반대 방향 열쇠: 연결을 건 컴퓨터(B)가 받은 열쇠로 터널을 열고 'A 가 B 를 부를 열쇠'를 넘긴다.
+// 열쇠 칸 이름은 몸통이 아니라 그 줄의 중계 기기 id — 남의 칸을 덮지 못하게. 중계 peer 줄만(테일넷 peer·폰은 403)
+#[test]
+fn peer_열쇠_돌려주기는_중계_peer_줄만_그_줄의_중계_id_칸에() {
+    let g = gate();
+    let now = std::time::SystemTime::now();
+    let back = "ab".repeat(32);
+    g.devices.add_peer_relay(PEER, "집 맥북", crate::mobile_pair::Relay { device: "dev-b".into(), x: "X".into() }, now).unwrap();
+    let f = Fake::default();
+    let body = format!(r#"{{"token":"{back}","device":"dev-evil"}}"#);
+    let r = handle(&as_peer(post("/api/peer-key-back", &body)), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    // C-5 실측(11-01): 받는 쪽이 목록에 안 넣어 그쪽을 못 불렀다 — 이름·터널 열쇠도 그 줄에서 같이 넘긴다
+    assert_eq!(f.calls(), vec![format!("peer_key_back dev-b 집 맥북 X {back}")], "몸통의 device 는 무시");
+    assert_eq!(handle(&as_peer(post("/api/peer-key-back", r#"{"token":"짧음"}"#)), &g, &f).status, 400);
+    // 테일넷 peer 줄 — 중계 id 가 없다
+    let t = peer_gate("peer0099");
+    let f2 = Fake::default();
+    assert_eq!(handle(&as_peer(post("/api/peer-key-back", &body)), &t, &f2).status, 403);
+    // 폰 열쇠
+    assert_eq!(handle(&post("/api/peer-key-back", &body), &g, &f2).status, 403);
+    assert!(f2.calls().is_empty());
+    assert!(head_check(&post("/api/peer-key-back", &body), &g).is_none(), "몸통 받는 길 목록에");
+}
+
+// C-5 실측 ② — 끊기 알림: 중계 peer 줄만(그 줄의 중계 id 로), 테일넷 peer·폰은 403
+#[test]
+fn peer_끊기_알림은_중계_peer_줄만() {
+    let g = gate();
+    g.devices.add_peer_relay(PEER, "집 맥북", crate::mobile_pair::Relay { device: "dev-b".into(), x: "X".into() }, std::time::SystemTime::now()).unwrap();
+    let f = Fake::default();
+    assert_eq!(handle(&as_peer(post("/api/peer-unlink", "{}")), &g, &f).status, 200);
+    assert_eq!(f.calls(), vec!["peer_unlink dev-b".to_string()]);
+    let t = peer_gate("peer0098");
+    let f2 = Fake::default();
+    assert_eq!(handle(&as_peer(post("/api/peer-unlink", "{}")), &t, &f2).status, 403);
+    assert_eq!(handle(&post("/api/peer-unlink", "{}"), &g, &f2).status, 403);
+    assert!(f2.calls().is_empty());
+    assert!(head_check(&post("/api/peer-unlink", "{}"), &g).is_none());
 }

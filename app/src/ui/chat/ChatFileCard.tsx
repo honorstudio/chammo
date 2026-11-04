@@ -21,7 +21,7 @@ export function ChatFileCard({ f, by }: { f: ChatFile; by: string }) {
         <span className="chat-filecard-name">{titleOf(f.path)}</span>
         {(where || f.who) && <span className="chat-filecard-at">{[f.who, where].filter(Boolean).join(' · ')}</span>}
       </button>
-      {menu && <ContextMenu x={menu.x} y={menu.y} items={[{ label: tr('파인더에서 보기', 'Show in Finder'), run: () => void lockerApi.reveal(f.path).catch(() => {}) }]} onClose={() => setMenu(null)} />}
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={[{ label: tr('폴더에서 보기', 'Show in folder'), run: () => void lockerApi.reveal(f.path).catch(() => {}) }]} onClose={() => setMenu(null)} />}
     </div>
   );
 }

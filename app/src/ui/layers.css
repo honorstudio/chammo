@@ -14,4 +14,14 @@
   --z-toast: 60;   /* 토스트 */
   --z-drag: 70;    /* 끌기 유령 */
   --z-boot: 90;    /* 첫 화면 스플래시 */
+  /* 굵은 획 — 고른 칸·열린 칩·끌어 놓을 자리·상태 점 고리처럼 box-shadow 퍼짐으로 긋는 1px 보다 굵은 선.
+     1.5px 를 그대로 쓰면 웹킷이 소수점 자리에서 한쪽 2px·반대쪽 1px 로 반올림한다(11-01 사용자 '좌상 두껍고 우하 얇다').
+     배율마다 장치 픽셀 정수: 2배만 1.5px(3), 나머지(1배·3배 폰)는 2px — 웹킷 길이 단위가 1/64px 라 5/3px 는 정확히 안 떨어진다.
+     퍼짐에 소수점 px 를 쓰면 strokeWidth.test 가 잡는다 */
+  --ring-w: 2px;
+  /* 칸 안쪽 획 — overflow 가 있는 칸(탭 스크롤 줄·알약·줄임표 줄) 안에서 바깥으로 퍼진 링은 칸 가장자리에서 잘린다(11-01 탭 좌우 끝).
+     그런 자리의 획은 안쪽으로 긋는다: box-shadow: var(--hair-in) var(--line) · var(--ring-in) var(--accent). strokeClip.test 가 잡는다 */
+  --hair-in: inset 0 0 0 1px;
+  --ring-in: inset 0 0 0 var(--ring-w);
 }
+@media (min-resolution: 2dppx) and (max-resolution: 2.99dppx) { :root { --ring-w: 1.5px; } }

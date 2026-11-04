@@ -26,6 +26,17 @@ pub struct Got {
     pub status: String,
     pub five: Option<Win>,
     pub week: Option<Win>,
+    /// 5시간 한도가 없는 요금제(2026-11 Ultra) — five 가 None 인 '못 읽음'과 다르다
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub no_five: bool,
+}
+
+/// 응답에서 읽은 창들
+#[derive(Debug, PartialEq, Clone, Default)]
+pub struct Wins {
+    pub five: Option<Win>,
+    pub week: Option<Win>,
+    pub no_five: bool,
 }
 
 /// 로그인 덩어리(또는 칸 값)에서 계정 토큰과 만료 시각(ms)
@@ -71,14 +82,21 @@ pub fn iso_ms(s: &str) -> Option<i64> {
     Some(((days * 86400 + h * 3600 + mi * 60 - off * 60) * 1000) as i64 + (sec * 1000.0).round() as i64)
 }
 
-/// 응답 → 5시간·주간
-pub fn parse(body: &str) -> Option<(Option<Win>, Option<Win>)> {
+/// 응답 → 5시간·주간. 5시간 한도 없음 = limits 줄에 session 이 없을 때(limits 가 없는 옛 모양이면 five_hour 가 null 일 때).
+/// 2026-11-01 실측: Ultra 는 five_hour:null, limits 엔 weekly_all·weekly_scoped 만. Claude Code 도 줄 분류는 kind 로만 한다
+pub fn parse(body: &str) -> Option<Wins> {
     let v: serde_json::Value = serde_json::from_str(body).ok()?;
     let one = |k: &str| -> Option<Win> {
         let o = v.get(k)?;
         Some(Win { used: o.get("utilization")?.as_f64()?, resets_at: iso_ms(o.get("resets_at")?.as_str()?)? })
     };
-    Some((one("five_hour"), one("seven_day")))
+    let (five, week) = (one("five_hour"), one("seven_day"));
+    let no_five = five.is_none()
+        && match v.get("limits").and_then(|l| l.as_array()) {
+            Some(rows) => !rows.iter().any(|r| r.get("kind").and_then(|k| k.as_str()) == Some("session")),
+            None => v.get("five_hour").is_some_and(|f| f.is_null()),
+        };
+    Some(Wins { five, week, no_five })
 }
 
 /// curl 인자 — 토큰은 여기 없다(-H @- = 헤더를 stdin 에서)
@@ -87,37 +105,38 @@ pub fn curl_args(url: &str) -> Vec<String> {
 }
 
 /// 한 번 묻기 — curl(맥 기본·윈도우 System32)로. 토큰은 stdin 헤더로만
-pub fn fetch(url: &str, token: &str) -> (String, Option<Win>, Option<Win>) {
-    let Some(h) = header_text(token) else { return ("noToken".into(), None, None) };
+pub fn fetch(url: &str, token: &str) -> (String, Wins) {
+    let none = |s: &str| (s.to_string(), Wins::default());
+    let Some(h) = header_text(token) else { return none("noToken") };
     let mut c = crate::platform::command(crate::platform::curl());
     c.args(curl_args(url)).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
-    let Ok(mut child) = c.spawn() else { return ("fail".into(), None, None) };
+    let Ok(mut child) = c.spawn() else { return none("fail") };
     if let Some(mut si) = child.stdin.take() {
         let _ = si.write_all(h.as_bytes());
     }
-    let Ok(out) = child.wait_with_output() else { return ("fail".into(), None, None) };
+    let Ok(out) = child.wait_with_output() else { return none("fail") };
     let text = String::from_utf8_lossy(&out.stdout);
     let (body, code) = text.rsplit_once('\n').unwrap_or(("", ""));
     match code.trim() {
         "200" => match parse(body) {
-            Some((f, w)) => ("ok".into(), f, w),
-            None => ("fail".into(), None, None),
+            Some(w) => ("ok".into(), w),
+            None => none("fail"),
         },
-        "429" => ("rate".into(), None, None),
-        "401" | "403" => ("auth".into(), None, None),
-        _ => ("fail".into(), None, None),
+        "429" => none("rate"),
+        "401" | "403" => none("auth"),
+        _ => none("fail"),
     }
 }
 
 /// 토큰이 있고 아직 안 만료됐으면 묻는다(만료 1분 전부터는 안 물음 — 갱신은 Claude Code 몫)
-pub fn ask(who: &str, secret: Option<&Secret>, now_ms: i64, url: &str, fetch: impl Fn(&str, &str) -> (String, Option<Win>, Option<Win>)) -> Got {
-    let got = |status: &str, five, week| Got { who: who.into(), status: status.into(), five, week };
-    let Some((token, exp)) = secret.and_then(token_of) else { return got("noToken", None, None) };
+pub fn ask(who: &str, secret: Option<&Secret>, now_ms: i64, url: &str, fetch: impl Fn(&str, &str) -> (String, Wins)) -> Got {
+    let got = |status: &str, w: Wins| Got { who: who.into(), status: status.into(), five: w.five, week: w.week, no_five: w.no_five };
+    let Some((token, exp)) = secret.and_then(token_of) else { return got("noToken", Wins::default()) };
     if exp != 0 && exp <= now_ms + 60_000 {
-        return got("expired", None, None);
+        return got("expired", Wins::default());
     }
-    let (status, five, week) = fetch(url, &token);
-    got(&status, five, week)
+    let (status, w) = fetch(url, &token);
+    got(&status, w)
 }
 
 #[cfg(test)]
@@ -138,11 +157,38 @@ mod tests {
     #[test]
     fn 응답_읽기() {
         let body = r#"{"five_hour":{"utilization":42.0,"resets_at":"2026-10-02T13:19:59.636524+00:00","limit_dollars":null},"seven_day":{"utilization":6.0,"resets_at":"2026-10-08T06:59:59.636543+00:00"},"seven_day_opus":null}"#;
-        let (f, w) = parse(body).unwrap();
-        assert_eq!(f.unwrap().used, 42.0);
-        assert_eq!(w.unwrap().used, 6.0);
-        assert_eq!(parse(r#"{"five_hour":null}"#), Some((None, None)));
+        let r = parse(body).unwrap();
+        assert_eq!(r.five.unwrap().used, 42.0);
+        assert_eq!(r.week.unwrap().used, 6.0);
+        assert!(!r.no_five);
         assert_eq!(parse("<html>"), None);
+    }
+
+    #[test]
+    fn 오시간_한도_없음과_못_읽음을_가른다() {
+        // 2026-11-01 실측 Ultra 응답 모양(줄임) — five_hour 는 null, limits 엔 session 줄이 없다
+        let ultra = r#"{"five_hour":null,"seven_day":{"utilization":46.0,"resets_at":"2026-11-05T07:00:00.082571+00:00"},"limits":[{"kind":"weekly_all","group":"weekly","percent":46,"resets_at":"2026-11-05T07:00:00.082571+00:00"},{"kind":"weekly_scoped","group":"weekly","percent":0}]}"#;
+        let r = parse(ultra).unwrap();
+        assert_eq!((r.five.is_none(), r.no_five, r.week.map(|w| w.used)), (true, true, Some(46.0)));
+        // limits 에 session 줄이 있는데 five_hour 를 못 읽었다 — 한도 없음이 아니라 못 읽음
+        let odd = r#"{"five_hour":null,"seven_day":null,"limits":[{"kind":"session","group":"session","percent":3}]}"#;
+        assert!(!parse(odd).unwrap().no_five);
+        // limits 가 없는 옛 모양 — five_hour 가 null 이면 없음, 키가 없거나 깨졌으면 못 읽음
+        assert!(parse(r#"{"five_hour":null}"#).unwrap().no_five);
+        assert!(!parse(r#"{"seven_day":null}"#).unwrap().no_five);
+        assert!(!parse(r#"{"five_hour":{"utilization":"?"}}"#).unwrap().no_five);
+        // 5시간 값이 있으면 limits 와 상관없이 있음
+        let both = r#"{"five_hour":{"utilization":5.0,"resets_at":"2026-11-01T15:00:00Z"},"limits":[]}"#;
+        let r = parse(both).unwrap();
+        assert_eq!((r.five.map(|f| f.used), r.no_five), (Some(5.0), false));
+    }
+
+    #[test]
+    fn 한도_없음은_화면에_noFive_로() {
+        let g = Got { who: "a1".into(), status: "ok".into(), five: None, week: None, no_five: true };
+        assert!(serde_json::to_string(&g).unwrap().contains("\"noFive\":true"));
+        let g = Got { no_five: false, ..g };
+        assert!(!serde_json::to_string(&g).unwrap().contains("noFive"));
     }
 
     #[test]
@@ -156,13 +202,13 @@ mod tests {
     #[test]
     fn 만료된_토큰은_묻지_않는다() {
         let s = |exp: i64| Secret::new(format!(r#"{{"claudeAiOauth":{{"accessToken":"t","expiresAt":{exp}}},"mcpOAuth":{{}}}}"#));
-        let never = |_: &str, _: &str| -> (String, Option<Win>, Option<Win>) { panic!("물으면 안 된다") };
+        let never = |_: &str, _: &str| -> (String, Wins) { panic!("물으면 안 된다") };
         assert_eq!(ask("a1", Some(&s(1_000)), 10_000, DEFAULT_URL, never).status, "expired");
         assert_eq!(ask("a1", Some(&s(70_000)), 10_000, DEFAULT_URL, never).status, "expired"); // 1분 안쪽
         assert_eq!(ask("a1", None, 10_000, DEFAULT_URL, never).status, "noToken");
-        let ok = |_: &str, t: &str| -> (String, Option<Win>, Option<Win>) {
+        let ok = |_: &str, t: &str| -> (String, Wins) {
             assert_eq!(t, "t");
-            ("ok".into(), Some(Win { used: 1.0, resets_at: 5 }), None)
+            ("ok".into(), Wins { five: Some(Win { used: 1.0, resets_at: 5 }), ..Default::default() })
         };
         let g = ask("live", Some(&s(10_000_000)), 10_000, DEFAULT_URL, ok);
         assert_eq!((g.who.as_str(), g.status.as_str(), g.five.map(|f| f.used)), ("live", "ok", Some(1.0)));
@@ -193,7 +239,7 @@ mod probe {
         let s = kc.get("Claude Code-credentials", &acct).unwrap();
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
         let g = super::ask("live", s.as_ref(), now, super::DEFAULT_URL, super::fetch);
-        eprintln!("상태 {} · 5시간 {:?}% · 주간 {:?}%", g.status, g.five.as_ref().map(|f| f.used), g.week.as_ref().map(|w| w.used));
+        eprintln!("상태 {} · 5시간 {:?}% (한도 없음 {}) · 주간 {:?}%", g.status, g.five.as_ref().map(|f| f.used), g.no_five, g.week.as_ref().map(|w| w.used));
         assert_eq!(g.status, "ok");
     }
 }

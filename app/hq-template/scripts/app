@@ -30,7 +30,7 @@ __doc__ = """Operate the Chammo app for the user — voice mode, features, scree
                                                        plus processes left behind by ended sessions
   scripts/app project list                             project folders: devRoot's folders + ones added separately
   scripts/app project add <folder>                     add a folder outside devRoot as a project (it stays where it is)
-  scripts/app project remove <folder|name>             stop treating it as a project (the folder is not touched)
+  scripts/app project remove <folder|name>             stop treating it as a project (the folder is not touched; a devRoot folder is only hidden — add brings it back)
   scripts/app trust <folder>                           when starting a session fails with "Workspace not trusted" (folders
                                                        inside a trusted devRoot don't need it). Only inside the projects folder the
                                                        user trusted; exit 3 = not covered → ask the user to trust it once
@@ -38,7 +38,7 @@ __doc__ = """Operate the Chammo app for the user — voice mode, features, scree
                                                        registers it for this folder only (~/.claude.json local scope) —
                                                        the repo's .mcp.json is never touched. Restart that folder's
                                                        running sessions afterwards (claude respawn <id>). Chammo must be open
-  scripts/app browser missing                          projects in devRoot (git repos) with no browser attached — connect before handing browser work
+  scripts/app browser missing                          projects in devRoot with no browser attached — connect before handing browser work
   scripts/app browser need <project|folder> [<why>]    put a "Connect browser" card in the decision inbox for the user
   scripts/app mode list                                Chammo modes (Claude Code mods drawn natively by the app): name, title,
                                                        where it came from (folder = <data folder>/modes, plugin, example), on/off
@@ -64,7 +64,7 @@ __doc__ = """Operate the Chammo app for the user — voice mode, features, scree
                                                        path — put it on screen with scripts/show <that path>. The phone opens it in Safari,
                                                        adds it to the Home Screen, signs in with Google in the home-screen app, picks this
                                                        computer and checks the number. Use this to add a phone. Exit 1 = Chammo is closed
-  scripts/app phone pair [--url]                       Tailscale fallback only — on iPhone a pairing QR opens in Safari and is NOT kept in
+  scripts/app phone pair [--url]                       Old Safari code QR — on iPhone a pairing QR opens in Safari and is NOT kept in
                                                        the home-screen app; use phone add. Makes a phone pairing QR (what Settings > Devices > Phone > "Make connect QR" shows) without a click:
                                                        writes a QR page and prints its path — put it on screen with scripts/show <that path>.
                                                        The code lives 10 minutes and works once; the address (it holds the code) is printed only
@@ -176,6 +176,7 @@ def project(data, home, verb, arg):
         return 1, f'config.json is unreadable — fix it first / 설정 파일을 못 읽어 안 고쳤어: {cfg}'
     dev = os.path.normpath(expand(c.get('devRoot') or '~/Developer', home))
     extras = extras_of(c)
+    hidden = [x for x in (c.get('hiddenProjects') or []) if isinstance(x, str)]
     if verb == 'list':
         names = sorted(n for n in (os.listdir(dev) if os.path.isdir(dev) else []) if not n.startswith('.') and os.path.isdir(os.path.join(dev, n)))
         names += [os.path.basename(expand(x, home).rstrip('/')) for x in extras]
@@ -187,7 +188,12 @@ def project(data, home, verb, arg):
         if full in (dev, home, '/'):
             return 1, 'pick one project folder, not devRoot or home / 프로젝트 폴더 하나를 골라'
         if full.startswith(dev + os.sep):
-            return 1, f'already a project (inside devRoot) / 이미 프로젝트 폴더 안이라 보여: {tilde(full, home)}'
+            t = tilde(full, home)
+            if t in hidden:  # 보관함 '뺀 것'에서 되돌리기와 같다
+                c['hiddenProjects'] = [x for x in hidden if x != t]
+                write_config(data, c)
+                return 0, f'back in the list / 목록에 되돌렸어: {t}'
+            return 1, f'already a project (inside devRoot) / 이미 프로젝트 폴더 안이라 보여: {t}'
         t = tilde(full, home)
         if t not in extras:
             c['extraProjects'] = extras + [t]
@@ -195,7 +201,17 @@ def project(data, home, verb, arg):
         return 0, f'added / 추가: {t} (project "{os.path.basename(full)}")'
     keep = [x for x in extras if os.path.normpath(expand(x, home)) != full and os.path.basename(expand(x, home).rstrip('/')) != arg.strip()]
     if len(keep) == len(extras):
-        return 1, f'not an added project / 따로 추가한 프로젝트가 아니야: {arg}'
+        # devRoot 안 폴더는 목록에서만 뺀다(hiddenProjects) — 폴더·세션은 그대로, 보관함 '뺀 것'·project add 로 되돌린다
+        a = arg.strip()
+        bare = a and '/' not in a and '\\' not in a and not a.startswith('~') and a not in ('.', '..')
+        inside = full if full.startswith(dev + os.sep) else (os.path.join(dev, a) if bare else '')
+        if not inside or os.path.dirname(inside) != dev or not os.path.isdir(inside):
+            return 1, f'not a project here / 프로젝트가 아니야: {arg}'
+        t = tilde(inside, home)
+        if t not in hidden:
+            c['hiddenProjects'] = hidden + [t]
+            write_config(data, c)
+        return 0, f'hidden from the list / 목록에서 뺐어: {t} (the folder itself is untouched / 폴더는 그대로 — 되돌리기: project add {t})'
     c['extraProjects'] = keep
     write_config(data, c)
     return 0, f'removed / 뺐어: {arg} (the folder itself is untouched / 폴더는 그대로)'
@@ -460,7 +476,7 @@ def project_dir(data, home, arg):
 
 
 def browser_missing(data, wait):
-    """브라우저 안 붙은 프로젝트(devRoot·추가 프로젝트의 git 저장소) — 앱이 ~/.claude.json·저장소를 읽는다"""
+    """브라우저 안 붙은 프로젝트(devRoot·추가 프로젝트) — 앱이 ~/.claude.json·저장소를 읽는다"""
     code, body = ask_app(data, 'browser', {'verb': 'missing', 'dir': '-'}, 'browser-attach.txt', wait)
     if code:
         return code, body

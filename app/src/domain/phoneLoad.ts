@@ -62,7 +62,7 @@ export function readPhoneLoad(text: string): PhoneLoad | null {
   });
   const s = v.load;
   if (!s || num(s.load1) === null || num(s.cores) === null) {
-    return { level: 'unknown', label: tr('모름', 'Unknown'), load1: 0, cores: 0, swapGb: 0, ageSec: null, stale: true, sessions: [], slots, why: tr('맥 앱이 아직 부하를 안 쟀어요', `The ${machine()} app has not measured the load yet`) };
+    return { level: 'unknown', label: tr('모름', 'Unknown'), load1: 0, cores: 0, swapGb: 0, ageSec: null, stale: true, sessions: [], slots, why: tr(`${machine()} 앱이 아직 부하를 안 쟀어요`, `The ${machine()} app has not measured the load yet`) };
   }
   const at = Date.parse(s.at) / 1000;
   const ageSec = Number.isFinite(at) ? Math.max(0, Math.round(now - at)) : null;
@@ -86,7 +86,7 @@ export function readPhoneLoad(text: string): PhoneLoad | null {
 export function loadChip(v: PhoneLoad | null): { cls: string; text: string; aria: string } | null {
   if (!v || v.level === 'unknown') return null;
   const text = v.load1 >= 10 ? String(Math.round(v.load1)) : v.load1.toFixed(1);
-  return { cls: v.stale ? 'ld-unknown' : `ld-${v.level}`, text, aria: tr(`맥 부하 ${v.stale ? '(오래된 값) ' : ''}${v.label} — ${text}, 코어 ${v.cores}개`, `${machine()} load ${v.stale ? '(stale) ' : ''}${v.label} — ${text}, ${v.cores} cores`) };
+  return { cls: v.stale ? 'ld-unknown' : `ld-${v.level}`, text, aria: tr(`${machine()} 부하 ${v.stale ? '(오래된 값) ' : ''}${v.label} — ${text}, 코어 ${v.cores}개`, `${machine()} load ${v.stale ? '(stale) ' : ''}${v.label} — ${text}, ${v.cores} cores`) };
 }
 
 /** 부하 시트 자리 줄 글 — 주인 · 바쁨/쉬는 중/세션 없음 · 몇 분 · 쥔 세션. 줄이 좁아 말줄임되니 긴 세션 이름을 맨 뒤에 */

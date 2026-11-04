@@ -21,7 +21,7 @@ Chammo 작업 기록 — 다른 세션에 시킨 일을 남기면 앱 오른쪽 
   scripts/task handover-done <h-…> "<result>"  -> the handed job is done (either side) / 넘긴 큰 일을 끝낸다
   scripts/task reply  <task id> "<summary of the reply>"               -> 'Lesson: …' / '교훈: …' lines become project lessons
   scripts/task done   <task id> "<result, one line + proof>" [--no-proof "<reason>"]
-                     → no proof (PR number, commit hash, URL, status code, file path, before→after numbers): not recorded, exit code 5 — asked once only, a second try on the same task is kept with a warning
+                     → no proof (file path, URL, PR number, commit hash, status code, before→after numbers): not recorded, exit code 5 — asked once only, a second try on the same task is kept with a warning
   scripts/task note   <task id> "<progress note>"
   scripts/task ask    <task id> "<what the user must decide>"          -> shows in the app's decision inbox
                                          (a job handed to you — h-… or split from one — exits 4 instead: ask whoever handed it, by SendMessage)
@@ -104,6 +104,44 @@ PAYMENT = re.compile(r'실결제|결제|환불|과금|토스페이먼츠|포트�
 MERGE_RULE = T('PR 은 올리고 머지하지 마 — CI 초록이면 PR 번호만 알려줘, 머지는 내가 한다.',
                "Open a PR but don't merge it — when CI is green just send me the PR number; I'll do the merge.")
 
+# git is optional (ADR 0024) — a project without .git gets no commit/PR words; a repo without a remote gets "local only" instead of the merge rule
+NOGIT_RULE = T('이 프로젝트는 git 을 쓰지 않는다(.git 없음) — git init·커밋·가지·PR 을 만들지 마. 결과물은 이 폴더에 두고, 끝났다고 할 땐 파일 경로·캡처를 증거로.',
+               "This project doesn't use git (no .git) — don't git init, commit, branch or open PRs. Keep results in this folder; when you say done, give file paths or captures as proof.")
+LOCAL_GIT_RULE = T('이 저장소엔 원격이 없다 — 커밋은 이 폴더에만, push·PR 은 하지 마. 디자인·영상·압축 원본은 커밋하지 마.',
+                   "This repository has no remote — commit locally only, no push or PR. Don't commit design, video or archive originals.")
+BIG_GIT_MB = 200
+
+
+def repo_kind(path):
+    """'none'(.git 없음) | 'local'(원격 없음) | 'remote' | None(폴더를 모름). 하위 폴더·워크트리는 위로 올라가며 .git 을 찾는다(홈에서 멈춤)"""
+    if not path or not os.path.isdir(path):
+        return None
+    home = os.path.expanduser('~')
+    d = os.path.realpath(path)
+    while True:
+        if os.path.exists(os.path.join(d, '.git')):
+            break
+        up = os.path.dirname(d)
+        if up == d or d == home:
+            return 'none'
+        d = up
+    try:
+        r = subprocess.run(['git', '-C', path, 'remote'], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return 'remote'  # git 을 못 부르면 예전처럼(머지 규칙)
+    return 'remote' if r.returncode != 0 or r.stdout.strip() else 'local'
+
+
+def git_size_mb(path):
+    """저장소 객체 크기(MB) — git count-objects. 못 재면 0"""
+    try:
+        r = subprocess.run(['git', '-C', path, 'count-objects', '-v'], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return 0
+    kb = sum(int(v) for k, v in (l.split(': ', 1) for l in r.stdout.splitlines() if ': ' in l) if k in ('size', 'size-pack') and v.strip().isdigit())
+    return kb // 1024
+
+
 # A session's choice prompt (AskUserQuestion) is seen by no one and it just stops — decide easy things, ask the sender
 
 def direct_rule():
@@ -181,8 +219,8 @@ def keep_candidates(project, lines):
 
 
 # Checklist + proof + three strikes — so a progress report isn't mistaken for the end
-PROOF_RULE = T('단계가 셋 넘는 일이면 체크리스트(TaskCreate 나 docs/plans/)를 두고 다 지우기 전엔 끝났다고 하지 마. 끝났다고 할 땐 확인한 증거(PR 번호·주소·응답 코드·로그)를 같이 적고, 같은 조각이 세 번 실패하면 더 밀지 말고 이 지시를 보낸 세션에 계획부터 다시 물어. 끝나거나 막히면 이 지시를 보낸 세션에 SendMessage 로 결과 한 줄(+증거)을 보내 — 안 보내면 그 참모와 사용자는 끝난 줄 모른다. git 작성자(user.name·user.email)가 없으면 지어 넣지 말고(로그인 메일 등 — 공개 push 때 그대로 나간다) 커밋 없이 끝낸 뒤 그렇다고 알려.',
-               "If this has more than three steps, keep a checklist (TaskCreate or docs/plans/) and don't call it done until it's empty. When you say done, include the proof you checked (PR number, URL, status code, log). If the same piece fails three times, stop pushing and ask the session that sent this to rethink the plan. When you finish or get stuck, SendMessage the session that sent this a one-line result (+ proof) — otherwise that assistant and the user never learn it is done. If git has no author (user.name / user.email), don't make one up (a login email would go public on push) — finish without committing and say so.")
+PROOF_RULE = T('단계가 셋 넘는 일이면 체크리스트(TaskCreate 나 docs/plans/)를 두고 다 지우기 전엔 끝났다고 하지 마. 끝났다고 할 땐 확인한 증거(결과물 파일 경로·PR 번호·주소·응답 코드·로그)를 같이 적고, 같은 조각이 세 번 실패하면 더 밀지 말고 이 지시를 보낸 세션에 계획부터 다시 물어. 끝나거나 막히면 이 지시를 보낸 세션에 SendMessage 로 결과 한 줄(+증거)을 보내 — 안 보내면 그 참모와 사용자는 끝난 줄 모른다. git 작성자(user.name·user.email)가 없으면 지어 넣지 말고(로그인 메일 등 — 공개 push 때 그대로 나간다) 커밋 없이 끝낸 뒤 그렇다고 알려.',
+               "If this has more than three steps, keep a checklist (TaskCreate or docs/plans/) and don't call it done until it's empty. When you say done, include the proof you checked (result file path, PR number, URL, status code, log). If the same piece fails three times, stop pushing and ask the session that sent this to rethink the plan. When you finish or get stuck, SendMessage the session that sent this a one-line result (+ proof) — otherwise that assistant and the user never learn it is done. If git has no author (user.name / user.email), don't make one up (a login email would go public on push) — finish without committing and say so.")
 
 # How hard to verify — tasks with hidden edge cases get "verify hard", sketches get "be quick".
 HIGH = re.compile(r'결제|환불|보안|취약|권한|마이그|운영|배포|삭제|데이터|버그|고치|인증|로그인|토큰|시크릿|'
@@ -449,15 +487,16 @@ def write_kept(path, text):
 
 def mirror_lesson(project, line):
     """Also write it under '## Lessons' in the project's CLAUDE.local.md, so sessions you open there yourself see it.
-    Only when git ignores that file — a lesson can mention account names and must not get committed."""
+    Only when git ignores that file — a lesson can mention account names and must not get committed. A folder without git can't commit it, so write"""
     root = os.path.join(DEV, project)
     if not os.path.isdir(root):
         return False
-    try:
-        if subprocess.run(['git', '-C', root, 'check-ignore', '-q', 'CLAUDE.local.md'], capture_output=True).returncode != 0:
+    if repo_kind(root) != 'none':
+        try:
+            if subprocess.run(['git', '-C', root, 'check-ignore', '-q', 'CLAUDE.local.md'], capture_output=True).returncode != 0:
+                return False
+        except OSError:  # no git on this PC (Windows with Python only) — can't tell it's ignored, so don't write
             return False
-    except OSError:  # no git on this PC (Windows with Python only) — can't tell it's ignored, so don't write
-        return False
     path = os.path.join(root, 'CLAUDE.local.md')
     body = open(path, encoding='utf-8').read() if os.path.exists(path) else ''
     write_kept(path, with_lesson(body, T('## 교훈', '## Lessons'), line,
@@ -559,8 +598,8 @@ def proof_gate(tid, note):
         print(T('증거 없이 남김 — 되묻기는 한 번만. 다음엔 확인한 것을 같이 적어 줘', 'Recorded without proof — asked once only. Next time add what you checked'), file=sys.stderr)
         return None
     append({'ts': now(), 'type': 'note', 'task': tid, 'note': T('증거 없는 done — 한 번 되물음', 'done without proof — asked once'), 'proof_ask': 1})
-    print(T('done 안 남겼어 — 결과에 확인한 증거가 없어(PR 번호·커밋 해시·주소·응답 코드·파일 경로·숫자 전후). 증거 한 줄 넣어 바로 다시 부르거나, 증거가 있을 수 없는 일이면 끝에 --no-proof \'<이유>\' — 사용자에게 알릴 일 아님',
-                'done not recorded — the result has no proof you checked (PR number, commit hash, URL, status code, file path, before→after numbers). Call again with one proof line, or if there can be none add --no-proof \'<reason>\' at the end — nothing to tell the user'), file=sys.stderr)
+    print(T('done 안 남겼어 — 결과에 확인한 증거가 없어(파일 경로·주소·PR 번호·커밋 해시·응답 코드·숫자 전후). 증거 한 줄 넣어 바로 다시 부르거나, 증거가 있을 수 없는 일이면 끝에 --no-proof \'<이유>\' — 사용자에게 알릴 일 아님',
+                'done not recorded — the result has no proof you checked (file path, URL, PR number, commit hash, status code, before→after numbers). Call again with one proof line, or if there can be none add --no-proof \'<reason>\' at the end — nothing to tell the user'), file=sys.stderr)
     return 5
 
 
@@ -1239,7 +1278,14 @@ def main(a):
         print(T(f'메시지 끝에 붙여: {LESSON_RULE}', f'append to the end of your message: {LESSON_RULE}'), file=sys.stderr)
         print(T(f'메시지 끝에 붙여: {ASK_RULE}', f'append to the end of your message: {ASK_RULE}'), file=sys.stderr)
         print(T(f'메시지 끝에 붙여: {LOAD_RULE}', f'append to the end of your message: {LOAD_RULE}'), file=sys.stderr)
-        print(T(f'메시지 끝에 붙여: {MERGE_RULE}', f'append to the end of your message: {MERGE_RULE}'), file=sys.stderr)
+        where = tgt.get('cwd') or (os.path.join(DEV, project) if project else None)
+        kind = repo_kind(where)
+        git_rule = {'none': NOGIT_RULE, 'local': LOCAL_GIT_RULE}.get(kind, MERGE_RULE)  # 폴더를 모르면 예전처럼 머지 규칙
+        print(T(f'메시지 끝에 붙여: {git_rule}', f'append to the end of your message: {git_rule}'), file=sys.stderr)
+        mb = git_size_mb(where) if kind == 'local' else 0
+        if mb >= BIG_GIT_MB:
+            print(T(f'(참모용 — 지시에 안 붙임) {project} 의 .git 이 {mb}MB 인데 원격이 없어 — 원본이 커밋됐을 수 있다. 사용자에게 한 줄 알리고, 깃을 끄자고 하면 .git 을 휴지통으로(되살릴 수 있다)',
+                    f'(for you, not the session) {project} has a {mb}MB .git and no remote — originals may have been committed. Tell the user in one line; if they want git off, move .git to the Trash (it can be restored)'), file=sys.stderr)
         hint = locker_hint(a[2])
         if hint:
             print(hint, file=sys.stderr)

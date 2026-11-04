@@ -79,7 +79,7 @@ export function useOrchBubble({ orchs, face, covered, onPick, onGo, storeKey = '
       <div className="obb-faces" role="tablist" aria-label={tr('참모 고르기', 'Pick an assistant')}>
         {orchs.map((o) => (
           <button key={o.id} type="button" role="tab" aria-selected={o.id === face.id} className={`obb-face${o.id === face.id ? ' on' : ''}`}
-            style={orchVars(o.color) as React.CSSProperties} title={o.label} aria-label={o.label} onClick={() => onPick(o.id)}>
+            style={orchVars(o.color) as React.CSSProperties} title={o.label} aria-label={o.label} data-orch-drop={o.id} onClick={() => onPick(o.id)}>
             <span className="obb-clip">{o.small}</span>{o.pip && o.pip !== 'rest' && <i className={`obb-pip p-${o.pip}`} aria-hidden="true" />}
           </button>
         ))}

@@ -56,6 +56,23 @@ pub fn preview(body: &str) -> String {
     if one.chars().count() > 80 { format!("{}…", one.chars().take(79).collect::<String>()) } else { one }
 }
 
+/// 알림 제목의 사람 = 프로필 이름(화면과 같게 — 11-02 사용자 '닉네임으로 안 나옴'). aka = 그 팀 프로필 이름(멤버 id → 이름, team_profile cached_names).
+/// 못 찾으면·이름표를 흉내 내면 받은 이름(명부) 그대로
+pub fn with_profile_name(rec: &Record, aka: &std::collections::BTreeMap<String, String>) -> Record {
+    let Some(p) = aka.get(&rec.member).map(|p| crate::team_relay_inbox::safe_name(p)).filter(|p| p != "?" && !p.is_empty()) else { return rec.clone() };
+    Record { person: p, ..rec.clone() }
+}
+
+/// 알릴 말일 때만 그 방 팀의 프로필 이름을 읽는다(키체인 — 말마다 읽지 않게)
+fn profile_names(dir: &Path, room: &str) -> std::collections::BTreeMap<String, String> {
+    let st = crate::team_relay::load_state(dir);
+    let team = st.rooms.iter().find(|r| r.id == room).map(|r| r.team.clone()).filter(|t| !t.is_empty()).unwrap_or_else(|| st.team_id.clone());
+    if team.is_empty() {
+        return Default::default();
+    }
+    crate::team_profile::cached_names(dir, &crate::team_relay_keys::store(), &team)
+}
+
 /// 이 말에 알릴까 — 남이 보낸 새 말(참모에게 넘긴 것 = delivered, 참모를 안 부른 사람 말 = human)만. 내 다른 기기가 보낸 것·막은 말·옛 말·내 기기끼리 방은 아니다.
 /// views = 창마다 (보고 있는 방, 그 창이 앞인가). 그 방을 앞에 띄운 창이 있으면 안 울린다
 pub fn decide(rec: &Record, views: &[(String, bool)], set: &Settings) -> Option<Alert> {
@@ -151,8 +168,12 @@ pub fn init<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
             crate::claude::log_out("notify", &format!("팀 새 말 {} #{} — 방해 금지라 안 울림", rec.room.chars().take(8).collect::<String>(), rec.seq));
             return;
         }
-        match decide(rec, &vs, &load(crate::config::data_dir())) {
-            Some(a) => fire(&a, rec),
+        let set = load(crate::config::data_dir());
+        match decide(rec, &vs, &set) {
+            Some(a) => {
+                let named = if rec.member.is_empty() { rec.clone() } else { with_profile_name(rec, &profile_names(crate::config::data_dir(), &rec.room)) };
+                fire(&decide(&named, &vs, &set).unwrap_or(a), &named)
+            }
             // 보고 있는 대화라 안 울림 — 기록에 한 줄(왜 안 울렸는지 나중에 볼 수 있게, 본문 없이)
             None if alerting(&rec.note) && rec.kind != "self" => crate::claude::log_out("notify", &format!("팀 새 말 {} #{} — 보는 중이라 안 울림", rec.room.chars().take(8).collect::<String>(), rec.seq)),
             None => {}

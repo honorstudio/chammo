@@ -104,7 +104,7 @@ export function popupNotice(name: string, kind: PopupKind | undefined): { title:
   const w = popupLabel(kind);
   return {
     title: n ? tr(`${n} 세션에 ${w}이 떴어요`, `${n} is showing a ${w}`) : tr(`세션 브라우저에 ${w}이 떴어요`, `A session browser is showing a ${w}`),
-    body: tr('결정 대기함에서 크롬에서 보기를 누르면 그 창이 앞으로 나와요', 'Open it from Decisions to bring the Chrome window forward'),
+    body: tr('누르면 그 크롬 창이 앞으로 나와요', 'Click to bring the Chrome window forward'),
   };
 }
 
@@ -151,8 +151,17 @@ export type AskPlaced = { live: Live; /** 부른 세션(래퍼의 부모 = procP
 
 /** 기다리는 부름마다 부른 세션과 받을 참모(먼저 부른 순). 세션을 못 찾아도 맨 앞 참모에게 — 아무 데도 안 보이는 것보다 낫다 */
 export function askPlaced(lives: Live[], everyone: Session[], events: TaskEvent[], orchs: Session[], front?: Session, heir?: (s: Session) => Session | undefined): AskPlaced[] {
-  return lives.filter((l) => l.ask).sort(byAt).map((live) => {
-    const session = everyone.find((s) => s.procPid && s.procPid === live.sessionPid);
-    return { live, session, owner: session ? forwardTo(session, events, orchs, everyone, front, heir) : front };
-  });
+  return lives.filter((l) => l.ask).sort(byAt).map((live) => placeOf(live, everyone, events, orchs, front, heir));
+}
+
+function placeOf(live: Live, everyone: Session[], events: TaskEvent[], orchs: Session[], front?: Session, heir?: (s: Session) => Session | undefined): AskPlaced {
+  const session = everyone.find((s) => s.procPid && s.procPid === live.sessionPid);
+  return { live, session, owner: session ? forwardTo(session, events, orchs, everyone, front, heir) : front };
+}
+
+/** 크롬 자체 창(패스키 등) 알림을 누르면 갈 곳 — 부름 카드와 같은 그 브라우저(card:<참모>:b:…). 누르면 칸·모달이 바로 크롬을 꺼낸다(2026-11-02 사용자 —
+ *  session:<프로필> 로 가서 세션 화면 '화면 받는 중'만 열렸다). 받을 참모가 없으면 undefined(예전 길) */
+export function popupTarget(live: Live, everyone: Session[], events: TaskEvent[], orchs: Session[], front?: Session, heir?: (s: Session) => Session | undefined): string | undefined {
+  const owner = placeOf(live, everyone, events, orchs, front, heir).owner;
+  return owner ? askTarget(owner.id, live) : undefined;
 }

@@ -75,7 +75,9 @@ export function usageOf(v: AccountsView | null, now: number): { usage: Usage; ag
   const usage: Usage = {};
   if (sl.five && sl.five.resetsAt > now) usage.five = lim(sl.five);
   if (sl.week && sl.week.resetsAt > now) usage.week = lim(sl.week);
-  return usage.five || usage.week ? { usage, age: now - sl.seenAt } : null;
+  // 5시간 한도 없음 — 위 막대 5시간 자리에 요금제 이름(Claude 가 준 이름 그대로라 또 바뀌어도 따라간다)
+  if (sl.noFive && !usage.five) usage.noFive = v.accounts.find((a) => a.id === v.active)?.plan || v.livePlan || '';
+  return usage.five || usage.week || usage.noFive !== undefined ? { usage, age: now - sl.seenAt } : null;
 }
 
 /** 몇 분 전 값인지 — 방금 / N분 전 / N시간 전 */
@@ -126,6 +128,7 @@ export function popRows(v: AccountsView | null, now: number): PopRow[] {
     const title = [a.email, a.plan].filter(Boolean).join(' · ');
     const tip = [
       st.kind !== 'ok' && slotText(st, now),
+      !five && sl?.noFive && tr(`5시간 한도 없음 (${a.plan} 요금제)`, `No 5-hour limit (${a.plan} plan)`),
       five && tr(`5시간 ${fiveLeft}% 남음 · ${fmtUntil(five.resetsAt, now)} 초기화`, `5h ${fiveLeft}% left · resets ${fmtUntil(five.resetsAt, now)}`),
       week && tr(`주간 ${weekLeft}% 남음 · ${weekText(week.resetsAt)} 초기화`, `Week ${weekLeft}% left · resets ${weekText(week.resetsAt)}`),
       [sl?.seenAt && (five || week) ? ageText(now - sl.seenAt) : '', title].filter(Boolean).join(' · '),

@@ -16,6 +16,18 @@ pub struct Win {
     pub rect: Rect,
     /// 창 이름(kCGWindowName) — 화면 기록 권한이 있어야 읽힌다. None = 못 읽음
     pub name: Option<String>,
+    /// 지금 화면에 그려져 있나(kCGWindowIsOnscreen) — 가린(⌘H) 앱은 창이 다 false
+    pub onscreen: bool,
+}
+
+/// 판단에 쓸 창들 — 크롬이 보이는 중(창 하나라도 화면에 있음)이면 화면에 있는 창만. 보이는 크롬은 닫은 대화상자도 전체 목록에
+/// 1분 넘게 번호를 남겨 '아직 떠 있음'으로 보였다(2026-11-02 시험 앱 — 꺼낸 크롬이 QR 뒤에도 안 숨음). 가린 크롬은 다 화면 밖이라 전체를 본다
+pub fn visible_only(wins: Vec<Win>) -> Vec<Win> {
+    if wins.iter().any(|w| w.onscreen) {
+        wins.into_iter().filter(|w| w.onscreen).collect()
+    } else {
+        wins
+    }
 }
 
 /// 사람을 부를 크롬 자체 창의 종류 — 패스키라고 확신할 때만 Passkey, 모르면 Window(중립 '크롬 창')
@@ -158,7 +170,7 @@ fn within(inner: Rect, outer: Rect) -> bool {
 
 /// 그 pid 의 창들(가려진 창 포함). 맥이 아니거나 못 읽으면 빈 것
 pub fn windows(pid: i32) -> Vec<Win> {
-    cg::windows(pid)
+    visible_only(cg::windows(pid))
 }
 
 #[cfg(target_os = "macos")]
@@ -183,6 +195,7 @@ mod cg {
         static kCGWindowBounds: *const c_void;
         static kCGWindowName: *const c_void;
         static kCGWindowNumber: *const c_void;
+        static kCGWindowIsOnscreen: *const c_void;
     }
     #[link(name = "CoreFoundation", kind = "framework")]
     extern "C" {
@@ -191,6 +204,7 @@ mod cg {
         fn CFDictionaryGetValue(d: *const c_void, k: *const c_void) -> *const c_void;
         fn CFNumberGetValue(n: *const c_void, ty: isize, out: *mut c_void) -> u8;
         fn CFRelease(cf: *const c_void);
+        fn CFBooleanGetValue(b: *const c_void) -> u8;
         fn CFGetTypeID(cf: *const c_void) -> usize;
         fn CFStringGetTypeID() -> usize;
         fn CFStringGetCString(s: *const c_void, buf: *mut u8, size: isize, encoding: u32) -> u8;
@@ -238,7 +252,9 @@ mod cg {
                     continue;
                 }
                 let num = int(d, kCGWindowNumber).and_then(|n| u32::try_from(n).ok()).unwrap_or(0);
-                out.push(Win { pid, num, layer: int(d, kCGWindowLayer).unwrap_or(-1), rect: Rect { x: r.x, y: r.y, w: r.w, h: r.h }, name: name(d) });
+                let on = CFDictionaryGetValue(d, kCGWindowIsOnscreen);
+                let onscreen = !on.is_null() && CFBooleanGetValue(on) != 0;
+                out.push(Win { pid, num, layer: int(d, kCGWindowLayer).unwrap_or(-1), rect: Rect { x: r.x, y: r.y, w: r.w, h: r.h }, name: name(d), onscreen });
             }
             CFRelease(list);
         }
@@ -257,11 +273,27 @@ mod tests {
     use super::*;
     const P: i32 = 45085;
     fn w(x: f64, y: f64, ww: f64, h: f64) -> Win {
-        Win { pid: P, num: 0, layer: 0, rect: Rect { x, y, w: ww, h }, name: None }
+        Win { pid: P, num: 0, layer: 0, rect: Rect { x, y, w: ww, h }, name: None, onscreen: false }
     }
     fn named(x: f64, y: f64, ww: f64, h: f64, name: &str) -> Win {
         Win { name: Some(name.into()), ..w(x, y, ww, h) }
     }
+    #[test]
+    fn 보이는_크롬이면_화면에_없는_창은_닫힌_것으로_본다() {
+        // 2026-11-02 시험 앱 실측 — 꺼낸(보이는) 크롬의 패스키 창이 닫혀도 맥 창 목록(전체)엔 1분 넘게 번호가 남아
+        // '아직 떠 있음'으로 보고 저절로 숨기기를 계속 거절했다(QR 뒤 창이 남음)
+        let on = |x: Win| Win { onscreen: true, ..x };
+        let pk = Win { num: 43, ..named(-2414.0, 1169.0, 448.0, 545.0, "패스키 및 보안 키") };
+        let shown = vec![on(w(-2450.0, 1086.0, 520.0, 640.0)), pk.clone()];
+        assert_eq!(visible_only(shown.clone()).len(), 1, "크롬이 보이면 화면에 있는 창만");
+        assert!(!still_open(&visible_only(shown), &[43]), "닫혀 화면에서 빠진 패스키 창은 떠 있지 않다");
+        assert!(still_open(&visible_only(vec![on(w(-2450.0, 1086.0, 520.0, 640.0)), on(pk.clone())]), &[43]), "화면에 있으면 떠 있다");
+        // 가린(⌘H) 크롬은 창이 다 화면 밖이라 전체를 본다 — 평소 패스키 알아보기(가린 채 뜬 창)는 그대로
+        let hidden = vec![w(-2850.0, 1000.0, 1200.0, 800.0), pk];
+        assert_eq!(visible_only(hidden.clone()).len(), 2);
+        assert!(still_open(&visible_only(hidden), &[43]));
+    }
+
     // 2026-10-06 실측 — 가짜 화면 위 세션 크롬(1200x800)과 그 크롬의 창들
     const MAIN: Rect = Rect { x: -2850.0, y: 1000.0, w: 1200.0, h: 800.0 };
     fn idle() -> Vec<Win> {

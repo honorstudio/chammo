@@ -632,3 +632,88 @@ fn pair_linked_same_relay_device_replaces_its_line_and_refuses_peer() {
     assert!(st.pair_linked(&Pairing { name: "참모", home: false, prev: None, peer: true }, relay("r2"), now).is_none());
     assert!(st.pair_linked(&Pairing { name: "x", home: false, prev: None, peer: false }, Relay { device: String::new(), x: "eA".into() }, now).is_none(), "중계 기기 id 없이는 안 묶는다");
 }
+
+// 컴퓨터끼리 중계(계획 2026-11-01-peer-relay C-3a) — 중계로 짝지은 다른 컴퓨터 참모 줄. 신원 = 중계 기기 id, 열쇠 = 그 컴퓨터 터널 열쇠
+#[test]
+fn pe_중계_peer_줄은_중계_기기마다_하나_폰_줄_찾기에는_안_섞인다() {
+    let dir = tmp("relay-peer");
+    let st = Devices::open(&dir);
+    let now = SystemTime::now();
+    let (t1, t2) = ("c".repeat(64), "d".repeat(64));
+    let r = |x: &str| Relay { device: "dev-imac".into(), x: x.into() };
+    let id1 = st.add_peer_relay(&t1, "사무실 아이맥\u{7}", r("X1"), now).unwrap();
+    assert_eq!(st.check(&t1, now).as_deref(), Some(id1.as_str()));
+    assert!(st.is_peer(&id1));
+    assert_eq!(st.relay_peer_line("dev-imac"), Some((id1.clone(), "X1".to_string())));
+    assert_eq!(st.relay_line("dev-imac"), None, "폰 줄 찾기(relay_line)엔 안 나온다");
+    let v = st.list().into_iter().find(|d| d.id == id1).unwrap();
+    assert_eq!((v.peer, v.name.as_str()), (true, "사무실 아이맥"));
+    // 다시 짝지으면 옛 열쇠는 죽고 줄은 하나
+    let id2 = st.add_peer_relay(&t2, "사무실 아이맥", r("X2"), now).unwrap();
+    assert!(st.check(&t1, now).is_none());
+    assert_eq!(st.relay_peer_line("dev-imac"), Some((id2, "X2".to_string())));
+    assert_eq!(st.list().iter().filter(|d| d.peer).count(), 1);
+    // 폰 중계 줄은 relay_peer_line 에 안 나온다
+    let c = st.new_code(now).unwrap();
+    let ph = st.pair_relay(&c, &Pairing { name: "iPhone", home: false, prev: None, peer: false }, Relay { device: "dev-phone".into(), x: "P".into() }, now).unwrap();
+    let ph_id = st.check(&ph, now).unwrap();
+    assert!(!st.is_peer(&ph_id));
+    assert_eq!(st.relay_peer_line("dev-phone"), None);
+    assert!(st.add_peer_relay("짧음", "x", r("X"), now).is_err(), "열쇠는 16진 64자만");
+    assert!(st.add_peer_relay(&"e".repeat(64), "x", Relay { device: "".into(), x: "X".into() }, now).is_err(), "중계 기기 id 없으면 안 됨");
+}
+
+// 리뷰(11-01 code-review high) ① — 컴퓨터 peer 줄의 중계 id 는 그 컴퓨터의 계정 기기 id 다. 줄을 지워도 계정에서 끊으면 안 된다(폰 줄만 끊기 대기열)
+#[test]
+fn pe_중계_peer_줄을_지워도_그_컴퓨터를_계정에서_끊지_않는다() {
+    let st = Devices::memory();
+    let now = SystemTime::now();
+    let id = st.add_peer_relay(&"c".repeat(64), "아이맥", Relay { device: "dev-imac".into(), x: "X".into() }, now).unwrap();
+    st.remove(&id).unwrap();
+    assert!(st.pending_revokes().is_empty(), "{:?}", st.pending_revokes());
+    // 폰 중계 줄은 그대로 끊기 대기열
+    let c = st.new_code(now).unwrap();
+    let ph = st.pair_relay(&c, &Pairing { name: "iPhone", home: false, prev: None, peer: false }, Relay { device: "dev-phone".into(), x: "P".into() }, now).unwrap();
+    st.remove(&st.check(&ph, now).unwrap()).unwrap();
+    assert_eq!(st.pending_revokes(), vec!["dev-phone".to_string()]);
+}
+
+// 리뷰 ④ — 다시 짝짓기가 실패하면 원래 되던 줄은 남는다(새 줄을 먼저 쓰고, 답을 보낸 뒤에야 옛 줄을 지운다)
+#[test]
+fn pe_중계_peer_다시_짝짓기는_확정_전엔_옛_줄을_안_지운다() {
+    let st = Devices::memory();
+    let now = SystemTime::now();
+    let r = || Relay { device: "dev-imac".into(), x: "X".into() };
+    let (t1, t2) = ("c".repeat(64), "d".repeat(64));
+    let old = st.add_peer_relay(&t1, "아이맥", r(), now).unwrap();
+    let new = st.stage_peer_relay(&t2, "아이맥", r(), now).unwrap();
+    assert!(st.check(&t1, now).is_some() && st.check(&t2, now).is_some(), "확정 전엔 둘 다");
+    st.remove(&new).unwrap();
+    assert_eq!(st.check(&t1, now).as_deref(), Some(old.as_str()), "실패하면 옛 줄이 그대로");
+    let new2 = st.stage_peer_relay(&t2, "아이맥", r(), now).unwrap();
+    st.commit_peer_relay("dev-imac", &new2).unwrap();
+    assert!(st.check(&t1, now).is_none() && st.check(&t2, now).is_some(), "확정하면 옛 줄만 지운다");
+    assert_eq!(st.list().iter().filter(|d| d.peer).count(), 1);
+}
+
+// C-6(재실측 11-02) 버그 B — 컴퓨터 peer 줄은 기기 줄 상한·정리에서 따로 센다. 컴퓨터 줄 때문에 폰 줄이 지워지면 안 된다
+#[test]
+fn pe_컴퓨터_줄은_폰_줄_상한을_안_먹는다() {
+    let st = Devices::memory();
+    let now = SystemTime::now();
+    let mut phones = vec![];
+    for i in 0..MAX_DEVICES {
+        let c = st.new_code(now).unwrap();
+        phones.push(st.pair(&c, &format!("iPhone {i}"), now).unwrap());
+    }
+    st.add_peer_relay(&"c".repeat(64), "아이맥", Relay { device: "dev-imac".into(), x: "X".into() }, now).unwrap();
+    for t in &phones {
+        assert!(st.check(t, now).is_some(), "폰 줄은 그대로");
+    }
+    assert!(st.relay_peer_line("dev-imac").is_some());
+    // 폰이 하나 더 오면 지워지는 건 가장 오래 안 쓴 폰 — 컴퓨터 줄은 안 건드린다
+    let c = st.new_code(now).unwrap();
+    st.pair(&c, "iPhone 새것", now).unwrap();
+    assert_eq!(st.list().iter().filter(|d| !d.peer).count(), MAX_DEVICES);
+    assert!(st.relay_peer_line("dev-imac").is_some(), "컴퓨터 줄은 폰 상한에 안 걸린다");
+}

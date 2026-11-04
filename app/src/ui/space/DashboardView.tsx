@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 import type { DashFile } from '../../domain/dashboard';
-import { docUrl, kindOf } from '../../domain/reader';
+import { cardThumb, docUrl, kindOf } from '../../domain/reader';
 import { tr } from '../../i18n';
 import { statusWord, type ActivityStatus } from '../../domain/status';
 import { IconChat, IconClose, IconMaximize, IconTerminal } from '../Icons';
@@ -13,8 +13,6 @@ import { AgentBrowser } from '../AgentBrowser';
 /** st = 원래 상태(domain/status) — 말은 statusWord 하나로(메뉴·사무실과 같게) */
 export type LiveLine = { status: 'run' | 'ask' | 'wait'; line: string; st?: ActivityStatus };
 export type DashLine = { id: string; name: string; status: LiveLine['status']; st?: ActivityStatus; /** 턴을 끝내고 쉬는 세션(살아 있음) — 붙여도 화면이 비어 처음엔 요약 */ finished?: boolean; line: string; /** 터미널처럼 몇 줄(대화 기록 꼬리) */ tail?: string[]; /** 그 세션이 쓰는 브라우저(참모 브라우저 래퍼 상태) — 있으면 칸이 브라우저 화면으로 */ browser?: Live };
-
-const isImage = (p: string) => p.startsWith('data:image') || kindOf(p) === 'image';
 
 // md·글 앞부분 — 썸네일에 몇 줄. 한 번 읽은 건 기억
 const excerpts = new Map<string, string>();
@@ -39,7 +37,7 @@ export function useQlThumb(path: string, on: boolean) {
   useEffect(() => {
     if (!on) return;
     let alive = true;
-    if (!qlThumbs.has(path)) qlThumbs.set(path, invoke<string>('ql_thumb', { path }));
+    if (!qlThumbs.has(path)) qlThumbs.set(path, invoke<string>('ql_thumb', { path, px: 480 })); // 카드 크기(Rust 캐시 thumbs, 리더는 1600)
     qlThumbs.get(path)!.then((p) => { if (alive) setPng(p); }, () => {});
     return () => { alive = false; };
   }, [path, on]);
@@ -48,13 +46,14 @@ export function useQlThumb(path: string, on: boolean) {
 
 /** 파일 카드 썸네일 — 그림은 그대로, HTML 시안은 첫 화면 그림, md·글은 앞부분 */
 export function Thumb({ f }: { f: DashFile }) {
-  const kind = f.path.startsWith('data:') ? 'image' : kindOf(f.path);
-  const text = useExcerpt(f.path, kind === 'md' || kind === 'text');
-  const png = useQlThumb(f.path, kind === 'html' || kind === 'other' || kind === 'office');
-  if (isImage(f.path)) return <img src={f.path.startsWith('data:') ? f.path : docUrl(f.path)} alt="" loading="lazy" />;
+  // PDF·영상도 첫 장 — 전엔 html·오피스·기타만 불러 PDF 카드가 회색 칸에 'PDF' 글자만(2026-11-01 사용자 PDF 카드)
+  const way = cardThumb(f.path);
+  const text = useExcerpt(f.path, way === 'text');
+  const png = useQlThumb(f.path, way === 'shot');
+  if (way === 'image') return <img src={f.path.startsWith('data:') ? f.path : docUrl(f.path)} alt="" loading="lazy" />;
   if (png) return <img className="cv-thumb-ql" src={docUrl(png)} alt="" />;
-  if (kind === 'md' || kind === 'text') return <p className="cv-thumb-text">{text}</p>;
-  return <span className="cv-thumb-kind">{(f.path.match(/\.([a-z0-9]+)$/i)?.[1] ?? kind).toUpperCase()}</span>;
+  if (way === 'text') return <p className="cv-thumb-text">{text}</p>;
+  return <span className="cv-thumb-kind">{(f.path.match(/\.([a-z0-9]+)$/i)?.[1] ?? kindOf(f.path)).toUpperCase()}</span>;
 }
 
 /**

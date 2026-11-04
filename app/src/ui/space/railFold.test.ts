@@ -56,8 +56,8 @@ describe('띠 RA — 도구는 더보기 하나', () => {
 });
 
 describe('띠 RA — + 하나', () => {
-  it('팀 칸의 + 는 띠 + 메뉴 안으로(팀 칸엔 + 없음)', () => {
-    expect(teamRail).not.toContain('tmx-rail-add'); // 팀 칸은 팀 표 하나(시안 team-space A)
+  it('팀 줄 맨 아래 + 는 팀 추가(11-02 사용자 — 시안 team-add v1 A, 슬랙·디스코드 줄), 참모 + 메뉴의 팀 초대·팀챗은 그대로', () => {
+    expect(teamRail).toContain('tmx-rail-add');
     expect(teamMode).toContain("label: team ? tr('팀 초대', 'Invite to team') : tr('팀 만들기', 'Make a team')");
   });
   it('+ 를 누르면 참모 하나 더 · 팀 만들기(팀이 있으면 팀 초대)', () => {

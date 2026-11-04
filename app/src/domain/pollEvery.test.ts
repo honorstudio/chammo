@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { makeEvery } from './pollEvery';
+import { bothShown, flagVis, makeEvery } from './pollEvery';
 
 function vis(start = true) {
   let v = start;
@@ -77,5 +77,41 @@ describe('makeEvery — 안 보이면 5배 느리게(2026-10-11)', () => {
     vi.advanceTimersByTime(5000);
     expect(n).toBe(0);
     expect(v.subs.size).toBe(0);
+  });
+});
+
+describe('bothShown — 앱 창이 앞이고 이 칸도 안 덮였을 때만 보임(11-01 가만히 IPC)', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('둘 중 하나라도 안 보이면 안 보임 · 바뀔 때만 알린다', () => {
+    const app = vis(true), pane = flagVis(true);
+    const both = bothShown(app, pane);
+    const seen: boolean[] = [];
+    const off = both.onShown((s) => seen.push(s));
+    expect(both.isShown()).toBe(true);
+    pane.set(false);
+    app.set(false); // 이미 안 보임 — 또 알리지 않는다
+    pane.set(true);
+    app.set(true);
+    expect(seen).toEqual([false, true]);
+    off();
+    pane.set(false);
+    expect(seen).toEqual([false, true]);
+  });
+
+  it('팀 화면이 참모 채팅을 덮으면 1초 읽기가 5초로, 걷히면 밀린 한 번을 바로', () => {
+    const app = vis(true), pane = flagVis(true);
+    let n = 0;
+    makeEvery(bothShown(app, pane), () => Date.now())(() => n++, 1000);
+    pane.set(false);
+    vi.advanceTimersByTime(4999);
+    expect(n).toBe(0);
+    vi.advanceTimersByTime(1);
+    expect(n).toBe(1);
+    vi.advanceTimersByTime(1500);
+    pane.set(true);
+    vi.advanceTimersByTime(0);
+    expect(n).toBe(2);
   });
 });

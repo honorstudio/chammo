@@ -82,7 +82,7 @@ describe('보안 10-23: 넘기기 세 길은 team_handoff(거름 + 본문 없는
 
 describe('폰 팀 보관함', () => {
   it('참모 보관함(이름으로 고르던 팀 폴더)이 아니라 팀 id 로 중계 팀 보관함을 읽는다 — 같은 이름의 참모 폴더와 안 섞이게(10-28)', () => {
-    expect(phone).toContain('<PhoneTeamLocker api={api} teamId={view.teamId} onOpen=');
+    expect(phone).toContain('<PhoneTeamLocker key={view.teamId} api={api} teamId={view.teamId} onOpen=');
     expect(phone).not.toContain('readLocker');
   });
 });
@@ -179,7 +179,7 @@ describe('폴더·정렬', () => {
   it('바꾸기는 누르면 바로 화면에(기다리는 일) — 같은 열쇠는 또 안 보내고, 실패하면 떼고 무엇이 안 됐는지 알린다', () => {
     expect(locker).toContain('if (pendRef.current.some((p) => p.key === key)) return false;');
     expect(locker).toContain('setNote(failText(op, String(e)))');
-    expect(locker).toContain('withPending(v.items, pend.map((p) => p.op))');
+    expect(locker).toContain('withPending(named, pend.map((p) => p.op))');
     expect(locker).toContain('while (up && !all.includes(up)) up = parentOf(up);'); // 되돌아간 폴더에 갇히지 않게 — 가장 가까운 위 폴더로
     for (const c of ["invoke('team_locker_mkdir'", "invoke('team_locker_folder'", "invoke('team_locker_rename'", "invoke('team_locker_act'"]) {
       const at = locker.indexOf(c);
@@ -221,7 +221,7 @@ describe('팀 보관함 여는 속도(296.png — 빈 칸으로 한참)', () => 
 
 describe('반응은 누르자마자(10-26 팀 지연)', () => {
   it('보낸 반응을 얹어 그리고, 보내는 중엔 같은 반응을 또 안 보내고, 실패하면 떼고 알린다', () => {
-    expect(convo).toContain('withMyReacts(got, pendReact, myName)');
+    expect(convo).toContain('withMyReacts(got, pendReact, myShown)');
     expect(convo).toContain('if (pendReact.some((x) => x.seq === seq && x.mark === markKey)) return;');
     expect(convo).toMatch(/setPendReact\(\(x\) => x\.filter\(\(y\) => y !== mine\)\); setErr\(tr\(`반응을 못 달았어요/);
   });
@@ -286,13 +286,13 @@ describe('썸네일(10-28 사용자 "말풍선 그림이 빈 네모") — 말풍
   });
   it('데스크톱은 teamApi 로 감싼 peek(+PDF 는 QuickLook) — 대화 칸은 invoke 를 직접 안 부른다, 시험이 바꿔 끼운다', () => {
     expect(api).toContain("invoke<string>('team_locker_peek', { team, id })");
-    expect(api).toContain("invoke<string>('ql_thumb', { path })");
+    expect(api).toContain("invoke<string>('ql_thumb', { path, px: 480 })");
     expect(convo).toContain('thumb = teamFileThumb');
     expect(convo).toContain('thumb={thumbOf}');
   });
   it('폰은 맥이 줄인 JPEG 길(/api/team-file-thumb) — 파일 열기·저장은 여전히 데스크톱만', () => {
     expect(web).toContain('/api/team-file-thumb?team=');
-    expect(phone).toContain('thumb={teamThumbBlob}');
+    expect(phone).toContain('thumb={(team: string, id: string) => teamThumbBlob(team, id)}'); // 세 번째 인자는 at(팀 홈 줄 전용)이라 이름·크기를 안 넘긴다
   });
   it('팀 보관함 카드도 같은 길 — PDF 첫 장까지', () => {
     expect(locker).toContain('teamFileThumb(team, item.id, item.name');

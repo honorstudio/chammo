@@ -10,24 +10,56 @@ fn out(cmd: &str, args: &[&str]) -> String {
 pub struct LoadRaw {
     /// `ps -axo pid=,ppid=,pcpu=,rss=,etime=,args=`
     pub ps: String,
-    /// `sysctl -n hw.ncpu vm.loadavg vm.swapusage hw.memsize` 네 줄
+    /// `sysctl -n hw.ncpu vm.loadavg vm.swapusage hw.memsize kern.boottime kern.memorystatus_level kern.memorystatus_vm_pressure_level`
     pub sys: String,
+    /// 데이터 볼륨 "남은바이트 전체바이트" — 60초 캐시(디스크는 천천히 변한다). 모르면 빈 글
+    pub disk: String,
 }
 
 #[tauri::command]
 pub async fn load_sample() -> LoadRaw {
     tauri::async_runtime::spawn_blocking(sample)
     .await
-    .unwrap_or(LoadRaw { ps: String::new(), sys: String::new() })
+    .unwrap_or(LoadRaw { ps: String::new(), sys: String::new(), disk: String::new() })
 }
 
 #[cfg(not(windows))]
 fn sample() -> LoadRaw {
     LoadRaw {
         ps: out("/bin/ps", &["-axo", "pid=,ppid=,pcpu=,rss=,etime=,args="]),
-        // 다섯째 줄 부팅 시각 — 부팅 직후엔 터미널 칸을 하나씩 붙인다(프론트 domain/busyGate)
-        sys: out("/usr/sbin/sysctl", &["-n", "hw.ncpu", "vm.loadavg", "vm.swapusage", "hw.memsize", "kern.boottime"]),
+        // 다섯째 줄 부팅 시각 — 부팅 직후엔 터미널 칸을 하나씩 붙인다(프론트 domain/busyGate).
+        // 여섯·일곱째 = 메모리 여유 %(memory_pressure 가 보여 주는 값)·압박 단계(1 정상·2 주의·4 위험) — 같은 호출에 키만 더(부하 칩 카드, 11-01)
+        sys: out("/usr/sbin/sysctl", &["-n", "hw.ncpu", "vm.loadavg", "vm.swapusage", "hw.memsize", "kern.boottime", "kern.memorystatus_level", "kern.memorystatus_vm_pressure_level"]),
+        disk: disk_cached(),
     }
+}
+
+/// 저장공간 — statvfs 라 프로세스를 안 띄운다. 60초에 한 번만 다시 잰다
+#[cfg(not(windows))]
+fn disk_cached() -> String {
+    use std::time::{Duration, Instant};
+    static LAST: std::sync::Mutex<Option<(Instant, String)>> = std::sync::Mutex::new(None);
+    let mut g = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, v)) = g.as_ref() {
+        if at.elapsed() < Duration::from_secs(60) {
+            return v.clone();
+        }
+    }
+    let path = if std::path::Path::new("/System/Volumes/Data").exists() { "/System/Volumes/Data" } else { "/" };
+    let v = disk_line(path).unwrap_or_default();
+    *g = Some((Instant::now(), v.clone()));
+    v
+}
+
+#[cfg(not(windows))]
+fn disk_line(path: &str) -> Option<String> {
+    let c = std::ffi::CString::new(path).ok()?;
+    let mut s: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut s) } != 0 {
+        return None;
+    }
+    let unit = s.f_frsize as u64;
+    Some(format!("{} {}", s.f_bavail as u64 * unit, s.f_blocks as u64 * unit))
 }
 
 /// 윈도우엔 ps·sysctl 이 없다 — sysinfo 로 읽어 맥과 같은 모양 글로(프론트 해석·테스트를 그대로 쓴다).
@@ -54,7 +86,7 @@ fn sample() -> LoadRaw {
     }
     let cores = sys.cpus().len().max(1);
     let sys_text = sys_lines(cores, sys.global_cpu_usage(), sys.used_swap(), sys.total_swap(), sys.total_memory());
-    LoadRaw { ps, sys: sys_text }
+    LoadRaw { ps, sys: sys_text, disk: String::new() }
 }
 
 /// 맥 `ps -axo pid=,ppid=,pcpu=,rss=,etime=,args=` 한 줄 모양

@@ -34,11 +34,31 @@ fn fill(body: &str, name: &str, summary: &str, date: &str) -> String {
     body.replace("{{name}}", name).replace("{{summary}}", summary).replace("{{date}}", date)
 }
 
-/// 빈 자리만 채운다. ko = 한국어 템플릿
+/// 틀 글 — `[git] ` 줄은 깃 프로젝트에만, `[nogit] ` 줄은 깃 없는 프로젝트에만(머리표는 지운다). scripts/new-project render 와 같은 규칙
+pub fn render(body: &str, git: bool) -> String {
+    body.split_inclusive('\n')
+        .filter_map(|line| match (line.strip_prefix("[git] "), line.strip_prefix("[nogit] ")) {
+            (Some(rest), _) => git.then_some(rest),
+            (_, Some(rest)) => (!git).then_some(rest),
+            _ => Some(line),
+        })
+        .collect()
+}
+
+/// devRoot 아래 폴더가 프로젝트인가 — git 저장소이거나 하네스(CLAUDE.md·docs/starter.md)가 있는 폴더. 깃 없는 프로젝트(ADR 0024)도 목록에 뜨게
+pub fn is_project_dir(dir: &Path) -> bool {
+    dir.join(".git").exists() || dir.join("CLAUDE.md").is_file() || dir.join(".claude/CLAUDE.md").is_file() || dir.join("docs/starter.md").is_file()
+}
+
+/// 빈 자리만 채운다. ko = 한국어 템플릿. 깃인지는 그 폴더에 .git 이 있느냐로(ADR 0024) — 깃이 아니면 .gitignore 도 안 깐다
 pub fn install(dir: &Path, ko: bool, name: &str, summary: &str, date: &str) -> std::io::Result<Report> {
     let mut r = Report::default();
     std::fs::create_dir_all(dir)?;
+    let git = dir.join(".git").exists();
     for (path, en, kr) in FILES {
+        if *path == ".gitignore" && !git {
+            continue;
+        }
         let dest = dir.join(path);
         if dest.exists() {
             r.kept.push((*path).into());
@@ -47,7 +67,7 @@ pub fn install(dir: &Path, ko: bool, name: &str, summary: &str, date: &str) -> s
         if let Some(p) = dest.parent() {
             std::fs::create_dir_all(p)?;
         }
-        std::fs::write(&dest, fill(if ko { kr } else { en }, name, summary, date))?;
+        std::fs::write(&dest, fill(&render(if ko { kr } else { en }, git), name, summary, date))?;
         r.written.push((*path).into());
     }
     Ok(r)
@@ -114,9 +134,87 @@ pub fn dirs_now(dev_root: &str) -> Vec<(String, std::path::PathBuf)> {
     dirs(&crate::config::home(), dev_root, &crate::config::current().extra_projects)
 }
 
+/// 커밋 한 줄 — 보관함 프로젝트 화면 '한 일'
+#[derive(Serialize, Debug, PartialEq)]
+pub struct Commit {
+    pub hash: String,
+    /// 커밋 시각(초)
+    pub ts: i64,
+    pub subject: String,
+}
+
+/// `git log --format=%h%x09%ct%x09%s` 출력 → 커밋들(모양이 틀린 줄은 건너뜀)
+pub fn parse_log(out: &str) -> Vec<Commit> {
+    out.lines()
+        .filter_map(|l| {
+            let mut it = l.splitn(3, '\t');
+            let (hash, ts, subject) = (it.next()?.trim(), it.next()?.trim().parse().ok()?, it.next()?.trim());
+            (!hash.is_empty()).then(|| Commit { hash: hash.into(), ts, subject: subject.into() })
+        })
+        .collect()
+}
+
+/// 앱이 프로젝트로 보는 폴더인가(devRoot 바로 아래·추가한 폴더) — 아무 경로에나 git 을 돌리지 않는다
+fn is_project(dir: &str) -> Option<std::path::PathBuf> {
+    let want = crate::config::fwd(dir.trim_end_matches(['/', '\\']));
+    dirs_now(&crate::config::current().dev_root).into_iter().map(|(_, p)| p).find(|p| crate::config::fwd(&p.to_string_lossy()) == want)
+}
+
+/// 프로젝트 화면 '한 일' — 그 프로젝트 최근 커밋 20개. 프로젝트 폴더가 아니거나 git 이 아니면 빈 목록
+#[tauri::command]
+pub async fn project_log(dir: String) -> Vec<Commit> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(p) = is_project(&dir) else { return Vec::new() };
+        if !p.join(".git").exists() {
+            return Vec::new();
+        }
+        parse_log(&crate::claude::git(&p, &["log", "-n", "20", "--format=%h%x09%ct%x09%s"]))
+    })
+    .await
+    .unwrap_or_default()
+}
+
+/// 보관함 '새 프로젝트 만들기' — 참모와 같은 길(<HQ>/scripts/new-project: git init·하네스·신뢰·브라우저). 출력(JSON)을 그대로 돌려준다
+#[tauri::command]
+pub async fn project_new(name: String, summary: String) -> Result<String, String> {
+    if !valid_name(&name) {
+        return Err(crate::i18n::tr("이름은 영문 소문자·숫자로 시작하고 소문자·숫자·- _ . 만 써요", "Use lowercase letters, digits, - _ . (start with a letter or digit)").into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let hq = crate::config::hq_dir(&crate::config::home(), &crate::config::current(), |k| std::env::var(k).ok());
+        let script = Path::new(&hq).join("scripts").join("new-project");
+        #[cfg(windows)]
+        let mut c = {
+            let mut c = crate::platform::python();
+            c.arg(&script);
+            c
+        };
+        #[cfg(not(windows))]
+        let mut c = crate::platform::command(&script);
+        let o = c.arg(&name).arg(summary.trim()).output().map_err(|e| e.to_string())?;
+        if o.status.success() {
+            Ok(String::from_utf8_lossy(&o.stdout).into_owned())
+        } else {
+            Err(String::from_utf8_lossy(&o.stderr).trim().to_string())
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 커밋_줄_읽기() {
+        let out = "a3f9c21\t1761900000\t로그인 빈 화면 고침\nbadline\nb111111\tx\t시각 틀림\nc222222\t1761800000\t탭\t들어간 제목\n";
+        assert_eq!(parse_log(out), vec![
+            Commit { hash: "a3f9c21".into(), ts: 1761900000, subject: "로그인 빈 화면 고침".into() },
+            Commit { hash: "c222222".into(), ts: 1761800000, subject: "탭\t들어간 제목".into() },
+        ]);
+        assert!(parse_log("").is_empty());
+    }
 
     fn temp(tag: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("chammo-proj-{tag}-{}", std::process::id()));
@@ -149,6 +247,7 @@ mod tests {
     #[test]
     fn 빈_폴더엔_다_깔고_이름_설명_날짜를_채운다() {
         let d = temp("new");
+        std::fs::create_dir_all(d.join(".git")).unwrap();
         let r = install(&d, true, "acme-shop", "작은 쇼핑몰", "2026-09-28").unwrap();
         assert_eq!(r.written.len(), FILES.len());
         let claude = std::fs::read_to_string(d.join("CLAUDE.md")).unwrap();
@@ -158,6 +257,52 @@ mod tests {
         assert!(d.join(".gitignore").is_file());
         assert!(!std::fs::read_to_string(d.join("CLAUDE.md")).unwrap().contains("{{"));
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 깃이_없는_폴더엔_gitignore_없이_깃_안_쓰는_줄로() {
+        // 깃은 선택(ADR 0024) — 깃 없는 폴더에 커밋 규칙을 깔면 세션이 git init·커밋을 한다
+        let d = temp("nogit");
+        let r = install(&d, true, "poster", "포스터", "2026-11-02").unwrap();
+        assert!(!d.join(".gitignore").exists());
+        assert!(!r.written.contains(&".gitignore".to_string()));
+        let c = std::fs::read_to_string(d.join("CLAUDE.md")).unwrap();
+        assert!(c.contains("git 을 쓰지 않는다"));
+        assert!(!c.contains("커밋은 작게"));
+        assert!(!c.contains("[git]") && !c.contains("[nogit]"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 깃_폴더엔_깃_줄만() {
+        let d = temp("git");
+        std::fs::create_dir_all(d.join(".git")).unwrap();
+        install(&d, false, "api", "An API", "2026-11-02").unwrap();
+        let c = std::fs::read_to_string(d.join("CLAUDE.md")).unwrap();
+        assert!(c.contains("Small commits"));
+        assert!(!c.contains("doesn't use git"));
+        assert!(!c.contains("[git]") && !c.contains("[nogit]"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 프로젝트_폴더는_깃이나_하네스가_있는_곳() {
+        let d = temp("isproj");
+        for (n, f) in [("g", ".git/HEAD"), ("c", "CLAUDE.md"), ("s", "docs/starter.md"), ("x", "readme.txt")] {
+            std::fs::create_dir_all(d.join(n).join(f).parent().unwrap()).unwrap();
+            std::fs::write(d.join(n).join(f), "").unwrap();
+        }
+        assert!(is_project_dir(&d.join("g")));
+        assert!(is_project_dir(&d.join("c")), "깃 없는 하네스 폴더도 프로젝트");
+        assert!(is_project_dir(&d.join("s")));
+        assert!(!is_project_dir(&d.join("x")), "그냥 폴더는 아니다");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 줄_고르기() {
+        assert_eq!(render("a\n[git] b\n[nogit] c\nd", true), "a\nb\nd");
+        assert_eq!(render("a\n[git] b\n[nogit] c\nd\n", false), "a\nc\nd\n");
     }
 
     #[test]

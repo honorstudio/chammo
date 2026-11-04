@@ -1924,6 +1924,10 @@ fn human_touch(profile: &str, live: &Live, auto: bool) -> Result<(), String> {
 
 fn focus_windows(profile: &str, live: &Live) -> Result<(), String> {
     human_touch(profile, live, false)?;
+    // 사람이 '크롬에서 보기'로 직접 연 창은 사람 것 — 저절로 꺼낸 표를 떼서 지킴이가 저절로 숨기지 않게(popup_tick)
+    if let Ok(mut v) = PEEKED.lock() {
+        v.retain(|p| p.0 != profile);
+    }
     let target = with_workers(|ws| ws.get(profile).and_then(|w| w.view.lock().ok().and_then(|v| v.current.clone())));
     let mut cdp = Cdp { ws: connect(live)?, next: 0 };
     let got = cdp.call("Target.getTargets", serde_json::json!({}), None, |_| {})?;
@@ -2342,7 +2346,14 @@ fn wake_after_move(moved: bool, hidden: Option<bool>, wins: &[Win], vd: crate::v
 /// auto = 패스키 꺼내기를 저절로 되돌리는 것 — 크롬 자체 창이 아직 떠 있거나 모르면 안 숨기고 Err(사람이 끝낼 때까지 꺼낸 채, 2026-10-11 네이버 패스키 깜빡임)
 #[tauri::command]
 pub async fn agent_hide(profile: String, auto: Option<bool>) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn_blocking(move || hide_now(&profile, auto == Some(true)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn hide_now(profile: &str, auto: bool) -> Result<(), String> {
+    let profile = profile.to_string();
+    {
         let Some(live) = read_live(&profile) else { return Ok(()) };
         // 윈도우 — 보이는 창이면 숨은 데스크톱으로 다시 띄운다(win_desk)
         if cfg!(target_os = "windows") {
@@ -2353,7 +2364,7 @@ pub async fn agent_hide(profile: String, auto: Option<bool>) -> Result<(), Strin
             return Ok(());
         }
         let Some(pid) = chrome_pid(live.port) else { return Ok(()) };
-        if auto == Some(true) && !may_auto_hide(held(&profile, pid).is_some(), popup_fresh(&live, pid)) {
+        if auto && !may_auto_hide(held(&profile, pid).is_some(), popup_fresh(&live, pid)) {
             return Err("popup still open".into());
         }
         unmark_shown(pid);
@@ -2367,9 +2378,7 @@ pub async fn agent_hide(profile: String, auto: Option<bool>) -> Result<(), Strin
             crate::claude::log_out("browser", &format!("사람 개입 저절로 돌려줌 — 꺼낸 창 숨김 ({profile})"));
         }
         Ok(())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    }
 }
 
 /// 앱이 꺼질 때 — 세션 크롬을 다 가린다(가상 모니터가 사라지기 전에)
@@ -2542,9 +2551,39 @@ fn popup_tick(lives: &[Live]) {
         .iter()
         .filter_map(|l| Some((l.profile.clone(), popup_of(l, None).1.or_else(|| held(&l.profile, chrome_pid(l.port)?))?)))
         .collect();
+    let up: Vec<String> = now.iter().map(|p| p.0.clone()).collect();
     if let Ok(mut v) = POPUPS.lock() {
         *v = now;
     }
+    // 저절로 꺼낸(agent_peek) 창은 크롬 자체 창이 닫히면 앱이 직접 다시 숨긴다 — 모달·칸이 안 떠 있어도(2026-11-02 사용자: QR 뒤에도 창이 남았다).
+    // 숨기기 직전 한 번 더 본다(hide_now auto — 아직 떠 있거나 모르면 거절)
+    let peeked: Vec<String> = PEEKED.lock().map(|v| v.iter().map(|p| p.0.clone()).collect()).unwrap_or_default();
+    let due = UNPEEK_MISS.lock().map(|mut m| unpeek_due(&peeked, &up, m.get_or_insert_with(HashMap::new))).unwrap_or_default();
+    for p in due {
+        let _ = hide_now(&p, true);
+    }
+}
+
+/// 저절로 꺼낸 프로필마다 크롬 자체 창이 연달아 안 보인 횟수
+static UNPEEK_MISS: Mutex<Option<HashMap<String, u32>>> = Mutex::new(None);
+
+/// 저절로 꺼낸 창 중 이제 숨길 것 — 크롬 자체 창이 두 바퀴(약 2초) 연달아 없을 때. 한 바퀴만 없으면 창을 옮긴 직후 자리가 엇나간 틈일 수 있다
+fn unpeek_due(peeked: &[String], up: &[String], miss: &mut HashMap<String, u32>) -> Vec<String> {
+    miss.retain(|k, _| peeked.contains(k));
+    let mut due = vec![];
+    for p in peeked {
+        if up.contains(p) {
+            miss.remove(p);
+            continue;
+        }
+        let n = miss.entry(p.clone()).or_insert(0);
+        *n += 1;
+        if *n >= 2 {
+            miss.remove(p);
+            due.push(p.clone());
+        }
+    }
+    due
 }
 
 /// 크롬 자체 창만 1초마다 보는 루프 — 실측 시험(chrome_popup_e2e)용. 앱은 지킴이(watch_hidden)가 같이 본다
@@ -2598,10 +2637,15 @@ fn peek_windows(profile: &str, live: &Live) -> Result<(), String> {
         v.retain(|p| p.0 != profile);
         v.push((profile.to_string(), pid, nums, kind));
     }
-    let ds = crate::vdisplay::visible_displays();
-    let (cx, cy) = crate::vdisplay::cursor().unwrap_or((f64::MIN, f64::MIN));
-    let d = crate::vdisplay::display_at(&ds, cx, cy).ok_or("no display")?;
-    let r = crate::vdisplay::center_in(d, PEEK_W, PEEK_H);
+    let r = match test_peek_at() {
+        Some(d) => crate::vdisplay::center_in(d, PEEK_W, PEEK_H),
+        None => {
+            let ds = crate::vdisplay::visible_displays();
+            let (cx, cy) = crate::vdisplay::cursor().unwrap_or((f64::MIN, f64::MIN));
+            let d = crate::vdisplay::display_at(&ds, cx, cy).ok_or("no display")?;
+            crate::vdisplay::center_in(d, PEEK_W, PEEK_H)
+        }
+    };
     for w in hosts {
         set_bounds(&mut cdp, w.0, r);
     }
@@ -2609,6 +2653,15 @@ fn peek_windows(profile: &str, live: &Live) -> Result<(), String> {
     let _ = cdp.ws.close(None);
     front_chrome(live.port);
     Ok(())
+}
+
+/// 시험 앱만(디버그 빌드) — 꺼낼 화면을 사람 화면 대신 시험 가짜 화면으로(CHAMMO_TEST_PEEK_AT=x,y,w,h). 꺼내기는 원래 사람 화면으로 옮기는 일이라 시험 창이 사용자 화면에 떴다
+fn test_peek_at() -> Option<crate::vdisplay::Rect> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    let v: Vec<f64> = std::env::var("CHAMMO_TEST_PEEK_AT").ok()?.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+    (v.len() == 4).then(|| crate::vdisplay::Rect { x: v[0], y: v[1], w: v[2], h: v[3] })
 }
 
 /// '크롬에서 보기' — 이 크롬은 지킴이가 안 가리게 하고 보이게·맨 앞으로
@@ -2624,6 +2677,21 @@ fn front_chrome(port: u16) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 저절로_꺼낸_창은_크롬_자체_창이_두_번_연달아_없으면_숨긴다() {
+        // 2026-11-02 사용자(구글 QR) — 숨기기를 모달·칸만 해서, 모달을 닫거나 칸을 떠나면 QR 뒤에도 꺼낸 창이 남아 사람이 최소화했다
+        let mut miss = HashMap::new();
+        let peeked = vec!["a".to_string(), "b".to_string()];
+        assert!(unpeek_due(&peeked, &["a".to_string()], &mut miss).is_empty(), "한 번 없음은 기다린다(창을 옮긴 직후 자리가 엇나가는 틈)");
+        assert_eq!(unpeek_due(&peeked, &["a".to_string()], &mut miss), vec!["b".to_string()]);
+        assert!(!miss.contains_key("b"), "숨기라고 한 건 표를 지운다(한 번만)");
+        let peeked = vec!["a".to_string()]; // b 는 숨겨서 꺼낸 표에서 빠졌다
+        assert!(unpeek_due(&peeked, &[], &mut miss).is_empty(), "a 는 이제 첫 없음");
+        assert!(unpeek_due(&peeked, &["a".to_string()], &mut miss).is_empty(), "다시 뜨면 셈을 처음부터");
+        assert!(unpeek_due(&peeked, &[], &mut miss).is_empty(), "처음부터 센다");
+        assert!(unpeek_due(&[], &[], &mut miss).is_empty() && miss.is_empty(), "꺼낸 게 없으면 표도 비운다");
+    }
 
     #[test]
     fn 표_없는_부름은_없는_것으로_본다() {

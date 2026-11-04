@@ -10,7 +10,7 @@ export const OPEN = ['settings', 'tour', 'office', 'review', 'all', 'replay', 'l
 export type OpenWhat = (typeof OPEN)[number];
 export const CLOSE = ['settings', 'office', 'reader', 'tasks', 'inbox', 'harnitor', 'tools', 'review'] as const;
 export type CloseWhat = (typeof CLOSE)[number];
-const FEATURES: FeatureSwitch[] = ['office', 'tama', 'gacha', 'review', 'voice', 'autoRevive', 'autoTidy', 'computerUse', 'usagePing', 'craftBasics', 'bubble', 'bubbleDesk'];
+const FEATURES: FeatureSwitch[] = ['office', 'tama', 'gacha', 'review', 'voice', 'autoRevive', 'autoTidy', 'computerUse', 'usagePing', 'craftBasics', 'bubble', 'bubbleDesk', 'git'];
 
 export type AppIntent =
   | { kind: 'voice'; on: boolean }

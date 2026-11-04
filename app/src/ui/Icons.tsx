@@ -453,3 +453,20 @@ export const IconGrip = () => (
 export const IconUndo = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M5.5 3.5L2.5 6.5l3 3" /><path d="M2.5 6.5h7a3.5 3.5 0 0 1 0 7H7" /></svg>
 );
+/** 부하 게이지: 반원 + 바늘(한가 왼쪽 위 · 보통 위 · 바쁨 오른쪽 위) — 위 띠 부하 칩(2026-11-01 사용자 1안) */
+const NEEDLE = { ok: 'M8 11.5 4.6 9.3', warn: 'M8 11.5V7.4', high: 'M8 11.5 11.4 9.3' } as const;
+export const IconGauge = ({ lv }: { lv: keyof typeof NEEDLE }) => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M2.5 11.5a5.5 5.5 0 0 1 11 0" /><path d={NEEDLE[lv]} /><circle cx="8" cy="11.5" r=".9" fill="currentColor" /></svg>
+);
+/** CPU: 칩 + 다리 */
+export const IconCpu = () => (
+  <svg viewBox="0 0 16 16" {...P}><rect x="4.5" y="4.5" width="7" height="7" rx="1.2" /><path d="M6.5 2.3v2.2M9.5 2.3v2.2M6.5 11.5v2.2M9.5 11.5v2.2M2.3 6.5h2.2M2.3 9.5h2.2M11.5 6.5h2.2M11.5 9.5h2.2" /></svg>
+);
+/** 메모리: 램 막대 */
+export const IconMemory = () => (
+  <svg viewBox="0 0 16 16" {...P}><rect x="2" y="4.5" width="12" height="6" rx="1" /><path d="M5 7v1.5M8 7v1.5M11 7v1.5M4 10.5v2M6.7 10.5v2M9.3 10.5v2M12 10.5v2" /></svg>
+);
+/** 저장공간: 원통 */
+export const IconDisk = () => (
+  <svg viewBox="0 0 16 16" {...P}><ellipse cx="8" cy="4.3" rx="5" ry="1.8" /><path d="M3 4.3v7.4c0 1 2.2 1.8 5 1.8s5-.8 5-1.8V4.3M3 8c0 1 2.2 1.8 5 1.8s5-.8 5-1.8" /></svg>
+);

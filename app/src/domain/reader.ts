@@ -22,6 +22,20 @@ const TEXT = ['txt', 'log', 'json', 'jsonl', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'j
 const PAGE_DOC = [...OFFICE, 'ppt', 'pptx', 'pps', 'ppsx', 'odp', 'key', 'xls', 'xlsx', 'ods', 'numbers', 'pages'];
 export const pageDoc = (path: string) => PAGE_DOC.includes(path.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? '');
 
+/** 첫 장 그림(ql_thumb)이 쓸 만한 것 — 맥 실측(2026-11-01): PDF·오피스·영상·ai·psd 0.05~0.7초. hwpx 는 Rust 가 속 미리보기 그림을 꺼낸다 */
+const SHOT = ['pdf', 'html', 'htm', ...PAGE_DOC, 'ai', 'eps', 'psd', 'hwpx'];
+/** 파일 카드 썸네일 길 — 채팅 카드·내 보관함 카드가 같이. image 그대로 · shot 첫 장 · text 앞부분 글 · none 확장자 표
+ *  (오디오는 QuickLook 이 음표 아이콘뿐, hwp 는 20초 헛돌아 none) */
+export function cardThumb(path: string, win = IS_WIN): 'image' | 'shot' | 'text' | 'none' {
+  if (path.startsWith('data:image')) return 'image';
+  const k = kindOf(path);
+  // 윈도우 웹뷰(크로미움)는 HEIC·TIFF 를 못 그린다 — 앱이 JPEG 로 바꾼 첫 장으로(win_thumb, 11-01)
+  if (k === 'image') return win && /\.(heic|heif|tiff?)$/i.test(path) ? 'shot' : 'image';
+  if (k === 'md' || k === 'text') return 'text';
+  if (k === 'video') return 'shot';
+  return SHOT.includes(path.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? '') ? 'shot' : 'none';
+}
+
 /** 미리보기 기다림 한도 — Rust 가 길마다 끊지만(그림 한 장 20초씩 두 길, page_doc 60초) 답이 아예 안 오면 '만드는 중'에 영영 멈췄다(2026-10-29 .ai) */
 /** 글 파일이 UTF-8 이 아니다(Rust reader::NOT_UTF8 — 엑셀이 내보낸 CSV·옛 메모장 EUC-KR·UTF-16) — 내부 코드 대신 사람 말 + 기본 앱으로 열기(11-01 QA H11) */
 export const notUtf8 = (e: string) => e.includes('NOT_UTF8');

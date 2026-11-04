@@ -1,6 +1,6 @@
 // 팀 프로필(이름·사진·상태) — 화면 판단(순수 함수). 저장 길은 Rust team_profile(팀 보관함 암호 길)
 import { describe, expect, it } from 'vitest';
-import { clampOffset, cropRect, dndNotice, lookOf, namedConvos, statusLine, type ProfileBoard } from './teamProfile';
+import { clampOffset, cropRect, dndNotice, lookNames, lookOf, namedConvos, statusLine, type ProfileBoard } from './teamProfile';
 
 const board: ProfileBoard = {
   team: 't1', rev: 3, teamIcon: '',
@@ -11,6 +11,18 @@ const board: ProfileBoard = {
 };
 
 describe('팀 프로필 화면 판단', () => {
+  // 11-02: 폰 일정 고치기 참석자 칩이 계정 이름으로 — 캘린더·방 만들기·부르기 목록이 명부 이름을 그대로 그렸다
+  it('lookNames — 명부를 프로필 이름으로, 계정 이름은 account 에 남기고 id·다른 칸은 그대로', () => {
+    const ppl = [{ id: 'm2', name: '박준호', me: false }, { id: 'm3', name: '서연', me: false }, { id: 'm9', name: '새사람', me: true }];
+    expect(lookNames(ppl, board)).toEqual([
+      { id: 'm2', name: '준호', account: '박준호', me: false },
+      { id: 'm3', name: '서연', account: '서연', me: false },
+      { id: 'm9', name: '새사람', account: '새사람', me: true },
+    ]);
+    // 판을 아직 못 읽었으면 명부 이름 그대로(빈 이름으로 그리지 않는다)
+    expect(lookNames(ppl, null).map((p) => [p.name, p.account])).toEqual([['박준호', '박준호'], ['서연', '서연'], ['새사람', '새사람']]);
+  });
+
   // 팀 설정엔 바꾼 이름이 나오는데 대화 목록·DM 머리엔 명부의 옛 이름이 그대로였던 것
   it('사람 대화(DM) 이름은 프로필 이름으로, 단톡방 이름·프로필 없는 사람은 그대로', () => {
     const cs = [

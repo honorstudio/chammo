@@ -5,7 +5,7 @@ import { messengerApi, openTarget, writeClipboard, type MessengerLink, type Mess
 import { accountLine, BOTFATHER, dotOf, stageOf, tokenFrom, tokenLooksRight } from '../domain/messenger';
 import { IconClose, IconCopy, IconOpen, IconPower, IconUnlink } from './Icons';
 import { IconButton } from './kit/IconButton';
-import { tr } from '../i18n';
+import { machine, tr } from '../i18n';
 
 const left = (ms: number) => { const s = Math.max(0, Math.round(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 
@@ -82,7 +82,7 @@ export function MessengerSection({ title }: { title: string }) {
           {link.qrSvg && <img className="su-qr" alt={tr('텔레그램 연결 QR', 'Telegram link QR')} src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(link.qrSvg)}`} />}
           <div className="su-mobile-side">
             <b>{tr(`${left(link.expires - now)} 안에 텔레그램에서 시작(Start)을 눌러 주세요`, `Press Start in Telegram within ${left(link.expires - now)}`)}</b>
-            <span className="su-hint">{tr('폰이면 QR 을 찍고, 이 맥 텔레그램이면 방금 열린 창에서 눌러요. 한 번 쓰면 사라져요.', 'On the phone scan the QR; on this Mac use the window that just opened. It works once.')}</span>
+            <span className="su-hint">{tr(`폰이면 QR 을 찍고, 이 ${machine()} 텔레그램이면 방금 열린 창에서 눌러요. 한 번 쓰면 사라져요.`, `On the phone scan the QR; on this ${machine()} use the window that just opened. It works once.`)}</span>
             <div className="su-inline">
               <button className="ib" aria-label={tr('텔레그램에서 열기', 'Open in Telegram')} title={tr('텔레그램에서 열기', 'Open in Telegram')} onClick={() => void openTarget('url', link.link).catch(() => {})}><IconOpen /></button>
               <button className="ib" aria-label={copied ? tr('복사했어요', 'Copied') : tr('링크 복사', 'Copy link')} title={copied ? tr('복사했어요', 'Copied') : tr('링크 복사', 'Copy link')} onClick={() => void writeClipboard(link.link).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1500); })}><IconCopy /></button>
@@ -96,7 +96,7 @@ export function MessengerSection({ title }: { title: string }) {
 
       {stage === 'confirm' && st?.pending && (
         <div className="tg-confirm">
-          <span className="su-hint">{tr('텔레그램에서 시작을 누른 계정이에요. 내 계정일 때만 연결하세요. 연결하면 이 맥의 참모에게 말을 걸 수 있어요', 'This account pressed Start in Telegram. Link it only if it is yours. It will be able to talk to the assistant on this Mac.')}</span>
+          <span className="su-hint">{tr(`텔레그램에서 시작을 누른 계정이에요. 내 계정일 때만 연결하세요. 연결하면 이 ${machine()}의 참모에게 말을 걸 수 있어요`, `This account pressed Start in Telegram. Link it only if it is yours. It will be able to talk to the assistant on this ${machine()}.`)}</span>
           <div className="su-row">
             <div className="su-row-text">
               <b>{st.pending.name}</b>

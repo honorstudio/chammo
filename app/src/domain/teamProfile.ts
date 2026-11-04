@@ -19,6 +19,12 @@ export function lookOf(board: ProfileBoard | null, member: string, rosterName: s
   return { name: p.name || rosterName, photo: p.photo, status: asStatus(p.status), note: p.note };
 }
 
+/** 팀 사람 목록을 화면 이름(프로필 이름, 없으면 명부 이름)으로 — 캘린더 참석자·방 만들기·부르기 목록·참모 이름 겹침처럼 명부(view.members)를 그대로 그리는 곳은 다 이 길로.
+ *  account = 명부(계정) 이름 — 부르기 글(@이름)·알림(Rust mentions_me)·사람 색은 이걸로 찾는다. 판을 아직 못 읽었으면 이름 그대로(11-02 폰 캘린더가 계정 이름) */
+export function lookNames<T extends { id: string; name: string }>(people: T[], board: ProfileBoard | null): (T & { account: string })[] {
+  return people.map((p) => ({ ...p, name: lookOf(board, p.id, p.name).name, account: p.name }));
+}
+
 /** 대화 목록·DM 머리에 쓸 이름 — 사람 대화는 프로필 이름(없으면 명부 이름), 단톡방은 방 이름 그대로. 판을 아직 못 읽었으면 그대로 */
 export function namedConvos<T extends { peer: string; name: string; kind?: string }>(cs: T[], board: ProfileBoard | null): T[] {
   if (!board) return cs;

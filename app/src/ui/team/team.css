@@ -141,6 +141,14 @@
 /* 팀 이름 옆 Beta(BetaTag) — 이름이 길면 이름만 줄어든다 */
 .tmx-list-ht { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; }
 .tmx-list-ht b { flex: 0 1 auto; min-width: 0; }
+/* 팀 이름 칩 ▾(11-02 팀 여러 개, 시안 team-add C) — 누르면 내 팀 줄 + 새 팀 만들기·초대 링크로 들어가기 */
+.tmx-list-chip { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; gap: 4px; min-width: 0; height: 32px; margin-left: -6px; padding: 0 6px; border-radius: 8px; cursor: pointer; color: var(--text); }
+.tmx-list-chip:hover, .tmx-list-chip[aria-expanded="true"] { background: var(--hover); }
+.tmx-list-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tmx-list-chip svg { width: 14px; height: 14px; flex: none; color: var(--text-3); }
+/* 칩 메뉴 팀 줄 — 팀 표 + 이름(+ 안 읽은 수). 지금 팀은 메뉴 공용 점(.on::after) */
+.tmx-menu-team { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 220px; }
+.tmx-menu-team b { font-weight: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tmx-li { display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 6px 12px 6px 14px; margin: 0 6px; border-radius: 10px; border: 0; background: transparent; font: inherit; color: var(--text); text-align: left; cursor: pointer; }
 .tmx-li:hover { background: var(--hover); }
 .tmx-li.on { background: var(--surface); box-shadow: var(--cv-shadow, 0 0 0 1px var(--line)); }
@@ -252,10 +260,10 @@
 /* 보낸 바꾸기가 서버 답을 기다리는 줄·칩 — 화면엔 이미 반영, 옅게만 */
 .tlk-pending { opacity: .62; }
 /* 고른 줄·카드 — 참모 보관함 고른 것과 같은 옅은 강조색 면 + 전체 테두리 */
-.tmx-lk-row.picked, .tmx-lk-row.picked:hover { background: color-mix(in srgb, var(--accent) 9%, var(--surface)); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 55%, transparent); }
+.tmx-lk-row.picked, .tmx-lk-row.picked:hover { background: color-mix(in srgb, var(--accent) 9%, var(--surface)); box-shadow: inset 0 0 0 var(--ring-w) color-mix(in srgb, var(--accent) 55%, transparent); }
 /* 카드는 위 썸네일 칸이 제 배경으로 안쪽 그림자를 덮어 테두리가 아래 이름 칸에만 보였다(314.png) — 둘레 테두리는 내용 위에 덮는 층으로 */
 .tlk-card.picked { background: color-mix(in srgb, var(--accent) 9%, var(--surface)); }
-.tlk-card.picked::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 55%, transparent); pointer-events: none; }
+.tlk-card.picked::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 var(--ring-w) color-mix(in srgb, var(--accent) 55%, transparent); pointer-events: none; }
 .tlk-chip-in { height: 32px; width: 140px; padding: 0 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--text); font: inherit; font-size: 12.5px; }
 .tmx-lk-row.on, .tlk-card.on { background: var(--hover); }
 .tmx-lk-row.tlk-locked b { color: var(--text-3); font-weight: 500; }
@@ -333,7 +341,7 @@
 .tmx-chip { position: relative; display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border-radius: 12px; border: 0; background: var(--surface-2); color: var(--text-2); font: inherit; font-size: 12px; cursor: pointer; box-shadow: inset 0 0 0 1px transparent; }
 .tmx-chip svg { width: 14px; height: 14px; }
 .tmx-chip b { font-weight: 650; font-variant-numeric: tabular-nums; }
-.tmx-chip.mine { box-shadow: inset 0 0 0 1.5px var(--text-2); color: var(--text); background: var(--surface); }
+.tmx-chip.mine { box-shadow: inset 0 0 0 var(--ring-w) var(--text-2); color: var(--text); background: var(--surface); }
 .tmx-chip:disabled { cursor: default; }
 .tmx-who { position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%); display: flex; align-items: center; gap: 10px; white-space: nowrap; background: var(--text); color: var(--surface); border-radius: 10px; padding: 8px 12px; font-size: 12px; box-shadow: 0 8px 22px rgba(0,0,0,.18); z-index: calc(var(--z-base) + 5); pointer-events: none; }
 .tmx-who > span:last-child { display: flex; flex-direction: column; line-height: 1.4; text-align: left; }
@@ -409,3 +417,33 @@ button.tmx-file:hover { background: var(--hover); }
 .tmx-opk-list { display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow-y: auto; }
 .tmx-opk-btn { display: flex; align-items: center; min-height: 44px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; font: inherit; font-size: 13px; color: var(--text); text-align: left; cursor: pointer; }
 .tmx-opk-btn:hover, .tmx-opk-btn:focus-visible { background: var(--hover); outline: none; }
+/* 줄 앞 작은 첫 장(FileMini, 11-01) — 확장자 표 자리에 같은 크기로. 팀 홈 최근 파일·폰 팀 보관함 줄 */
+.hb-ext.file-mini, .tmx-ext.file-mini { width: 32px; height: 32px; flex: 0 0 auto; padding: 0; border-radius: 7px; overflow: hidden; background: #fff; box-shadow: 0 0 0 1px var(--line); display: inline-flex; }
+.file-mini img { width: 100%; height: 100%; object-fit: cover; object-position: top center; display: block; }
+.tmx-lk-row .tmx-ext.file-mini { grid-row: span 2; align-self: center; }
+
+/* ── 팀 파일 받기(11-01 사용자 시안) — 받기 아이콘은 늘 보이는 겹친 형제(말풍선·줄·카드가 단추라), 막대 = 받은 / 전체 ── */
+.tmx-dl { display: inline-flex; gap: 2px; }
+.tmx-dl-bar { display: block; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.tmx-dl-bar i { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+.tmx-dl-num { font-variant-numeric: tabular-nums; }
+/* 실패 이유는 한 상태 색 — 말풍선 글 규칙(.tmx-file-tx span)이 안쪽까지 회색으로 덮어서 셋을 같은 세기로 */
+.tmx-file .tmx-dl-err, .tlk-cap .tmx-dl-err, .tmx-lk-row .tmx-dl-err { color: var(--danger-ink); }
+/* 말풍선 */
+.tmx-file-wrap { position: relative; width: 300px; max-width: 100%; }
+.tmx-file-wrap > .tmx-file { width: 100%; }
+.tmx-file-wrap > .tmx-file .tmx-file-row { padding-right: 30px; }
+.tmx-file-wrap.two > .tmx-file .tmx-file-row { padding-right: 60px; }
+.tmx-file-wrap > .tmx-dl { position: absolute; right: 8px; top: 11px; }
+.tmx-file-wrap.pic > .tmx-dl { top: auto; bottom: 10px; }
+.tmx-file-wrap.pic.going > .tmx-dl { bottom: 22px; }
+/* 보관함 카드 — 아이콘은 이름 칸 오른쪽 아래, 막대는 그림 칸 아래쪽 */
+.tlk-rw > .tlk-card ~ .tlk-dl { position: absolute; right: 6px; bottom: 9px; }
+.tlk-rw:has(> .tlk-dl) .tlk-cap { padding-right: 38px; }
+.tlk-rw:has(> .tlk-dl .kit-ib + .kit-ib) .tlk-cap { padding-right: 66px; }
+.tlk-card > .tlk-card-bar { position: absolute; left: 10px; right: 10px; top: 90px; }
+/* 보관함 줄 — 아이콘은 '내 참모에게'(오른쪽 끝) 왼쪽 */
+.tlk-rw > .tmx-lk-row ~ .tlk-dl { position: absolute; right: 42px; top: 50%; transform: translateY(-50%); }
+.tlk-rw:has(> .tlk-dl) > .tmx-lk-row { padding-right: 76px; }
+.tlk-rw:has(> .tlk-dl .kit-ib + .kit-ib) > .tmx-lk-row { padding-right: 106px; }
+.tmx-lk-row > .tlk-row-bar { flex: 0 0 80px; }

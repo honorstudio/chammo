@@ -722,3 +722,47 @@ describe('죽은 칸 — 바꾸기가 그 칸 탓으로 실패하면 다음 칸�
     expect(p2.switchTo).toBe('c');
   });
 });
+
+describe('5시간 한도 없음(2026-11 Ultra) — 없음을 0%·100% 로 오판하지 않는다', () => {
+  // 사용량 주소가 five_hour:null(limits 에 session 없음)이면 Rust 가 noFive: true 로 준다
+  const ultra = (who: string, week: number, weekAt: number) => ({ who, status: 'ok', five: null, week: { used: week, resetsAt: weekAt }, noFive: true });
+
+  it('applyApi — 칸에 noFive 를 적고 옛 5시간 값은 지운다', () => {
+    const s0 = base({ slots: { b: { fp: WB, five: { used: 99, resetsAt: at(22) } }, a: { fp: WA } } });
+    const s = applyApi(s0, [ultra('b', 40, WB)], IDS, at(19));
+    expect(s.slots.b).toEqual({ fp: WB, week: { used: 40, resetsAt: WB }, noFive: true, seenAt: at(19) });
+  });
+  it('applyApi — 5시간 값이 다시 오면 noFive 를 푼다 · 못 읽음(실패)은 그대로 둔다', () => {
+    const s0 = applyApi(base(), [ultra('b', 40, WB)], IDS, at(19));
+    expect(applyApi(s0, [{ who: 'b', status: 'fail' }], IDS, at(19, 5)).slots.b?.noFive).toBe(true);
+    const s = applyApi(s0, [{ who: 'b', status: 'ok', five: { used: 5, resetsAt: at(22) }, week: { used: 40, resetsAt: WB } }], IDS, at(19, 10));
+    expect(s.slots.b?.noFive).toBeUndefined();
+    expect(s.slots.b?.five?.used).toBe(5);
+  });
+  it('readAuto — noFive 는 true 일 때만 남는다', () => {
+    expect(readAuto({ slots: { b: { noFive: true }, a: { noFive: 'yes' } } }).slots).toEqual({ b: { noFive: true }, a: {} });
+  });
+  it('step — 한도 없는 칸은 주간이 넉넉하면 소진 아님(넘기지 않는다), 앞 칸으로 돌아가기도 그대로', () => {
+    const s0 = applyApi(base({ switchedAt: at(10) }), [ultra('b', 40, WB)], IDS, at(18, 29));
+    const p = tick(s0, at(18, 30), null);
+    expect(p.switchTo).toBeNull();
+    expect(p.state.slots.b?.blockedUntil).toBeUndefined();
+    expect(slotStatus(p.state.slots.b, at(18, 30))).toEqual({ kind: 'ok' });
+  });
+  it('step — 상태줄에 5시간 칸이 없어도 칸의 noFive 는 남는다 · 주간이 차면 주간으로 넘긴다', () => {
+    const s0 = applyApi(base({ switchedAt: at(10) }), [ultra('b', 40, WB)], IDS, at(18, 29));
+    const weekOnly = JSON.stringify({ rate_limits: { seven_day: { used_percentage: 96, resets_at: sec(WB) } } });
+    const p = tick(s0, at(18, 30), weekOnly);
+    expect(p.state.slots.b?.noFive).toBe(true);
+    expect(p.switchTo).toBe('a');
+    expect(p.why).toBe('week');
+    expect(p.state.slots.b?.blockedUntil).toBe(WB);
+  });
+  it('step — 한도 없는 칸이 한도 오류로 멈추면 5시간 시각이 아니라 모름(1시간)으로 막는다', () => {
+    const s0 = applyApi(base({ switchedAt: at(10) }), [ultra('b', 40, WB)], IDS, at(18, 29));
+    const p = tick(s0, at(18, 30), null, { stuck: [{ session: 's1', ts: at(18, 29, 2, 30) }] });
+    expect(p.switchTo).toBe('a');
+    expect(p.state.slots.b?.why).toBe('limit');
+    expect(p.state.slots.b?.blockedUntil).toBe(at(19, 30));
+  });
+});

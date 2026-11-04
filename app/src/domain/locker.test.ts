@@ -80,14 +80,16 @@ describe('화면 자리(pick)', () => {
 });
 
 describe('cardLook — 썸네일 모양', () => {
-  it('그림은 그대로, PPT·PDF·시안은 진짜 썸네일, 엑셀·한글·md·워드는 문서 모양', () => {
+  it('그림은 그대로, PPT·PDF·시안·워드·엑셀·디자인 파일은 진짜 첫 장(11-01), md·글·오디오는 문서 모양', () => {
     expect(cardLook('/a/b.PNG')).toEqual({ look: 'image', tag: 'PNG' });
     expect(cardLook('/a/월간보고.pptx')).toEqual({ look: 'shot', tag: 'PPTX' });
     expect(cardLook('/a/b.pdf').look).toBe('shot');
     expect(cardLook('/a/v1.html').look).toBe('shot');
-    expect(cardLook('/a/매출.xlsx')).toEqual({ look: 'doc', tag: 'XLSX' });
-    expect(cardLook('/a/신청서.hwpx').look).toBe('doc');
+    expect(cardLook('/a/매출.xlsx')).toEqual({ look: 'shot', tag: 'XLSX' });
+    for (const p of ['/a/제안서.docx', '/a/간판.ai', '/a/표지.psd', '/a/신청서.hwpx', '/a/c.mov']) expect(cardLook(p).look, p).toBe('shot');
     expect(cardLook('/a/요약.md').look).toBe('doc');
+    expect(cardLook('/a/bgm.mp3').look).toBe('doc');
+    expect(cardLook('/a/옛서식.hwp').look).toBe('doc');
     expect(cardLook('/a/Makefile')).toEqual({ look: 'doc', tag: 'FILE' });
   });
 });

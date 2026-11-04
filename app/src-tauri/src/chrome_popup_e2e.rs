@@ -7,7 +7,7 @@ use std::io::{Read, Write};
 
 const BETA: &str = "/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta";
 const PAGE: &str = "<!doctype html><title>pk</title><button id=b style='position:fixed;left:0;top:0;width:200px;height:100px'>get</button>\
-<script>b.onclick=()=>{window.r='pending';navigator.credentials.get({publicKey:{challenge:new Uint8Array(32),rpId:'localhost',userVerification:'preferred',timeout:120000}})\
+<script>b.onclick=()=>{window.r='pending';window.ac=new AbortController();navigator.credentials.get({signal:window.ac.signal,publicKey:{challenge:new Uint8Array(32),rpId:'localhost',userVerification:'preferred',timeout:120000}})\
 .then(()=>{window.r='ok'},e=>{window.r='err:'+e.name})}</script>";
 
 struct Chrome {
@@ -186,4 +186,65 @@ fn peek_cross_display_e2e() {
     let _ = std::fs::remove_file(live_dir().join(format!("{profile}.json")));
     assert!(after_peek.is_some(), "다른 모니터로 옮긴 뒤에도 패스키 창을 알아봐야(엇나간 자리에 남으면 꺼낸 크롬을 바로 숨긴다)");
     assert!(after_back.is_some(), "되돌린 뒤에도 패스키 창이 브라우저 창 안에");
+}
+
+/// 저절로 꺼낸(agent_peek) 크롬은 패스키 창이 닫히면 앱 지킴이(popup_tick)가 직접 다시 숨기나 — 모달·칸 없이(2026-11-02 사용자 구글 QR: 창이 남아 손으로 최소화).
+/// 크롬은 이 시험이 띄우지 않는다 — 시험 데이터 폴더에서 chammo-browser launch 로 받은 참모 브라우저(가짜 패스키 페이지가 열린 것)에 붙기만.
+/// 꺼낸 표만 달고 창은 가짜 화면 그대로(사용자 화면에 안 뜬다).
+/// `CHAMMO_HOME=<시험 폴더> CHAMMO_TEST_PROFILE=<그 프로필> cargo test auto_unpeek_e2e -- --ignored --nocapture --test-threads=1`
+#[test]
+#[ignore]
+fn auto_unpeek_e2e() {
+    let home = std::env::var("HOME").unwrap_or_default();
+    assert!(!crate::config::is_real_data(&home, crate::config::data_dir()), "CHAMMO_HOME 을 시험 폴더로 줘");
+    let profile = std::env::var("CHAMMO_TEST_PROFILE").expect("CHAMMO_TEST_PROFILE (chammo-browser launch 로 띄운 시험 프로필)");
+    let live = read_live(&profile).expect("시험 프로필 참모 브라우저가 떠 있어야");
+    let pid = wait_for("크롬 pid", 10, || chrome_pid(live.port));
+    let mut owner = Cdp { ws: wait_for("주인 연결", 10, || connect(&live).ok()), next: 0 };
+    let got = owner.call("Target.getTargets", serde_json::json!({}), None, |_| {}).unwrap();
+    let target = got["targetInfos"].as_array().unwrap().iter().find(|t| t["type"] == "page" && t["url"].as_str().unwrap_or("").contains("/pk.html")).expect("가짜 패스키 페이지 탭")["targetId"].clone();
+    let s = owner.call("Target.attachToTarget", serde_json::json!({ "targetId": target, "flatten": true }), None, |_| {}).unwrap();
+    let s = s["sessionId"].as_str().unwrap().to_string();
+    let eval = |c: &mut Cdp, e: &str| c.call("Runtime.evaluate", serde_json::json!({ "expression": e, "returnByValue": true }), Some(&s), |_| {}).map(|r| r["result"]["value"].clone());
+    wait_for("가려짐", 10, || {
+        app_window::hide(pid);
+        std::thread::sleep(Duration::from_millis(300));
+        (app_window::hidden(pid) == Some(true)).then_some(())
+    });
+    for ty in ["mousePressed", "mouseReleased"] {
+        owner.call("Input.dispatchMouseEvent", serde_json::json!({ "type": ty, "x": 50, "y": 40, "button": "left", "clickCount": 1 }), Some(&s), |_| {}).unwrap();
+    }
+    wait_for("패스키 요청이 걸림", 10, || (eval(&mut owner, "window.r").ok()? == serde_json::json!("pending")).then_some(()));
+    let (hosts, kind) = wait_for("패스키 창을 알아봄", 20, || {
+        let (h, k) = popup_of(&live, None);
+        (!h.is_empty()).then_some((h, k?))
+    });
+    // agent_peek 처럼 꺼낸 표 — 자리는 안 옮긴다
+    let rects: Vec<crate::vdisplay::Rect> = hosts.iter().map(|w| w.1).collect();
+    let nums = crate::chrome_popup::popup_nums(&crate::chrome_popup::windows(pid), pid, &rects);
+    println!("패스키 창 {kind:?} 번호 {nums:?}");
+    mark_shown(pid);
+    PEEKED.lock().unwrap().push((profile.clone(), pid, nums, kind));
+    // 꺼낸 크롬은 보인다(front_chrome) — 가린 크롬은 끝난 패스키 창도 목록에 1분 넘게 남겨서 같은 조건으로. 창은 가짜 화면 그대로, 포커스는 안 뺏는다(unhide)
+    app_window::unhide(pid);
+    let peeked = || PEEKED.lock().unwrap().iter().any(|p| p.0 == profile);
+    let lives = || agent_lives().into_iter().filter(|l| l.profile == profile).collect::<Vec<_>>();
+    for _ in 0..4 {
+        popup_tick(&lives());
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    assert!(peeked(), "패스키 창이 떠 있는 동안은 꺼낸 채(사람이 QR 찍는 중)");
+    // QR 을 찍어 끝난 것처럼 — 요청이 끝나 창이 닫힌다(페이지의 AbortController — 탭을 옮기는 것만으론 가려진 크롬의 패스키 창이 1분 넘게 남았다)
+    let t1 = Instant::now();
+    eval(&mut owner, "window.ac && window.ac.abort()").unwrap();
+    wait_for("창이 닫히면 지킴이가 저절로 숨김", 60, || {
+        popup_tick(&lives());
+        let pid_now = chrome_pid(live.port);
+        println!("{:?}s held={:?} fresh={:?}", t1.elapsed().as_secs(), pid_now.and_then(|p| held(&profile, p)), pid_now.and_then(|p| popup_fresh(&live, p)));
+        std::thread::sleep(Duration::from_millis(1000));
+        (!peeked()).then_some(())
+    });
+    println!("저절로 숨김까지 {:?}", t1.elapsed());
+    assert!(!shown().contains(&pid), "꺼낸 크롬 표도 떼야 지킴이가 다시 가린다");
+    assert_eq!(app_window::hidden(pid), Some(true), "크롬은 다시 가려짐");
 }

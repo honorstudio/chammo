@@ -52,6 +52,7 @@ import { BOOT_LIMIT_MS, envFromCache, envIsWin, ENV_KEY, splashDeadline, splashD
 import { hideBootSplash } from './bootSplash';
 import { IconRefresh } from '../Icons';
 import { makePoller, RESUME_EVENT } from '../../domain/poller';
+import { FAIL_EVERY_MS, netText, OK_EVERY_MS, unreachStep, type Unreach } from '../../domain/unreach';
 import { installResume } from './resume';
 import { installFreshBuild } from './freshBuild';
 import { Notice } from './Notice';
@@ -313,9 +314,12 @@ export function MobileApp() {
       c.signal.addEventListener('abort', () => clearTimeout(t));
       return { signal: c.signal, late: () => late };
     };
-    type Got = { ok: true; env: MobileEnv; raw: string } | { ok: false; err: unknown };
+    // 실패 줄(domain/unreach) — 허브가 몇 초 끊겼다 붙는 동안은 보던 화면 그대로, 유예를 넘게 이어질 때만 '못 닿음'(2026-11-02)
+    let un: Unreach = { since: 0 };
+    type Got = { ok: true; env: MobileEnv; raw: string } | { ok: false; err: unknown; at: number };
     const p = makePoller<Got>({
       read: async (signal) => {
+        const at = Date.now();
         const lim = limited(signal);
         try {
           if (e) return { ok: true, env: e, raw: await listSessionsRaw(lim.signal) };
@@ -323,20 +327,23 @@ export function MobileApp() {
           takeEnv(v);
           return { ok: true, env: v, raw };
         } catch (err) {
-          return { ok: false, err: lim.late() ? new Error(tr(`${josa(machine(), '이', '가')} ${BOOT_LIMIT_MS / 1000}초 넘게 답이 없어요`, `The ${machine()} hasn't answered in ${BOOT_LIMIT_MS / 1000} seconds`)) : err };
+          return { ok: false, at, err: lim.late() ? new Error(tr(`${machine()} 답을 기다리고 있어요. 저절로 다시 해요`, `Waiting for your ${machine()}. Retrying automatically`)) : err };
         }
       },
       apply: (g) => {
         setRetrying(false);
         if (!g.ok) {
           if (g.err instanceof NoKeyError) { forgetEnv(); setNoKey(true); p.stop(); return; } // 열쇠가 없으면 더 묻지 않는다
-          setError((g.err as Error).message);
+          const step = unreachStep(un, { ok: false, startedAt: g.at, now: Date.now() });
+          un = { since: step.since };
+          if (step.show) setError(netText(g.err));
           return;
         }
+        un = { since: 0 };
         got = true;
         show(g.env, g.raw);
       },
-      everyMs: () => 3000,
+      everyMs: () => (un.since ? FAIL_EVERY_MS : OK_EVERY_MS),
     });
     // 기억해 둔 맥 정보로 시작했으면 새 맥 정보를 한 번 받아 — 바뀌었으면(비서 이름·폴더) 지난 세션 목록으로 바로 다시 그린다
     if (e) void getEnv().then((v) => { if (sameEnv(e, v)) return; takeEnv(v); if (lastRaw !== null) show(v, lastRaw); }, () => { /* 세션 받기가 이유를 보인다 */ });
@@ -396,7 +403,8 @@ export function MobileApp() {
     return cover(
       <div className="m-center m-unreach">
         <BrandMark size={64} className="m-brand" />
-        <p>{error ? tr(`${machine()}에 못 닿았어요: ${error}`, `Can't reach the ${machine()}: ${error}`) : ''}</p>
+        {error && <p>{tr('아직 대화를 못 받아 왔어요', "Couldn't load your chats yet")}</p>}
+        {error && <p className="m-unreach-why">{error}</p>}
         <button type="button" className={retrying ? 'm-icon m-retrying' : 'm-icon'} disabled={retrying} onClick={retry} aria-label={tr('다시 시도', 'Try again')} title={tr('다시 시도', 'Try again')}><IconRefresh /></button>
       </div>,
     );

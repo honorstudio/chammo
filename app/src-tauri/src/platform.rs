@@ -328,6 +328,30 @@ pub fn open_path(target: &str) -> std::io::Result<()> {
     spawn_reaped(&mut c).map(|_| ())
 }
 
+/// 파일 관리자에서 그 파일을 골라 보이기(보관함 '파인더에서 보기'·팀 파일 받기 뒤). 맥 open -R · 윈도우 탐색기 /select · 그 밖은 부모 폴더
+pub fn reveal(p: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    let r = command("open").arg("-R").arg(p).status();
+    #[cfg(windows)]
+    let r = {
+        use std::os::windows::process::CommandExt;
+        // 인자 전체를 Rust 가 따옴표로 감싸면 탐색기가 못 알아듣는다 — 날 인자로(explorer_select_arg)
+        command("explorer").raw_arg(explorer_select_arg(&p.to_string_lossy())).status()
+    };
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let r = command("xdg-open").arg(p.parent().unwrap_or(p)).status();
+    r.map(|_| ()) // 탐색기는 성공해도 1 을 낸다 — 띄웠으면 됐다
+}
+
+/// 탐색기 /select 날 인자 — 경로만 큰따옴표로(공백·쉼표가 있어도 한 덩어리). canonicalize 의 \\?\ 는 탐색기가 몰라서 뗀다(11-01 윈도우 시험 PC 실측:
+/// Rust 기본 따옴표 "/select,C:\a b\c" 는 문서 폴더만 열렸다)
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+pub(crate) fn explorer_select_arg(path: &str) -> String {
+    let p = path.replace('/', "\\");
+    let p = if let Some(rest) = p.strip_prefix("\\\\?\\UNC\\") { format!("\\\\{rest}") } else { p.strip_prefix("\\\\?\\").map(str::to_string).unwrap_or(p) };
+    format!("/select,\"{p}\"")
+}
+
 /// 크롬에서 열기 — 기본 브라우저 말고 깔린 구글 크롬(2026-10-02 사용자 "크롬에서 보기"). 크롬이 없으면 기본 브라우저.
 /// 무엇으로 열었는지("chrome" | "default") 돌려준다. 윈도우는 chrome.exe 를 직접(cmd start 는 주소 속 & 에서 끊긴다)
 pub fn open_in_chrome(url: &str) -> std::io::Result<String> {
@@ -700,6 +724,26 @@ pub fn quiet_hard_errors() {}
 
 #[cfg(test)]
 mod tests {
+    // 11-01 윈도우 시험 PC 실측: Rust 가 인자 전체를 "…" 로 감싸면("/select,C:\a b\c") 탐색기가 못 알아듣고 문서 폴더를 연다 —
+    // 경로만 따옴표로 감싼 날 인자(raw_arg)여야 그 폴더에서 그 파일이 골라진 채 열린다
+    #[test]
+    fn 탐색기_보이기_인자는_경로만_따옴표로() {
+        assert_eq!(super::explorer_select_arg("C:\\Users\\Me\\Documents\\Chammo\\팀\\대화 파일\\사진 모음.zip"), "/select,\"C:\\Users\\Me\\Documents\\Chammo\\팀\\대화 파일\\사진 모음.zip\"");
+        // canonicalize 가 붙인 \\?\ 는 탐색기가 모른다 — 떼고, UNC 는 \\서버 모양으로
+        assert_eq!(super::explorer_select_arg("\\\\?\\C:\\a b\\c.txt"), "/select,\"C:\\a b\\c.txt\"");
+        assert_eq!(super::explorer_select_arg("\\\\?\\UNC\\nas\\공유\\c.txt"), "/select,\"\\\\nas\\공유\\c.txt\"");
+        // 쉼표가 든 경로도 따옴표 안이라 끊기지 않는다 · 앞 빗금 경로는 역슬래시로
+        assert_eq!(super::explorer_select_arg("C:/a,b/c.txt"), "/select,\"C:\\a,b\\c.txt\"");
+    }
+
+    #[test]
+    fn 탐색기_보이기는_한_곳에서만() {
+        // 보이기를 부르는 곳이 저마다 explorer 인자를 짜면 또 깨진다 — platform::reveal 하나로
+        for (name, src) in [("locker_fs.rs", include_str!("locker_fs.rs")), ("team_locker_cmd.rs", include_str!("team_locker_cmd.rs"))] {
+            assert!(!src.contains("/select,"), "{name} 이 탐색기 인자를 따로 짠다 — platform::reveal 을 써");
+        }
+    }
+
     #[test]
     fn 파워셸_작은따옴표_문자열은_굽은_따옴표도_두_번() {
         assert_eq!(super::ps_quote("it's"), "'it''s'");

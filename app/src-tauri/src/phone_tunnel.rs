@@ -20,6 +20,8 @@ const M2P: &[u8] = b"mac->phone";
 pub const CONFIRM: &[u8] = b"chammo-ok";
 pub const HELLO: u8 = 1;
 pub const DATA: u8 = 2;
+/// 컴퓨터 → 폰: 이 연결의 세션을 모른다(허브에 다시 붙어 잊음 등) — 봉하지 않은 1바이트. 폰은 끊고 새로 악수한다(phone-web/hub.ts)
+pub const RESET: u8 = 3;
 /// hello 의 난수 길이
 pub const NONCE_LEN: usize = 16;
 /// 공개 열쇠 길이(SEC1 압축 안 한 점)

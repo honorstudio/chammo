@@ -86,8 +86,8 @@ function Outgoing({ m, onRetry, onDrop }: { m: OutMsg; onRetry: (id: string) => 
     <div className="m-out-failed">
       <Mine text={m.text} />
       <div className="m-out-row">
-        <span className="m-out-why">{tr('못 보냈어요', "Couldn't send")}{m.error ? ` · ${m.error}` : ''}</span>
-        <button type="button" className="m-icon" onClick={() => onRetry(m.id)} aria-label={tr('다시 보내기', 'Send again')} title={tr('다시 보내기', 'Send again')}><IconRefresh /></button>
+        <span className="m-out-why">{m.error || tr('전해지지 않았어요', 'Not delivered')}</span>
+        <button type="button" className="m-icon" onClick={() => onRetry(m.id)} aria-label={tr('다시 보내기', 'Resend')} title={tr('다시 보내기', 'Resend')}><IconRefresh /></button>
         <button type="button" className="m-icon" onClick={() => onDrop(m.id)} aria-label={tr('이 말 지우기', 'Delete this message')} title={tr('지우기', 'Delete')}><IconClose /></button>
       </div>
     </div>

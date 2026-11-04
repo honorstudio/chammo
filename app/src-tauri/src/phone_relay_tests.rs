@@ -83,3 +83,40 @@ fn backoff_resets_after_a_healthy_connection() {
     assert_eq!(next_fails(7, Some(Duration::from_secs(10))), 8);
     assert_eq!(next_fails(3, None), 4);
 }
+
+/// 잘 돌던 연결이 끊기면 1초 뒤 바로 — 중계 쪽 연결이 몇 분마다 빈손으로 닫혀서(notify.log 11-02 'Connection reset without closing handshake')
+/// 4초씩 비면 그동안 폰 요청이 다 실패했다. 짧게 붙었다 끊기기를 되풀이하거나 못 붙으면 예전처럼 늘린다(서버를 두드리지 않게)
+#[test]
+fn 잘_돌던_허브가_끊기면_1초_뒤_다시() {
+    use std::time::Duration;
+    let healthy = Some(Duration::from_secs(646));
+    assert_eq!(reconnect_wait(next_fails(0, healthy)), Duration::from_secs(1));
+    assert_eq!(reconnect_wait(next_fails(9, healthy)), Duration::from_secs(1), "앞서 몇 번 끊겼어도 잘 돌았으면 처음부터");
+    // 11-02 15:54 처럼 21초·46초 만에 또 끊기면 늘어난다 — 1·4·8·16초…
+    let short = Some(Duration::from_secs(21));
+    let mut f = next_fails(0, healthy);
+    let mut waits = vec![reconnect_wait(f).as_secs()];
+    for _ in 0..3 {
+        f = next_fails(f, short);
+        waits.push(reconnect_wait(f).as_secs());
+    }
+    assert_eq!(waits, vec![1, 4, 8, 16]);
+    // 못 붙는 동안도 늘어나고 5분에서 멈춘다
+    assert_eq!(reconnect_wait(next_fails(40, None)), Duration::from_secs(300));
+}
+
+// 컴퓨터끼리 숫자 확인(C-3b) — 폰 갈래는 그대로(대기 폰도), 컴퓨터 갈래는 같은 계정의 허용된 다른 컴퓨터만
+#[test]
+fn 숫자_확인_받을_기기_폰은_대기도_컴퓨터는_허용된_것만() {
+    let d = |id: &str, kind: &str, status: &str, current: bool| crate::team_relay::DeviceName { id: id.into(), name: id.into(), kind: kind.into(), status: status.into(), current, ..Default::default() };
+    let mut s = st();
+    s.my_devices = vec![d("me", "mac", "approved", true), d("ph", "phone", "pending", false), d("imac", "mac", "approved", false), d("pc", "win", "pending", false), d("odd", "", "approved", false)];
+    assert!(link_dev_ok(&s, "ph", false), "대기 폰은 폰 갈래로");
+    assert!(!link_dev_ok(&s, "ph", true), "폰을 컴퓨터 갈래로는 안 받는다");
+    assert!(link_dev_ok(&s, "imac", true));
+    assert!(!link_dev_ok(&s, "imac", false), "컴퓨터를 폰 갈래로는 안 받는다");
+    assert!(!link_dev_ok(&s, "pc", true), "대기 컴퓨터는 기기 허용이 먼저");
+    assert!(!link_dev_ok(&s, "me", true), "나 자신");
+    assert!(!link_dev_ok(&s, "odd", true), "종류 모름");
+    assert!(!link_dev_ok(&s, "ghost", true));
+}

@@ -128,10 +128,13 @@ pub(crate) fn prune(list: &mut Vec<Device>, now: u64, keep: Option<&str>) -> Vec
         }
         !idle
     });
-    while list.len() > MAX_DEVICES {
-        let Some(i) = list.iter().enumerate().filter(|(_, d)| !kept(d)).min_by_key(|(_, d)| d.used()).map(|(i, _)| i) else { break };
-        let d = list.remove(i);
-        gone.push(Removed { id: d.id, name: d.name, reason: format!("상한 {MAX_DEVICES}줄 넘어 가장 오래 안 쓴 것") });
+    // 상한은 폰 줄·컴퓨터(peer) 줄을 따로 센다 — 컴퓨터 줄 때문에 폰 줄이 지워지면 안 된다(C-6 재실측 11-02)
+    for peer in [false, true] {
+        while list.iter().filter(|d| d.peer == peer).count() > MAX_DEVICES {
+            let Some(i) = list.iter().enumerate().filter(|(_, d)| d.peer == peer && !kept(d)).min_by_key(|(_, d)| d.used()).map(|(i, _)| i) else { break };
+            let d = list.remove(i);
+            gone.push(Removed { id: d.id, name: d.name, reason: format!("상한 {MAX_DEVICES}줄 넘어 가장 오래 안 쓴 것") });
+        }
     }
     gone
 }
@@ -444,6 +447,20 @@ impl Devices {
         g.list.iter().find(|d| !d.peer && d.relay.as_ref().is_some_and(|r| r.device == relay_device)).map(|d| (d.id.clone(), d.relay.as_ref().unwrap().x.clone()))
     }
 
+    /// 중계 기기 id → (줄 id, 그 컴퓨터 터널 열쇠) — 중계로 짝지은 다른 컴퓨터 참모 줄만(계획 2026-11-01-peer-relay)
+    pub fn relay_peer_line(&self, relay_device: &str) -> Option<(String, String)> {
+        let mut g = self.inner.lock().unwrap();
+        self.reload_if_changed(&mut g);
+        g.list.iter().find(|d| d.peer && d.relay.as_ref().is_some_and(|r| r.device == relay_device)).map(|d| (d.id.clone(), d.relay.as_ref().unwrap().x.clone()))
+    }
+
+    /// 그 줄이 다른 기기 참모(peer) 줄인가
+    pub fn is_peer(&self, id: &str) -> bool {
+        let mut g = self.inner.lock().unwrap();
+        self.reload_if_changed(&mut g);
+        g.list.iter().any(|d| d.id == id && d.peer)
+    }
+
     /// 줄 id → 중계 기기 id(푸시를 중계로 보낼 때)
     pub fn relay_of(&self, id: &str) -> Option<String> {
         let mut g = self.inner.lock().unwrap();
@@ -597,6 +614,50 @@ impl Devices {
         Ok(())
     }
 
+    /// 중계로 짝지은 다른 컴퓨터 참모 줄(테일스케일 없이, 계획 2026-11-01-peer-relay) — 사람이 숫자 확인·허용한 뒤에만 부른다.
+    /// 같은 중계 기기의 옛 peer 줄은 바꿔 끼운다(옛 열쇠는 그 순간 죽는다). 꺼 둔 '보관함 보여 주기'는 이어받는다
+    pub fn add_peer_relay(&self, token: &str, name: &str, relay: Relay, now: SystemTime) -> std::io::Result<String> {
+        let dev = relay.device.clone();
+        let id = self.stage_peer_relay(token, name, relay, now)?;
+        self.commit_peer_relay(&dev, &id)?;
+        Ok(id)
+    }
+
+    /// 다시 짝짓기에서 실패해도 되던 줄이 남게(리뷰 11-01 ④) — 새 줄만 먼저 쓰고(옛 줄 그대로), 상대에게 열쇠를 보낸 뒤 commit_peer_relay 로 옛 줄을 지운다.
+    /// 못 보냈으면 부른 쪽이 새 줄만 remove
+    pub fn stage_peer_relay(&self, token: &str, name: &str, relay: Relay, now: SystemTime) -> std::io::Result<String> {
+        if token.len() != 64 || !token.chars().all(|c| c.is_ascii_hexdigit()) || relay.device.is_empty() || relay.x.is_empty() {
+            return Err(std::io::Error::other("bad peer key"));
+        }
+        let at = ms(now);
+        let name: String = name.chars().filter(|c| !c.is_control()).take(40).collect();
+        let (hash, id) = (sha(token), random_hex(8)?);
+        let same = |d: &Device| d.peer && d.relay.as_ref().is_some_and(|r| r.device == relay.device);
+        let mut g = self.inner.lock().unwrap();
+        let mut gone = Vec::new();
+        self.mutate(&mut g, |l| {
+            let no_locker = l.iter().any(|d| same(d) && d.no_locker);
+            l.push(Device { id: id.clone(), name: name.clone(), hash, created: at, last_seen: Some(at), home: false, group: None, paired: None, peer: true, node: None, no_locker, relay: Some(relay.clone()) });
+            gone = prune(l, at, Some(&id));
+        })?;
+        drop(g);
+        log_device(&format!("다른 기기 참모 연결(중계) {} {name}", short(&id)));
+        log_removed(&gone);
+        Ok(id)
+    }
+
+    /// 중계로 이은 컴퓨터 줄 끊기 — 그 중계 기기의 peer 줄 전부(폰 줄은 안 건드린다)
+    pub fn remove_relay_peer(&self, relay_device: &str) -> std::io::Result<()> {
+        let mut g = self.inner.lock().unwrap();
+        self.mutate(&mut g, |l| l.retain(|d| !(d.peer && d.relay.as_ref().is_some_and(|r| r.device == relay_device))))
+    }
+
+    /// 짝짓기 확정 — 같은 중계 기기의 다른 peer 줄(옛 열쇠)을 지운다
+    pub fn commit_peer_relay(&self, relay_device: &str, keep: &str) -> std::io::Result<()> {
+        let mut g = self.inner.lock().unwrap();
+        self.mutate(&mut g, |l| l.retain(|d| d.id == keep || !(d.peer && d.relay.as_ref().is_some_and(|r| r.device == relay_device))))
+    }
+
     /// 다른 기기 참모 줄의 '보관함 보여 주기' — peer 줄만(폰은 원래 다 본다). 다시 허용(add_peer)해도 꺼 둔 값은 이어진다
     pub fn set_locker(&self, id: &str, on: bool) -> std::io::Result<()> {
         let mut g = self.inner.lock().unwrap();
@@ -630,8 +691,9 @@ impl Devices {
     }
 }
 
+/// 끊을 수 있는 중계 기기 — 폰 줄만. 컴퓨터 peer 줄의 중계 id 는 그 컴퓨터의 계정 기기 id 라 줄을 지워도 계정에서 끊으면 안 된다(리뷰 11-01 ①)
 fn relays_of(list: &[Device]) -> Vec<String> {
-    list.iter().filter_map(|d| d.relay.as_ref().map(|r| r.device.clone())).collect()
+    list.iter().filter(|d| !d.peer).filter_map(|d| d.relay.as_ref().map(|r| r.device.clone())).collect()
 }
 
 fn gone_relays(before: &[String], after: &[Device]) -> Vec<String> {

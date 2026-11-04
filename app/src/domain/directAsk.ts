@@ -159,7 +159,10 @@ export function placeDirect(log: string, o: {
   return cards.map((card) => {
     // 앱이 낸 카드(기기·보안 번호·되찾기 — @link)는 일을 보낸 참모가 없다 — 맨 앞(보고 있던) 참모에게 넘기지 않고 결정 대기함에만(2026-10-29)
     if (card.from === LINK_FROM) return { card };
-    const s = o.everyone.find((x) => x.id === card.from) ?? ({ id: card.from, name: '', project: card.cwd.split('/').pop() ?? '' } as Session);
+    // 참모가 직접 띄운 카드는 그 참모 채팅에 — 다른 참모가 그 참모에게 일을 넘긴 기록이 있으면 sentBy 가 넘긴 쪽을 골랐다(2026-11-01)
+    const self = o.orchs.find((x) => x.id === card.from);
+    if (self) return { card, owner: self };
+    const s =o.everyone.find((x) => x.id === card.from) ?? ({ id: card.from, name: '', project: card.cwd.split('/').pop() ?? '' } as Session);
     return { card, owner: sentBy(s, o.events, o.orchs, o.everyone) };
   });
 }

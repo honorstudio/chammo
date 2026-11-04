@@ -1,0 +1,793 @@
+#!/bin/sh
+''':'
+# sh 로 읽으면 맞는 파이썬을 골라 다시 실행한다 — 윈도우의 python3 는 스토어 대리 실행기(종료 49)라 py -3 → python 중 도는 것
+[ "$OS" = Windows_NT ] || exec python3 "$0" "$@"
+for p in "py -3" python; do $p -c '' >/dev/null 2>&1 && exec $p "$0" "$@"; done
+echo "python not found — install Python 3 (winget install Python.Python.3.12)" >&2; exit 127
+':'''
+__doc__ = """clean — the cleaner's hands: measure what piles up, sort it into three lanes, and delete/move only what the lane allows.
+정리 담당의 손 — 쌓인 것을 재고, 세 갈래로 가르고, 그 갈래가 허락한 것만 지우고 옮긴다. 판단 규칙은 hq-cleaner 스킬.
+
+  clean scan [--json] [--scope job,worktree,browser,data,shots,move]   read only / 읽기만
+  clean run [--as <assistant>]   (others' items go to their owner) mode report (default) = list only · apply = delete 'auto', move 'move', then list the rest
+  clean mode [report|apply]
+  clean move <path> <project>    into <devRoot>/<project>/.shots/, a link stays behind / 옮기고 옛 자리에 바로가기
+  clean trash <path>...          send an 'ask' item to the Trash after the user said yes / 사용자가 고른 것만 휴지통
+  clean restore <run id|path>    undo moves and trash runs from the ledger / 장부대로 되돌리기
+  clean alias <name> <project>   remember that a name belongs to a project / 이 이름은 이 프로젝트
+  clean schedule [--as <assistant>]  weekly report-only job 'cleaner' if there is none yet / 주간 예약이 없으면 건다(보고만)
+
+Lanes / 갈래: auto = rebuildable (cache, build output, finished temp) → deleted right away, the Trash would not free space ·
+ask = touched by a person → a card, then Trash or move · move = clearly one project's → moved, link left ·
+keep = never (settings, accounts, keys, login state, history). Nothing outside the lists below is ever 'auto'.
+Ledger / 장부: <data>/cleaner/ledger.jsonl · settings / 설정: <data>/cleaner.json (mode·aliases·generic·keep·autoLimitBytes)
+"""
+import datetime, fnmatch, importlib.machinery, importlib.util, json, os, re, shutil, subprocess, sys, time
+
+for _io in (sys.stdin, sys.stdout, sys.stderr):  # 윈도우 파이썬 기본은 cp949 — 다른 HQ 도구와 같게 한글·'—' 를 UTF-8 로
+    if _io and hasattr(_io, 'reconfigure') and (_io.encoding or '').lower().replace('-', '') != 'utf8':
+        _io.reconfigure(encoding='utf-8', errors='replace')
+
+sys.dont_write_bytecode = True
+HERE = os.path.dirname(os.path.realpath(__file__))
+_l = importlib.machinery.SourceFileLoader('locker', os.path.join(HERE, 'locker'))
+locker = importlib.util.module_from_spec(importlib.util.spec_from_loader('locker', _l))
+_l.exec_module(locker)
+
+DAY = 86400
+GB = 1 << 30
+IMG = ('.png', '.jpg', '.jpeg', '.webp', '.gif', '.heic', '.log')
+CAP_DIRS = ('.shots', '.playwright-mcp', 'loop-shots')
+BUILD = ('node_modules', 'target', '.next', 'dist', 'app/node_modules', 'app/dist', 'app/src-tauri/target',
+         'src-tauri/target', 'web/node_modules', 'phone/node_modules', 'phone/dist')
+CACHE = ('Default/Cache', 'Default/Code Cache', 'Default/GPUCache', 'Default/Service Worker/CacheStorage',
+         'Default/DawnGraphiteCache', 'Default/DawnWebGPUCache', 'GrShaderCache', 'ShaderCache', 'GraphiteDawnCache',
+         'component_crx_cache')
+SECRET = re.compile(r'(ssh[-_ ]?key|id_rsa|id_ed25519|private[-_ ]?key|credential|passw|(^|[-_.])secrets?([-_.]|$)|(^|[-_.])tokens?([-_.]|$)|\.pem$|\.p8$|\.p12$|\.key$|^\.env)', re.I)
+MEDIA = IMG + ('.mp4', '.mov', '.webm', '.mp3', '.wav', '.pdf', '.svg', '.dmg', '.zip', '.exe', '.gz',
+                '.js', '.mjs', '.cjs', '.mts', '.ts', '.tsx', '.map', '.py', '.rs', '.go', '.css', '.html')  # code named after tokens is not a token / 코드 파일
+PNPM_SHARE = 0.55  # measured 11-01: pnpm node_modules freed 0.54GB of 0.97GB (APFS clones are invisible to nlink) / 실측
+DONE = ('done', 'stopped', 'failed')
+DEFAULTS = {'mode': 'report', 'aliases': {}, 'generic': [], 'keep': [], 'autoLimitBytes': 50 * GB, 'unownedAuto': True}
+
+
+def _now():
+    return time.time()
+
+
+def _read_json(p, default):
+    try:
+        with open(p, encoding='utf-8') as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+class Ctx:
+    """where things are — tests pass a fake home/data and fixed agents·ps / 시험은 가짜 홈·데이터와 정한 agents·ps 를 넘긴다"""
+
+    def __init__(self, home=None, data=None, agents=None, ps=None, self_job=None):
+        self.home = home or os.path.expanduser('~')
+        self.data = data or locker.data_dir(self.home)
+        conf = _read_json(os.path.join(self.data, 'config.json'), {})
+        settled = locker.settled_of(self.home, self.data)
+        self.dev = os.path.expanduser(conf.get('devRoot') or '') or (settled[0] if settled else '')
+        self.hq = os.path.expanduser(conf.get('hqDir') or '') or os.path.dirname(HERE)
+        self.locker = locker.root_of(self.home, self.data, os.environ.get('CHAMMO_LOCKER_ROOT', ''))
+        self.cfg = dict(DEFAULTS, **_read_json(os.path.join(self.data, 'cleaner.json'), {}))
+        self._agents, self._ps = agents, ps
+        self.self_job = os.path.basename(os.environ.get('CLAUDE_JOB_DIR', '').rstrip('/')) if self_job is None else self_job
+        self._tasks = None
+
+    @property
+    def agents(self):
+        if self._agents is None:
+            try:
+                r = subprocess.run(['claude', 'agents', '--json'], capture_output=True, text=True, timeout=60)
+                self._agents = json.loads(r.stdout or '[]')
+            except (OSError, ValueError, subprocess.TimeoutExpired):
+                raise SystemExit('clean: could not read `claude agents --json` — stopping so a live session is never touched / 세션 목록을 못 읽어 멈춤')
+        return self._agents
+
+    @agents.setter
+    def agents(self, v):
+        self._agents = v
+
+    @property
+    def ps(self):
+        if self._ps is None:
+            try:
+                self._ps = subprocess.run(['ps', '-axo', 'command'], capture_output=True, text=True, timeout=30).stdout
+            except (OSError, subprocess.TimeoutExpired):
+                self._ps = ''
+        return self._ps
+
+    @property
+    def tasks(self):
+        if self._tasks is None:
+            self._tasks = []
+            try:
+                with open(os.path.join(self.data, 'tasks.jsonl'), encoding='utf-8') as f:
+                    for l in f:
+                        try:
+                            self._tasks.append(json.loads(l))
+                        except ValueError:
+                            pass
+            except OSError:
+                pass
+        return self._tasks
+
+    def owner_of(self, session):
+        """who sent work to this session / 이 세션에 일을 보낸 참모(마지막 send)"""
+        o = None
+        for t in self.tasks:
+            if t.get('type') == 'send' and t.get('target') == session:
+                o = t.get('fromName') or t.get('from')
+        return o
+
+    def projects(self):
+        if getattr(self, '_projects', None) is not None and self._projects[0] == json.dumps(self.cfg.get('generic')):
+            return self._projects[1]
+        self._projects = (json.dumps(self.cfg.get('generic')), self._list_projects())
+        return self._projects[1]
+
+    def _list_projects(self):
+        if not self.dev or not os.path.isdir(self.dev):
+            return []
+        hq = os.path.basename(self.hq.rstrip('/'))
+        gen = self.cfg.get('generic') or []  # names too common to match on (globs ok) / 흔해서 안 맞출 이름
+        return sorted(p for p in os.listdir(self.dev) if not p.startswith(('.', '_')) and p != hq
+                      and not any(fnmatch.fnmatch(p, g) for g in gen) and os.path.isdir(os.path.join(self.dev, p)))
+
+    def live_dirs(self):
+        return [os.path.realpath(a.get('cwd')) for a in self.agents if a.get('cwd')]
+
+    def kept(self, p):
+        rp = os.path.realpath(p)
+        return any(rp == os.path.realpath(k) or rp.startswith(os.path.realpath(k) + os.sep) for k in self.cfg.get('keep') or [])
+
+
+# ── measuring / 재기 ──
+def secret(p):
+    """a key-looking file — screenshots and media never count / 키처럼 보이는 파일(그림·영상은 아님)"""
+    n = os.path.basename(p)
+    return not n.lower().endswith(MEDIA) and bool(SECRET.search(n))
+
+
+def size(p):
+    """(bytes, freeable) — freeable counts only files with no other hard link, so a pnpm node_modules is not overstated
+    / freeable = 다른 하드링크가 없는 파일만 — pnpm node_modules 를 du 만큼 부풀리지 않는다"""
+    if os.path.islink(p):
+        return 0, 0
+    if os.path.isfile(p):
+        st = os.lstat(p)
+        return st.st_size, st.st_size if st.st_nlink <= 1 else 0
+    total = free = 0
+    seen = set()
+    for r, ds, fs in os.walk(p):
+        for f in fs:
+            try:
+                st = os.lstat(os.path.join(r, f))
+            except OSError:
+                continue
+            if st.st_ino in seen:
+                continue
+            seen.add(st.st_ino)
+            total += st.st_size
+            if st.st_nlink <= 1:
+                free += st.st_size
+    return total, free
+
+
+def newest(p, cap=5000):
+    """latest mtime inside (looks at up to cap files) / 안쪽 가장 새 시각"""
+    try:
+        m = os.lstat(p).st_mtime
+    except OSError:
+        return 0
+    if os.path.isdir(p) and not os.path.islink(p):
+        n, m0, m = 0, m, 0  # a folder's own time moves when anything is added — look at the files / 폴더 시각 말고 안쪽 파일
+        for r, ds, fs in os.walk(p):
+            for f in fs:
+                try:
+                    m = max(m, os.lstat(os.path.join(r, f)).st_mtime)
+                except OSError:
+                    pass
+                n += 1
+                if n >= cap:
+                    return m
+        return m if n else m0
+    return m
+
+
+def item(scope, kind, p, why, **extra):
+    b, f = size(p)
+    return dict({'scope': scope, 'kind': kind, 'path': p, 'bytes': b, 'free': f, 'why': why}, **extra)
+
+
+def git_out(repo):
+    """paths git does not track (untracked + ignored) — a folder ignored as a whole comes back as the folder"""
+    out = set()
+    for extra in ([], ['--ignored', '--exclude-standard']):
+        try:
+            r = subprocess.run(['git', '-C', repo, 'ls-files', '--others', '--directory', '-z', *extra],
+                               capture_output=True, text=True, timeout=120)
+        except (OSError, subprocess.TimeoutExpired):
+            return set()
+        out |= {x.rstrip('/') for x in r.stdout.split('\0') if x}
+    return out
+
+
+def tracked(p):
+    d = p if os.path.isdir(p) and not os.path.islink(p) else os.path.dirname(p)
+    try:
+        r = subprocess.run(['git', '-C', d, 'ls-files', '--error-unmatch', '--', os.path.abspath(p)],
+                           capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return r.returncode == 0 and bool(r.stdout.strip())
+
+
+def repos(ctx):
+    seen = []
+    for base in ([os.path.join(ctx.dev, p) for p in sorted(os.listdir(ctx.dev))] if os.path.isdir(ctx.dev) else []) + [ctx.hq]:
+        if base in seen or not os.path.exists(os.path.join(base, '.git')):
+            continue
+        seen.append(base)
+        wt = os.path.join(base, '.claude', 'worktrees')
+        if os.path.isdir(wt):
+            seen += [os.path.join(wt, w) for w in sorted(os.listdir(wt)) if os.path.exists(os.path.join(wt, w, '.git'))]
+    return seen
+
+
+# ── who owns it / 누구 것인가 ──
+def _tok(name):
+    return r'(^|[-_./ \d])' + re.escape(name.lower()) + r'($|[-_./ \d])'
+
+
+def _session_cwd(ctx, name):
+    for a in ctx.agents:
+        if a.get('name') == name and a.get('cwd'):
+            return a['cwd']
+    if '_job_cwd' not in ctx.__dict__:
+        idx = {}
+        jobs = os.path.join(ctx.home, '.claude', 'jobs')
+        for j in sorted(os.listdir(jobs), key=lambda j: os.path.getmtime(os.path.join(jobs, j))) if os.path.isdir(jobs) else []:
+            st = _read_json(os.path.join(jobs, j, 'state.json'), {})
+            if st.get('name') and st.get('cwd'):
+                idx[st['name']] = st['cwd']
+        ctx._job_cwd = idx
+    return ctx._job_cwd.get(name)
+
+
+def _project_of_dir(ctx, d, known=True):
+    """the devRoot project a folder sits in — known=False also names one that is gone / devRoot 안 어느 프로젝트인가"""
+    if not d or not ctx.dev:
+        return None
+    rel = os.path.relpath(os.path.realpath(d), os.path.realpath(ctx.dev))
+    top = rel.split(os.sep)[0]
+    if rel.startswith('..') or top in ('.', ''):
+        return None
+    return top if not known or top in ctx.projects() else None
+
+
+def attribute(ctx, name, path):
+    """(project, 'sure'|'unsure'|None, candidates) — path inside a project > task record > name/alias > names inside
+    / 경로 > 일 기록(그 경로를 증거로 적은 일의 세션 cwd) > 이름·별명 > 안쪽 파일 이름"""
+    p = _project_of_dir(ctx, path)
+    if p and os.path.realpath(path) != os.path.realpath(ctx.hq) and not os.path.realpath(path).startswith(os.path.realpath(ctx.hq) + os.sep):
+        return p, 'sure', [p]
+    # task record: a done/reply note that names this entry → that task's session → its folder
+    needle = re.compile(r'\.shots/' + re.escape(name) + r'($|[/\s"\'`),·])')
+    tids = {t.get('task') for t in ctx.tasks if t.get('type') in ('done', 'reply') and needle.search(json.dumps(t, ensure_ascii=False))}
+    hits = {_project_of_dir(ctx, _session_cwd_cached(ctx, t['target'])) for t in ctx.tasks
+            if t.get('type') == 'send' and t.get('task') in tids and t.get('target')}
+    if len(hits) == 1 and None not in hits:  # every task that cites it points at one project / 그 경로를 적은 일이 다 한 프로젝트
+        p = hits.pop()
+        return p, 'sure', [p]
+    low = name.lower()
+    projects = ctx.projects()
+    cands = {q for q in projects if (len(q) >= 4 or low.split('.')[0] == q.lower()) and re.search(_tok(q), low)}
+    cands |= {q for a, q in (ctx.cfg.get('aliases') or {}).items() if q in projects and re.search(_tok(a), low)}
+    if len(cands) == 1:
+        p = cands.pop()
+        return p, 'sure', [p]
+    if len(cands) > 1:
+        return None, 'unsure', sorted(cands)
+    if os.path.isdir(path):
+        names, counts = [], {}
+        for r, ds, fs in os.walk(path):
+            names += [f.lower() for f in fs]
+            if len(names) > 300:
+                break
+        for q in projects:
+            if len(q) >= 4:
+                c = sum(1 for f in names if q.lower() in f)
+                if c >= 3:
+                    counts[q] = c
+        if counts:
+            p = max(counts, key=counts.get)
+            return p, 'unsure', [p]
+    return None, None, []
+
+
+# ── scopes / 범위 ──
+def scan_job(ctx):
+    jobs = os.path.join(ctx.home, '.claude', 'jobs')
+    alive = {a.get('id') for a in ctx.agents}
+    out = []
+    for j in sorted(os.listdir(jobs)) if os.path.isdir(jobs) else []:
+        t = os.path.join(jobs, j, 'tmp')
+        if j == ctx.self_job or j in alive or not os.path.isdir(t) or not os.listdir(t):
+            continue
+        st = _read_json(os.path.join(jobs, j, 'state.json'), None)
+        if not st or st.get('state') not in DONE:
+            continue
+        marks = [os.path.join(jobs, j, f) for f in ('state.json', 'timeline.jsonl')]
+        last = max([os.path.getmtime(m) for m in marks if os.path.exists(m)] + [newest(t)])
+        if _now() - last < 7 * DAY:
+            continue
+        out.append(item('job', 'auto', t, f"finished session ({st.get('state')}), quiet 7d+ / 끝난 세션 7일 조용",
+                        project=_project_of_dir(ctx, st.get('cwd'), known=False) or st.get('cwd'),
+                        owner=ctx.owner_of(st.get('name')) or _owner_of_project(ctx, _project_of_dir(ctx, st.get('cwd'), known=False)),
+                        session=st.get('name')))
+    return out
+
+
+def scan_worktree(ctx):
+    out = []
+    live = ctx.live_dirs()
+    for r in repos(ctx):
+        if '/.claude/worktrees/' not in r.replace(os.sep, '/'):
+            continue
+        builds = [os.path.join(r, b) for b in BUILD if os.path.isdir(os.path.join(r, b))]
+        if not builds:
+            continue
+        rp = os.path.realpath(r)
+        try:
+            dirty = subprocess.run(['git', '-C', r, 'status', '--porcelain'], capture_output=True, text=True, timeout=60).stdout.strip()
+            gd = subprocess.run(['git', '-C', r, 'rev-parse', '--git-dir'], capture_output=True, text=True, timeout=30).stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        gd = gd if os.path.isabs(gd) else os.path.join(r, gd)
+        # not 'index' — git status itself rewrites it, so it always looks fresh / index 는 git status 가 고쳐 써서 늘 방금으로 보인다
+        last = max([os.path.getmtime(os.path.join(gd, f)) for f in ('HEAD', 'logs/HEAD') if os.path.exists(os.path.join(gd, f))] or [0])
+        if dirty or rp in ctx.ps or r in ctx.ps or any(c == rp or c.startswith(rp + os.sep) for c in live) or _now() - last < 3 * DAY:
+            continue
+        name = os.path.basename(r)
+        proj = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(r))))
+        for b in builds:
+            i = item('worktree', 'auto', b, 'build output, worktree clean·no session·quiet 3d / 빌드물(변경 0·세션 없음·3일 조용)',
+                     project=proj, owner=ctx.owner_of(name) or _owner_of_project(ctx, proj), session=name)
+            if os.path.isdir(os.path.join(b, '.pnpm')):
+                i['free'] = int(i['bytes'] * PNPM_SHARE)
+                i['why'] += ' · pnpm: frees ≈55% (shared with the store) / pnpm 은 절반쯤만 빈다'
+            out.append(i)
+    return out
+
+
+def _profile_age(p):
+    marks = [os.path.join(p, 'Local State'), os.path.join(p, 'Default', 'Preferences'),
+             os.path.join(p, 'Default', 'Cookies'), os.path.join(p, 'Default', 'History')]
+    return _now() - max([os.path.getmtime(m) for m in marks if os.path.exists(m)] or [os.path.getmtime(p)])
+
+
+def scan_browser(ctx):
+    out = []
+    prof = os.path.join(ctx.data, 'browser', 'profiles')
+    projects = set(ctx.projects())
+    for n in sorted(os.listdir(prof)) if os.path.isdir(prof) else []:
+        p = os.path.join(prof, n)
+        if not os.path.isdir(p):
+            continue
+        busy = os.path.lexists(os.path.join(p, 'SingletonLock')) or os.path.isdir(os.path.join(ctx.data, 'browser', 'locks', n))
+        if not busy:
+            out += [item('browser', 'auto', os.path.join(p, c), 'browser cache, profile not in use / 쓰는 중 아닌 프로필의 캐시', project=n)
+                    for c in CACHE if os.path.isdir(os.path.join(p, c))]
+        if not busy and n not in projects and _profile_age(p) > 14 * DAY:
+            out.append(item('browser', 'ask', p, 'profile with no project folder, unused 14d (logins inside) / 프로젝트 없는 프로필 14일 안 씀(로그인 들어 있음)', project=n))
+    app = os.path.join(ctx.data, 'browser', 'app')
+    copies = sorted((os.path.join(app, c) for c in os.listdir(app)) if os.path.isdir(app) else [], key=os.path.getmtime)
+    for c in copies[:-1]:
+        if c not in ctx.ps:
+            out.append(item('browser', 'auto', c, 'older browser copy, not running — made again when needed (APFS clone: real space may be less) / 옛 브라우저 사본'))
+    return out
+
+
+def scan_data(ctx):
+    out = []
+    for sub, days, kind, why in (('tmp', 7, 'auto', 'app temp 7d+ / 앱 임시 7일+'),
+                                 ('ql', 30, 'auto', 'preview thumbnail 30d+ — made again / 미리보기 그림 30일+')):
+        d = os.path.join(ctx.data, sub)
+        for n in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+            p = os.path.join(d, n)
+            if _now() - newest(p) > days * DAY:
+                out.append(item('data', kind, p, why))
+    for n in sorted(os.listdir(ctx.data)) if os.path.isdir(ctx.data) else []:
+        p = os.path.join(ctx.data, n)
+        if (n.startswith('backup-') or n in ('pages.bak', 'app-backup')) and _now() - newest(p) > 30 * DAY:
+            out.append(item('data', 'ask', p, 'old backup 30d+ / 30일 넘은 백업'))
+    return out
+
+
+def _shots_entries(repo):
+    out = []
+    for rel in sorted(git_out(repo)):
+        top = rel.split('/')[0]
+        full = os.path.join(repo, rel)
+        if top not in CAP_DIRS:
+            continue
+        if rel == top:  # whole folder ignored → its entries
+            out += [os.path.join(full, n) for n in sorted(os.listdir(full))] if os.path.isdir(full) else []
+        else:
+            out.append(full)
+    return out
+
+
+def _files(p):
+    if os.path.isfile(p) or os.path.islink(p):
+        return [p]
+    return [os.path.join(r, f) for r, ds, fs in os.walk(p) for f in fs]
+
+
+def scan_shots(ctx):
+    out = []
+    hq = os.path.realpath(ctx.hq)
+    for repo in repos(ctx):
+        in_hq = os.path.realpath(repo) == hq
+        for e in _shots_entries(repo):
+            if ctx.kept(e) or '/.shots/store' in e.replace(os.sep, '/') + '/':
+                continue
+            files = _files(e)
+            if any(secret(f) for f in files):
+                out.append(item('shots', 'keep', e, 'looks like a secret — not moved or deleted; move it into CLAUDE.local.md or the keychain / 비밀처럼 보임 — 지우지도 옮기지도 않음'))
+                continue
+            if in_hq and attribute(ctx, os.path.basename(e), e)[1]:
+                continue  # a project's — the move scope lists it / 프로젝트 것 — 옮기기 칸이 다룬다
+            if not files or _now() - newest(e) < 7 * DAY:
+                continue
+            proj = os.path.basename(repo) if in_hq else (_project_of_dir(ctx, repo, known=False) or os.path.basename(repo))
+            if all(f.lower().endswith(IMG) for f in files):
+                out.append(item('shots', 'auto', e, 'captures·logs 7d+ / 7일 넘은 캡처·로그', project=proj))
+            else:
+                out.append(item('shots', 'ask', e, 'other files 7d+ (made by a person or a build) / 7일 넘은 그 밖 파일', project=proj,
+                                owner=_owner_of_project(ctx, proj)))
+    return out
+
+
+def scan_move(ctx):
+    out = []
+    shots = os.path.join(ctx.hq, '.shots')
+    if os.path.isdir(shots) and os.path.exists(os.path.join(ctx.hq, '.git')):
+        for e in _shots_entries(ctx.hq):
+            if os.path.islink(e) or ctx.kept(e) or any(secret(f) for f in _files(e)):
+                continue
+            proj, conf, cands = attribute(ctx, os.path.basename(e), e)
+            if conf == 'sure':
+                out.append(item('move', 'move', e, f'belongs to {proj} / {proj} 것', project=proj, owner=_owner_of_project(ctx, proj)))
+            elif conf == 'unsure':
+                out.append(item('move', 'ask-move', e, 'whose? / 누구 것? ' + ', '.join(cands), candidates=cands))
+    if os.path.isdir(ctx.locker):
+        for agent in sorted(os.listdir(ctx.locker)):
+            d = os.path.join(ctx.locker, agent)
+            for n in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+                p = os.path.join(d, n)
+                if os.path.islink(p) and not os.path.exists(p):
+                    out.append(dict(scope='move', kind='auto', path=p, bytes=0, free=0, why='link whose target is gone / 대상이 사라진 바로가기'))
+                elif not os.path.islink(p) and not n.startswith('.'):
+                    proj, conf, cands = attribute(ctx, n, p)
+                    if conf:
+                        out.append(item('move', 'ask-move', p, f'locker item that looks like {", ".join(cands)} / 보관함 — 프로젝트 것 같음', candidates=cands, agent=agent))
+    mem = os.path.join(ctx.home, '.claude', 'projects', re.sub(r'[^A-Za-z0-9]', '-', os.path.realpath(ctx.hq)), 'memory')
+    for f in sorted(os.listdir(mem)) if os.path.isdir(mem) else []:
+        if f.endswith('.md') and f != 'MEMORY.md':
+            proj, conf, cands = attribute(ctx, f[:-3], os.path.join(mem, f))
+            if conf == 'sure':
+                out.append(item('move', 'ask-move', os.path.join(mem, f), f'memory about {proj} only — move into {proj}/CLAUDE.local.md? / 한 프로젝트 사정 메모리', candidates=cands))
+    return out
+
+
+def _owner_of_project(ctx, proj):
+    """the assistant who last sent work into this project / 이 프로젝트에 마지막으로 일을 보낸 참모"""
+    if not proj:
+        return None
+    if '_proj_owner' not in ctx.__dict__:  # one pass over the log, then a lookup / 기록은 한 번만 훑는다
+        m = {}
+        for t in ctx.tasks:
+            if t.get('type') == 'send' and t.get('target'):
+                cwd = _session_cwd_cached(ctx, t['target'])
+                if not cwd or os.path.realpath(cwd) == os.path.realpath(ctx.hq):
+                    continue  # helpers run in the HQ itself — they don't own a project / HQ 자리 도우미는 프로젝트 주인이 아니다
+                pj = _project_of_dir(ctx, cwd, known=False)
+                if pj:
+                    m[pj] = t.get('fromName') or t.get('from')
+        ctx._proj_owner = m
+    return ctx._proj_owner.get(proj)
+
+
+def _session_cwd_cached(ctx, name):
+    cache = ctx.__dict__.setdefault('_cwd', {})
+    if name not in cache:
+        cache[name] = _session_cwd(ctx, name) if name else None
+    return cache[name]
+
+
+SCOPES = {'job': scan_job, 'worktree': scan_worktree, 'browser': scan_browser, 'data': scan_data, 'shots': scan_shots, 'move': scan_move}
+
+
+def scan(ctx, scopes=None):
+    out = []
+    for s in scopes or SCOPES:
+        out += [i for i in SCOPES[s](ctx) if not ctx.kept(i['path'])]
+    return out
+
+
+# ── doing / 하기 ──
+def _gb(b):
+    return f'{b / GB:.2f}GB' if b >= GB / 10 else f'{b / (1 << 20):.0f}MB'
+
+
+def _log(ctx, rec):
+    d = os.path.join(ctx.data, 'cleaner')
+    os.makedirs(d, exist_ok=True)
+    rec = dict({'ts': datetime.datetime.now().isoformat(timespec='seconds')}, **rec)
+    with open(os.path.join(d, 'ledger.jsonl'), 'a', encoding='utf-8') as f:
+        f.write(json.dumps(rec, ensure_ascii=False) + '\n')
+
+
+def _rid(tag):
+    return datetime.datetime.now().strftime('%Y%m%d-%H%M%S-') + tag
+
+
+def _remove(p):
+    if os.path.isdir(p) and not os.path.islink(p):
+        shutil.rmtree(p, ignore_errors=True)
+    elif os.path.lexists(p):
+        os.unlink(p)
+
+
+def _unique(d, name):
+    base, n = name, 2
+    while os.path.lexists(os.path.join(d, name)):
+        root, ext = os.path.splitext(base) if not os.path.isdir(os.path.join(d, base)) else (base, '')
+        name = f'{root} {n}{ext}'
+        n += 1
+    return os.path.join(d, name)
+
+
+def move(ctx, src, project, rid=None):
+    """move into <devRoot>/<project>/.shots/ and leave a link — old chats and records keep opening it"""
+    src = os.path.abspath(src)
+    dest_dir = os.path.join(ctx.dev, project)
+    if not os.path.isdir(dest_dir):
+        raise ValueError(f'no such project / 그런 프로젝트 없음: {project}')
+    if not os.path.lexists(src) or os.path.islink(src):
+        raise ValueError(f'nothing to move / 옮길 게 없음: {src}')
+    if tracked(src):
+        raise ValueError(f'git tracks it — not moved / git 이 추적하는 파일이라 안 옮김: {src}')
+    if any(secret(f) for f in _files(src)):
+        raise ValueError(f'looks like a secret — not moved / 비밀처럼 보여 안 옮김: {src}')
+    os.makedirs(os.path.join(dest_dir, '.shots'), exist_ok=True)
+    dest = _unique(os.path.join(dest_dir, '.shots'), os.path.basename(src))
+    rid = rid or _rid('move')
+    b, _ = size(src)
+    shutil.move(src, dest)
+    os.symlink(dest, src)
+    _log(ctx, {'run': rid, 'kind': 'move', 'from': src, 'to': dest, 'bytes': b, 'project': project})
+    return rid
+
+
+def trash(ctx, paths, rid=None, system=True):
+    """an 'ask' item the user picked → the Trash (macOS) or <data>/cleaner/trash/<run>/ elsewhere — both undoable"""
+    rid = rid or _rid('trash')
+    for p in paths:
+        p = os.path.abspath(p)
+        if tracked(p):
+            raise ValueError(f'git tracks it / git 이 추적: {p}')
+        b, _ = size(p)
+        if system and sys.platform == 'darwin' and os.path.exists('/usr/bin/trash'):
+            subprocess.run(['/usr/bin/trash', p], check=True, capture_output=True)
+            to = '(Trash)'
+        else:
+            d = os.path.join(ctx.data, 'cleaner', 'trash', rid)
+            os.makedirs(d, exist_ok=True)
+            to = _unique(d, os.path.basename(p))
+            shutil.move(p, to)
+        _log(ctx, {'run': rid, 'kind': 'trash', 'from': p, 'to': to, 'bytes': b})
+    return rid
+
+
+def restore(ctx, key):
+    rows = []
+    try:
+        with open(os.path.join(ctx.data, 'cleaner', 'ledger.jsonl'), encoding='utf-8') as f:
+            rows = [json.loads(l) for l in f if l.strip()]
+    except OSError:
+        pass
+    done = []
+    for r in reversed(rows):
+        if r.get('run') != key and r.get('from') != os.path.abspath(key):
+            continue
+        frm, to = r.get('from'), r.get('to')
+        if r.get('kind') in ('move', 'trash') and to and to != '(Trash)' and os.path.lexists(to):
+            if os.path.islink(frm) and os.path.realpath(frm) == os.path.realpath(to):
+                os.unlink(frm)
+            if os.path.lexists(frm):
+                continue
+            shutil.move(to, frm)
+            done.append(frm)
+    return done
+
+
+def set_alias(ctx, name, project):
+    p = os.path.join(ctx.data, 'cleaner.json')
+    cfg = _read_json(p, {})
+    cfg.setdefault('aliases', {})[name] = project
+    ctx.cfg['aliases'] = cfg['aliases']
+    with open(p, 'w', encoding='utf-8') as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=1)
+
+
+def set_mode(ctx, value=None):
+    p = os.path.join(ctx.data, 'cleaner.json')
+    cfg = _read_json(p, {})
+    if value:
+        if value not in ('report', 'apply'):
+            raise SystemExit('mode: report | apply')
+        cfg['mode'] = value
+        with open(p, 'w', encoding='utf-8') as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=1)
+        ctx.cfg['mode'] = value
+    return ctx.cfg['mode']
+
+
+ROUTINE = 'cleaner'
+WHEN = 'weekly mon 08:00'
+
+
+def schedule(ctx, me=None, runner=subprocess.run):
+    """the weekly job — made once, never twice; mode stays as set (report at first) / 주간 예약 한 번만"""
+    routine = os.path.join(HERE, 'routine')
+    r = runner([sys.executable, routine, 'list'], capture_output=True, text=True, timeout=120)
+    try:
+        rows = json.loads(r.stdout or '[]')
+    except ValueError:
+        rows = []
+    rows = rows.get('routines', rows) if isinstance(rows, dict) else rows
+    if any(isinstance(x, dict) and x.get('name') == ROUTINE for x in rows):
+        return f'{ROUTINE}: already scheduled / 이미 있음'
+    who = f' --as {me}' if me else ''
+    job = (f'Open the hq-cleaner skill, run `scripts/clean run{who}` and follow the skill: in report mode send the summary to'
+           f' {me or "the assistant"} and stop; never delete by hand. / hq-cleaner 스킬을 열고 scripts/clean run{who} 을 돌려 스킬대로 —'
+           ' 보고만 모드면 요약을 참모에게 보내고 끝, 손으로 지우지 않는다.')
+    r = runner([sys.executable, routine, 'new', ROUTINE, WHEN, job, '--in', ctx.hq], capture_output=True, text=True, timeout=120)
+    if r.returncode:
+        raise ValueError(f'routine new failed / 예약 실패: {(r.stderr or r.stdout).strip()[:300]}')
+    return f'{ROUTINE}: scheduled {WHEN}, mode {ctx.cfg.get("mode")} / 예약함'
+
+
+def summary(items, per=12):
+    lines = []
+    order = ('auto', 'move', 'ask', 'ask-move', 'ask-owner', 'keep')
+    label = {'auto': 'auto — rebuildable / 알아서', 'move': 'move — clearly a project\'s / 옮기기', 'ask': 'ask — a person decides / 묻기',
+             'ask-move': 'ask — whose is it? / 누구 것인지 묻기', 'ask-owner': 'another assistant\'s — ask its owner / 다른 참모 것 — 주인에게',
+             'keep': 'keep — flagged, never touched / 안 건드림(알림)'}
+    for k in order:
+        rows = sorted((i for i in items if i['kind'] == k), key=lambda i: -i['bytes'])
+        if not rows:
+            continue
+        lines.append(f"[{label[k]}] {len(rows)} · {_gb(sum(i['bytes'] for i in rows))} (frees ≈ {_gb(sum(i['free'] for i in rows))})")
+        by = {}
+        for i in rows:
+            by.setdefault(i['scope'], []).append(i)
+        for s, rs in by.items():
+            lines.append(f"  {s}: {len(rs)} · {_gb(sum(i['bytes'] for i in rs))}")
+            if len(rs) > per:  # many → by project and owner first, so one card can cover one owner's pile / 많으면 프로젝트·주인별 묶음
+                grp = {}
+                for i in rs:
+                    g = grp.setdefault((str(i.get('project') or '-'), i.get('owner') or '-'), [0, 0])
+                    g[0] += 1
+                    g[1] += i['bytes']
+                for (pj, ow), (n, b) in sorted(grp.items(), key=lambda x: -x[1][1])[:per]:
+                    lines.append(f"    {_gb(b):>8}  {n:>4} × {pj}" + (f' [owner {ow}]' if ow != '-' else ''))
+                if len(grp) > per:
+                    lines.append(f'    … {len(grp) - per} more groups / 묶음 더')
+                rs = rs[:3]
+            for i in rs[:per]:
+                tail = ''.join(f' [{x}]' for x in (i.get('project'), i.get('owner') and f"owner {i['owner']}") if x)
+                lines.append(f"    {_gb(i['bytes']):>8}  {i['path']}{tail} — {i['why']}")
+    return '\n'.join(lines) or 'nothing to clean / 정리할 것 없음'
+
+
+def route(ctx, items, me):
+    """another assistant's items wait for that assistant / 다른 참모 것은 그 주인 몫으로 돌린다"""
+    if not me:
+        return items
+    hq = os.path.basename(ctx.hq.rstrip('/'))
+    for i in items:
+        if i['kind'] not in ('auto', 'move'):
+            continue
+        if i.get('owner') and i['owner'] != me:
+            i['kind'], i['why'] = 'ask-owner', f"{i['owner']}'s — ask them first / {i['owner']} 것 — 그 참모에게 먼저 · " + i['why']
+        elif not i.get('owner') and not ctx.cfg.get('unownedAuto', True) and i.get('scope') in ('job', 'worktree') and i.get('project') != hq:
+            i['kind'], i['owner'] = 'ask-owner', '(none)'
+            i['why'] = 'nobody sent work there — ask the user / 맡긴 기록 없음 — 사용자에게 · ' + i['why']
+    return items
+
+
+def run(ctx, me=None):
+    items = route(ctx, scan(ctx), me)
+    mode = ctx.cfg.get('mode', 'report')
+    if mode != 'apply':
+        return f'mode report — nothing changed / 보고만 모드 — 아무것도 안 바꿈\n{summary(items)}'
+    auto = [i for i in items if i['kind'] == 'auto']
+    total = sum(i['bytes'] for i in auto)
+    if total > ctx.cfg.get('autoLimitBytes', DEFAULTS['autoLimitBytes']):
+        print(f"stopped: 'auto' is {_gb(total)}, over the limit — something is misjudged, nothing deleted / 알아서가 상한을 넘어 멈춤\n{summary(items)}")
+        raise SystemExit(2)
+    rid = _rid('run')
+    before = shutil.disk_usage(ctx.home).free
+    for i in auto:
+        _remove(i['path'])
+        _log(ctx, {'run': rid, 'kind': 'auto', 'scope': i['scope'], 'from': i['path'], 'bytes': i['bytes'], 'why': i['why']})
+    moved = []
+    for i in items:
+        if i['kind'] == 'move':
+            try:
+                move(ctx, i['path'], i['project'], rid)
+                moved.append(i)
+            except (ValueError, OSError) as e:
+                i['kind'], i['why'] = 'ask-move', f'move failed: {e}'
+    after = shutil.disk_usage(ctx.home).free
+    rest = [i for i in items if i['kind'] in ('ask', 'ask-move', 'ask-owner', 'keep')]
+    return (f'run {rid}: deleted {len(auto)} ({_gb(total)}), moved {len(moved)} · free space {_gb(before)} → {_gb(after)}'
+            f' / 지움 {len(auto)}·옮김 {len(moved)} · 여유 {_gb(before)} → {_gb(after)}\n{summary(rest)}')
+
+
+def main(argv):
+    if not argv or argv[0] in ('-h', '--help', 'help'):
+        print(__doc__)
+        return 0
+    cmd, rest = argv[0], argv[1:]
+    me = None
+    if '--as' in rest:  # the assistant running this — others' items are routed to them / 부른 참모
+        k = rest.index('--as')
+        me = rest[k + 1] if k + 1 < len(rest) else None
+        rest = rest[:k] + rest[k + 2:]
+    ctx = Ctx()
+    if cmd == 'scan':
+        scopes = None
+        if '--scope' in rest:
+            scopes = rest[rest.index('--scope') + 1].split(',')
+            bad = [s for s in scopes if s not in SCOPES]
+            if bad:
+                raise SystemExit(f'unknown scope: {bad} — {list(SCOPES)}')
+        items = route(ctx, scan(ctx, scopes), me)
+        print(json.dumps(items, ensure_ascii=False, indent=1) if '--json' in rest else summary(items))
+    elif cmd == 'run':
+        print(run(ctx, me))
+    elif cmd == 'mode':
+        print(set_mode(ctx, rest[0] if rest else None))
+    elif cmd == 'move' and len(rest) == 2:
+        print(move(ctx, rest[0], rest[1]))
+    elif cmd == 'trash' and rest:
+        print(trash(ctx, rest))
+    elif cmd == 'restore' and len(rest) == 1:
+        print('\n'.join(restore(ctx, rest[0])) or 'nothing to restore / 되돌릴 것 없음')
+    elif cmd == 'schedule':
+        print(schedule(ctx, me))
+    elif cmd == 'alias' and len(rest) == 2:
+        set_alias(ctx, rest[0], rest[1])
+        print(f'{rest[0]} → {rest[1]}')
+    else:
+        print(__doc__)
+        return 2
+    return 0
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except ValueError as e:
+        print(f'clean: {e}', file=sys.stderr)
+        sys.exit(1)

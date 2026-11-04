@@ -504,3 +504,67 @@ class HandedAsk(unittest.TestCase):
         self.assertEqual(self.asks(), [])
         self.assertEqual(self.run_task(['ask', hid, 'gathered: copy A or B?'], 'orchaaaa')[0], 0)
         self.assertEqual(len(self.asks()), 1)
+
+
+class GitOptional(unittest.TestCase):
+    """깃은 선택(ADR 0024) — 깃 없는 프로젝트엔 커밋·PR 말을 안 붙인다. 원격 없는 저장소엔 PR·머지 말 대신 '이 폴더에만'"""
+    def send(self, d, kind):
+        p = os.path.join(d, 'proj')
+        os.makedirs(p)
+        if kind != 'none':
+            subprocess.run(['git', 'init', '-q', p], check=True)
+        if kind == 'remote':
+            subprocess.run(['git', '-C', p, 'remote', 'add', 'origin', 'https://example.com/x.git'], check=True)
+        task.LOG, task.LESSONS = os.path.join(d, 'tasks.jsonl'), os.path.join(d, 'lessons')
+        task.load_agents = lambda: [{'id': 'aaaa1111', 'name': 'poster', 'cwd': p}]
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            self.assertEqual(task.main(['send', 'poster', '포스터 색 바꾸기']), 0)
+        return err.getvalue()
+
+    def test_깃_없는_프로젝트엔_머지_대신_깃_안_씀(self):
+        with tempfile.TemporaryDirectory() as d:
+            err = self.send(d, 'none')
+            self.assertNotIn(task.MERGE_RULE, err)
+            self.assertIn(task.NOGIT_RULE, err)
+            self.assertNotIn(task.LOCAL_GIT_RULE, err)
+
+    def test_원격_없는_저장소엔_PR_말_없이(self):
+        with tempfile.TemporaryDirectory() as d:
+            err = self.send(d, 'local')
+            self.assertNotIn(task.MERGE_RULE, err)
+            self.assertIn(task.LOCAL_GIT_RULE, err)
+
+    def test_원격이_있으면_예전처럼_머지_규칙(self):
+        with tempfile.TemporaryDirectory() as d:
+            err = self.send(d, 'remote')
+            self.assertIn(task.MERGE_RULE, err)
+            self.assertNotIn(task.NOGIT_RULE, err)
+
+    def test_원격_없는_큰_git_은_참모에게_한_줄(self):
+        with tempfile.TemporaryDirectory() as d, unittest.mock.patch.object(task, 'git_size_mb', return_value=407):
+            err = self.send(d, 'local')
+            self.assertIn('407MB', err)
+            self.assertNotIn('407MB', task.LOCAL_GIT_RULE)
+
+    def test_규칙_글(self):
+        for w in ('git init', task.T('커밋', 'commit')):
+            self.assertIn(w, task.NOGIT_RULE)
+
+    def test_깃_없는_폴더엔_교훈_거울을_그냥_적는다(self):
+        # git check-ignore 가 실패해 깃 없는 폴더엔 CLAUDE.local.md 에 교훈이 안 남았다 — 커밋될 길이 없으니 적는다
+        with tempfile.TemporaryDirectory() as d:
+            task.LESSONS, task.DEV = os.path.join(d, 'lessons'), d
+            os.makedirs(os.path.join(d, 'p'))
+            self.assertTrue(task.mirror_lesson('p', '깃 없는 교훈'))
+            self.assertIn('깃 없는 교훈', pathlib.Path(d, 'p', 'CLAUDE.local.md').read_text(encoding='utf-8'))
+
+    def test_저장소_종류(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, 'x')
+            os.makedirs(os.path.join(p, 'sub'))
+            self.assertEqual(task.repo_kind(p), 'none')
+            subprocess.run(['git', 'init', '-q', p], check=True)
+            self.assertEqual(task.repo_kind(os.path.join(p, 'sub')), 'local', '하위 폴더(워크트리 등)도 저장소로')
+            self.assertIsNone(task.repo_kind(None))
+            self.assertIsNone(task.repo_kind(os.path.join(d, 'missing')))

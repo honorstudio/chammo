@@ -20,6 +20,7 @@ const { askApp } = require('./place-at-launch');
 const { minimizePulledIn } = require('./minimize');
 const { sessionChrome } = require('./appcopy');
 const { createHoldCall, startHoldPasskey } = require('./hold-passkey');
+const { quietSignin } = require('./features');
 
 const CLI = path.join(__dirname, '..', 'bin', 'chammo-browser.js');
 const DEFAULT_WAIT = 120_000;
@@ -267,6 +268,9 @@ async function hold(o, { out = (r) => process.stdout.write(`${JSON.stringify(r)}
     };
     // 크롬 띄우기 — 처음, 그리고 패스키 전환(src/hold-passkey.js)으로 구글 서명 원본 ↔ ad-hoc 사본
     async function open(exe, inject) {
+      // 구글 로그인 뒤 크롬 로그인 권유 버블 끄기(src/features.js) — 크롬이 꺼져 있는 지금만 쓸 수 있다
+      const q = quietSignin(profileDir, { running: !!singletonPid(profileDir) });
+      if (q !== 'set' && q !== 'already') log(`로그인 권유 끄기 못 함(${q}) — 크롬이 로그인 권유 버블을 띄울 수 있다`);
       ctx = await chromium.launchPersistentContext(profileDir, {
         ...(exe ? { executablePath: exe } : { channel }),
         headless: !!o.headless,

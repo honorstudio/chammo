@@ -18,6 +18,8 @@ export const getLang = (): Lang => lang;
 let winKeys = IS_WIN;
 export const setWinKeys = (w: boolean) => { winKeys = w; };
 export const tr = (ko: string, en: string): string => fileManagerLabel(keyLabel(lang === 'en' ? en : ko, winKeys), winKeys);
+/** 숫자에 천 단위 콤마 — 3056669 → 3,056,669 (한·영 같은 모양) */
+export const fmtNum = (n: number): string => n.toLocaleString(lang === 'en' ? 'en-US' : 'ko-KR');
 
 /** 'English / 한국어' 한 쌍 — 앞은 ^·': '·' — '·여는 괄호 뒤에서 시작하고(한글·빗금 없음), 뒤는 한글이 든 글로 ' — '·' ('·닫는 괄호 앞에서 끝난다 */
 const PAIR = /(^|: | — |[([<])((?:(?!: | — )[^가-힣/()[\]<>])+?) \/ ((?:(?! — | \()[^)\]>])*?[가-힣](?:(?! — | \()[^)\]>])*?)(?= — | \(|[)\]>]|$)/gu;

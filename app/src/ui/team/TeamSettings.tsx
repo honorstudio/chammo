@@ -6,7 +6,7 @@ import { teamDelete, teamFeed, teamInvite, teamInvites, teamLeave, teamRemove, t
 import { teamIconSet } from '../../data/teamProfileApi';
 import type { SafetyPerson } from '../../domain/e2eSafety';
 import { personColor } from '../../domain/teamChat';
-import { lookOf, statusLine } from '../../domain/teamProfile';
+import { lookNames, lookOf, statusLine } from '../../domain/teamProfile';
 import { canDeleteTeam, canDo, deleteAsk, leaveNote, memberRows, menuFor, PERM_CHIPS, switchTargets } from '../../domain/teamSettings';
 import { tr } from '../../i18n';
 import { IconClose, IconCopy, IconMore, IconPencil } from '../Icons';
@@ -119,7 +119,7 @@ export function TeamSettings({ view: given, onClose, onChanged, follow }: {
   if (agentEdit) {
     return (
       <div className="tmx-start tmx-set tma-wide">
-        <TeamAgentEdit team={view.teamId} list={agentEdit.list} editing={agentEdit.a} people={view.members.map((m) => m.name)}
+        <TeamAgentEdit team={view.teamId} list={agentEdit.list} editing={agentEdit.a} people={lookNames(view.members, board).flatMap((m) => [m.name, m.account])}
           rooms={view.rooms.filter((r) => (r.kind === 'group' || r.kind === 'dm') && (!r.team || r.team === view.teamId)).map((r) => ({ id: r.id, name: r.name || r.with }))}
           onBack={() => setAgentEdit(null)} onSaved={() => { setAgentEdit(null); setAgentsKey((k) => k + 1); }} />
       </div>

@@ -53,6 +53,11 @@ pub fn decode(bytes: &[u8]) -> Result<Doc, String> {
     serde_json::from_slice::<Doc>(bytes).map(clean).map_err(|e| format!("글을 못 읽었어: {e}"))
 }
 
+/// 못 연(why) 살아 있는 글 기록 수 — 고친 판·고정 기록도 하나씩 센다(열어 봐야 같은 글인지 안다)
+pub(crate) fn locked_posts(items: &[Item]) -> usize {
+    items.iter().filter(|i| i.kind == "post" && !i.why.is_empty() && i.deleted_at.is_none() && i.state != "trash" && i.state != "uploading").count()
+}
+
 fn usable(i: &Item) -> bool {
     i.why.is_empty() && i.deleted_at.is_none() && i.state != "trash" && i.state != "uploading"
 }
@@ -129,6 +134,8 @@ pub struct Board {
     pub owner: bool,
     /// 아직 받는 중인 글 수 — 받아 둔 글부터 먼저 그렸다(화면은 곧 다시 읽는다)
     pub loading: usize,
+    /// 이 기기 몫 열쇠를 기다리는 글 수(새 팀원 기기 — 켜진 다른 팀원 앱이 봉투를 더해 줘야 열린다)
+    pub locked: usize,
 }
 
 struct Ctx {
@@ -183,7 +190,7 @@ pub fn board_split(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str) -> R
     let (c, docs, job, loading) = read_first(dir, kc, http, team, true)?;
     let pairs: Vec<(&Item, Doc)> = docs.iter().map(|(i, d)| (i, d.clone())).collect();
     let (posts, pinned) = fold(&pairs, &c.owners, &c.t.member_id);
-    Ok((Board { team: c.t.id.clone(), rev: c.v.rev, posts, pinned, owner: team_owners::has(&c.owners, &c.t.member_id), loading }, job))
+    Ok((Board { team: c.t.id.clone(), rev: c.v.rev, posts, pinned, owner: team_owners::has(&c.owners, &c.t.member_id), loading, locked: locked_posts(&c.v.items) }, job))
 }
 
 /// 글 쓰기·고치기(origin = 고칠 글 id) — 고치기는 글쓴이만. 돌려주는 건 글 id + 봉투 더하기 일(쓰기·고정·지우기 모두 — 부르는 쪽이 spawn)

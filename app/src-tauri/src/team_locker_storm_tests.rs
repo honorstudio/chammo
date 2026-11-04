@@ -674,3 +674,33 @@ fn 사람_동작이_서버_429_를_받으면_칸이_곧_넘어갈_때만_한_번
     assert_eq!(w.count(), n, "배경은 쉬는 중");
     relay::RETRY_TS.with(|t| t.set(0));
 }
+
+#[test]
+fn 팀원이_들어오면_화면_없이도_새_사람_몫_열쇠를_끝까지_넘긴다() {
+    // 11-02 새 팀원 시연: 기존 팀원 앱이 팀 화면을 열 때만 한 번에 20개씩 넘겨서, 참모 화면에 있으면 새 팀원은 계속 빈 홈·잠긴 보관함이었다
+    let w = busy_world("catchup");
+    let k = relay::device_keys(&w.kc, &relay::load_state(&w.d)).unwrap();
+    for _ in 0..60 {
+        w.extra.borrow_mut().push(sealed(&w, &k, "d1", "m1", vec![], &["d1"]));
+    }
+    w.set_rev(1);
+    w.r.always("POST", "/keys", 200, "{}");
+    let now = Instant::now();
+    assert_eq!(catch_up_at(&w.d, &w.kc, &w.r, &w.team, now, CATCH_UP_ROUNDS), 60, "상한(20)씩 여러 바퀴로 60개 다");
+    assert_eq!(posts(&w), 60, "{:?}", w.by_path());
+    // 다 넘긴 뒤엔 더 안 올린다
+    assert_eq!(catch_up_at(&w.d, &w.kc, &w.r, &w.team, now, CATCH_UP_ROUNDS), 0);
+    assert_eq!(posts(&w), 60);
+}
+
+#[test]
+fn 열쇠_넘기기_바퀴는_상한까지만() {
+    let w = busy_world("catchup-cap");
+    let k = relay::device_keys(&w.kc, &relay::load_state(&w.d)).unwrap();
+    for _ in 0..60 {
+        w.extra.borrow_mut().push(sealed(&w, &k, "d1", "m1", vec![], &["d1"]));
+    }
+    w.set_rev(1);
+    w.r.always("POST", "/keys", 200, "{}");
+    assert_eq!(catch_up_at(&w.d, &w.kc, &w.r, &w.team, Instant::now(), 2), 2 * MAX_SHARE_POSTS);
+}

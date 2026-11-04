@@ -71,10 +71,14 @@ describe('첫 설정 기본 단계는 폴더+믿기만(ux-start M4)', () => {
 });
 
 describe('위 띠(ux-start M6)', () => {
-  it("부하 칩은 '부하 높음' 글자만, 숫자는 title, loadChipShown 일 때만", async () => {
+  it('부하 칩은 늘 보이고(11-01 사용자 "팔로우가 안 됨") 숫자를 칩에 안 띄운다 — 숫자는 올리면 뜨는 카드에', async () => {
     const bar = (await import('./TopBar.tsx?raw')).default;
-    expect(bar).toMatch(/loadChipShown\(load\.level, !!loadOn\)/);
-    expect(bar).toContain("tr('부하 높음', 'High load')");
+    expect(bar).toContain('<LoadChip {...load} />');
+    const chip = (await import('./LoadChip.tsx?raw')).default;
+    const face = chip.slice(chip.indexOf('function Face'), chip.indexOf('export function LoadChip'));
+    expect(face).not.toMatch(/load1|toFixed/);
+    expect(face).toContain('<IconGauge lv={lv} />'); // 1안: 게이지 + 원인은 탈 났을 때만(bad)
+    expect(face).toMatch(/bad\.map/);
     expect(bar).not.toMatch(/맥이 바빠요/);
   });
   it("사용 한도 앞에 'Claude 한도', 참모가 하나도 없으면(첫 날) 한도·커밋 숫자를 숨긴다", async () => {

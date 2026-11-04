@@ -577,11 +577,13 @@ struct FakeKeep {
     up: Option<(Tailnet, Arc<AtomicBool>, SocketAddr)>,
     starts: usize,
     logs: Vec<String>,
+    /// 이 컴퓨터에 테일스케일이 깔려 있나(CLI)
+    installed: bool,
 }
 
 impl FakeKeep {
     fn new(on: bool, nets: Vec<Option<Tailnet>>) -> Self {
-        FakeKeep { on, nets, up: None, starts: 0, logs: vec![] }
+        FakeKeep { on, nets, up: None, starts: 0, logs: vec![], installed: true }
     }
     fn next_net(&mut self) -> Option<Tailnet> {
         if self.nets.len() > 1 { self.nets.remove(0) } else { self.nets[0].clone() }
@@ -590,6 +592,7 @@ impl FakeKeep {
 
 impl Keep for FakeKeep {
     fn on(&self) -> bool { self.on }
+    fn installed(&self) -> bool { self.installed }
     fn running(&self) -> Option<Tailnet> { self.up.as_ref().map(|u| u.0.clone()) }
     fn detect(&mut self) -> Option<Tailnet> { self.next_net() }
     fn start(&mut self, _restart: bool) -> Result<(), String> {
@@ -777,4 +780,24 @@ fn pair_answer_has_a_code_url_or_a_reason() {
         Some(false) => assert!(a["error"].as_str().is_some_and(|e| !e.is_empty())),
         None => panic!("ok 가 없다: {a}"),
     }
+}
+
+// 11-01 사용자: 테일스케일 없이 도는 게 기본 — 안 깔린 컴퓨터에서 '폰 연결'을 켜면 중계 길만 쓰고, 테일넷 서버는 헛 재시도하지 않는다
+#[test]
+fn 테일스케일이_안_깔렸으면_켜_둬도_다시_시도하지_않고_10분마다_볼_뿐() {
+    let mut k = FakeKeep::new(true, vec![None]);
+    k.installed = false;
+    let mut st = KeepState::default();
+    let t0 = std::time::Instant::now();
+    for i in 0..3 {
+        assert_eq!(keep_step(&mut k, &mut st, t0 + Duration::from_secs(600 * i)), Duration::from_secs(600));
+    }
+    assert_eq!((k.starts, k.logs.len()), (0, 0), "start 도 실패 기록도 없다: {:?}", k.logs);
+    // 나중에 깔면 그때부터 평소처럼 켠다
+    k.installed = true;
+    k.nets = vec![Some(net("100.100.10.1"))];
+    keep_step(&mut k, &mut st, t0 + Duration::from_secs(1800));
+    assert_eq!(k.starts, 1);
+    let (_, stop, _) = k.up.clone().expect("깔린 뒤엔 뜬다");
+    stop.store(true, Ordering::Relaxed);
 }

@@ -10,6 +10,8 @@ use std::time::Duration;
 
 pub const DEVICE_SUB: &str = "device";
 pub const PHONE_LINK_SUB: &str = "phone-link";
+/// 같은 계정 다른 컴퓨터 연결 숫자 확인(계획 2026-11-01-peer-relay C-3b) — 답은 direct::peer_link_pick
+pub const PEER_LINK_SUB: &str = "peer-link";
 /// 계정 되찾기 요청(relay ADR 0007 R9) — 내 다른 기기가 낸 게 아니면 취소
 pub const RECOVER_SUB: &str = "recover";
 /// 대기 기기는 이만큼 지나면 서버가 저절로 허용한다 — 카드도 그때까지
@@ -78,6 +80,20 @@ pub fn phone_link_row(id: &str, name: &str, sas: u32, until_ms: u64, pending_pla
         "code": crate::device_link::sas_text(sas),
         "detail": crate::i18n::tr("숫자가 다르면 거절 — 누군가 가운데 끼어든 거예요", "Different number? Decline — someone is in the middle"),
         "what": if new.is_some() { crate::i18n::tr("새 기기 허용 + 폰 화면 열기", "Allow new device + open this computer") } else { crate::i18n::tr("폰 화면 열기 허용", "Allow phone to open this computer") },
+        "yes": crate::i18n::tr("허용", "Allow"), "no": crate::i18n::tr("거절", "Decline"), "options": [],
+        "until": crate::direct::iso_of_ms(until_ms),
+    })
+}
+
+/// 컴퓨터 연결 숫자 확인 카드 — dev = 그 컴퓨터(B)의 중계 기기 id(B 자신에게 안 보이게·B 가 못 누르게 가르는 값). 이름은 서버 기기 목록 이름
+pub fn peer_link_row(id: &str, name: &str, dev: &str, sas: u32, until_ms: u64, ts: &str) -> Value {
+    let name = clean(name, 64);
+    json!({
+        "ts": ts, "type": "ask", "id": id, "from": crate::direct::LINK_FROM, "cwd": "", "kind": crate::direct::LINK_KIND, "sub": PEER_LINK_SUB, "dev": dev,
+        "q": crate::i18n::tr(&format!("{name} 이 이 컴퓨터와 이어지려 해요. 숫자가 같을 때만 허용해요"), &format!("{name} wants to connect to this computer. Allow only if the numbers match.")),
+        "code": crate::device_link::sas_text(sas),
+        "detail": crate::i18n::tr("숫자가 다르면 누가 끼어든 것이니 거절해요", "If the numbers differ, someone is in the middle, so decline."),
+        "what": crate::i18n::tr("컴퓨터 연결 허용", "Allow computer link"),
         "yes": crate::i18n::tr("허용", "Allow"), "no": crate::i18n::tr("거절", "Decline"), "options": [],
         "until": crate::direct::iso_of_ms(until_ms),
     })

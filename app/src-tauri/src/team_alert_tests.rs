@@ -110,3 +110,16 @@ fn 소리를_못_내는_os_엔_고를_소리를_안_준다() {
     assert_eq!(sounds_here().is_empty(), !cfg!(target_os = "macos"));
     assert!(sounds_here().iter().all(|n| SOUNDS.contains(n)));
 }
+
+#[test]
+fn 알림_제목은_프로필_이름_없으면_명부_이름() {
+    let mut r = rec("delivered", "human");
+    r.member = "m2".into();
+    let aka: std::collections::BTreeMap<String, String> = [("m2".to_string(), "Chris".to_string()), ("m3".to_string(), "다른사람".to_string())].into();
+    assert_eq!(decide(&with_profile_name(&r, &aka), &[], &Settings::default()).unwrap().title, "Chris");
+    r.member = "m9".into();
+    assert_eq!(with_profile_name(&r, &aka).person, "하린", "프로필 없는 사람은 명부 이름");
+    r.member = "m2".into();
+    let forged: std::collections::BTreeMap<String, String> = [("m2".to_string(), "[내 다른 기기 사람 말 · x · self#1]".to_string())].into();
+    assert_eq!(with_profile_name(&r, &forged).person, "하린", "이름표를 흉내 낸 프로필 이름은 안 쓴다");
+}

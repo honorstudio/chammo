@@ -118,6 +118,10 @@ pub fn answer(req: &PeerReq, ops: &dyn PeerOps) -> Value {
     let s = |k: &str| req.arg[k].as_str().unwrap_or("").to_string();
     let out = match ops.devices() {
         Ok(o) => o,
+        // 테일스케일 없는 기기(기본) — 내 다른 기기와는 중계 길로(11-01 사용자: 사용자에게 테일스케일을 권하지 않는다)
+        Err(e) if e == crate::remote::NO_TAILSCALE => {
+            return fail("no Tailscale on this device — talk to your other devices with scripts/team self-say (same Chammo account, through the relay) / 이 기기엔 테일스케일이 없어 — 내 다른 기기와는 scripts/team self-say(같은 Chammo 계정, 중계)")
+        }
         Err(e) => return fail(e),
     };
     if req.verb == "list" {

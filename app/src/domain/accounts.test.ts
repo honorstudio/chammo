@@ -138,6 +138,12 @@ describe('usageOf — 위 막대 사용량(지금 칸 기록 = 계정 토큰으�
     const v = view({ auto: { v: 2, slots: { a2: { five: { used: 46, resetsAt: reset }, week: { used: 6, resetsAt: reset + 86_400_000 }, seenAt: now - 90_000 } } } });
     expect(usageOf(v, now)).toEqual({ usage: { five: { left: 54, resetIn: 12_000 }, week: { left: 94, resetIn: 98_400 } }, age: 90_000 });
   });
+  it('5시간 한도가 없는 칸(noFive)이면 5시간 대신 요금제 이름 — 주간 기록이 없어도 null 이 아니다', () => {
+    const v = view({ active: 'a1', accounts: [{ id: 'a1', name: '큰 것', email: 'a@x.com', plan: 'Ultra' }], auto: { v: 3, slots: { a1: { noFive: true, week: { used: 46, resetsAt: reset + 86_400_000 }, seenAt: now - 60_000 } } } });
+    expect(usageOf(v, now)).toEqual({ usage: { week: { left: 54, resetIn: 98_400 }, noFive: 'Ultra' }, age: 60_000 });
+    const bare = view({ active: 'a1', accounts: [{ id: 'a1', name: '큰 것', email: 'a@x.com', plan: '' }], livePlan: 'Ultra', auto: { v: 3, slots: { a1: { noFive: true, seenAt: now } } } });
+    expect(usageOf(bare, now)?.usage).toEqual({ noFive: 'Ultra' });
+  });
   it('기록이 없거나 지금 칸을 모르면 null(상태줄 값을 쓴다)', () => {
     expect(usageOf(view(), now)).toBeNull();
     expect(usageOf(view({ active: null }), now)).toBeNull();
@@ -241,5 +247,15 @@ describe('로그인해서 바꾸기 — 바꾸기가 갱신 막힘·죽은 갱�
     expect(reloginDone(view({ active: 'a1' }), 'a1')).toBe(true);
     expect(reloginDone(view(), 'a1')).toBe(false);
     expect(reloginDone(view({ active: null, liveEmail: 'other@x.com' }), 'a1')).toBe(false);
+  });
+});
+
+describe('popRows — 5시간 한도 없음(Ultra)은 마우스 올림 설명에 한 줄', () => {
+  const now = new Date(2026, 9, 2, 19, 0).getTime();
+  it('5시간 줄 대신 "5시간 한도 없음 (Ultra 요금제)"', () => {
+    const v = view({ active: 'a1', accounts: [{ id: 'a1', name: '큰 것', email: 'a@x.com', plan: 'Ultra' }], auto: { v: 3, slots: { a1: { noFive: true, week: { used: 46, resetsAt: now + 3_600_000 }, seenAt: now } } } });
+    const [r] = popRows(v, now);
+    expect(r!.tip.split('\n')[0]).toBe('5시간 한도 없음 (Ultra 요금제)');
+    expect([r!.five, r!.week, r!.left]).toEqual([null, 54, 54]);
   });
 });

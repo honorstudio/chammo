@@ -6,7 +6,7 @@ import { desktopHome, desktopSources, homeMemo } from '../../data/teamHomeApi';
 import { desktopPosts } from '../../data/teamPostApi';
 import type { AgentShown } from '../../domain/teamAgent';
 import { postPlaces, type HomeApi, type HomeBlock, type HomeBoard as Board, type HomeSources } from '../../domain/teamHome';
-import type { LockerItem } from '../../domain/teamLocker';
+import { keyWaitNote, type LockerItem } from '../../domain/teamLocker';
 import { personColor, stamp } from '../../domain/teamChat';
 import { homeOf, pinFailed, postErr, quoteOf, type Post, type PostApi, type PostBoard } from '../../domain/teamPosts';
 import { keepBoard, lookOf } from '../../domain/teamProfile';
@@ -16,6 +16,7 @@ import { IconBack, IconChat, IconPencil, IconPin, IconPinOff, IconTrash } from '
 import { IconButton } from '../kit/IconButton';
 import { Confirm } from '../OrchDialogs';
 import { every } from '../poll';
+import { teamRev } from './teamRev';
 import { DataBlock } from './HomeBlocks';
 import { HomeBoard, type ModeChoice } from './HomeBoard';
 import { PersonOf } from './TeamFaces';
@@ -55,6 +56,9 @@ export function TeamHome({ teamId, team, members, icon, onTalk, api = desktopPos
   /** 팀 캘린더 칸(relay ADR 0011) — 데스크톱·폰이 각자 길로 */
   calBlock?: (b: HomeBlock, editing: boolean) => React.ReactNode;
 }) {
+  // 판 바뀜 묻기 — 데스크톱은 프로필판과 한 묶음(팀마다 3초에 한 번, ui/team/teamRev), 폰 웹 API 는 원래대로 각자 3초
+  const watchPosts = api === desktopPosts ? teamRev.watch : undefined;
+  const watchHome = homeApi === desktopHome ? teamRev.watch : undefined;
   const [b, setB] = useState<PostBoard | null>(null);
   const [err, setErr] = useState('');
   const [seen, setSeen] = useState(() => readSeen(teamId));
@@ -91,8 +95,9 @@ export function TeamHome({ teamId, team, members, icon, onTalk, api = desktopPos
     rev.current = m?.v.rev ?? 0;
     load(m && !needFetch(m, 0) ? m.v.rev : null);
     // 보관함 바뀜 알림(소켓 {t:"locker"})으로 판이 오르면 다시 — 프로필판과 같은 판 번호
-    return every(() => { if (!busyLoad.current) load(partial.current ? null : rev.current); }, 3_000);
-  }, [teamId, load]);
+    const sub = { seen: () => (busyLoad.current ? null : partial.current ? 'force' as const : rev.current), poke: () => { if (!busyLoad.current) load(partial.current ? null : rev.current); } };
+    return watchPosts ? watchPosts(teamId, sub) : every(sub.poke, 3_000);
+  }, [teamId, load, watchPosts]);
 
   // 판 — 글판과 같은 판 번호(보관함 바뀜)로 다시 읽는다. 읽기 실패는 판 없이 글 목록 그대로(문구는 글판 몫)
   const [hb, setHb] = useState<Board | null>(null);
@@ -113,8 +118,9 @@ export function TeamHome({ teamId, team, members, icon, onTalk, api = desktopPos
     setHb(m?.v ?? null);
     hrev.current = m?.v.rev ?? 0;
     loadHome(m && !needFetch(m, 0) ? m.v.rev : null);
-    return every(() => { if (!busyHome.current) loadHome(hrev.current); }, 3_000);
-  }, [teamId, loadHome]);
+    const sub = { seen: () => (busyHome.current ? null : hrev.current), poke: () => { if (!busyHome.current) loadHome(hrev.current); } };
+    return watchHome ? watchHome(teamId, sub) : every(sub.poke, 3_000);
+  }, [teamId, loadHome, watchHome]);
   // 블록이 읽는 것 — 그 블록이 판에 있을 때만, 보관함 판이 오르면 다시
   const [agents, setAgents] = useState<AgentShown[]>([]);
   const [files, setFiles] = useState<LockerItem[]>([]);
@@ -186,7 +192,9 @@ export function TeamHome({ teamId, team, members, icon, onTalk, api = desktopPos
       ))}
     </div>
   ) : null;
-  const postState = !b && !err ? tr('글을 불러오는 중…', 'Loading posts…') : b && !h?.pinned && !h?.list.length ? tr('아직 글이 없어요', 'No posts yet') : '';
+  // 새로 든 팀원 기기 — 열쇠를 기다리는 글이 있으면 '없음' 대신 그 수와 까닭(11-02 시연)
+  const wait = keyWaitNote(b?.locked ?? 0, 'post');
+  const postState = !b && !err ? tr('글을 불러오는 중…', 'Loading posts…') : b && !h?.pinned && !h?.list.length ? wait || tr('아직 글이 없어요', 'No posts yet') : wait;
   // 판이 없을 때 — 지금 팀 홈 그대로(공지 칸 + 글 목록)
   const postList = (
     <>
@@ -196,13 +204,13 @@ export function TeamHome({ teamId, team, members, icon, onTalk, api = desktopPos
     </>
   );
   const data = { members, agents, files, content: hb?.content ?? {}, onTalk, openUrl: sources.openUrl, nameOf,
-    openFile: sources.openFile ? (i: LockerItem) => sources.openFile!(teamId, i) : undefined, canOpen: sources.canOpen,
+    openFile: sources.openFile ? (i: LockerItem) => sources.openFile!(teamId, i) : undefined, canOpen: sources.canOpen, thumb: sources.thumb ? (i: LockerItem) => sources.thumb!(teamId, i) : undefined,
     saveContent: (block: string, c: Parameters<HomeApi['content']>[2]) => homeApi.content(teamId, block, c).then(() => loadHome(null)) };
   const block = (x: HomeBlock, editing: boolean): React.ReactNode => {
     if (x.k === 'pin') return pinBox && !editing ? pinBox : <div className="hb-ph"><IconPin />{tr('고정 공지', 'Pinned notice')}{!editing && <span className="hb-s2">{tr(' · 팀장이 글을 고정하면 여기에', ' · Shows the post the owner pins')}</span>}</div>;
     if (x.k === 'posts') return <><div className="hb-bh">{tr('글', 'Posts')}</div>{editing ? null : list ?? (postState && <div className="tmh-empty">{postState}</div>)}</>;
     if (x.k === 'cal') return calBlock ? calBlock(x, editing) : <><div className="hb-bh">{tr('팀 캘린더', 'Team calendar')}</div><div className="hb-none">{tr('캘린더 탭에서 봐요', 'Open the calendar tab')}</div></>;
-    if (x.k === 'mode') return modeBlock ? modeBlock(x, editing) : <><div className="hb-bh">{tr('참모 모드', 'Chammo mode')}</div><div className="hb-none">{tr('모드 칸은 맥 앱에서 보여요', 'Mode blocks show in the Mac app')}</div></>;
+    if (x.k === 'mode') return modeBlock ? modeBlock(x, editing) : <><div className="hb-bh">{tr('참모 모드', 'Chammo mode')}</div><div className="hb-none">{tr('모드 칸은 컴퓨터 앱에서 보여요', 'Mode blocks show in the desktop app')}</div></>;
     return <DataBlock b={x} d={data} editing={editing} />;
   };
 

@@ -2,6 +2,7 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import type { Step as AppInstallStep } from '../domain/appInstall';
 import type { Features } from '../domain/config';
+import type { OrgPolicy } from '../domain/orgPolicy';
 import type { AccountsView } from '../domain/accounts';
 import type { PreviewPhase } from '../domain/voiceDial';
 import type { SayNow } from '../domain/speakGlow';
@@ -48,6 +49,8 @@ export type Config = {
   devRoot: string;
   /** devRoot 밖에 따로 추가한 프로젝트 폴더들(`~/…` 모양) */
   extraProjects: string[];
+  /** 보관함 프로젝트 목록에서 뺀 폴더들(`~/…` 모양) — 목록에서만 숨긴다 */
+  hiddenProjects?: string[];
   hqDir: string;
   githubUser: string;
   ttsCommand: string;
@@ -232,9 +235,7 @@ export const writeLiveSnap = (json: string) => invoke<void>('write_live_snap', {
 /** 상태줄이 남긴 최신 입력(사용 한도) 원문 */
 export const readUsage = () => invoke<string>('read_usage');
 
-export type RepoToday = { name: string; commits: number; added: number; deleted: number };
-/** 오늘 내가 한 커밋 (저장소별) */
-/** 다마고치 먹이용 커밋 원문 (파싱은 domain/tama/sources.ts) */
+/** 커밋 원문 — 위 막대 오늘 커밋·하루 리플레이(domain/replay.ts)·다마고치 먹이(domain/tama/sources.ts)가 파싱 */
 export const commitLog = (devRoot: string, author: string, since: string, until?: string) =>
   invoke<string>('commit_log', { devRoot, author, since, until: until ?? null });
 
@@ -280,6 +281,12 @@ export const appendTaskEvent = (ev: object) => invoke<void>('append_task_event',
 export const sessionScreen = (id: string) => invoke<string>('session_screen', { id });
 export const sendKeys = (id: string, keys: string) => invoke<void>('send_keys', { id, keys });
 export const logAutoAllow = (ev: object) => invoke<void>('log_auto_allow', { line: JSON.stringify(ev) });
+/** 회사 정책 아래 권한 창 → 사람 카드(Rust perm_card_cmd). 창을 못 읽으면 null */
+export const permCardOpen = (id: string, cwd: string) => invoke<string | null>('perm_card_open', { id, cwd });
+export const permCardClose = (id: string) => invoke<number>('perm_card_close', { id });
+export const orgPolicy = () => invoke<OrgPolicy>('org_policy');
+/** 전체 sessionId → 그 세션 기록의 첫 권한 모드(없으면 빠짐) */
+export const startupModes = (ids: string[]) => invoke<Record<string, string>>('startup_modes', { ids });
 /** 프로젝트 이름 → HOLO MEMO 파일 내용(없으면 빈 문자열) */
 export const readMemos = (names: string[]) => invoke<Record<string, string>>('read_memos', { names });
 export const writeMemo = (name: string, content: string) => invoke<void>('write_memo', { name, content });
@@ -296,8 +303,6 @@ export const imeLog = (lines: string) => invoke<void>('ime_log', { lines });
 /** Dock 아이콘 뱃지 숫자 (0 이면 지움) */
 export const setBadge = (count: number) => invoke<void>('set_badge', { count });
 
-export const todayCommits = (devRoot: string, author: string, since: string) =>
-  invoke<RepoToday[]>('today_commits', { devRoot, author, since });
 
 /** ⌘+클릭 링크 열기 (url = 브라우저, file = 기본 앱) */
 /** 클립보드에 글자 넣기 (Rust pbcopy — 웹뷰 clipboard API 는 입력 도중이 아니면 막힌다) */
@@ -388,7 +393,7 @@ export const routinesList = () => invoke<string>('routines_list');
 export const routineDo = (name: string, action: 'run' | 'pause' | 'resume' | 'remove' | 'told') => invoke<string>('routine_do', { name, action });
 
 // ── 부하 모니터(Rust load.rs). 세션별로 가르는 건 domain/load ──
-export const loadSample = () => invoke<{ ps: string; sys: string }>('load_sample');
+export const loadSample = () => invoke<{ ps: string; sys: string; disk?: string }>('load_sample');
 export const loadEnv = (pids: number[]) => invoke<string>('load_env', { pids });
 /** 주인 없는 프로세스 끄기 — Claude 가 띄운 것만(Rust 가 확인). 끈 프로세스 수 */
 export const loadKill = (pid: number) => invoke<number>('load_kill', { pid });

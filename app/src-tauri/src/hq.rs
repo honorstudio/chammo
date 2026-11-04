@@ -36,6 +36,8 @@ pub const TEMPLATE: &[TemplateFile] = &[
     TemplateFile { path: "scripts/locker", body: include_str!("../../hq-template/scripts/locker"), exec: true },
     // 지난 대화 검색 — <데이터>/recall.db(FTS5 trigram), 비밀 모양은 색인 전에 가린다. 앱은 안 거친다
     TemplateFile { path: "scripts/recall", body: include_str!("../../hq-template/scripts/recall"), exec: true },
+    // 정리 담당의 손 — 재고 세 갈래(알아서·묻기·안 건드림)로 가르고 장부를 남기며 지우고 옮긴다(ADR 0022). locker 를 import 한다
+    TemplateFile { path: "scripts/clean", body: include_str!("../../hq-template/scripts/clean"), exec: true },
     // Craft 앱(ArtCraft 오픈소스): 웹판 받기·SHA 대조·127.0.0.1 서빙·주소 미리보기 + 맥 앱을 조작 채널로 띄워 참모가 명령으로 — 앱은 안 거친다
     TemplateFile { path: "scripts/craft", body: include_str!("../../hq-template/scripts/craft"), exec: true },
     TemplateFile { path: "scripts/craft_win.py", body: include_str!("../../hq-template/scripts/craft_win.py"), exec: false },
@@ -54,6 +56,7 @@ pub const TEMPLATE: &[TemplateFile] = &[
     TemplateFile { path: ".claude/skills/hq-craft/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-craft/SKILL.md"), exec: false },
     TemplateFile { path: ".claude/skills/hq-login/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-login/SKILL.md"), exec: false },
     TemplateFile { path: ".claude/skills/hq-recall/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-recall/SKILL.md"), exec: false },
+    TemplateFile { path: ".claude/skills/hq-cleaner/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-cleaner/SKILL.md"), exec: false },
     TemplateFile { path: ".claude/skills/hq-mode-kit/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-mode-kit/SKILL.md"), exec: false },
     TemplateFile { path: ".claude/skills/hq-mode-kit/kit.tsx", body: include_str!("../../hq-template/.claude/skills/hq-mode-kit/kit.tsx"), exec: false },
     TemplateFile { path: ".claude/skills/hq-mode-kit/kit-svg.ts", body: include_str!("../../hq-template/.claude/skills/hq-mode-kit/kit-svg.ts"), exec: false },
@@ -326,6 +329,9 @@ fn ours(cmd: &str) -> bool {
 /// 이 프로젝트에 settings.local.json 을 새로 만들어도 되나 — git 저장소가 아니거나 git 이 그 파일을 무시할 때만.
 /// 안 그러면 사용자 저장소에 추적 안 된 파일(내 맥 경로가 든)이 생긴다. .gitignore 는 대신 안 고친다(사용자 저장소)
 pub fn may_create_local(dir: &Path) -> bool {
+    if !dir.join(".git").exists() {
+        return true; // 깃이 아닌 폴더 — git 을 안 부른다(1분마다 모든 폴더, 맥 명령줄 도구 없으면 설치 창)
+    }
     match crate::platform::command("git").arg("-C").arg(dir).args(["check-ignore", "-q", ".claude/settings.local.json"]).output() {
         Ok(o) => o.status.code() != Some(1), // 0 = 무시함, 1 = 안 무시함, 128 = 저장소 아님
         Err(_) => true,                       // git 이 없으면 저장소도 아니다

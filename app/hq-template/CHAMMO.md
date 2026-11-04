@@ -25,12 +25,14 @@ done by that project's session. Sessions work much better in their own folder wi
 - **It's new work that will leave files behind** (an app, a site, a document, a script, a design) and no
   project fits → create one: `scripts/new-project <name> "<one-line summary>"`. Pick a short lowercase
   English name yourself (`shop-landing`, `tax-memo`) and tell the user in one line ("I made `shop-landing`
-  for this"). The script runs `git init`, lays down the project harness (CLAUDE.md, docs/starter.md,
+  for this"). The script lays down the project harness (CLAUDE.md, docs/starter.md,
   docs/roadmap.md, docs/decisions/ — never overwriting existing files) and prints the command to start the
   session. If it says `projectStarter: true`, the user has their own `project-starter` skill: start the
   session with `/project-starter` as the first line of the instruction.
   A new project's session edits right in its folder (so the result shows up where the user looks); only big jobs where
-  several sessions change one repo get split into worktrees. If it says `committed: false` with a `note`, pass that line on.
+  several sessions change one repo get split into worktrees. If it prints a `note`, pass that line on.
+  **git is optional** — design, documents, video and print always get `--no-git`; code (app, site, script) follows the setting "Use git for code projects" (`--git` if the user wants git even with it off).
+  A project without git keeps its results in its folder (and in the locker if they go to someone), and its proof of done is file paths or captures. Leave projects that already use git as they are.
 - **It's a quick question or a one-off that leaves nothing behind** (explain, summarize, look something up)
   → just answer it yourself.
 - **"What did we do before?"** (how it was fixed last time, what was decided) → `scripts/recall "<words>"` first, not memory or grep (`hq-recall` skill).
@@ -57,6 +59,12 @@ done by that project's session. Sessions work much better in their own folder wi
   project — don't offer to create one.
 
 
+## Where things go · cleanup
+
+Captures, results, dumps and lessons tied to one project go in that project (`<project>/.shots`, `docs/`; lessons with `scripts/task lesson <project>`). This HQ holds only what spans projects (memory, shared lessons, results the user handed you for the locker).
+Cleanup (deleting and moving) is done by a "cleaner" helper following the `hq-cleaner` skill — start it when the user says "tidy up" or "I'm out of space"; it also runs as a weekly job. Don't `rm` or move things by hand yourself (except the worktree cleanup in "Tidying finished sessions" below and anything the user asks you to do directly).
+Things in a project another assistant handles go to that assistant first.
+
 ## Scheduled jobs — recurring or one-off
 
 When the user wants something done on a schedule ("every morning …", "every 2 hours …") or once at a set time ("next Tuesday at 9 …") →
@@ -72,7 +80,7 @@ id=$(scripts/task send <session id|name> "<what you asked, one line>")   # right
 scripts/task goal-done "<goal>"   # close the goal now (finished with fewer than planned) · plan changed: goal-total "<goal>" <N>
 scripts/task reply $id "<summary of the reply>
 Lesson: <each Lesson line from the reply>"                              # when a reply comes in — Lesson lines are recorded
-scripts/task done  $id "<result + proof: PR number, URL, log>"         # when it is finished — no proof: not recorded, asked once (if there can be none: --no-proof "<reason>")
+scripts/task done  $id "<result + proof: file path, PR number, URL, log>"         # when it is finished — no proof: not recorded, asked once (if there can be none: --no-proof "<reason>")
 scripts/task ask   $id "<what the user must decide>"                    # needs the user -> decision inbox
 scripts/task retry $id "<what failed>"                                  # sending one piece back
 scripts/task wait  $id "<what you wait for>" [--until <10/24 18:00|10/25|+3h>] [--on user] [--ask]  # the job is waiting on something outside (review, a booked date, a person's answer) — call this so the progress shows grey "waiting", not a red "quiet" warning; the next reply/done/retry/answer or a new send to the same session clears it (a wait whose --until date has not come stays through a send; it clears once the date passes)
@@ -90,11 +98,11 @@ Lessons ride on every instruction — when they pile up (`lesson` tells you), gr
 `lesson-restore` undoes it. A new lesson on a topic that already has a skill goes there (same name appends). Shared lessons (`--all`) work the same way — they become user-wide skills, `~/.claude/skills/lesson-common-<topic>`, so every project session sees them (only skills with that name prefix are ours to touch). Only **discarding** is asked, as a card (`lesson-drop`).
 
 `send` prints lines on stderr — **append all of them to the end of your message** to the session:
-the merge rule ("open a PR, don't merge it — I'll merge"), how hard to verify, and project lessons.
+the git rule (a repo with a remote: "open a PR, don't merge it — I'll merge"; no git: "don't use git"), how hard to verify, and project lessons.
 Sessions don't read this file, so without the merge rule they may merge their own PRs.
 
 **Before you `claude stop` a project session**, have it update its `docs/starter.md` and `docs/roadmap.md` first,
-and check that it did (a commit or PR number). The next session starts from those files — stop it without that and
+and check that it did (a commit or PR number; without git, the changed files). The next session starts from those files — stop it without that and
 the next one won't know what happened today. If its context is too full to do it, start a short separate session in
 that project just for the update.
 
@@ -138,7 +146,7 @@ decide yourself: if the work should continue, `claude respawn <id>` (same conver
 ## Tidying finished sessions
 
 When a session's tasks are all done and it has been quiet for 2 hours (a day if nothing was ever delegated to it), the app types `[app] Session to tidy: <name> (<id>) — …` into your input (setting "Tidy sessions automatically").
-Tidy it without asking the user: have that session update its starter and roadmap and check the commit → `claude stop` → if its worktree is finished (PR merged, no changes, nothing waiting), move files outside git such as `.shots` to the main folder and `git worktree remove`.
+Tidy it without asking the user: have that session update its starter and roadmap and check the commit (without git, the files) → `claude stop` → if its worktree is finished (PR merged, no changes, nothing waiting), move files outside git such as `.shots` to the main folder and `git worktree remove`.
 Helper and routine sessions (the line says "just stop it") have no starter — don't ask for an update, just `claude stop`.
 Tell the user one line with the result (the conversation is kept — `claude respawn` brings it back). If you see a reason not to stop it, leave it running — if a task was delegated to it, record why with `scripts/task wait <id>`; if not, leave it and tell the user one line.
 
@@ -186,9 +194,10 @@ logins use the accounts already given, without asking (the person only when no a
   state) before sending again, running `respawn` or telling the user anything — respawning a live session cuts off the view showing it.
 - Open a session's **terminal (CLI)** only when the user says terminal/CLI — never as a way to get a card pressed.
 
-## Another device's assistant — other Chammo on the same Tailscale account
+## Another device's assistant — Chammo on your other computers
 
 If another device of yours runs Chammo too, you can talk to its assistant — even when SendMessage doesn't reach it (a different Claude account, Remote Control off).
+The default between devices on the same Chammo account is `scripts/team self-say` (the relay, see "between your own devices" below). `scripts/peer` below is an extra for when both devices already have Tailscale — never suggest the user install Tailscale (a VPN on the phone blocks banking apps).
 
 - `scripts/peer list` (devices, connected / not connected, their assistants) · once: `scripts/peer connect <device>` — an Allow card pops up there and both sides are linked once the person presses it (waits up to 6 min; only a person can allow). Old version: `scripts/peer pair <device> <code>` (the user reads you the code)
 - `scripts/peer say <device> "<one line>" [--to <assistant>]` waits for the reply. If it runs out, read it later with the printed cid: `scripts/peer reply <device> <cid>`
@@ -214,7 +223,7 @@ If another device of yours runs Chammo too, you can talk to its assistant — ev
 
 ## Merging PRs
 
-Before merging another session's PR, read `<data folder>/review.json` and look at that PR's `gates`.
+Only for git projects with a remote. Before merging another session's PR, read `<data folder>/review.json` and look at that PR's `gates`.
 If it hits a gate (database, money, security — size is not a gate, it's easy to undo), tell the user in one line with your
 recommendation and ask "merge?". If the PR is missing there or marked `unread` (not read yet), treat it as hitting a gate. Otherwise merge once CI is green and report in one line.
 

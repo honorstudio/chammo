@@ -57,8 +57,23 @@ pub fn root_of(home: &Path, data: &Path, env: Option<&str>, real_data: bool) -> 
 
 /// 폴더·파일 이름으로 써도 되는 글 — 경로 글자(/ \ :)는 -, 제어 글자·앞 점은 뺀다. 비면 fallback
 pub fn safe_name(name: &str, fallback: &str) -> String {
-    let s: String = name.chars().filter(|c| !c.is_control()).map(|c| if matches!(c, '/' | '\\' | ':') { '-' } else { c }).collect();
-    let s: String = s.trim().trim_start_matches('.').trim().chars().take(120).collect();
+    safe_name_for(name, fallback, cfg!(windows))
+}
+
+/// safe_name — win 이면 윈도우가 못 만드는 이름도 고친다(11-01 윈도우 시험 PC 실측: 맥에서 올린 '사진?.png' 받기가 os error 123 으로 실패).
+/// < > " | ? * 는 -, 끝 점·공백은 뗀다(윈도우가 말없이 떼서 다른 이름이 된다), CON·NUL·COM1 같은 장치 이름은 앞에 _
+pub fn safe_name_for(name: &str, fallback: &str, win: bool) -> String {
+    let bad = |c: char| matches!(c, '/' | '\\' | ':') || (win && matches!(c, '<' | '>' | '"' | '|' | '?' | '*'));
+    let s: String = name.chars().filter(|c| !c.is_control()).map(|c| if bad(c) { '-' } else { c }).collect();
+    let mut s: String = s.trim().trim_start_matches('.').trim().chars().take(120).collect();
+    if win {
+        s = s.trim_end_matches(['.', ' ']).to_string();
+        let stem = s.split('.').next().unwrap_or("").to_ascii_uppercase();
+        let device = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL") || (stem.len() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) && stem.as_bytes()[3].is_ascii_digit() && stem.as_bytes()[3] != b'0');
+        if device {
+            s.insert(0, '_');
+        }
+    }
     if s.is_empty() {
         fallback.to_string()
     } else {
@@ -1581,13 +1596,7 @@ pub fn locker_reveal(path: String) -> Result<(), String> {
         Err(e) => return Err(e),
     };
     let at = if std::fs::read_link(&p).is_ok() && p.exists() { canon(&p) } else { p };
-    #[cfg(target_os = "macos")]
-    let r = crate::platform::command("open").arg("-R").arg(&at).status();
-    #[cfg(windows)]
-    let r = crate::platform::command("explorer").arg(format!("/select,{}", at.display())).status();
-    #[cfg(not(any(target_os = "macos", windows)))]
-    let r = crate::platform::command("xdg-open").arg(at.parent().unwrap_or(&at)).status();
-    r.map(|_| ()).map_err(es)
+    crate::platform::reveal(&at).map_err(es)
 }
 
 /// 열기 버튼 — 맥 파일 창(여러 개)으로 고른 것을 넣는다. 취소면 빈 결과

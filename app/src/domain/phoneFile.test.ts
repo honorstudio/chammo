@@ -5,6 +5,7 @@ describe('fileKind — 폰 보기 종류', () => {
   it('확장자·웹 주소로 가른다', () => {
     expect(fileKind('/u/a.PNG')).toBe('image');
     expect(fileKind('/u/a.pdf')).toBe('pdf');
+    for (const p of ['/u/logo.svg', '/u/간판.AI', '/u/a.eps', '/u/표지.psd']) expect(fileKind(p), p).toBe('office'); // 첫 장만(11-01)
     expect(fileKind('/u/a.md')).toBe('md');
     expect(fileKind('/u/a.html')).toBe('html');
     expect(fileKind('/u/a.json')).toBe('json');

@@ -81,7 +81,7 @@ export function ModeManage() {
                 )}
                 {asking === r.name && (
                   <div className="mdv-mg-ask" role="alert">
-                    <span>{tr('원본 폴더를 맥 휴지통으로 보낼까? 휴지통에서 되살릴 수 있어.', 'Move its folder to the Trash? You can put it back from there.')}<small>{r.dir}</small></span>
+                    <span>{tr('원본 폴더를 휴지통으로 보낼까? 휴지통에서 되살릴 수 있어.', 'Move its folder to the Trash? You can put it back from there.')}<small>{r.dir}</small></span>
                     <button type="button" className="btn danger" disabled={busy} onClick={() => remove(r, true)}>{tr('휴지통으로', 'Move to Trash')}</button>
                     <button type="button" className="btn" disabled={busy} onClick={() => setAsking(null)}>{tr('취소', 'Cancel')}</button>
                   </div>

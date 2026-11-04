@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { FIT, IMAGE_STEPS, stepZoom } from '../../domain/readerZoom';
 import { imageWidth, shownPercent, toggleFitActual } from '../../domain/imageFit';
-import { docUrl, kindOf, pageDoc } from '../../domain/reader';
+import { IS_WIN, docUrl, kindOf, pageDoc } from '../../domain/reader';
 import { isCurationHtml } from '../../domain/curation';
 import { tr } from '../../i18n';
 import { IconMaximize, IconReveal, IconRestore } from '../Icons';
@@ -91,12 +91,12 @@ export function FileTab({ path, where, attachTo, onAttach, onBig, big = false, o
   return (
     <div className="cv-doc cv-filetab">
       {kind !== 'web' && <div className="cv-doc-bar">
-        <span className="cv-path" title={tr('끌어서 파인더·카톡·메일로', 'Drag to Finder, chat or mail')} {...dragOut(path)}>{where}</span>
+        <span className="cv-path" title={IS_WIN ? undefined : tr('끌어서 다른 앱으로 보내기', 'Drag to another app')} {...dragOut(path)}>{where}</span>
         <span className="cv-sp" />
         {zoomUi}
         <CraftOpenChip path={path} />
         {/* 팀 파일(데이터 폴더에 풀어 둔 평문)은 파인더로 안 연다 — 머리 내려받기가 다운로드 폴더에 꺼낸다 */}
-        {!isTeamCache(path) && <IconButton label={tr('파인더에서 보기', 'Show in Finder')} onClick={() => void lockerApi.reveal(path).catch(() => {})}><IconReveal /></IconButton>}
+        {!isTeamCache(path) && <IconButton label={tr('폴더에서 보기', 'Show in folder')} onClick={() => void lockerApi.reveal(path).catch(() => {})}><IconReveal /></IconButton>}
         {onAttach && <SendToOrch to={attachTo} onClick={onAttach} />}
         <IconButton label={big ? tr('원래 크기로', 'Restore size') : tr('크게 보기', 'Open large')} title={big ? tr('원래 크기로', 'Restore size') : tr('크게 보기 — 확대·가득 채우기', 'Open large — zoom and fill')} onClick={onBig}>{big ? <IconRestore /> : <IconMaximize />}</IconButton>
       </div>}

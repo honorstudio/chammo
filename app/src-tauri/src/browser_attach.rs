@@ -452,9 +452,9 @@ pub async fn project_browser_attach(dir: String) -> Result<BrowserLink, String> 
     tauri::async_runtime::spawn_blocking(move || attach_at(&d)).await.map_err(|e| e.to_string())?
 }
 
-/// 브라우저 안 붙은 프로젝트 이름(이름순) — git 저장소만(그냥 폴더는 프로젝트 일이 안 간다). linked = 그 폴더에 붙었나
+/// 브라우저 안 붙은 프로젝트 이름(이름순) — 프로젝트 폴더만(git 저장소나 하네스, 그냥 폴더는 프로젝트 일이 안 간다). linked = 그 폴더에 붙었나
 pub fn missing_in(dirs: &[(String, PathBuf)], linked: impl Fn(&Path) -> bool) -> Vec<String> {
-    let mut out: Vec<String> = dirs.iter().filter(|(_, p)| p.join(".git").exists() && !linked(p)).map(|(n, _)| n.clone()).collect();
+    let mut out: Vec<String> = dirs.iter().filter(|(_, p)| crate::project::is_project_dir(p) && !linked(p)).map(|(n, _)| n.clone()).collect();
     out.sort();
     out
 }
@@ -708,17 +708,18 @@ mod tests {
     }
 
     #[test]
-    fn 안_붙은_프로젝트는_git_저장소만_이름순() {
+    fn 안_붙은_프로젝트는_프로젝트_폴더만_이름순() {
         let d = std::env::temp_dir().join(format!("chammo-attach-miss-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
-        for n in ["shop", "blog", "notes", "ops"] {
+        for n in ["shop", "blog", "notes", "ops", "poster"] {
             std::fs::create_dir_all(d.join(n)).unwrap();
         }
         for n in ["shop", "blog", "ops"] {
-            std::fs::create_dir_all(d.join(n).join(".git")).unwrap(); // notes 는 저장소가 아닌 폴더
+            std::fs::create_dir_all(d.join(n).join(".git")).unwrap(); // notes 는 저장소도 하네스도 아닌 폴더
         }
-        let dirs: Vec<(String, PathBuf)> = ["shop", "notes", "ops", "blog"].iter().map(|n| (n.to_string(), d.join(n))).collect();
-        assert_eq!(missing_in(&dirs, |p| p.ends_with("ops")), vec!["blog".to_string(), "shop".to_string()]);
+        std::fs::write(d.join("poster/CLAUDE.md"), "# poster").unwrap(); // 깃 없는 프로젝트(ADR 0024)
+        let dirs: Vec<(String, PathBuf)> = ["shop", "notes", "ops", "blog", "poster"].iter().map(|n| (n.to_string(), d.join(n))).collect();
+        assert_eq!(missing_in(&dirs, |p| p.ends_with("ops")), vec!["blog".to_string(), "poster".to_string(), "shop".to_string()]);
         let _ = std::fs::remove_dir_all(&d);
     }
 

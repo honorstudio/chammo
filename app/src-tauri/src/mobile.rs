@@ -814,10 +814,24 @@ pub fn boot<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 const KEEP_FAST: Duration = Duration::from_secs(5);
 const KEEP_SLOW: Duration = Duration::from_secs(60);
 const KEEP_FAST_FOR: Duration = Duration::from_secs(120);
+/// 테일스케일이 안 깔린 컴퓨터 — 켜 둬도 테일넷 서버는 헛 재시도하지 않고(폰은 중계 길), 나중에 깔았나만 가끔 본다(11-01 사용자 정책)
+const KEEP_ABSENT: Duration = Duration::from_secs(600);
+
+/// 이 컴퓨터에 테일스케일이 깔려 있나 — CLI 가 없으면 테일넷 길(서버·serve)은 아예 안 본다
+pub(crate) fn tailscale_installed() -> bool {
+    tailscale_bin().is_some()
+}
+
+/// 테일스케일이 없을 때 화면에 남길 한 줄 — 오류가 아니라 중계 길 안내(계정이 있으면 화면이 안 띄운다)
+fn no_tailscale_note() -> String {
+    crate::i18n::tr("Chammo 계정에 로그인하면 폰이 어디서나 붙어요.", "Sign in to your Chammo account and your phone connects from anywhere.").to_string()
+}
 
 /// 살려 두기 고리가 바깥에 묻는 것 — 시험은 가짜로 갈아 끼운다
 pub(crate) trait Keep {
     fn on(&self) -> bool;
+    /// 테일스케일(CLI)이 깔려 있나 — 없으면 테일넷 서버를 켜 보지도 않는다
+    fn installed(&self) -> bool;
     /// 떠 있는 서버의 주소(없으면 안 떠 있음)
     fn running(&self) -> Option<Tailnet>;
     fn detect(&mut self) -> Option<Tailnet>;
@@ -841,6 +855,10 @@ pub(crate) fn keep_step(k: &mut impl Keep, st: &mut KeepState, now: std::time::I
     if !k.on() {
         *st = KeepState::default();
         return KEEP_SLOW;
+    }
+    if !k.installed() {
+        *st = KeepState::default();
+        return KEEP_ABSENT;
     }
     if let Some(cur) = k.running() {
         // 떠 있으면(설정 화면이 켰어도) 처음부터 — 다음에 같은 이유로 실패해도 다시 적는다
@@ -888,6 +906,13 @@ struct RealKeep<R: tauri::Runtime> {
 impl<R: tauri::Runtime> Keep for RealKeep<R> {
     fn on(&self) -> bool {
         !QUIT.load(Ordering::Relaxed) && saved_on(crate::config::data_dir())
+    }
+    fn installed(&self) -> bool {
+        let yes = tailscale_installed();
+        if !yes {
+            set_error(Some(no_tailscale_note()));
+        }
+        yes
     }
     fn running(&self) -> Option<Tailnet> {
         RUNNING.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|r| r.tailnet.clone())
@@ -973,8 +998,13 @@ fn status() -> MobileStatus {
 #[tauri::command]
 pub async fn mobile_status<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> MobileStatus {
     // 켜 뒀는데 안 떠 있으면(테일스케일이 늦게 떴다) 한 번 더 시도
+    // 테일스케일이 안 깔렸으면 묻지 않는다 — 화면이 5초마다 부르는데 그때마다 ps·CLI 찾기를 돌던 헛일(11-01)
     if saved_on(crate::config::data_dir()) && RUNNING.lock().unwrap().is_none() {
-        let _ = tauri::async_runtime::spawn_blocking(move || set_error(start(&app).err())).await;
+        if tailscale_installed() {
+            let _ = tauri::async_runtime::spawn_blocking(move || set_error(start(&app).err())).await;
+        } else {
+            set_error(Some(no_tailscale_note()));
+        }
     } else {
         // 상태를 물을 때도 funnel 을 다시 본다
         let _ = tauri::async_runtime::spawn_blocking(funnel_check).await;
@@ -986,7 +1016,10 @@ pub async fn mobile_status<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Mobil
 pub async fn mobile_set<R: tauri::Runtime>(app: tauri::AppHandle<R>, on: bool) -> Result<MobileStatus, String> {
     save_on(crate::config::data_dir(), on).map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
-        if on {
+        if on && !tailscale_installed() {
+            // 폰은 중계 길(계정)로 — 테일넷 서버는 없어도 오류가 아니다
+            set_error(Some(no_tailscale_note()));
+        } else if on {
             set_error(start(&app).err());
         } else {
             let _one = START.lock().unwrap_or_else(|e| e.into_inner());
@@ -1346,6 +1379,16 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
     fn direct_answer_by(&self, id: &str, pick: &crate::direct::Pick, by: &str) -> Result<(), String> {
         crate::direct::answer(id, pick, by)
     }
+    fn peer_unlink(&self, relay: &str) -> Result<(), String> {
+        crate::remote::forget_relay(relay)
+    }
+    fn peer_key_back(&self, relay: &str, name: &str, x: &str, token: &str) -> Result<(), String> {
+        crate::remote::store_relay_key(relay, token)?;
+        if x.is_empty() {
+            return Err("그 컴퓨터 터널 열쇠를 몰라요".into());
+        }
+        crate::remote::save_relay_peer(crate::config::data_dir(), relay, name, x).map_err(|e| e.to_string())
+    }
     fn logout_card(&self, from: &str) -> Result<String, String> {
         crate::direct::ask_account_logout(from)
     }
@@ -1430,10 +1473,16 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
         crate::team_ui::handoff_send(to, text, false).map(|name| serde_json::json!({ "to": name }))
     }
     fn team_invite(&self) -> Result<serde_json::Value, String> {
-        crate::team_ui::phone_job("invite", serde_json::json!({}))
+        crate::team_ui::phone_job("invite", "", serde_json::json!({}))
     }
-    fn team_create(&self, team: &str) -> Result<serde_json::Value, String> {
-        crate::team_ui::phone_job("create", serde_json::json!({ "team": team }))
+    fn team_create(&self, team: &str, me: &str) -> Result<serde_json::Value, String> {
+        crate::team_ui::phone_job("create", me, serde_json::json!({ "team": team }))
+    }
+    fn team_use(&self, team: &str) -> Result<serde_json::Value, String> {
+        crate::team_relay::use_team(crate::config::data_dir(), team).map(|st| crate::team_cmd::view(&st))
+    }
+    fn team_join(&self, code: &str, me: &str) -> Result<serde_json::Value, String> {
+        crate::team_ui::phone_job("join", me, serde_json::json!({ "code": code }))
     }
     fn team_profiles(&self, team: &str, seen: u64) -> Result<serde_json::Value, String> {
         // 데스크톱 useProfiles 와 같은 길 — 본 판이 있고 소켓이 새 판을 안 알렸으면 중계를 안 부른다(폰은 4초마다 묻는다)
@@ -1498,14 +1547,25 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
         crate::team_home_store::save_content(crate::config::data_dir(), &crate::team_relay_keys::store(), &crate::team_relay::Curl, team, block, c)?.spawn();
         Ok(())
     }
-    fn team_file_thumb(&self, team: &str, id: &str, size: u32) -> Result<Vec<u8>, String> {
+    fn team_file_thumb(&self, team: &str, id: &str, size: u32, only_at: Option<u64>) -> Result<Vec<u8>, String> {
         // 데스크톱 말풍선 썸네일과 같은 peek(50MB 까지, 데이터 폴더 team-locker-peek) — 그 방 열쇠가 없으면 여기서 막힌다
-        let p = crate::team_locker_app::peek(crate::config::data_dir(), &crate::team_relay_keys::store(), &crate::team_relay::Curl, team, id)?;
-        let out = match crate::mobile_files::kind_of(&p) {
-            crate::mobile_files::Kind::Image(_) | crate::mobile_files::Kind::Heic => self.jpeg(&p, Some(size)),
-            crate::mobile_files::Kind::Pdf => self.ql_thumb(&p, size),
-            _ => return Err("그림·PDF 만 썸네일".into()),
+        let p = match only_at {
+            // 팀 홈 줄 — 이미 풀어 둔 판만(내려받기를 일으키지 않는다)
+            Some(at) => crate::team_locker_app::peeked(crate::config::data_dir(), team, id, at).ok_or("아직 안 풀어 둔 파일")?,
+            None => crate::team_locker_app::peek(crate::config::data_dir(), &crate::team_relay_keys::store(), &crate::team_relay::Curl, team, id)?,
         };
+        // 그림은 sips, 첫 장(PDF·오피스·영상·ai·psd·hwpx — 11-01 넓힘)은 QuickLook
+        let image = match crate::mobile_files::kind_of(&p) {
+            crate::mobile_files::Kind::Image(_) | crate::mobile_files::Kind::Heic => true,
+            _ if crate::mobile_files::team_page(&p) => false,
+            _ => return Err("그림·첫 장 그릴 수 있는 문서만 썸네일".into()),
+        };
+        // 풀어 둔 파일 기준으로 캐시 — 폰이 대화를 다시 열 때마다 다시 그리지 않게
+        if let Some(hit) = self.thumb_get(&p, size) {
+            return hit.ok_or_else(|| "썸네일을 못 만들었어".into());
+        }
+        let out = if image { self.jpeg(&p, Some(size)) } else { self.ql_thumb(&p, size) };
+        self.thumb_put(&p, size, out.as_deref());
         out.ok_or_else(|| "썸네일을 못 만들었어".into())
     }
     fn team_file_image(&self, team: &str, id: &str, view: bool) -> Result<crate::mobile_http::TeamImage, String> {
@@ -1646,10 +1706,29 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
         crate::reader::save_attach(format!("phone.{ext}"), bytes.to_vec())
     }
     fn jpeg(&self, path: &Path, max: Option<u32>) -> Option<Vec<u8>> {
-        crate::mobile_files::sips_jpeg(path, max)
+        // 그림 바꾸기도 썸네일 문(동시에 둘)을 지난다 — 폰이 카드 여러 장을 한꺼번에 불러도 sips 가 줄줄이 안 뜨게
+        crate::thumbs::MAKERS.run(|| crate::mobile_files::sips_jpeg(path, max))
     }
     fn ql_thumb(&self, path: &Path, size: u32) -> Option<Vec<u8>> {
-        crate::mobile_files::ql_jpeg(path, size)
+        crate::thumbs::MAKERS.run(|| crate::mobile_files::ql_jpeg(path, size))
+    }
+    fn thumb_get(&self, src: &Path, size: u32) -> Option<Option<Vec<u8>>> {
+        let k = crate::thumbs::key(src, size)?;
+        match crate::thumbs::look(&crate::thumbs::dir(), &k, "jpg") {
+            crate::thumbs::Hit::Ready(p) => std::fs::read(p).ok().map(Some),
+            crate::thumbs::Hit::Failed => Some(None),
+            crate::thumbs::Hit::Miss(_) => None,
+        }
+    }
+    fn thumb_put(&self, src: &Path, size: u32, jpeg: Option<&[u8]>) {
+        let Some(k) = crate::thumbs::key(src, size) else { return };
+        let dir = crate::thumbs::dir();
+        match jpeg {
+            Some(b) => {
+                crate::thumbs::put(&dir, &k, "jpg", b);
+            }
+            None => crate::thumbs::mark_failed(&dir, &k),
+        }
     }
     fn avatars(&self) -> serde_json::Value {
         serde_json::to_value(crate::avatar::avatars_read()).unwrap_or_default()

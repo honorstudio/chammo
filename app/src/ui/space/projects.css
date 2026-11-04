@@ -1,0 +1,95 @@
+/* 보관함 '모든 프로젝트' 목록·프로젝트 화면(ProjectView) — 보관함 칸 모양(lk-*)을 그대로 쓰고 모자란 것만 */
+.pv-list, .pv-panel { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.pv-bar { display: flex; align-items: center; gap: 8px; }
+.pv-find { flex: 1; margin: 0; }
+.pv-group { display: flex; flex-direction: column; gap: 2px; }
+.pv-group .lk-sub { margin-bottom: 4px; }
+.pv-row { all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 10px; border-radius: 8px; font-size: 13px; }
+.pv-row:hover { background: var(--hover); }
+.pv-row:focus-visible { box-shadow: inset 0 0 0 var(--ring-w, 2px) var(--accent); }
+.pv-row b { flex: none; width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.pv-desc { flex: 1; min-width: 0; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pv-row em, .pv-done em { flex: none; font-style: normal; font-size: 11.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.pv-more { all: unset; cursor: pointer; align-self: flex-start; padding: 6px 10px; border-radius: 8px; font-size: 12.5px; color: var(--text-3); }
+.pv-more:hover { background: var(--hover); color: var(--text-2); }
+.pv-new { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px; border-radius: var(--cv-r, 10px); background: var(--panel); }
+.pv-new .lk-pop-find { margin: 0; width: 180px; }
+.pv-new .pv-sum { flex: 1; min-width: 160px; }
+.pv-err { flex-basis: 100%; font-size: 12.5px; color: var(--danger, #c4362f); }
+.pv-head { display: flex; align-items: center; gap: 8px; }
+.pv-head h2 { margin: 0; font-size: 18px; letter-spacing: -.2px; }
+.pv-blurb { margin: -8px 0 0; font-size: 13px; color: var(--text-2); }
+.pv-sec { display: flex; flex-direction: column; gap: 4px; }
+.pv-sec .lk-sub { margin-bottom: 4px; }
+.pv-now { padding: 12px 14px; border-radius: var(--cv-r, 10px); background: var(--panel); font-size: 13px; }
+.pv-now b { font-weight: 600; }
+.pv-now ul { margin: 6px 0 0; padding-left: 18px; color: var(--text-2); }
+.pv-sess { all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 10px; border-radius: 8px; font-size: 13px; }
+.pv-sess:hover:not(:disabled) { background: var(--hover); }
+.pv-sess b { flex: none; width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.pv-sess span:last-child { flex: 1; min-width: 0; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pv-done { display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 0 10px; font-size: 13px; }
+.pv-done em { width: 40px; }
+.pv-done span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pv-done i { flex: none; font-style: normal; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--text-2); padding: 1px 6px; border-radius: 5px; box-shadow: inset 0 0 0 1px var(--line); }
+@media (max-width: 560px) { .pv-row b, .pv-sess b { width: 120px; } }
+.pv-files { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; }
+
+/* 쉬운 화면(2026-11-01 시안 projects-friendly B + A 표지) — 표지·내 차례·진행 막대·이야기·입력칸. 강조는 옅은 면 색만(왼쪽 띠 없음) */
+.pf-cover { position: relative; flex: none; display: grid; place-items: center; overflow: hidden; border-radius: 11px; width: 44px; height: 44px; background: color-mix(in srgb, var(--pf-tone) 16%, var(--surface)); color: color-mix(in srgb, var(--pf-tone) 75%, var(--text)); }
+.pf-cover.pf-s { width: 28px; height: 28px; border-radius: 8px; }
+.pf-cover.pf-l { width: 56px; height: 56px; border-radius: 14px; }
+.pf-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pf-cover b { font-size: 17px; font-weight: 700; }
+.pf-cover.pf-s b { font-size: 12px; }
+.pf-cover.pf-l b { font-size: 22px; }
+.pf-mark { position: absolute; right: 2px; bottom: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--surface); display: grid; place-items: center; box-shadow: 0 0 0 1px var(--line); }
+.pf-mark .cv-spin { flex: none; width: 10px; height: 10px; }
+.pf-mark .cv-ask { flex: none; width: 7px; height: 7px; box-shadow: none; }
+.pf-t0 { --pf-tone: #2f74e0; } .pf-t1 { --pf-tone: #c98a00; } .pf-t2 { --pf-tone: #2f8f5a; }
+.pf-t3 { --pf-tone: #7a55c4; } .pf-t4 { --pf-tone: #c4572f; } .pf-t5 { --pf-tone: #5a6472; }
+.pf-row { all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 6px 8px; border-radius: 10px; }
+.pf-row:hover { background: var(--hover); }
+.pf-row:focus-visible, .pf-turn-head:focus-visible, .pf-chip:focus-visible { box-shadow: inset 0 0 0 var(--ring-w, 2px) var(--accent); }
+.pf-tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.pf-tx b { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pf-line { font-size: 12.5px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pf-prog { display: flex; gap: 3px; max-width: 200px; margin-top: 3px; }
+.pf-prog i { flex: 1; height: 5px; border-radius: 3px; background: var(--surface-2); }
+.pf-prog i.on { background: var(--working); }
+.pf-prog i.cur { background: linear-gradient(90deg, var(--working) 50%, color-mix(in srgb, var(--working) 30%, var(--surface)) 50%); }
+.pf-turn { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 14px; background: color-mix(in srgb, var(--blocked) 12%, var(--surface)); }
+.pf-turn + .pf-turn { margin-top: 8px; }
+.pf-turn-head { all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 10px; min-height: 36px; border-radius: 8px; }
+.pf-turn-head b { font-size: 13.5px; font-weight: 600; color: var(--text-2); }
+.pf-ask { border-radius: 10px; background: var(--surface); }
+.pf-stuck { display: flex; align-items: center; gap: 10px; font-size: 13.5px; }
+.pf-stuck span { flex: 1; min-width: 0; }
+.pf-stuck .cv-btn { background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); height: 36px; }
+.pf-head { display: flex; align-items: center; gap: 12px; }
+.pf-head-tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pf-head-tx h2 { margin: 0; font-size: 19px; letter-spacing: -.3px; }
+.pf-head-tx .pv-blurb { margin: 0; }
+.pf-story { position: relative; display: flex; flex-direction: column; gap: 14px; padding-left: 22px; }
+.pf-story::before { content: ""; position: absolute; left: 5px; top: 6px; bottom: 6px; width: 1.5px; background: var(--line); }
+.pf-story > .pv-more { margin-left: -12px; }
+.pf-ev { position: relative; display: flex; flex-direction: column; gap: 3px; font-size: 13.5px; }
+.pf-ev::before { content: ""; position: absolute; left: -21px; top: 3px; width: 9px; height: 9px; border-radius: 50%; background: var(--surface); box-shadow: inset 0 0 0 2px var(--line-strong); }
+.pf-ev em { font-style: normal; font-size: 11.5px; color: var(--text-3); }
+.pf-ev.now::before { background: var(--working); box-shadow: 0 0 0 4px color-mix(in srgb, var(--working) 18%, transparent); }
+.pf-ev.now b { font-weight: 600; color: var(--working); }
+.pf-comp { display: flex; flex-direction: column; gap: 4px; padding: 10px 10px 8px 12px; border-radius: 14px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.pf-comp textarea { all: unset; box-sizing: border-box; width: 100%; min-height: 40px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; }
+.pf-comp.big textarea { min-height: 84px; font-size: 15px; }
+.pf-comp textarea::placeholder { color: var(--text-3); }
+.pf-comp-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pf-note { font-size: 12px; color: var(--text-3); }
+.pf-first { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 18px; min-height: 420px; max-width: 520px; width: 100%; margin: 0 auto; }
+.pf-first-top { position: absolute; top: 0; right: 0; }
+.pf-first { position: relative; }
+.pf-first h2 { margin: 0; font-size: 22px; letter-spacing: -.4px; text-align: center; }
+.pf-ex { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.pf-chip { all: unset; cursor: pointer; padding: 9px 14px; min-height: 20px; border-radius: 20px; background: var(--panel); font-size: 13px; color: var(--text-2); }
+.pf-chip:hover { background: var(--hover); color: var(--text); }
+.pf-mark { --cv-ink-run: var(--working); --cv-ink-ask: var(--blocked); }
+.pf-ask .inbox-item { border: 0; padding: 10px 12px; }

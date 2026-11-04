@@ -2,7 +2,7 @@
 // waitingFor=permission prompt 인 세션만. 화면을 읽어 Allow 줄을 이름으로 찾고(domain/autoAllow) 키를 넣은 뒤, 풀렸는지 확인해 기록한다.
 // 선택지 질문(input needed)·비밀번호·2FA·결제 창은 건드리지 않는다 — 결정 대기함에 그대로 남는다
 import { useEffect, useRef } from 'react';
-import { listSessionsRaw, logAutoAllow, sendKeys, sessionScreen } from '../data/tauri';
+import { listSessionsRaw, logAutoAllow, permCardClose, permCardOpen, sendKeys, sessionScreen } from '../data/tauri';
 import { notifyOnce } from './notifier';
 import { leftWindow, pickAllow, retryAfter, skipPlan, type AllowOutcome } from '../domain/autoAllow';
 import { parseAgents, type Session } from '../domain/session';
@@ -20,6 +20,8 @@ const toldSkip = new Map<string, string>();
 /** 화면을 연달아 못 읽은 횟수 — 커서 못 찾음(한 번은 덜 그려진 화면일 수 있어 조용히 다시)·붙는 중 전환 화면(30초까지 조용히)을 따로 센다 */
 const misses = new Map<string, number>();
 const soons = new Map<string, number>();
+/** 회사 정책 아래 사람 카드를 띄운 세션 → 카드 id(ADR 0023). 창을 벗어나면 카드를 거둔다 */
+const carded = new Map<string, string>();
 /** 건너뛴 창 — 무슨 창이었는지 기록에 남긴다(마지막 구분선 아래 12줄, 300자). 왜 건너뛰었는지 나중에 볼 수 없었다 */
 const promptTail = (screen: string) => {
   const all = screen.split('\n');
@@ -30,7 +32,8 @@ const promptTail = (screen: string) => {
 
 const whereOf = (s: Session) => (s.workspace ? `${s.project} / ${s.workspace}` : s.project);
 
-export function useAutoAllow(sessions: Session[], devRoot: string | undefined, onLog: () => void) {
+/** policyBlocked = 회사 정책으로 바이패스가 막힌 기기(useOrgPolicy) — 그땐 누르지 않고 사람 카드로. false 면 예전과 똑같다 */
+export function useAutoAllow(sessions: Session[], devRoot: string | undefined, onLog: () => void, policyBlocked = false) {
   /** 세션 id → 다시 봐도 되는 때 (domain/autoAllow retryAfter) */
   const next = useRef(new Map<string, number>());
   const busy = useRef(false);
@@ -41,6 +44,7 @@ export function useAutoAllow(sessions: Session[], devRoot: string | undefined, o
       toldSkip.delete(id);
       misses.delete(id);
       soons.delete(id);
+      if (carded.delete(id)) void permCardClose(id).catch(() => {});
     }
     if (busy.current || !devRoot) return;
     const now = Date.now();
@@ -53,6 +57,29 @@ export function useAutoAllow(sessions: Session[], devRoot: string | undefined, o
     const log = (ev: object) => logAutoAllow({ ts: new Date().toISOString(), where: whereOf(s), ...ev }).then(onLog).catch(() => {});
     void (async () => {
       try {
+        if (policyBlocked) {
+          // 회사 정책 — 화면을 읽어 사람 카드(결정 대기함·채팅·폰). 같은 창이면 같은 카드, 누르는 건 사람이 고른 뒤 Rust 가 같은 창인지 보고
+          const id = await permCardOpen(s.id, s.cwd);
+          if (!id) {
+            // 카드로 못 읽는 창(번호 줄이 없는 창 등) — 조용히 두지 않고 예전처럼 '직접 골라야 하는 창'으로 알린다(채팅 선택지 버튼)
+            const why = tr('선택지 커서를 못 찾았어', "Couldn't find the option cursor");
+            const plan = skipPlan({ skip: why }, misses.get(s.id) ?? 0);
+            misses.set(s.id, (misses.get(s.id) ?? 0) + 1);
+            done(plan.outcome);
+            if (plan.tell && toldSkip.get(s.id) !== why) {
+              toldSkip.set(s.id, why);
+              notifyOnce({ kind: 'allowFail', session: s.id, orch: false, title: tr(`${whereOf(s)} — 직접 골라야 하는 창`, `${whereOf(s)} — needs your choice`), body: tr(`${why} — 그 세션 채팅을 열면 버튼으로 고를 수 있어`, `${why} — open that session's chat to choose`) });
+            }
+            return;
+          }
+          done('carded');
+          misses.delete(s.id);
+          if (carded.get(s.id) !== id) {
+            carded.set(s.id, id);
+            await log({ result: tr('회사 정책으로 직접 확인 요청', 'Asked a person, per company policy'), card: id });
+          }
+          return;
+        }
         const screen = await sessionScreen(s.id);
         const pick = pickAllow(screen);
         if ('skip' in pick) {
@@ -87,5 +114,5 @@ export function useAutoAllow(sessions: Session[], devRoot: string | undefined, o
         inFlight.delete(s.id);
       }
     })();
-  }, [sessions, devRoot, onLog]);
+  }, [sessions, devRoot, onLog, policyBlocked]);
 }

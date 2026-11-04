@@ -13,10 +13,15 @@ struct Ops {
     answers: Vec<(&'static str, u16, &'static str)>,
     /// call 이 이 오류로 실패(열쇠 끊김 "pair" 등)
     fail: Option<&'static str>,
+    /// 이 기기에 테일스케일이 안 깔림(remote::NO_TAILSCALE)
+    no_ts: bool,
 }
 
 impl PeerOps for Ops {
     fn devices(&self) -> Result<DevicesOut, String> {
+        if self.no_ts {
+            return Err(crate::remote::NO_TAILSCALE.into());
+        }
         Ok(DevicesOut { me: "laptop".into(), devices: vec![dev("nA", "office-imac", "connected"), dev("nB", "office-pc", "pair"), dev("nC", "office-mini", "offline")] })
     }
     fn pair(&self, id: &str, code: &str) -> Result<(), String> {
@@ -171,4 +176,17 @@ fn pe_열쇠가_없으면_코드_말고_연결로_안내() {
     let r = PeerReq { id: "r1".into(), verb: "say".into(), arg: serde_json::json!({ "verb": "say", "device": "office-pc", "text": "x", "cid": "c1" }) };
     let e = answer(&r, &ops)["error"].as_str().unwrap().to_string();
     assert!(e.contains("scripts/peer connect office-pc") && e.contains("허용"), "{e}");
+}
+
+// 11-01 사용자: 테일스케일 없이가 기본 — 안 깔린 기기에서 scripts/peer 는 테일스케일을 켜라 대신 중계 길(self-say)로 이어 준다
+#[test]
+fn 테일스케일이_없으면_self_say_로_안내하고_테일스케일을_권하지_않는다() {
+    let ops = Ops { no_ts: true, ..Default::default() };
+    for verb in ["list", "say"] {
+        let v = answer(&request(&line(serde_json::json!({ "verb": verb, "device": "office-imac", "text": "hi" }))).unwrap(), &ops);
+        let e = v["error"].as_str().unwrap_or("");
+        assert_eq!(v["ok"], false, "{verb}");
+        assert!(e.contains("scripts/team self-say"), "{verb}: {e}");
+        assert!(!e.contains("켜") && !e.contains("install"), "{verb}: 테일스케일을 켜라·깔아라 하지 않는다: {e}");
+    }
 }

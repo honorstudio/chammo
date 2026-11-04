@@ -108,14 +108,15 @@ async function worker() {
 
 /** 컴퓨터 화면을 받아 두고 연다. 컴퓨터가 꺼져 있으면 10초마다 다시 */
 async function open(link: RelayLink) {
-  screen('컴퓨터에 붙는 중', `${link.macName ?? '컴퓨터'} Chammo 화면을 받아 오고 있어요.`, [], true);
+  screen('연결하는 중', `${link.macName ?? '컴퓨터'} 화면을 불러오고 있어요`, [], true);
   try {
     await worker();
     await fetchShell(tunnelFor(link), link.relay);
     location.replace(homeUrl(location.search));
   } catch (e) {
     const off = e instanceof OfflineError;
-    screen(off ? '컴퓨터가 꺼져 있어요' : '못 붙었어요', off ? `${link.macName ?? '컴퓨터'} Chammo 가 켜지면 저절로 붙어요.` : (e as Error).message, [{ label: '다시', primary: true, run: () => void open(link) }]);
+    // 글은 소넷(11-04) — 망 오류(TypeError)는 속 글 대신 한 줄, 그 밖(서비스 워커 없음 등)은 할 일이 담긴 글 그대로
+    screen(off ? '아직 꺼져 있어요' : '연결하지 못했어요', off ? `${link.macName ?? '컴퓨터'}에서 Chammo 를 켜면 저절로 이어져요` : e instanceof TypeError ? '연결이 잠깐 끊겼어요. 다시 눌러 주세요' : (e as Error).message, [{ label: '다시', primary: true, run: () => void open(link) }]);
     if (off) setTimeout(() => void open(link), RETRY_MS);
   }
 }

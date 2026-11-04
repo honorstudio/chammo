@@ -111,12 +111,15 @@ impl Tunnels {
                 vec![Ev::Send(reply)]
             }
             Some(&DATA) => {
-                let Some(conn) = self.conns.get_mut(c).filter(|x| x.relay == from) else { return vec![Ev::Drop("no session".into())] };
+                // 세션을 모르거나 버릴 때는 그 연결에 RESET 한 바이트 — 폰이 끊고 새로 악수한다.
+                // 안 알리면 폰은 옛 세션으로 계속 보내고 중계는 살아 있어 끊지도 않았다(11-04 03:07 허브 다시 붙은 뒤 2분 먹통)
+                let reset = |why: String| vec![Ev::Drop(why), Ev::Send(vec![tun::RESET])];
+                let Some(conn) = self.conns.get_mut(c).filter(|x| x.relay == from) else { return reset("no session".into()) };
                 let pt = match conn.s.open(frame) {
                     Ok(pt) => pt,
                     Err(e) => {
                         self.conns.remove(c);
-                        return vec![Ev::Drop(format!("{e:?}"))];
+                        return reset(format!("{e:?}"));
                     }
                 };
                 match conn.take(&pt) {
@@ -124,7 +127,7 @@ impl Tunnels {
                     Ok(None) => vec![],
                     Err(e) => {
                         self.conns.remove(c);
-                        vec![Ev::Drop(e)]
+                        reset(e)
                     }
                 }
             }
@@ -213,9 +216,11 @@ fn text(status: u16, t: &str) -> Resp {
     Resp { status, headers: vec![("Content-Type", "text/plain; charset=utf-8".into())], body: t.as_bytes().to_vec() }
 }
 
-/// 터널에 없는 길 — 짝짓기는 두드리기로만, 연결 요청·다른 기기 참모 길은 테일넷 손님용
-fn blocked(path: &str) -> bool {
-    matches!(path, "/api/pair" | "/api/hello" | "/api/link-request" | "/api/link-status" | "/api/link-check" | "/api/peer-say" | "/api/peer-reply" | "/api/peer-human" | "/api/peer-direct-answer" | "/api/peer-locker")
+/// 터널에 없는 길 — 짝짓기는 두드리기로만, 테일넷 연결 요청 길은 늘 막고, 다른 기기 참모 길은 그 줄이 peer(중계로 짝지은 컴퓨터, C-3a)일 때만 연다.
+/// peer 줄이 부를 수 있는 길은 폰 서버가 peer 열쇠에 거는 문(peer_allowed)이 다시 좁힌다
+fn blocked(path: &str, peer: bool) -> bool {
+    matches!(path, "/api/pair" | "/api/hello" | "/api/link-request" | "/api/link-status" | "/api/link-check")
+        || (!peer && matches!(path, "/api/peer-say" | "/api/peer-reply" | "/api/peer-human" | "/api/peer-direct-answer" | "/api/peer-locker" | "/api/peer-logout-ask" | "/api/peer-key-back" | "/api/peer-unlink"))
 }
 
 /// 표(ticket)가 열쇠인 길 — iframe·소리·내려받기. 표는 이 폰이 자기 토큰으로 받은 것
@@ -226,7 +231,7 @@ fn ticket_path(path: &str) -> bool {
 /// 터널 요청 → 폰 서버 요청. Host·Origin 은 이쪽이 정하고, 같은 문(head_check)과 '토큰 기기 = 세션 기기'를 본다
 pub fn gate_req(t: &TReq, line: &str, gate: &Gate) -> Result<Req, Resp> {
     let (path, query) = t.path.split_once('?').map_or((t.path.as_str(), ""), |(p, q)| (p, q));
-    if blocked(path) {
+    if blocked(path, gate.devices.is_peer(line)) {
         return Err(text(404, "not found"));
     }
     let mut headers: Vec<(String, String)> = t.headers.clone();

@@ -26,13 +26,13 @@ def setUpModule():
     unittest.addModuleCleanup(p.stop)
 
 
-def fake_data(root, lang='ko'):
-    """데이터 폴더 흉내 — config.json + 앱이 풀어 둔 템플릿"""
+def fake_data(root, lang='ko', git=True):
+    """데이터 폴더 흉내 — config.json + 앱이 풀어 둔 템플릿. git = 설정 '코드 프로젝트에 git 쓰기'(features.git)"""
     data = pathlib.Path(root) / 'data'
     dev = pathlib.Path(root) / 'dev'
     dev.mkdir(parents=True)
     (data / 'templates/project' / lang / 'docs').mkdir(parents=True)
-    (data / 'config.json').write_text(json.dumps({'language': lang, 'devRoot': str(dev)}))
+    (data / 'config.json').write_text(json.dumps({'language': lang, 'devRoot': str(dev), 'features': {'git': git}}))
     t = data / 'templates/project' / lang
     (t / 'CLAUDE.md').write_text('# {{name}}\n\n{{summary}}\n')
     (t / 'docs/starter.md').write_text('{{name}} {{date}}\n')
@@ -70,6 +70,26 @@ class Create(unittest.TestCase):
             self.assertEqual((p / 'CLAUDE.md').read_text(), '# 내 규칙')
             self.assertTrue(out['existed'])
             self.assertIn('docs/starter.md', out['written'])
+
+    def test_깃을_안_쓰면_폴더와_하네스만(self):
+        # 깃은 선택(ADR 0024) — 디자인·문서 프로젝트에 원본이 커밋돼 .git 이 커졌다
+        with tempfile.TemporaryDirectory() as root:
+            data, dev = fake_data(root, git=False)
+            (data / 'templates/project/ko/CLAUDE.md').write_text('# {{name}}\n[git] 커밋은 작게\n[nogit] 이 프로젝트는 git 을 쓰지 않는다\n')
+            out = np.create('poster', '포스터', data=str(data), home=root, today='2026-11-02')
+            p = dev / 'poster'
+            self.assertFalse(out['git'])
+            self.assertFalse((p / '.git').exists())
+            self.assertFalse((p / '.gitignore').exists())
+            self.assertEqual((p / 'CLAUDE.md').read_text(), '# poster\n이 프로젝트는 git 을 쓰지 않는다\n')
+
+    def test_깃이면_깃_줄만(self):
+        with tempfile.TemporaryDirectory() as root:
+            data, dev = fake_data(root)
+            (data / 'templates/project/ko/CLAUDE.md').write_text('# {{name}}\n[git] 커밋은 작게\n[nogit] 이 프로젝트는 git 을 쓰지 않는다\n')
+            out = np.create('shop', '가게', data=str(data), home=root, today='2026-11-02', use_git=True)
+            self.assertTrue(out['git'])
+            self.assertEqual((dev / 'shop/CLAUDE.md').read_text(), '# shop\n커밋은 작게\n')
 
     def test_project_starter_스킬이_있으면_그걸_쓰라고_하고_템플릿은_안_깐다(self):
         with tempfile.TemporaryDirectory() as root:

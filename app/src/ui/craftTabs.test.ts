@@ -14,7 +14,7 @@ describe('Craft 탭은 독 아이콘만', () => {
   it('독 오른쪽 클릭에 따로 창·꺼내기·끄기·최근 문서', () => {
     const dock = space.slice(space.indexOf('myDock(lo.id).map((it'), space.indexOf('row.tabs.map'));
     expect(dock).toMatch(/따로 창으로/);
-    expect(dock).toMatch(/맥 앱으로 꺼내기/);
+    expect(dock).toMatch(/'앱으로 꺼내기/);
     expect(dock).toMatch(/끄기 — 바뀐 게 있으면 저장하고/);
   });
 });

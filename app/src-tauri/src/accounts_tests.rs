@@ -102,7 +102,7 @@ fn 추가_흐름_지금_로그인_보관_뒤_새_로그인_보관() {
     assert!(created);
     assert_eq!((id.as_str(), pool.current.as_deref()), ("a1", Some("a1")));
     assert_eq!(pool.accounts[0].name, "a"); // 이름 없으면 이메일 앞부분
-    assert_eq!(pool.accounts[0].plan, "Max 20x");
+    assert_eq!(pool.accounts[0].plan, "Ultra");
     assert_eq!(e.slot("a1").as_deref(), Some("tokA"));
     // 앱 안 터미널에서 claude auth login → 새 계정
     e.login("b", "default_claude_max_5x", "tokB");
@@ -332,8 +332,56 @@ fn 목록_파일에_토큰이_없다() {
 #[test]
 fn 요금제_이름과_순서() {
     assert_eq!(plan_of(&json!({ "organizationRateLimitTier": "default_claude_max_5x" })), ("Max 5x".into(), 2));
-    assert_eq!(plan_of(&json!({ "organizationRateLimitTier": "default_claude_max_20x" })), ("Max 20x".into(), 3));
-    assert_eq!(plan_of(&json!({})).1, 4);
+    // 2026-11 Max 20x → Ultra 로 이름이 바뀌었다(등급 글자는 그대로 max_20x)
+    assert_eq!(plan_of(&json!({ "organizationRateLimitTier": "default_claude_max_20x" })), ("Ultra".into(), 3));
+    assert_eq!(plan_of(&json!({ "organizationRateLimitTier": "default_claude_pro" })), ("Pro".into(), 1));
+    assert_eq!(plan_of(&json!({})), ("".into(), 4));
+}
+
+#[test]
+fn 요금제_이름은_claude_가_받은_이름이_먼저() {
+    // Claude Code 가 프로필(organization.plan_display_name)에서 받아 oauthAccount.planDisplayName 에 적는다 — 이름이 또 바뀌어도 손 안 댄다
+    let o = json!({ "organizationRateLimitTier": "default_claude_max_20x", "planDisplayName": "Ultra" });
+    assert_eq!(plan_of(&o), ("Ultra".into(), 3));
+    let o = json!({ "organizationRateLimitTier": "default_claude_max_5x", "planDisplayName": "Max Plus" });
+    assert_eq!(plan_of(&o), ("Max Plus".into(), 2));
+    // 이상한 값(빈 글·너무 김·줄바꿈·태그)은 Claude Code 처럼 버리고 등급 표로
+    for bad in ["", " ", "<b>x</b>", "a\nb", &"x".repeat(41)] {
+        let o = json!({ "organizationRateLimitTier": "default_claude_max_20x", "planDisplayName": bad });
+        assert_eq!(plan_of(&o).0, "Ultra", "{bad:?}");
+    }
+    assert_eq!(plan_of(&json!({ "planDisplayName": 7 })).0, "");
+}
+
+#[test]
+fn 모르는_등급은_읽을_모양으로() {
+    assert_eq!(plan_of(&json!({ "organizationRateLimitTier": "default_claude_max_40x" })), ("Max 40x".into(), 4));
+    assert_eq!(plan_of(&json!({ "organizationRateLimitTier": "default_claude_team_premium" })).0, "Team Premium");
+    assert_eq!(plan_of(&json!({ "userRateLimitTier": "enterprise" })).0, "Enterprise");
+}
+
+#[test]
+fn 지금_로그인의_요금제_이름을_같은_계정_칸에_옮긴다() {
+    let e = Env::two("planname");
+    // 지금은 B(5x). Claude Code 가 프로필을 다시 읽어 이름을 적었다
+    let mut o = oauth("b", "default_claude_max_5x");
+    o["planDisplayName"] = json!("Max Plus");
+    merge_oauth(&e.live.claude_json, &o).unwrap();
+    let mut p = e.pool();
+    reconcile(&e.store, &e.live, &e.list, &mut p).unwrap();
+    let b = p.accounts.iter().find(|a| a.id == "a2").unwrap();
+    assert_eq!((b.plan.as_str(), b.oauth["planDisplayName"].as_str()), ("Max Plus", Some("Max Plus")));
+    // 다른 칸은 그대로 · 파일에도 남는다
+    assert_eq!(p.accounts.iter().find(|a| a.id == "a1").unwrap().oauth.get("planDisplayName"), None);
+    assert_eq!(e.pool().accounts.iter().find(|a| a.id == "a2").unwrap().plan, "Max Plus");
+}
+
+#[test]
+fn 옛_기록의_요금제_이름도_읽을_때_새_이름() {
+    let mut p = Pool { accounts: vec![Account { id: "a1".into(), plan: "Max 20x".into(), oauth: oauth("a", "default_claude_max_20x"), ..Default::default() }], ..Default::default() };
+    assert!(refresh_plans(&mut p, None));
+    assert_eq!(p.accounts[0].plan, "Ultra");
+    assert!(!refresh_plans(&mut p, None), "두 번째엔 바뀐 게 없다");
 }
 
 #[test]

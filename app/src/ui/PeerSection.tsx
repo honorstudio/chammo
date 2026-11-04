@@ -29,11 +29,14 @@ export function PeerSection({ title }: { title: string }) {
   const [accts, setAccts] = useState<Record<string, HereAccount[] | undefined>>({});
   const [mine, setMine] = useState('');
   const [note, setNote] = useState<string | null>(null);
+  // 이 컴퓨터에 테일스케일이 없다(Rust remote::NO_TAILSCALE) — 오류가 아니라 이 덤 칸을 안 쓰는 것(11-01)
+  const [noTs, setNoTs] = useState(false);
   useEffect(() => { void teamStatus().then((v) => setMine(v.account?.email ?? ''), () => {}); }, []);
   const load = () => {
     setBusy(true);
     void remoteDevices().then((o) => {
       setList(o.devices);
+      setNoTs(false);
       setErr(null);
       for (const d of o.devices.filter((x) => x.status === 'connected')) {
         const api = remoteApi(d.id);
@@ -42,7 +45,12 @@ export function PeerSection({ title }: { title: string }) {
           setAccts((m) => ({ ...m, [d.id]: env.chammoAccounts }));
         }, () => {});
       }
-    }, (e: unknown) => { setList([]); setErr(String(e)); }).finally(() => setBusy(false));
+    }, (e: unknown) => {
+      setList([]);
+      const m = String(e);
+      setNoTs(m.includes('no-tailscale'));
+      setErr(m.includes('no-tailscale') ? null : m);
+    }).finally(() => setBusy(false));
   };
   const chat = (d: RemoteDevice, a: RemoteAssistant) => {
     const detail: RemoteChatTarget = { dev: d.id, devName: d.name, agent: a.id, name: a.name || a.id };
@@ -123,7 +131,8 @@ export function PeerSection({ title }: { title: string }) {
             </div>
           );
         })}
-        {list && list.length === 0 && !err && <span className="su-hint">{tr('같은 계정에 참모가 있는 다른 기기가 없어요', 'No other device with Chammo on this account')}</span>}
+        {noTs && <span className="su-hint">{tr('이 컴퓨터엔 테일스케일이 없어요.', "This computer doesn't have Tailscale.")}</span>}
+        {list && list.length === 0 && !err && !noTs && <span className="su-hint">{tr('같은 계정에 참모가 있는 다른 기기가 없어요', 'No other device with Chammo on this account')}</span>}
         {!list && <span className="su-hint">{tr('찾는 중…', 'Looking…')}</span>}
       </div>
       {note && <span className="su-hint">{note}</span>}

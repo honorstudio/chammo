@@ -134,3 +134,15 @@ fn 팀_홈_글은_한_번에_같이_받는다() {
     let read = &read[..read.find("\n}\n").unwrap()];
     assert!(read.contains("bytes_many("), "글 본문을 하나씩(bytes_of) 차례로 받지 않는다");
 }
+
+#[test]
+fn 열쇠를_기다리는_글_수를_센다() {
+    // 11-02 새 팀원 기기 — 이 기기 몫 봉투가 아직 없어 못 연 글(why)이 '아직 글이 없어요'로 보였다
+    let lock = |id: &str| Item { why: "열쇠 없음".into(), ..item(id, "m1", 1) };
+    let gone = Item { deleted_at: Some(5), ..lock("aaaaaaaaaaaaaaaa4") };
+    let trash = Item { state: "trash".into(), ..lock("aaaaaaaaaaaaaaaa5") };
+    let file = Item { kind: "file".into(), ..lock("aaaaaaaaaaaaaaaa6") };
+    let items = vec![item("aaaaaaaaaaaaaaaa1", "m1", 1), lock("aaaaaaaaaaaaaaaa2"), lock("aaaaaaaaaaaaaaaa3"), gone, trash, file];
+    assert_eq!(locked_posts(&items), 2, "살아 있는 글 중 못 연 것만 — 지운 글·휴지통·파일·열린 글은 빼고");
+    assert_eq!(locked_posts(&[item("aaaaaaaaaaaaaaaa1", "m1", 1)]), 0);
+}

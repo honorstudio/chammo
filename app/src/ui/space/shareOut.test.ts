@@ -11,13 +11,13 @@ import reveal from '../../../src-tauri/src/locker_fs.rs?raw';
 const bar = tab.slice(tab.indexOf('cv-doc-bar'), tab.indexOf('ft-body'));
 
 describe('스페이스 미리보기 머리줄', () => {
-  it("'파인더에서 보기' 아이콘 단추 — 글자 단추가 아니라 IconReveal + 이름(aria-label·title)", () => {
-    expect(bar).toMatch(/<IconButton label=\{tr\('파인더에서 보기', 'Show in Finder'\)\}.*?><IconReveal \/><\/IconButton>/);
+  it("'폴더에서 보기' 아이콘 단추 — 글자 단추가 아니라 IconReveal + 이름(aria-label·title)", () => {
+    expect(bar).toMatch(/<IconButton label=\{tr\('폴더에서 보기', 'Show in folder'\)\}.*?><IconReveal \/><\/IconButton>/);
     expect(icons).toMatch(/export const IconReveal = \(\) =>/);
   });
   it('누르면 보관함과 같은 locker_reveal(lockerApi.reveal) — 팀 파일(데이터 폴더 평문)엔 안 단다(내려받기 몫)', () => {
     expect(bar).toMatch(/lockerApi\.reveal\(path\)/);
-    expect(bar).toMatch(/\{!isTeamCache\(path\) && <IconButton label=\{tr\('파인더에서 보기'/);
+    expect(bar).toMatch(/\{!isTeamCache\(path\) && <IconButton label=\{tr\('폴더에서 보기'/);
   });
   it('경로 줄을 끌면 바깥으로(dragOut) — 그림도 칸이 안 넘칠 때(넘치면 끌어서 이동 몫)', () => {
     expect(bar).toMatch(/className="cv-path"[^>]*\{\.\.\.dragOut\(path\)\}/);
@@ -31,8 +31,8 @@ describe('크게 보기(모달) 머리줄 — 참모 없이 show 로 떠도 같�
   it('파일 이름을 끌면 바깥으로(dragOut) — 주소·붙인 그림은 아님', () => {
     expect(head).toMatch(/<b \{\.\.\.\(file \? dragOut\(f\.path\) : \{\}\)\}/);
   });
-  it("'파인더에서 보기' 아이콘 단추 — 같은 lockerApi.reveal", () => {
-    expect(head).toMatch(/\{file && <button className="pv-ic" onClick=\{\(\) => void lockerApi\.reveal\(f\.path\)\.catch\(\(\) => \{\}\)\}[^>]*aria-label=\{tr\('파인더에서 보기', 'Show in Finder'\)\}><IconReveal \/><\/button>\}/);
+  it("'폴더에서 보기' 아이콘 단추 — 같은 lockerApi.reveal", () => {
+    expect(head).toMatch(/\{file && <button className="pv-ic" onClick=\{\(\) => void lockerApi\.reveal\(f\.path\)\.catch\(\(\) => \{\}\)\}[^>]*aria-label=\{tr\('폴더에서 보기', 'Show in folder'\)\}><IconReveal \/><\/button>\}/);
   });
 });
 
@@ -40,9 +40,9 @@ describe('채팅 파일 카드', () => {
   it('끌면 바깥으로(dragOut)', () => {
     expect(card).toMatch(/\{\.\.\.dragOut\(f\.path\)\}/);
   });
-  it("오른쪽 클릭 메뉴에 '파인더에서 보기' — 보관함 메뉴와 같은 글·같은 명령", () => {
+  it("오른쪽 클릭 메뉴에 '폴더에서 보기' — 보관함 메뉴와 같은 글·같은 명령", () => {
     expect(card).toMatch(/onContextMenu=/);
-    expect(card).toMatch(/tr\('파인더에서 보기', 'Show in Finder'\)/);
+    expect(card).toMatch(/tr\('폴더에서 보기', 'Show in folder'\)/);
     expect(card).toMatch(/lockerApi\.reveal\(f\.path\)/);
   });
   it('썸네일은 웹뷰 그림 끌기를 안 시작한다(우리 끌기를 가로채 pointercancel)', () => {

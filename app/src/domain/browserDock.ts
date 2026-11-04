@@ -1,7 +1,7 @@
 // 세션 브라우저 독(2026-10-27 인앱 브라우저 시안 A) — 스페이스 탭 줄에 그 참모가 맡은 세션들의 브라우저가 아이콘 하나씩(Craft 독처럼, 세션 글자 배지).
 // 누르면 스페이스 칸 전체가 그 브라우저(b:<프로필>), 칸을 닫아도(숨김) 아이콘은 남는다 — 브라우저를 끄는 건 참모·세션
 import { josa, tr } from '../i18n';
-import { takeoverLine, type Live } from './agentBrowser';
+import { ACTIVE_MS, takeoverLine, type Live } from './agentBrowser';
 
 export type BrowserDot = 'ask' | 'human' | 'agent' | '';
 /** who = 세션이 안 쥔 HQ 브라우저(hqBrowserHome) — 사람이 서랍에서 연 것(me)·주인 모름(unknown). 보는 참모 이름을 달지 않는다 */
@@ -99,6 +99,12 @@ export function turnCard(l: Live, t: { dialog: { type: string; message: string }
  *  모달은 사람이 만지는 중일 때 꺼내지만(peekStep active) 이때는 패스키 말고 할 일이 없어 바로. 사람이 고른 구글 크롬은 단추로 */
 export function signedAutoPeek(mac?: SignedState): boolean {
   return !!mac?.signed && !!mac.auto;
+}
+
+/** 칸이 크롬 자체 창을 저절로 꺼낼까 — 사람이 알림·카드·칸 단추로 막(30초 안) 이 브라우저를 불렀거나(2026-11-02 사용자: 알림 → '화면 받는 중' → 작은 단추를 찾아야 했다),
+ *  래퍼가 패스키 때문에 구글 크롬으로 바꾼 동안(signedAutoPeek). 세션 혼자 돌다 뜬 창은 안 꺼낸다(카드) */
+export function paneWantsPeek(x: { pressedAt: number | undefined; now: number; mac?: SignedState }): boolean {
+  return signedAutoPeek(x.mac) || (x.pressedAt != null && x.now - x.pressedAt < ACTIVE_MS);
 }
 
 /** 구글 크롬으로 바꿔 둔 동안 칸 한 줄(2026-10-29 패스키 자동) — 래퍼가 패스키를 보고 스스로 바꿨으면(auto) 까닭을, 사람이 고른 것이면 지금 상태를. 옆에 돌아오기 단추 */

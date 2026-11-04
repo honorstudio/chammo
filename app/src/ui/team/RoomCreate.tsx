@@ -1,9 +1,11 @@
 // 단톡방 만들기·바꾸기(시안 msg-rooms R) — 이름 + 팀 사람 고르기. 나는 늘 들어간다. 바꾸기는 지금 방 사람을 체크해 둔 채로 연다
-import { useState } from 'react';
+import { useContext, useMemo, useState } from 'react';
 import { teamRoomNew, teamRoomSet } from '../../data/teamApi';
 import { personColor } from '../../domain/teamChat';
+import { lookNames } from '../../domain/teamProfile';
 import { tr } from '../../i18n';
 import { PersonOf } from './TeamFaces';
+import { ProfilesCtx } from './useProfiles';
 import './team.css';
 
 type M = { id: string; name: string; me: boolean };
@@ -19,7 +21,9 @@ export function RoomCreate({ team, members, room, onDone, onCancel, make = teamR
   make?: typeof teamRoomNew;
   set?: typeof teamRoomSet;
 }) {
-  const others = members.filter((m) => !m.me);
+  // 고를 사람 이름은 프로필 이름(lookNames), 색은 계정 이름 — 별명을 바꿔도 사람 색은 그대로
+  const { board } = useContext(ProfilesCtx);
+  const others = useMemo(() => lookNames(members.filter((m) => !m.me), board), [members, board]);
   const [name, setName] = useState(room?.name ?? '');
   const [picked, setPicked] = useState<Set<string>>(() => new Set(room ? room.members : []));
   const [busy, setBusy] = useState(false);
@@ -45,7 +49,7 @@ export function RoomCreate({ team, members, room, onDone, onCancel, make = teamR
         {others.map((m) => (
           <label key={m.id}>
             <input type="checkbox" checked={picked.has(m.id)} onChange={() => toggle(m.id)} />
-            <PersonOf member={m.id} name={m.name} color={personColor(m.name)} size={24} />
+            <PersonOf member={m.id} name={m.account} color={personColor(m.account)} size={24} />
             <span>{m.name}</span>
           </label>
         ))}

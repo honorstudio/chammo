@@ -53,9 +53,9 @@ fn peer(id: &str, online: bool) -> TsPeer {
 #[test]
 fn md3_기기_칸_상태_합치기() {
     let saved = vec![
-        Saved { id: "nA".into(), name: "A".into(), ip: "100.64.0.1".parse().unwrap(), port: 47123, paired_at: 1, last_ok: Some(5) },
-        Saved { id: "nGONE".into(), name: "옛 PC".into(), ip: "100.64.0.2".parse().unwrap(), port: 47123, paired_at: 1, last_ok: Some(3) },
-        Saved { id: "nB".into(), name: "B".into(), ip: "100.64.0.3".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None },
+        Saved { id: "nA".into(), name: "A".into(), ip: "100.64.0.1".parse().unwrap(), port: 47123, paired_at: 1, last_ok: Some(5), relay_x: None },
+        Saved { id: "nGONE".into(), name: "옛 PC".into(), ip: "100.64.0.2".parse().unwrap(), port: 47123, paired_at: 1, last_ok: Some(3), relay_x: None },
+        Saved { id: "nB".into(), name: "B".into(), ip: "100.64.0.3".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None, relay_x: None },
     ];
     let peers = vec![peer("nA", true), peer("nB", true), peer("nNEW", true), peer("nOLD", true), peer("nNONE", true)];
     let probe = |id: &str| match id {
@@ -78,7 +78,7 @@ fn md3_기기_칸_상태_합치기() {
 
 #[test]
 fn md3_기기가_꺼지면_offline_짝지은_적_없으면_안_보인다() {
-    let saved = vec![Saved { id: "nA".into(), name: "A".into(), ip: "100.64.0.1".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None }];
+    let saved = vec![Saved { id: "nA".into(), name: "A".into(), ip: "100.64.0.1".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None, relay_x: None }];
     let v = merge(&[peer("nA", false), peer("nX", false)], &saved, |_| Probe { hello: Presence::Absent, auth: None });
     assert_eq!(v.iter().map(|d| (d.id.as_str(), d.status)).collect::<Vec<_>>(), [("nA", "offline")]);
 }
@@ -190,7 +190,7 @@ fn md3_대신_보내기는_열쇠를_붙이고_401이면_짝짓기_필요() {
     let dir = tmp("call");
     let kc = Fake::default();
     kc.put(SERVICE, "nBOX", TOK);
-    save(&dir, &[Saved { id: "nBOX".into(), name: "B".into(), ip: "100.64.0.9".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None }]).unwrap();
+    save(&dir, &[Saved { id: "nBOX".into(), name: "B".into(), ip: "100.64.0.9".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None, relay_x: None }]).unwrap();
     let saw = RefCell::new(None);
     let here = Some("100.64.0.9".parse().unwrap());
     let out = call(&kc, &dir, "nBOX", here, "GET", "/api/sessions", None, &|t: &Target, r: &Request, _: Duration, _: usize| {
@@ -223,7 +223,7 @@ fn 대신_보내는_사이_새로_이은_기기_줄이_안_사라진다() {
     let dir = tmp("call-race");
     let kc = Fake::default();
     kc.put(SERVICE, "nBOX", TOK);
-    save(&dir, &[Saved { id: "nBOX".into(), name: "B".into(), ip: "100.64.0.9".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None }]).unwrap();
+    save(&dir, &[Saved { id: "nBOX".into(), name: "B".into(), ip: "100.64.0.9".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None, relay_x: None }]).unwrap();
     let here = Some("100.64.0.9".parse().unwrap());
     call(&kc, &dir, "nBOX", here, "GET", "/api/sessions", None, &|_: &Target, _: &Request, _: Duration, _: usize| {
         upsert_saved(&dir, "nNEW", "새 기기", "100.64.0.10".parse().unwrap()).unwrap(); // 망을 기다리는 사이 다른 연결이 끝남
@@ -240,7 +240,7 @@ fn md3_끊기는_키체인과_목록에서_둘_다() {
     let dir = tmp("unpair");
     let kc = Fake::default();
     kc.put(SERVICE, "nBOX", TOK);
-    save(&dir, &[Saved { id: "nBOX".into(), name: "B".into(), ip: "100.64.0.9".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None }]).unwrap();
+    save(&dir, &[Saved { id: "nBOX".into(), name: "B".into(), ip: "100.64.0.9".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None, relay_x: None }]).unwrap();
     unpair(&kc, &dir, "nBOX").unwrap();
     assert!(kc.val(SERVICE, "nBOX").is_none());
     assert!(load(&dir).is_empty());
@@ -252,7 +252,7 @@ fn md3_열쇠는_지금_테일넷에서_그_노드의_주소로만() {
     let dir = tmp("ip");
     let kc = Fake::default();
     kc.put(SERVICE, "nBOX", TOK);
-    save(&dir, &[Saved { id: "nBOX".into(), name: "B".into(), ip: "100.64.0.9".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None }]).unwrap();
+    save(&dir, &[Saved { id: "nBOX".into(), name: "B".into(), ip: "100.64.0.9".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None, relay_x: None }]).unwrap();
     let never = |_: &Target, _: &Request, _: Duration, _: usize| -> Result<Response, NetErr> { panic!("보내면 안 된다") };
     let e = call(&kc, &dir, "nBOX", None, "GET", "/api/sessions", None, &never).unwrap_err();
     assert!(e.contains("테일넷"), "{e}");
@@ -568,7 +568,7 @@ fn hu_사람_길은_참모_길로는_못_간다() {
     let dir = tmp("human");
     let kc = Fake::default();
     kc.put(SERVICE, "nBOX", TOK);
-    save(&dir, &[Saved { id: "nBOX".into(), name: "B".into(), ip: "100.64.0.9".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None }]).unwrap();
+    save(&dir, &[Saved { id: "nBOX".into(), name: "B".into(), ip: "100.64.0.9".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None, relay_x: None }]).unwrap();
     let here = Some("100.64.0.9".parse().unwrap());
     let never = |_: &Target, _: &Request, _: Duration, _: usize| -> Result<Response, NetErr> { panic!("보내면 안 된다") };
     assert!(call(&kc, &dir, "nBOX", here, "POST", "/api/peer-human", Some("{}"), &never).is_err());
@@ -644,3 +644,96 @@ fn hu_실측_사람_길_한_바퀴() {
     eprintln!("⑥ 같은 cid 다시 → {}", st(call_human(&kc, &dir, &peer.id, here, "/api/peer-direct-answer", &ans, &send)));
 }
 
+
+// 컴퓨터끼리 중계(C-4) — 중계로 짝지은 줄은 id 가 relay:<중계 기기 id>, 열쇠도 그 이름 칸(peer-key-back·짝짓기와 같은 칸). 부르는 길은 테일넷과 같은 문
+#[test]
+fn 중계_줄은_relay_id_칸의_열쇠로_같은_문을_지나간다() {
+    let dir = tmp("relay-call");
+    let kc = Fake::default();
+    kc.put(SERVICE, &relay_key_account("dev-a"), TOK);
+    save(&dir, &[Saved { id: "relay:dev-a".into(), name: "사무실 아이맥".into(), ip: std::net::Ipv4Addr::UNSPECIFIED, port: 0, paired_at: 1, last_ok: None, relay_x: Some("X".into()) }]).unwrap();
+    let saw = RefCell::new(None);
+    let out = call(&kc, &dir, "relay:dev-a", Some(std::net::Ipv4Addr::UNSPECIFIED), "GET", "/api/sessions", None, &|_: &Target, r: &Request, _: Duration, _: usize| {
+        *saw.borrow_mut() = r.token.map(str::to_string);
+        ok(200, "[]")
+    })
+    .unwrap();
+    assert_eq!(out.status, 200);
+    assert_eq!(saw.borrow().clone(), Some(TOK.to_string()));
+    assert_eq!(relay_key_account("dev-a"), "relay:dev-a");
+    // 허용 안 한 길은 중계 줄도 안 보낸다
+    let never = |_: &Target, _: &Request, _: Duration, _: usize| -> Result<Response, NetErr> { panic!("보내면 안 된다") };
+    assert!(call(&kc, &dir, "relay:dev-a", Some(std::net::Ipv4Addr::UNSPECIFIED), "GET", "/api/file?path=/x", None, &never).is_err());
+}
+
+#[test]
+fn 중계로_이은_컴퓨터는_기기_목록에_연결됨으로() {
+    let s = |id: &str, x: Option<&str>| Saved { id: id.into(), name: "아이맥".into(), ip: std::net::Ipv4Addr::UNSPECIFIED, port: 0, paired_at: 1, last_ok: Some(9), relay_x: x.map(str::to_string) };
+    let v = relay_views(&[s("relay:dev-a", Some("X")), s("nTAIL", None), s("relay:dev-b", None)]);
+    assert_eq!(v.len(), 1);
+    assert_eq!((v[0].id.as_str(), v[0].status, v[0].paired), ("relay:dev-a", "connected", true));
+}
+
+// C-5 실측(11-01) ① — 반대 방향 열쇠를 받은 쪽(A)도 목록에 그 컴퓨터를 넣어야 A 에서 B 를 부른다
+#[test]
+fn 반대_방향_열쇠를_받은_쪽도_목록에_중계_줄() {
+    let dir = tmp("keyback-save");
+    save_relay_peer(&dir, "dev-b", "집 맥북\u{7}", "XB").unwrap();
+    let l = load(&dir);
+    assert_eq!(l.len(), 1);
+    assert_eq!((l[0].id.as_str(), l[0].name.as_str(), l[0].relay_x.as_deref()), ("relay:dev-b", "집 맥북", Some("XB")));
+    assert_eq!(relay_views(&l).len(), 1);
+    // 다시 받으면 줄은 하나
+    save_relay_peer(&dir, "dev-b", "집 맥북", "XB2").unwrap();
+    assert_eq!(load(&dir).len(), 1);
+    assert_eq!(load(&dir)[0].relay_x.as_deref(), Some("XB2"));
+}
+
+// C-5 실측 ② — 끊기를 상대에게도 알린다(전엔 B 쪽만 지워 A 에 줄·열쇠가 찌꺼기로 남았다). 알리기는 되는 만큼만, 이 쪽은 늘 지운다
+#[test]
+fn 중계_줄_끊기는_상대에게_알리고_이쪽을_지운다() {
+    let dir = tmp("relay-unlink");
+    let kc = Fake::default();
+    kc.put(SERVICE, "relay:dev-a", TOK);
+    save_relay_peer(&dir, "dev-a", "아이맥", "XA").unwrap();
+    let lines = crate::mobile_pair::Devices::memory();
+    lines.add_peer_relay(&"e".repeat(64), "아이맥", crate::mobile_pair::Relay { device: "dev-a".into(), x: "XA".into() }, std::time::SystemTime::now()).unwrap();
+    let saw = RefCell::new(vec![]);
+    relay_unlink(&kc, &dir, &lines, "relay:dev-a", &|_: &Target, r: &Request, _: Duration, _: usize| {
+        saw.borrow_mut().push((r.method.to_string(), r.path.to_string(), r.token.map(str::to_string)));
+        ok(200, "{\"ok\":true}")
+    })
+    .unwrap();
+    assert_eq!(saw.borrow().clone(), vec![("POST".to_string(), "/api/peer-unlink".to_string(), Some(TOK.to_string()))]);
+    assert!(load(&dir).is_empty(), "목록 줄 지움");
+    assert!(lines.relay_peer_line("dev-a").is_none(), "그쪽이 이쪽을 부르던 줄도 지움");
+    // 상대가 꺼져 있어도 이쪽은 지운다
+    save_relay_peer(&dir, "dev-a", "아이맥", "XA").unwrap();
+    kc.put(SERVICE, "relay:dev-a", TOK);
+    relay_unlink(&kc, &dir, &lines, "relay:dev-a", &|_: &Target, _: &Request, _: Duration, _: usize| Err(NetErr::Refused)).unwrap();
+    assert!(load(&dir).is_empty());
+}
+
+// C-5 실측 ③ — 같은 컴퓨터가 테일넷 옛 줄(꺼짐·짝짓기 필요)과 중계 줄(연결됨)로 두 번 나오면 중계 줄 하나만
+#[test]
+fn 같은_이름의_안_닿는_테일넷_줄은_중계_줄에_합친다() {
+    let v = |id: &str, name: &str, status: &'static str| DeviceView { id: id.into(), name: name.into(), os: String::new(), status, paired: true, old: false, link: true, version: None, last_ok: None };
+    let tail = vec![v("nOLD", "Laptop-B", "offline"), v("nPC", "DESKTOP", "connected"), v("nLIVE", "아이맥", "connected")];
+    let relay = vec![v("relay:a", "Laptop-B", "connected"), v("relay:b", "아이맥", "connected")];
+    let out: Vec<String> = merge_relay(tail, relay).into_iter().map(|d| d.id).collect();
+    assert_eq!(out, ["nPC", "nLIVE", "relay:a", "relay:b"], "닿는 테일넷 줄(nLIVE)은 남긴다 — 빠른 길");
+}
+
+// C-6 버그 A — 테일스케일이 깔렸지만 꺼진 맥: 테일넷 목록이 실패해도 중계 줄은 돌려준다(scripts/peer list·say 가 돈다)
+#[test]
+fn 테일넷이_실패해도_중계_줄은_돌려준다() {
+    let v = |id: &str, status: &'static str| DeviceView { id: id.into(), name: id.into(), os: String::new(), status, paired: true, old: false, link: true, version: None, last_ok: None };
+    let out = combine(Err("테일스케일이 꺼져 있거나 로그인 전이에요".into()), vec![v("relay:a", "connected")]).unwrap();
+    assert_eq!(out.devices.len(), 1);
+    assert_eq!(out.devices[0].id, "relay:a");
+    // 중계 줄도 없으면 테일넷 오류 그대로
+    assert!(combine(Err("x".into()), vec![]).is_err());
+    // 테일넷이 되면 합친다
+    let ok = combine(Ok(DevicesOut { me: "mac".into(), devices: vec![v("nPC", "connected")] }), vec![v("relay:a", "connected")]).unwrap();
+    assert_eq!((ok.me.as_str(), ok.devices.len()), ("mac", 2));
+}

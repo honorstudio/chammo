@@ -275,3 +275,67 @@ fn 셈은_메모리라_앱을_다시_켜면_비어_있다() {
     let restarted = Links::default();
     assert!(restarted.first("k9", &hello(&np), SIGN, DEV, &mac_x(), t0).is_ok());
 }
+
+// 컴퓨터끼리 숫자 확인(계획 2026-11-01-peer-relay C-3b) — 같은 5단계, 표식만 따로(도메인 분리): 폰 짝짓기 기록을 컴퓨터 짝짓기로 되쓸 수 없게
+#[test]
+fn 컴퓨터_짝짓기는_표식이_달라_같은_값이어도_다른_숫자와_봉함() {
+    let (pt, mt, sign, np, nm) = (v(1, 65), v(2, 65), v(3, 32), v(5, 16), v(6, 16));
+    assert_ne!(sas_for(true, &pt, &mt, &sign, b"d9", &np, &nm), sas(&pt, &mt, &sign, b"d9", &np, &nm));
+    assert_eq!(sas_for(false, &pt, &mt, &sign, b"d9", &np, &nm), sas(&pt, &mt, &sign, b"d9", &np, &nm), "폰 갈래는 그대로");
+    assert_ne!(commit_for(true, &pt, &np), commit(&pt, &np));
+    assert_ne!(commit_m_for(true, &mt, &nm), commit_m(&mt, &nm));
+}
+
+#[test]
+fn 컴퓨터_두드리기는_컴퓨터_표식으로만_풀린다() {
+    let l = Links::default();
+    let t0 = Instant::now();
+    let np = [5u8; 16];
+    let mt = mac_x();
+    let x = phone_x();
+    // 폰 표식 commit 을 컴퓨터 두드리기로 보내면 nP 대조에서 막힌다
+    let phone_style = json!({ "sign": SIGN, "x": tun::b64(&x), "ua": "집 맥북", "commit": tun::b64(&commit(&x, &np)), "dev": DEV });
+    l.first_kind("k1", &phone_style, SIGN, DEV, &mt, true, t0).unwrap();
+    assert!(l.reveal("k1", &np, &mt, t0).is_err(), "폰 표식은 컴퓨터 갈래에서 안 맞는다");
+    let peer_style = json!({ "sign": SIGN, "x": tun::b64(&x), "ua": "집 맥북", "commit": tun::b64(&commit_for(true, &x, &np)), "dev": DEV });
+    let cm = l.first_kind("k2", &peer_style, SIGN, DEV, &mt, true, t0).unwrap();
+    let (n, h, nm) = l.reveal("k2", &np, &mt, t0).unwrap();
+    assert!(h.peer);
+    assert_eq!(cm, commit_m_for(true, &mt, &nm));
+    assert_eq!(n, sas_for(true, &x, &mt, &tun::unb64(SIGN).unwrap(), DEV.as_bytes(), &np, &nm));
+}
+
+// 거는 쪽(B 컴퓨터) — 폰 TS LinkRun 을 Rust 로(C-3b-2). 받는 쪽 Links 와 맞물려 같은 숫자
+#[test]
+fn 거는_컴퓨터와_받는_컴퓨터가_같은_숫자를_본다() {
+    let l = Links::default();
+    let t0 = Instant::now();
+    let (bx, mt) = (phone_x(), mac_x());
+    let mut b = Initiator::with_nonce(bx.clone(), mt.clone(), tun::unb64(SIGN).unwrap(), DEV.into(), [5u8; 16]);
+    assert!(b.link2(&[0u8; 32]).is_err(), "link1 전엔 안 된다");
+    let h = b.link1("집 맥북");
+    assert_eq!((h["step"].as_str(), h["ua"].as_str(), h["dev"].as_str()), (Some("link1"), Some("집 맥북"), Some(DEV)));
+    let cm = l.first_kind("k1", &h, SIGN, DEV, &mt, true, t0).unwrap();
+    assert!(!b.can_finish());
+    let l3 = b.link2(&cm).unwrap();
+    assert!(b.link2(&cm).is_err(), "한 번만");
+    let np = tun::unb64(l3["nP"].as_str().unwrap()).unwrap();
+    let (n, _, nm) = l.reveal("k1", &np, &mt, t0).unwrap();
+    assert_eq!(b.link4(&nm).unwrap(), n, "양쪽 숫자가 같다");
+    assert!(b.can_finish());
+}
+
+#[test]
+fn 거는_컴퓨터는_commit_과_다른_nm_을_거절한다() {
+    let (bx, mt) = (phone_x(), mac_x());
+    let mut b = Initiator::with_nonce(bx, mt.clone(), tun::unb64(SIGN).unwrap(), DEV.into(), [5u8; 16]);
+    b.link1("집 맥북");
+    b.link2(&commit_m_for(true, &mt, &[1u8; 16])).unwrap();
+    assert!(b.link4(&[2u8; 16]).is_err(), "봉해 둔 nM 과 다르면(중계가 숫자를 맞추려 바꿈)");
+    assert!(!b.can_finish());
+    // 폰 표식으로 봉한 cM 도 안 맞는다
+    let mut b2 = Initiator::with_nonce(phone_x(), mt.clone(), tun::unb64(SIGN).unwrap(), DEV.into(), [5u8; 16]);
+    b2.link1("집 맥북");
+    b2.link2(&commit_m(&mt, &[1u8; 16])).unwrap();
+    assert!(b2.link4(&[1u8; 16]).is_err());
+}

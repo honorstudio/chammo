@@ -5,7 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { tr } from '../../i18n';
 import { attachToChat } from '../fileDrop';
 import { LOCKER_MOVE } from './useLocker';
-import { chatDropAt, lightChat } from './chatDrop';
+import { chatDropAt, lightChat, type ChatDrop } from './chatDrop';
 import { lostRelease } from './dragEnd';
 import { dirOfId, TEAM_LOCKER_DROP, TEAM_LOCKER_MOVE, TEAM_LOCKER_OUT } from '../../domain/teamLocker';
 import { TEAM_DROP_EVENT } from '../team/teamDrop';
@@ -98,10 +98,12 @@ export function dragGhost(label: string, folders: boolean | string, remote = fal
         document.body.appendChild(ghost);
         document.documentElement.classList.add('cv-dragging');
       }
-      // 채팅 칸 위면 칸 전체(카드) 강조, 아니면 보관함 폴더 줄 — 못 받는 자리면 강조 대신 표에 이유 한 줄
-      const chat = chatDropAt(x, y);
+      // 참모 얼굴(띠 프사·떠 있는 대화창 머리)이 먼저 — 그 얼굴만 빛낸다. 머리는 채팅 칸 안이라 칸 빛이 먼저면 늘 지금 참모로 보였다(2026-11-01 사용자)
+      // 채팅 칸 위면 칸 전체(카드) 강조 + 떠 있는 창이면 받을 참모 얼굴도, 아니면 보관함 폴더 줄 — 못 받는 자리면 강조 대신 표에 이유 한 줄
+      const face = folderAt(x, y, ORCH_SPOT);
+      const chat = face ? null : chatDropAt(x, y);
       lightChat(chat);
-      const { spot, why } = chat ? { spot: null, why: null } : spotAt(x, y);
+      const { spot, why } = face ? { spot: face, why: null } : chat ? { spot: floatFace(chat), why: null } : spotAt(x, y);
       light(selfSpot(spot, self) ? null : spot);
       const no = why ?? (remote && !chat && !spot ? NOT_HERE() : null);
       ghost.className = no ? 'cv-drag-ghost no' : 'cv-drag-ghost';
@@ -120,6 +122,12 @@ export function dragGhost(label: string, folders: boolean | string, remote = fal
     },
     chatAt,
   };
+}
+
+/** 떠 있는 대화창에 놓으면 받을 참모 얼굴(그 창 머리) — 창 빛과 같이 얼굴도 빛내 누구에게 가는지 보이게. 떠 있지 않으면 null */
+function floatFace(chat: ChatDrop): HTMLElement | null {
+  if (!chat.hot?.classList?.contains('obb-float')) return null;
+  return chat.hot.querySelector<HTMLElement>(`.obb-face[data-orch-drop="${CSS.escape(chat.id)}"]`);
 }
 
 /** 채팅 입력칸에 글 넣기(멘션·명령) — ChatView 가 받아 글 끝에 붙인다 */
@@ -145,15 +153,15 @@ function dropAt(payload: DragPayload, x: number, y: number) {
   // 띠 프사·떠 있는 배지(data-orch-drop) = 그 참모 채팅에 놓기와 같다 — 배지가 그 참모 대화창을 연다(시안 orch-bubble F, 10-28)
   const orch = folderAt(x, y, '[data-orch-drop]')?.dataset.orchDrop;
   if (orch) window.dispatchEvent(new CustomEvent(ORCH_DROPPED, { detail: { id: orch } }));
-  const id = chatAt(x, y) ?? (payload.kind !== 'team' ? orch ?? null : null);
+  // 얼굴이 채팅 칸보다 먼저 — 떠 있는 대화창 머리 얼굴은 채팅 칸 안이다(놓으면 그 참모로 바꾸고 그 입력칸에, 2026-11-01 사용자)
+  const id = orch ?? chatAt(x, y);
   if (id) { drop(id, payload); return; }
   if (payload.kind === 'team') {
     const spot = folderAt(x, y, TEAM_SPOTS);
     if (selfSpot(spot, self)) return; // 자기 폴더·그 안 — 빛이 없던 자리, 놓아도 아무 일 없다
     const chip = spot?.dataset.teamFolder;
     if (chip !== undefined) window.dispatchEvent(new CustomEvent(TEAM_LOCKER_MOVE, { detail: { team: payload.team, ids: payload.ids, folder: chip } }));
-    // 띠 참모 프사 = 그 참모에게(채팅 칸에 놓기와 같은 길), 팀 대화 칸 = 그 대화에 첨부(TeamLocker 가 다시 올릴 것만 가른다)
-    else if (spot?.dataset.orchDrop) drop(spot.dataset.orchDrop, payload);
+    // 팀 대화 칸 = 그 대화에 첨부(TeamLocker 가 다시 올릴 것만 가른다). 참모 얼굴은 위에서 이미(orch)
     else if (spot && isConvo(spot)) window.dispatchEvent(new CustomEvent(TEAM_LOCKER_OUT, { detail: { team: payload.team, ids: payload.ids, convo: spot } }));
     return;
   }
@@ -237,7 +245,7 @@ if (typeof window !== 'undefined') {
     if (!d || typeof d.team !== 'string' || !Array.isArray(d.ids) || !d.ids.length || typeof d.x !== 'number' || typeof d.y !== 'number') return;
     const [x, y] = frameToClient(d);
     const orch = folderAt(x, y, ORCH_SPOT)?.dataset.orchDrop;
-    const id = chatAt(x, y) ?? orch ?? null;
+    const id = orch ?? chatAt(x, y) ?? null;
     if (!id) { void invoke('drag_back', { to: String(d.from ?? ''), team: d.team, text: TEAM_MISS() }).catch(() => {}); return; }
     if (orch && id === orch) window.dispatchEvent(new CustomEvent(ORCH_DROPPED, { detail: { id: orch } }));
     window.dispatchEvent(new CustomEvent(TEAM_GIVE_IN, { detail: { team: d.team, ids: d.ids, to: id } }));

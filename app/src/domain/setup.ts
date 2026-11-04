@@ -26,9 +26,9 @@ export type EnvCheck = {
   gitEmail?: string;
 };
 
-/** git 이름·메일 줄 — git 이 없으면(그 줄이 묻는다)·옛 점검 결과(칸 없음)면 숨김 */
-export const gitIdentityRow = (c: Pick<EnvCheck, 'clt' | 'gitName' | 'gitEmail'>): 'ok' | 'need' | 'hidden' =>
-  !c.clt || c.gitName === undefined ? 'hidden' : c.gitName.trim() && (c.gitEmail ?? '').trim() ? 'ok' : 'need';
+/** git 이름·메일 줄 — git 이 없으면(그 줄이 묻는다)·옛 점검 결과(칸 없음)·'코드 프로젝트에 git 쓰기'를 끈 사람(gitOn, ADR 0024)이면 숨김 */
+export const gitIdentityRow = (c: Pick<EnvCheck, 'clt' | 'gitName' | 'gitEmail'>, gitOn = true): 'ok' | 'need' | 'hidden' =>
+  !gitOn || !c.clt || c.gitName === undefined ? 'hidden' : c.gitName.trim() && (c.gitEmail ?? '').trim() ? 'ok' : 'need';
 
 /** 입력 검사 — 앱 Rust(setup::git_identity_ok)와 같은 규칙. 'name'·'email' = 어느 칸이 틀렸나 */
 export function gitIdentityError(name: string, email: string): 'name' | 'email' | null {
@@ -65,11 +65,13 @@ export function versionWarning(text: string, dismissed: string | null): VersionF
   return dismissed === text.trim() ? null : fit;
 }
 
-/** 설정을 끝낼 수 있나 — Claude Code 설치·로그인·확인된 버전 이상, 명령줄 도구(git)·파이썬 3(윈도우)은 꼭. gh 는 선택 */
-/** skipped = 사람이 '나중에 하기'로 넘긴 것(git·파이썬만 — 관리자 권한·winget 없는 회사 PC 가 설정을 못 끝냈다, win-env H3) */
-export const setupReady = (c: EnvCheck | null, skipped: SetupTask[] = []): boolean =>
+/** 설정을 끝낼 수 있나 — Claude Code 설치·로그인·확인된 버전 이상, 명령줄 도구(맥은 /usr/bin/python3 가 여기 들어 있어 git 을 안 써도 꼭)·파이썬 3(윈도우)은 꼭. gh 는 선택.
+ *  git 이름·메일은 '코드 프로젝트에 git 쓰기'(gitOn)를 켰을 때만 */
+/** 사람이 '나중에 하기'로 넘길 수 있는 것 — git·파이썬(관리자 권한·winget 없는 회사 PC 가 설정을 못 끝냈다, win-env H3), git 이름·메일(gitId, 0.4.7 2차 검증) */
+export type SkipKey = SetupTask | 'gitId';
+export const setupReady = (c: EnvCheck | null, skipped: SkipKey[] = [], gitOn = true): boolean =>
   !!c && !!c.claudePath && c.loggedIn && (c.clt || skipped.includes('clt')) && (c.python !== false || skipped.includes('python')) && versionFit(c.claudeVersion) !== 'old'
-  && gitIdentityRow(c) !== 'need';
+  && (gitIdentityRow(c, gitOn) !== 'need' || skipped.includes('gitId'));
 
 /** Claude 로그인 줄 — 확인이 시간 안에 안 끝났으면 '로그인 필요'가 아니라 '다시 확인'(win-env M2) */
 export const loginRow = (c: Pick<EnvCheck, 'loggedIn' | 'loginUnknown'>): 'ok' | 'need' | 'unknown' => (c.loggedIn ? 'ok' : c.loginUnknown ? 'unknown' : 'need');
@@ -270,19 +272,21 @@ export const WIZARD: WizardStep[] = ['welcome', 'check', 'basics', 'features', '
 export type Trust = { dev: boolean; hq: boolean };
 /** 다음으로 넘어갈 수 있나 — 점검 단계는 Claude Code 설치·로그인·명령줄 도구가, 기본 설정 단계는 두 폴더 믿기가 다 돼야.
  *  마지막 단계는 '시작하기'라 다음이 없다 */
-export function canNext(step: WizardStep, check: EnvCheck | null, trust?: Trust, access?: Access | null, skipped: SetupTask[] = []): boolean {
-  if (step === 'check') return setupReady(check, skipped);
+export function canNext(step: WizardStep, check: EnvCheck | null, trust?: Trust, access?: Access | null, skipped: SkipKey[] = [], gitOn = true): boolean {
+  if (step === 'check') return setupReady(check, skipped, gitOn);
   // 고른 프로젝트 폴더를 맥이 막고 있으면 세션이 'Unexpected' 로만 실패한다(이슈 #1) — 여기서 멈춰 세운다
   if (step === 'basics') return !!trust?.dev && !!trust?.hq && !wizardAccess(access ?? null).block;
   return step !== 'ready';
 }
 
 /** 다음 단추가 꺼진 까닭 — 단추 바로 위에 한 줄(null = 갈 수 있음). 믿기 줄이 창 아래에 있어 왜 꺼졌는지 몰랐다(2026-10-22 QA 17) */
-export function nextWhy(step: WizardStep, check: EnvCheck | null, trust: Trust | undefined, access: Access | null, win: boolean, skipped: SetupTask[] = []): string | null {
-  if (canNext(step, check, trust, access, skipped) || step === 'ready' || step === 'welcome' || step === 'features') return null;
+export function nextWhy(step: WizardStep, check: EnvCheck | null, trust: Trust | undefined, access: Access | null, win: boolean, skipped: SkipKey[] = [], gitOn = true): string | null {
+  if (canNext(step, check, trust, access, skipped, gitOn) || step === 'ready' || step === 'welcome' || step === 'features') return null;
+  // 이름·메일 말은 그 줄이 보일 때만(깃 스위치를 켠 사람) — 문구 소넷(2026-11-02)
+  const id = check && gitIdentityRow(check, gitOn) === 'need';
   if (step === 'check') return win
-    ? tr('Claude Code, git, 파이썬 3 설치와 로그인, git 이름·메일 저장을 마치면 다음으로 갈 수 있어요.', 'Finish installing Claude Code, git, and Python 3, signing in, and saving your git name and email to continue.')
-    : tr('위의 Claude Code 설치·로그인, 명령줄 도구, git 이름·메일 저장을 마치면 다음으로 갈 수 있어요.', 'Finish installing Claude Code, signing in, the command line tools, and saving your git name and email above to continue.');
+    ? tr('Claude Code, git, 파이썬 3 설치와 로그인을 마치면 다음으로 갈 수 있어요.', 'Finish installing Claude Code, git, and Python 3, and signing in, to continue.') + (id ? tr(' git 이름·메일은 저장하거나 나중에 하기로 넘겨도 돼요.', ' You can save your git name and email, or skip it for now.') : '')
+    : tr('위의 Claude Code 설치·로그인과 명령줄 도구를 마치면 다음으로 갈 수 있어요.', 'Finish installing and signing in to Claude Code and the command line tools above to continue.') + (id ? tr(' git 이름·메일은 저장하거나 나중에 하기로 넘겨도 돼요.', ' You can save your git name and email, or skip it for now.') : '');
   if (wizardAccess(access).block) return tr('프로젝트 폴더를 열 수 없어요 — 위 프로젝트 폴더 칸의 안내부터 해 주세요.', 'The projects folder cannot be opened — follow the note under Projects folder first.');
   return tr('위 두 폴더를 「믿기」로 믿으면 다음으로 갈 수 있어요.', 'Trust the two folders above to continue.');
 }

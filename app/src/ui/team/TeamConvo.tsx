@@ -17,7 +17,7 @@ import { openTeamFile } from './openTeamFile';
 import { openWebLink } from '../followLink';
 import { mdToHtmlTeam } from '../md';
 import { Face, PersonOf, TeamMarkIcon } from './TeamFaces';
-import { dndNotice, lookOf, statusLine } from '../../domain/teamProfile';
+import { dndNotice, lookNames, lookOf, statusLine } from '../../domain/teamProfile';
 import { echoOfSent, enterAction } from '../../domain/enterSend';
 import { clickFocusesInput } from '../../domain/chat';
 import type { draftStore } from '../../domain/chatDraft';
@@ -26,6 +26,7 @@ import { ProfilesCtx } from './useProfiles';
 import './profile.css';
 import { Attachments, FileBubbles, HelperFace, MentionMenu, MentionText, ReactAdd, Reacts } from './RoomBits';
 import { TEAM_DROP_EVENT } from './teamDrop';
+import { useTeamDowns } from './TeamDownBits';
 import { giveIds, giveMenu, useRoster } from './teamGive';
 import { OrchPickList, rememberPick } from './OrchPick';
 import type { RosterOrch } from '../../domain/teamGive';
@@ -121,10 +122,12 @@ export function TeamConvo({ convo, items, team, myName, handed, onRead, onHanded
   const { board } = useContext(ProfilesCtx);
   // 반응·파일은 데스크톱만(폰 /api/team-say 는 글만)
   const rich = !phone;
-  const got = useMemo(() => (convo.room ? reactionsOf(items, convo.room) : new Map<number, Reaction[]>()), [items, convo.room]);
+  // 반응 누른 사람·내 이름 = 프로필 이름(말 줄 이름과 같은 lookOf)
+  const got = useMemo(() => (convo.room ? reactionsOf(items, convo.room, (m, roster) => lookOf(board, m, roster).name) : new Map<number, Reaction[]>()), [items, convo.room, board]);
+  const myShown = lookOf(board, members.find((m) => m.me)?.id ?? '', myName).name;
   // 보낸 뒤 서버 답을 기다리는 내 반응 — 누르자마자 얹고(withMyReacts), 받은 목록이 따라잡으면 뗀다. 실패하면 떼고 알린다
   const [pendReact, setPendReact] = useState<{ seq: number; mark: string; on: boolean }[]>([]);
-  const reacts = useMemo(() => withMyReacts(got, pendReact, myName), [got, pendReact, myName]);
+  const reacts = useMemo(() => withMyReacts(got, pendReact, myShown), [got, pendReact, myShown]);
   useEffect(() => { setPendReact((x) => { const n = x.filter((p) => !!got.get(p.seq)?.find((r) => r.mark === p.mark)?.mine !== p.on); return n.length === x.length ? x : n; }); }, [got]);
   const names = useMemo(() => members.map((m) => m.name), [members]);
   // 팀 참모 — 마지막 목록(망 없이) 먼저, 뒤에서 새로 받는다. 부르기 메뉴·말풍선 얼굴·보내기 전 확인 장이 같이 쓴다
@@ -145,7 +148,9 @@ export function TeamConvo({ convo, items, team, myName, handed, onRead, onHanded
   const [unfold, setUnfold] = useState<Record<number, boolean>>({});
   // 이 기기에서 부른 팀 참모 답의 토큰(seq → [모델, 토큰]) — 부른 사람 화면에만
   const [usage, setUsage] = useState<Record<string, [string, number]>>({});
-  const callable = useMemo(() => members.filter((m) => (group ? (convo.members ?? []).includes(m.id) : m.id === convo.peer || m.me)), [members, group, convo.members, convo.peer]);
+  // 부르기 목록은 프로필 이름으로 보이고 글엔 계정 이름(lookNames account) — 알림(Rust mentions_me)·강조가 계정 이름으로 찾는다
+  const callable = useMemo(() => lookNames(members.filter((m) => (group ? (convo.members ?? []).includes(m.id) : m.id === convo.peer || m.me)), board), [members, group, convo.members, convo.peer, board]);
+  const shown = useMemo(() => new Map(lookNames(members, board).map((m) => [m.account, m.name])), [members, board]);
   const [atts, setAtts] = useState<Att[]>([]);
   const [dropOver, setDropOver] = useState(false);
   const [menu, setMenu] = useState<{ start: number; q: string; sel: number } | null>(null);
@@ -294,12 +299,20 @@ export function TeamConvo({ convo, items, team, myName, handed, onRead, onHanded
   const thumbOf = useMemo(() => ({ get: (f: TeamFile) => thumb(f.team || teamId, f.id, f.name, f.size), forget: (f: TeamFile) => forgetTeamThumb(f.team || teamId, f.id) }), [thumb, teamId]);
   // 파일 풍선 — 누르면 스페이스(보관함과 같은 openTeamFile 길), 오른쪽 클릭 = 다른 앱으로 열기·이 기기에 저장
   const fileFail = (e: unknown) => setErr(tr(`파일을 못 열었어요 — ${String(e)}`, `Could not open the file — ${String(e)}`));
-  const openFile = (f: TeamFile, app = false) => void openTeamFile((external) => files.open(f.team || teamId, f.id, external), f.name, app).catch(fileFail);
+  // 받기 — 큰 파일은 몇 분 걸려 말풍선에 막대·멈추기·폴더에서 보기(11-01 사용자). 여는 길도 받는 동안 같은 막대
+  const downs = useTeamDowns(rich);
+  const saveFile = (f: TeamFile) => void downs.watch(files.save(f.team || teamId, f.id));
+  const openFile = (f: TeamFile, app = false) => {
+    const p = openTeamFile((external) => files.open(f.team || teamId, f.id, external), f.name, app);
+    void downs.watch(p);
+    p.catch(fileFail);
+  };
+  const fileDown = rich ? { api: downs, save: saveFile } : undefined;
   const [fileMenu, setFileMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const onFileMenu = (e: React.MouseEvent, f: TeamFile) => setFileMenu({ x: e.clientX, y: e.clientY, items: [
     { label: tr('열기', 'Open'), run: () => openFile(f) },
     { label: tr('다른 앱으로 열기', 'Open with default app'), run: () => openFile(f, true) },
-    { label: tr('이 기기에 저장', 'Save to this Mac'), sep: true, run: () => void files.save(f.team || teamId, f.id).catch(fileFail) },
+    { label: tr('내 폴더에 저장', 'Save to my folder'), sep: true, run: () => saveFile(f) },
     // 내 참모에게 — 보관함 메뉴와 같은 줄(프사 + 이름), 고른 참모 보관함에 풀어 그 참모 채팅에 붙인다(보내기는 사람이)
     ...(mine.length ? [giveMenu(mine, (o) => void giveIds(f.team || teamId, [f.id], o).catch(fileFail))] : []),
   ] });
@@ -444,7 +457,7 @@ export function TeamConvo({ convo, items, team, myName, handed, onRead, onHanded
           const canReact = rich && (l.kind === 'bubble' || l.kind === 'agent');
           const add = canReact && <ReactAdd mine={rs.filter((r: { mine: boolean }) => r.mine).map((r: { mark: string }) => r.mark)} onPick={(k, on) => react(it.seq, k, on)} />;
           const chips = <Reacts list={rs} onToggle={canReact ? (k, on) => react(it.seq, k, on) : undefined} />;
-          const fs = it.files?.length ? <FileBubbles files={it.files} me={l.kind === 'bubble' && l.side === 'me'} onOpen={rich ? (f) => openFile(f) : viewImage} onlyPics={!rich} onMenu={rich ? onFileMenu : undefined} thumb={thumbOf} /> : null;
+          const fs = it.files?.length ? <FileBubbles files={it.files} me={l.kind === 'bubble' && l.side === 'me'} onOpen={rich ? (f) => openFile(f) : viewImage} onlyPics={!rich} onMenu={rich ? onFileMenu : undefined} thumb={thumbOf} down={fileDown} /> : null;
           const hl = l.kind !== 'blocked' && l.kind !== 'e2e' && !(l.kind === 'bubble' && l.side === 'me') && mentionsMe(it.body, myName);
           const rd = <ReadLeft n={unread.get(it.seq) ?? 0} />;
           return (
@@ -460,13 +473,13 @@ export function TeamConvo({ convo, items, team, myName, handed, onRead, onHanded
               )}
               {l.kind === 'bubble' && l.side === 'me' && (
                 <>
-                  <div className="tmx-me">{add}<span className="tmx-meta">{rd}<span className="tmx-at">{stamp(l.at, now)}</span></span><div className="tmx-col">{l.text && <div className="tmx-bub me"><MentionText text={l.text} names={names} myName={myName} newTab={phone} /></div>}{fs}</div></div>
+                  <div className="tmx-me">{add}<span className="tmx-meta">{rd}<span className="tmx-at">{stamp(l.at, now)}</span></span><div className="tmx-col">{l.text && <div className="tmx-bub me"><MentionText text={l.text} names={names} myName={myName} newTab={phone} shown={shown} /></div>}{fs}</div></div>
                   {rs.length > 0 && <div className="tmx-reacts me">{chips}</div>}
                 </>
               )}
               {l.kind === 'bubble' && l.side === 'them' && (
                 <div className={`tmx-row ${picked === it.seq ? 'picked' : ''} ${hl ? 'hl' : ''}`} onClick={(e) => { if (!onLinkEl(e)) setPicked((p) => (p === it.seq ? null : it.seq)); }}><PersonOf member={it.member} name={l.name} color={l.color} size={28} />
-                  <div className="tmx-col"><span className="tmx-nm">{l.name} <span className="tmx-at">{stamp(l.at, now)}</span>{rd}</span>{l.text && <div className="tmx-bub"><MentionText text={l.text} names={names} myName={myName} newTab={phone} /></div>}{fs}{chips}</div>{add}{hand}</div>
+                  <div className="tmx-col"><span className="tmx-nm">{l.name} <span className="tmx-at">{stamp(l.at, now)}</span>{rd}</span>{l.text && <div className="tmx-bub"><MentionText text={l.text} names={names} myName={myName} newTab={phone} shown={shown} /></div>}{fs}{chips}</div>{add}{hand}</div>
               )}
               {l.kind === 'agent' && (() => {
                 // 팀 참모 답(ADR 0017) — 그 참모 얼굴, 8줄 넘으면 접힘, 이어 묻기(글자 단추), 토큰은 부른 사람 화면에만

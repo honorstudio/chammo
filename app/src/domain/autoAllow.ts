@@ -60,8 +60,9 @@ export function pickAllow(screen: string): AllowPick {
 
 /** 같은 세션을 다시 보기까지 — 풀었으면 5초 뒤(곧 다음 창이 뜰 수 있다 — 막 풀린 창이 목록에 한 번 더 남아 있어도 헛손질 안 하게), 건너뛰었거나 못 풀었으면 1분(같은 창을 계속 두드리지 않게).
  * held(사람이 골라야 하는 창) = 세션이 그 창을 벗어나면(leftWindow) 바로 놓고, 안 벗어나면 안전망으로 10분에 한 번만 — 같은 창을 6.5시간 동안 250번 다시 봤다(2026-10-11 perf 9번) */
-export type AllowOutcome = 'allowed' | 'soon' | 'skipped' | 'held' | 'stillOpen' | 'failed';
-export const retryAfter = (o: AllowOutcome): number => (o === 'allowed' || o === 'soon' ? 5_000 : o === 'held' ? 10 * 60_000 : 60_000);
+/** carded = 회사 정책 아래 사람 카드를 띄운 창(ADR 0023) — 30초마다 다시 봐서 답한 뒤 곧바로 뜬 다음 창도 카드가 되게(같은 창이면 같은 카드) */
+export type AllowOutcome = 'allowed' | 'soon' | 'skipped' | 'held' | 'stillOpen' | 'failed' | 'carded';
+export const retryAfter = (o: AllowOutcome): number => (o === 'allowed' || o === 'soon' ? 5_000 : o === 'held' ? 10 * 60_000 : o === 'carded' ? 30_000 : 60_000);
 
 /** 건너뛴 창을 어떻게 — 사람 몫(hold)은 바로 알리고, 전환 화면(soon)은 조용히 5초 뒤(30초 넘게 그대로면 알리고 보통 주기 — attach 를 끝없이 안 띄우게),
  *  커서를 못 찾은 건 한 번은 조용히 다시 보고(덜 그려졌을 수 있다). misses = 이 세션에서 연달아 못 읽은 횟수(이번 것 빼고) */

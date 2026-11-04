@@ -20,6 +20,7 @@ import { openTarget, readSessionTasks, readTranscript, type SessionTask, type Tr
 import { modKey } from '../../domain/keys';
 import { docUrl, IS_WIN } from '../../domain/reader';
 import { DROP_EVENT, DROP_PATHS_EVENT } from '../fileDrop';
+import { clearCount, nextEmpties } from '../../domain/termInput';
 import { chipName, chipPastes, isFolderChip } from '../../domain/drop';
 import { assistant, josa, tr } from '../../i18n';
 import { orchestratorLike, seenName } from '../../domain/session';
@@ -41,7 +42,7 @@ import { openChatFile } from './openChatFile';
 import { attachToChat } from '../fileDrop';
 import { useRefInbox } from '../refBus';
 import { nextRefLabel, type RefKind } from '../../domain/refChips';
-import { every } from '../poll';
+import { useCoverEvery } from '../poll';
 import { echoOfSent, enterAction } from '../../domain/enterSend';
 import { chatPollMs, liveReply, liveStep, liveView, NO_LIVE } from '../../domain/chatLive';
 import './chat.css';
@@ -74,13 +75,15 @@ const drafts = chatDrafts;
  * 스페이스 모드의 채팅 보기(2026-09-30 사용자). 터미널(TUI)은 뒤에 그대로 붙어 있고, 이건 그 위에 덮는 판이다.
  * 읽기 = 대화 기록 이어 읽기, 쓰기 = 그 터미널 입력칸에 붙여넣고 Enter(send). 멈추기 = Esc
  */
-export function ChatView({ extra = [], fontSize, sessionId, state, send, interrupt, rawKeys, onTerminal, onInputFocus, focusRef, screen, submitTerminal, pasteImage, voiceStop = 0, sendQueuedNow, typeOnly, clearTerminal, paneId, ctx, modelInfo, pickModel, cwd, locker, notice, link, remote = false, readOnly = false, readFn }: {
+export function ChatView({ extra = [], fontSize, sessionId, state, send, interrupt, rawKeys, onTerminal, onInputFocus, focusRef, screen, submitTerminal, pasteImage, voiceStop = 0, sendQueuedNow, typeOnly, clearTerminal, paneId, ctx, modelInfo, pickModel, cwd, locker, notice, link, remote = false, readOnly = false, readFn, covered = false }: {
   /** 읽기만(다른 기기 프로젝트 세션 엿보기) — 입력칸·상태 줄 아래를 숨긴다 */
   readOnly?: boolean;
   /** 다른 기기 참모 채팅(ADR 0011) — 뒤 터미널이 없다: 터미널·모델·/ 자동완성·보관함·그림 붙이기·멈춤·@ 멘션을 끈다 */
   remote?: boolean;
   /** 대화 기록 읽기 — 원격이면 그 기기 폰 서버(remoteApi), 없으면 이 기기 */
   readFn?: (sessionId: string, from?: number) => Promise<TranscriptChunk>;
+  /** 칸이 덮였다(팀 모드·다른 기기 참모·기기 보기가 위를 덮음) — 기록·할 일 읽기를 앱 창이 뒤에 있을 때처럼 늦춘다 */
+  covered?: boolean;
   /** 대화 사이에 시각 순으로 끼울 것 — 직접 답하기 카드(useDirectCards)·보여 준 파일 카드(clip = 그려진 첫 말보다 앞이면 안 그림) */
   extra?: { ts: string; key: string; pin?: boolean; clip?: boolean; node: React.ReactNode }[];
   /** 글자 크기(⌘+/⌘−) — 바뀌면 입력칸 높이를 다시 잰다(채팅 글자가 이걸 따라 커진다, space.css --chat-k) */
@@ -179,6 +182,8 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   const imgCount = useRef(0); // 이번 메시지에 붙인 그림·파일 수 — 붙인 게 비면 0 으로
   const fileCount = useRef(0);
   const lastAttach = useRef(0);
+  // 이번 메시지에 앱이 터미널 입력칸에 붙여 넣은 글 길이 — 화면 읽기는 긴 입력칸을 잘라 보여서 지울 때 모자랐다(domain/termInput)
+  const pasted = useRef(0);
   const attach = (item: { key: string; url?: string; name: string; path?: string }, kind: 'img' | 'file'): string => {
     lastAttach.current = Date.now();
     const label = kind === 'img' ? `${REF_PREFIX}img${++imgCount.current}` : `${REF_PREFIX}file${++fileCount.current}`;
@@ -275,7 +280,8 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   const addImage = (item: { key: string; url?: string; name: string; path?: string }) => attach(item, 'img');
   // 붙인 것 빼기 — Claude 입력칸 속 그림 표시를 하나만 골라 지울 믿을 만한 방법이 없어 통째로(2026-09-30 사용자)
   const clearAttached = () => {
-    clearTerminal([...termText].length + 20);
+    clearTerminal(clearCount(termText, pasted.current));
+    pasted.current = 0;
     setAttached([]);
     imgCount.current = 0;
     fileCount.current = 0;
@@ -300,6 +306,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
       // 터미널 입력칸엔 이름표 바로 뒤 따옴표 경로로(그림은 이스케이프 따로 한 조각) — 조각 사이는 Claude 가 앞 붙여넣기를 다 읽게 조금 쉬고
       e.preventDefault();
       chipPastes(chips).forEach((t, i) => {
+        pasted.current += [...t].length;
         const put = () => pane.dispatchEvent(new CustomEvent(DROP_EVENT, { detail: t }));
         if (i) window.setTimeout(put, 400 * i); else put();
       });
@@ -317,6 +324,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     return () => focusRef?.(null);
   }, [focusRef]);
 
+  const everyHere = useCoverEvery(covered);
   // 대화 기록 이어 읽기 — /clear 하면 sessionId 가 바뀌어 처음부터
   const tickRef = useRef<(() => Promise<void>) | null>(null);
   useEffect(() => {
@@ -352,8 +360,8 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   const pollMs = chatPollMs({ working: state === 'working', waiting: pending.length > 0, lastKind: items[items.length - 1]?.kind });
   useEffect(() => {
     if (!sessionId) return;
-    return every(() => void tickRef.current?.(), pollMs);
-  }, [sessionId, readFn, pollMs]);
+    return everyHere(() => void tickRef.current?.(), pollMs);
+  }, [sessionId, readFn, pollMs, everyHere]);
 
   // 할 일 목록(터미널의 "N tasks …") — 2초마다. 접기·펴기는 이 컴퓨터에 기억
   const [tasks, setTasks] = useState<SessionTask[]>([]);
@@ -363,9 +371,9 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     let alive = true;
     const tick = () => void readSessionTasks(sessionId).then((t) => { if (alive) setTasks((p) => (JSON.stringify(p) === JSON.stringify(t) ? p : t)); }).catch(() => {});
     tick();
-    const stop = every(tick, 2000);
+    const stop = everyHere(tick, 2000);
     return () => { alive = false; stop(); };
-  }, [sessionId]);
+  }, [sessionId, everyHere]);
   const [hints, setHints] = useState(() => { try { return localStorage.getItem('chatHints') !== '0'; } catch { return true; } });
   const [tasksOpen, setTasksOpen] = useState(() => { try { return localStorage.getItem('chatTasksOpen') !== '0'; } catch { return true; } });
 
@@ -482,15 +490,18 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
       hold.current = liveStep(hold.current, { now: Date.now(), answering: answering.current, text: full ? liveReply(full.lines) : null, items: itemsRef.current });
       setLive(hold.current.blocks); // 글이 그대로면 같은 배열 — 다시 안 그린다
       const s = screen();
-      const t = s && Date.now() >= quietUntil.current ? promptInput(s.lines, s.cursor) ?? '' : '';
+      // raw — 읽은 입력칸 글 · null = 못 읽음(입력칸이 화면 밖) · undefined = 보낸 직후 잠깐 안 읽음. 읽을 터미널이 없는 창(바탕 배지 대화창)은 빈 칸으로 본다
+      const raw = !s ? '' : Date.now() >= quietUntil.current ? promptInput(s.lines, s.cursor) : undefined;
+      const t = raw ?? '';
       setTermText((prev) => (prev === t ? prev : t));
       setCompacting(isCompacting(s?.lines));
       const d = s ? screenDialog(s.lines) : null;
       setDialog((prev) => (JSON.stringify(prev) === JSON.stringify(d) ? prev : d));
       // 터미널 입력칸이 비면(보냈거나 지웠거나) 붙인 것도 비운다 — 한 번 빈칸으로 읽혔다고 지우면 썸네일이 사라지고 [Image #n] 만 남았다
-      empties.current = t ? 0 : empties.current + 1;
+      // 못 읽은 것(null)은 빈 칸이 아니다 — 비었다고 세면 글이 남은 채 #file 기억이 지워져 같은 파일이 #file1 로 또 붙었다(2026-11-01 사용자, domain/termInput)
+      empties.current = nextEmpties(empties.current, raw);
       // 입력칸에 #file·#img 이름표가 남아 있거나 방금 붙였으면 아직 쓰는 중 — 번호를 1로 되돌리면 두 파일이 같은 @file1 이 됐다(2026-09-30 사용자)
-      if (empties.current >= 4 && !/[#@](img|file)\d+/.test(draftRef.current) && Date.now() - lastAttach.current > 5000) { imgCount.current = 0; fileCount.current = 0; setAttached((a) => (a.length ? [] : a)); }
+      if (empties.current >= 4 && !/[#@](img|file)\d+/.test(draftRef.current) && Date.now() - lastAttach.current > 5000) { imgCount.current = 0; fileCount.current = 0; pasted.current = 0; setAttached((a) => (a.length ? [] : a)); }
     }, 400);
     return () => window.clearInterval(id);
   }, [screen]);
@@ -575,6 +586,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     return () => window.clearTimeout(t);
   }, [sendFail]);
   const sendWatched = (text: string, at: number) => {
+    pasted.current = 0; // 붙여 넣은 글은 이 말과 같이 간다
     void Promise.resolve(send(text)).then((ok) => {
       if (ok !== false) return;
       dropPending(at);
@@ -604,7 +616,8 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   const enterOk = () => !dialogRef.current && state !== 'blocked';
   /** 입력칸을 비우고 → (first 가 있으면 그 말을 보내고) → 남길 말만 다시 넣는다(Enter 없이). 세션 쪽이 차례대로 친다 */
   const rebuildInput = (keep: string[], first?: string) => {
-    clearTerminal([...termText].length + 20);
+    clearTerminal(clearCount(termText, pasted.current));
+    pasted.current = 0;
     if (first) send(first);
     if (keep.length && typeOnly) typeOnly(keep.join('\n'));
     quietUntil.current = Date.now() + 1500;
@@ -617,7 +630,8 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     const mine = left.length === 1 ? waiting.find((p) => p.text === left[0]) : undefined;
     if (mine && stuckInInput(left, term) && enterOk()) { submitTerminal(mine.text); repend(mine); }
     else {
-      clearTerminal([...term].length + 20);
+      clearTerminal(clearCount(term, pasted.current));
+      pasted.current = 0;
       // 말풍선이 없는 것(끊겨서 되돌아온 말)은 '안 갔어요'로 남겨 다시 보낼 수 있게 — 조용히 지우지 않는다
       const now = Date.now();
       const back = left.filter((t) => !waiting.some((p) => p.text === t));

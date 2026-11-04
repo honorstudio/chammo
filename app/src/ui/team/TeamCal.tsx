@@ -1,5 +1,5 @@
 // 팀 캘린더 탭(chammo-relay ADR 0011, 시안 v2 A) — 월·주·목록, 만들기·고치기·완료·지우기·지운 일정 되살리기. 앱이 직접 그린다(클로드 0)
-import { useMemo, useState } from 'react';
+import { useContext, useMemo, useState } from 'react';
 import { tr } from '../../i18n';
 import { desktopCal, type CalApi } from '../../data/teamCalApi';
 import {
@@ -7,6 +7,8 @@ import {
   type CalData, type CalItem, type Occ,
 } from '../../domain/teamCal';
 import { stamp } from '../../domain/teamChat';
+import { lookNames } from '../../domain/teamProfile';
+import { keyWaitNote } from '../../domain/teamLocker';
 import { BetaTag } from '../kit/BetaTag';
 import { IconButton } from '../kit/IconButton';
 import { IconBack, IconCalendar, IconForward, IconList, IconMore, IconPlus, IconRepeat } from '../Icons';
@@ -14,6 +16,7 @@ import { TeamDialog } from './TeamDialog';
 import type { HomeDialog } from './TeamHome';
 import { CalForm, CalView } from './CalForm';
 import { useTeamCal } from './useTeamCal';
+import { ProfilesCtx } from './useProfiles';
 import './teamCal.css';
 
 type View = 'month' | 'week' | 'list';
@@ -40,7 +43,10 @@ export function TeamCal({ teamId, members, api = desktopCal, phone, Dialog = Tea
   const [trash, setTrash] = useState(false);
   const [hideDone, setHideDone] = useState(readHide);
 
-  const names = useMemo(() => new Map(members.map((m) => [m.id, m.name])), [members]);
+  // 참석자 칩·지운 사람 — 프로필 이름(대화·팀 설정과 같은 lookNames, 11-02 폰 칩이 계정 이름이었다)
+  const { board } = useContext(ProfilesCtx);
+  const people = useMemo(() => lookNames(members, board), [members, board]);
+  const names = useMemo(() => new Map(people.map((m) => [m.id, m.name])), [people]);
   const nameOf = (id: string) => names.get(id) ?? tr('팀원', 'Teammate');
   const items = snap?.items ?? [];
   const d = new Date(anchor.replace(/-/g, '/'));
@@ -121,6 +127,7 @@ export function TeamCal({ teamId, members, api = desktopCal, phone, Dialog = Tea
         <IconButton size={phone ? 'l' : 's'} tone="pri" label={tr('일정 만들기', 'New event')} onClick={() => setEdit({ item: null, day: newEventDay(picked, shownSpan(view, anchor), today) })}><IconPlus /></IconButton>
       </div>
       {err && !snap && <div className="tcal-banner" role="alert">{tr('팀 일정을 못 불러왔어요 — ', "Couldn't load team events — ")}{err}</div>}
+      {snap && keyWaitNote(snap.items.filter((x) => x.why && !x.del).length, 'event') && <div className="tcal-banner soft">{keyWaitNote(snap.items.filter((x) => x.why && !x.del).length, 'event')}</div>}
       {snap?.cached && <div className="tcal-banner soft">{tr('마지막으로 받은 일정이에요 — 새로 받는 중', 'Showing the last events — refreshing')}</div>}
 
       {view === 'month' && (
@@ -213,7 +220,7 @@ export function TeamCal({ teamId, members, api = desktopCal, phone, Dialog = Tea
       )}
       {edit && (
         <Dialog label={edit.item ? tr('일정 고치기', 'Edit event') : tr('일정 만들기', 'New event')} onClose={() => !busy && setEdit(null)}>
-          <CalForm item={edit.item} day={edit.day} people={members} busy={busy} err={werr} onCancel={() => setEdit(null)}
+          <CalForm item={edit.item} day={edit.day} people={people} busy={busy} err={werr} onCancel={() => setEdit(null)}
             onSave={(data) => { const e = edit; void write(e.item, e.item?.id ?? newCalId(), data).then((ok) => ok && setEdit(null)); }} />
         </Dialog>
       )}

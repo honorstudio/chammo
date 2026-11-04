@@ -2,7 +2,7 @@
 // 시안: docs/design-drafts/day-replay (C 요약 + B 재생 막대(A 레인) + D 다마고치 산책 + E 부품, 사용자 2026-09-27 "다 마음에 든다")
 import type { AllowLog } from './autoAllow';
 import { tr } from '../i18n';
-import { isGeneratedPath } from './tama/sources';
+import { isCodePath } from './codeLines';
 import type { TaskEvent } from './tasks';
 
 const HOUR = 3600_000;
@@ -29,13 +29,15 @@ export const shiftDay = (w: DayWindow, days: number): DayWindow => {
 };
 
 export type DayCommit = { hash: string; repo: string; t: number; subject: string; lines: number; merge: boolean };
+/** lines = added + deleted (코드 파일만 — domain/codeLines) */
+export type ParsedCommit = DayCommit & { added: number; deleted: number };
 
 /** Rust `commit_log` 원문(저장소마다 `@@R\t이름` 뒤에 커밋들). 같은 해시는 처음 본 저장소로 한 번만 */
-export function parseDayCommits(raw: string): DayCommit[] {
-  const out: DayCommit[] = [];
+export function parseDayCommits(raw: string): ParsedCommit[] {
+  const out: ParsedCommit[] = [];
   const seen = new Set<string>();
   let repo = '';
-  let cur: DayCommit | null = null;
+  let cur: ParsedCommit | null = null;
   for (const line of raw.split('\n')) {
     if (line.startsWith('@@R\t')) {
       repo = line.slice(4).trim();
@@ -48,15 +50,34 @@ export function parseDayCommits(raw: string): DayCommit[] {
       cur = null;
       if (!hash || !Number.isFinite(t) || seen.has(hash)) continue;
       seen.add(hash);
-      cur = { hash, repo, t, subject, lines: 0, merge: parents.trim().split(/\s+/).length > 1 };
+      cur = { hash, repo, t, subject, lines: 0, added: 0, deleted: 0, merge: parents.trim().split(/\s+/).length > 1 };
       out.push(cur);
       continue;
     }
     if (!cur) continue;
     const [a, d, path] = line.split('\t');
-    if (path !== undefined && !isGeneratedPath(path)) cur.lines += (Number(a) || 0) + (Number(d) || 0);
+    if (path === undefined || !isCodePath(path)) continue;
+    cur.added += Number(a) || 0;
+    cur.deleted += Number(d) || 0;
+    cur.lines = cur.added + cur.deleted;
   }
   return out;
+}
+
+export type RepoToday = { name: string; commits: number; added: number; deleted: number };
+
+/** 위 막대 '오늘 커밋' — 저장소별 커밋 수(머지 커밋 빼고)·코드 줄 수, 커밋 많은 저장소 먼저 */
+export function repoToday(commits: ParsedCommit[]): RepoToday[] {
+  const by = new Map<string, RepoToday>();
+  for (const c of commits) {
+    if (c.merge) continue;
+    const r = by.get(c.repo) ?? { name: c.repo, commits: 0, added: 0, deleted: 0 };
+    r.commits += 1;
+    r.added += c.added;
+    r.deleted += c.deleted;
+    by.set(c.repo, r);
+  }
+  return [...by.values()].sort((a, b) => b.commits - a.commits);
 }
 
 export type ReplayKind = 'commit' | 'big' | 'merge' | 'send' | 'done' | 'ask' | 'allow';

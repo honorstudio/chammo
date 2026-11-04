@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { TtsField } from './TtsField';
 import { setGitIdentity, appVersion, browserSetupStart, browserSetupState, browserStatus, checkEnv, claudeTrusted, projectAccess, notifyOpenSettings, notifyRequest, notifyStatus, axTrusted, screenTrusted, askPermission, createHq, folderStatus, getAppEnv, makeDir, openTarget, pickFolder, rebuildMenu, writeConfig, type Config, type FolderStatus } from '../data/tauri';
-import { addExtraProject, claudeSignedInText, firstRunName, readyAccountNote, canNext, nextWhy, trustExitNote, parseClaudeVersion, setupCommand, setupReady, winSetupNotes, tildify, notifyRow, axRow, browserRow, browserChecklist, ghRow, gitIdentityRow, gitIdentityError, installState, loginRow, GET_URL, setupFailed, versionFit, WIZARD, type BrowserSetupState, type BrowserStatus, type EnvCheck, type NotifyStatus, type SetupTask, type Trust, type WizardStep } from '../domain/setup';
+import { addExtraProject, claudeSignedInText, firstRunName, readyAccountNote, canNext, nextWhy, trustExitNote, parseClaudeVersion, setupCommand, setupReady, winSetupNotes, tildify, notifyRow, axRow, browserRow, browserChecklist, ghRow, gitIdentityRow, gitIdentityError, installState, loginRow, GET_URL, setupFailed, versionFit, WIZARD, type BrowserSetupState, type BrowserStatus, type EnvCheck, type NotifyStatus, type SetupTask, type SkipKey, type Trust, type WizardStep } from '../domain/setup';
 import type { Animation, FeatureSwitch } from '../domain/config';
 import { firstTab, settingsEscCloses, settingsTabs, tabOf, type SettingsTab, type SetupStart } from '../domain/settingsTabs';
 import { BRAND } from '../domain/avatar';
@@ -89,8 +89,10 @@ function Field({ label, hint, children }: { label: string; hint?: ReactNode; chi
 
 const features = (): [FeatureSwitch, string, string][] => [
   ['office', tr('사무실', 'Office'), tr('참모 화면을 픽셀 사무실로 보여 줘요', 'Shows the assistant view as a pixel office')],
-  ['tama', tr('다마고치', 'Tamagotchi'), tr('커밋·머지를 먹고 자라는 작은 펫 위젯', 'A small pet widget that grows on your commits and merges')],
-  ['gacha', tr('뽑기', 'Gacha'), tr('머지·커밋으로 모은 코인으로 사무실 꾸미기', 'Decorate the office with coins earned from merges and commits')],
+  // 문구 소넷 medium(2026-11-02) — 깃 없이도 끝낸 일로 자란다(ADR 0024)
+  ['tama', tr('다마고치', 'Tamagotchi'), tr('맡긴 일을 끝내거나 결과물을 보여 줄수록 크는 작은 펫이에요. git 을 쓰면 커밋·머지도 먹어요.', 'A small pet widget that grows as you finish tasks, share results and run schedules. With git on, it also eats commits and merges.')],
+  ['gacha', tr('뽑기', 'Gacha'), tr('끝낸 일로 모은 코인으로 사무실을 꾸며요. git 을 쓰면 커밋·머지도 코인이 돼요.', 'Decorate your office with coins earned from finished tasks. With git on, commits and merges earn coins too.')],
+  ['git', tr('코드 프로젝트에 git 쓰기', 'Use git for code projects'), tr('앱·사이트·스크립트 프로젝트에 git(버전 기록)을 켜고, 세션이 커밋·PR 규칙을 따라요. 개발자용이에요. 꺼 두면 폴더에 파일만 남아요. 디자인·문서·영상과 이미 git 이 있는 프로젝트는 그대로예요.', 'Turns on git (version history) for app, site and script projects, and sessions follow commit and PR rules. For developers. When off, files just stay in the folder. Design, document and video projects, and projects that already have git, stay as they are.')],
   ['review', tr('PR 리뷰', 'PR review'), tr('열린 PR 과 머지 전에 볼 것을 모아 보여 줘요 (gh 필요)', 'Collects open PRs and what to check before merging (needs gh)')],
   ['voice', tr('음성 모드', 'Voice mode'), tr('채팅에 음성 모드 단추를 보여 줘요 — 그 단추를 켜면 참모의 답을 소리로 읽어 줘요', "Shows the voice mode button in chat — turn that on to hear the assistant's replies")],
   ['agentView', tr('세션 브라우저 앱에서 보기', 'Watch session browsers in the app'), tr(`세션이 브라우저를 쓰면 그 화면을 대시보드에 띄워요. 켜 둔 동안 이 ${machine()}의 다른 프로그램도 그 크롬을 조종할 수 있어요. 바꾼 설정은 새로 켜는 세션부터 적용돼요`, `Shows what a session's browser is doing on its dashboard. While on, other programs on this ${machine()} could also control that Chrome. Changes apply to sessions started afterwards`)],
@@ -138,13 +140,23 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
       setGitBusy(false);
     }
   };
+  const gitIdForm = (
+    <>
+      <form className="su-control su-inline su-git-id" onSubmit={(e) => { e.preventDefault(); void saveGit(); }}>
+        <input value={gitIn.name} placeholder={tr('이름', 'Name')} aria-label={tr('이름', 'Name')} autoComplete="name" spellCheck={false} onChange={(e) => setGitIn((g) => ({ ...g, name: e.target.value }))} />
+        <input value={gitIn.email} placeholder={tr('메일', 'Email')} aria-label={tr('메일', 'Email')} type="email" autoComplete="email" spellCheck={false} onChange={(e) => setGitIn((g) => ({ ...g, email: e.target.value }))} />
+        <button type="submit" className="btn pri" disabled={gitBusy}>{tr('저장', 'Save')}</button>
+      </form>
+      {gitErr && <div className="su-error su-git-id">{gitErr}</div>}
+    </>
+  );
   const [checking, setChecking] = useState(false);
   const [task, setTask] = useState<SetupTask | null>(start ?? null);
   /** 윈도우 git·파이썬 설치를 한 번이라도 돌렸나 — 그 뒤에도 ✕ 면 껐다 켜기 안내 */
   const [tried, setTried] = useState<SetupTask[]>(start ? [start] : []);
   // 윈도우 git·파이썬 — 설치 터미널이 실패로 끝난 것, 사람이 '나중에 하기'로 넘긴 것(회사 PC, win-env H3)
   const [failed, setFailed] = useState<SetupTask[]>([]);
-  const [skipped, setSkipped] = useState<SetupTask[]>([]);
+  const [skipped, setSkipped] = useState<SkipKey[]>([]);
   const [dev, setDev] = useState<FolderStatus | null>(null);
   const [hq, setHq] = useState<FolderStatus | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -316,7 +328,7 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
 
   const doneLine = tr('끝났어요. 위의 "다시 확인"을 누르거나 잠깐 기다려 주세요.', 'Done. Press "Check again" above, or wait a moment.');
   const run = (t: SetupTask) => { setTried((d) => (d.includes(t) ? d : [...d, t])); setFailed((d) => d.filter((x) => x !== t)); setSkipped((d) => d.filter((x) => x !== t)); setTask(t); };
-  const ready = setupReady(check, skipped);
+  const ready = setupReady(check, skipped, draft.features.git);
   const fit = check?.claudeVersion ? versionFit(check.claudeVersion) : 'unknown';
   const ver = parseClaudeVersion(check?.claudeVersion ?? '')?.join('.') ?? check?.claudeVersion;
 
@@ -435,21 +447,22 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
                       <button className="btn pri" onClick={() => run('login')}>{tr('로그인하기', 'Sign in')}</button>
                     </Row>)}
               {IS_WIN ? winToolRow('clt', check.clt) : check.clt
-                ? <Row state="ok" title={tr('git (Xcode 명령줄 도구)', 'git (Xcode Command Line Tools)')} text={tr('있어요.', 'Installed.')} />
-                : <Row state="need" title={tr('git (Xcode 명령줄 도구)', 'git (Xcode Command Line Tools)')} text={tr('git 이 들어 있는 Apple 도구예요. 누르면 macOS 설치 창이 떠요 — 설치에 몇 분 걸려요.', "Apple's tools that include git. The button opens the macOS installer — it takes a few minutes.")}>
+                // git 이 아니라 참모 도구(/usr/bin/python3) 때문에 필수 — git 을 앞세우지 않는다(ADR 0024, 문구 소넷)
+                ? <Row state="ok" title={tr('Xcode 명령줄 도구', 'Xcode command line tools')} text={tr('설치돼 있어요.', 'Installed.')} />
+                : <Row state="need" title={tr('Xcode 명령줄 도구', 'Xcode command line tools')} text={tr('참모 도구가 쓰는 Apple 기본 도구예요. 누르면 macOS 설치 창이 떠요. 몇 분 걸려요.', "A basic Apple tool the assistant's tools rely on. Click to open the macOS installer. It takes a few minutes.")}>
                     <button className="btn pri" onClick={() => run('clt')}>{tr('설치하기', 'Install')}</button>
                   </Row>}
               {IS_WIN && winToolRow('python', check.python !== false)}
-              {gitIdentityRow(check) === 'ok' && <Row state="ok" title={tr('git 이름·메일', 'Git name and email')} text={`${check.gitName} · ${check.gitEmail}`} />}
-              {gitIdentityRow(check) === 'need' && (
+              {gitIdentityRow(check, draft.features.git) === 'ok' && <Row state="ok" title={tr('git 이름·메일', 'Git name and email')} text={`${check.gitName} · ${check.gitEmail}`} />}
+              {gitIdentityRow(check, draft.features.git) === 'need' && (
                 <>
-                  <Row state="need" title={tr('git 이름·메일', 'Git name and email')} text={tr('프로젝트마다 저장 기록(커밋)에 남길 이름과 메일이 필요해요. 이 컴퓨터에 한 번만 적으면 돼요. 공개 저장소에 올리면 다른 사람도 볼 수 있어요.', 'Each project needs a name and email to record with its commits. You only enter them once on this computer. Anyone can see them if you push to a public repository.')} />
-                  <form className="su-control su-inline su-git-id" onSubmit={(e) => { e.preventDefault(); void saveGit(); }}>
-                    <input value={gitIn.name} placeholder={tr('이름', 'Name')} aria-label={tr('이름', 'Name')} autoComplete="name" spellCheck={false} onChange={(e) => setGitIn((g) => ({ ...g, name: e.target.value }))} />
-                    <input value={gitIn.email} placeholder={tr('메일', 'Email')} aria-label={tr('메일', 'Email')} type="email" autoComplete="email" spellCheck={false} onChange={(e) => setGitIn((g) => ({ ...g, email: e.target.value }))} />
-                    <button type="submit" className="btn pri" disabled={gitBusy}>{tr('저장', 'Save')}</button>
-                  </form>
-                  {gitErr && <div className="su-error su-git-id">{gitErr}</div>}
+                  {skipped.includes('gitId')
+                    ? <Row state="opt" title={tr('git 이름·메일', 'Git name and email')} text={tr('이름·메일 없이 다음으로 넘어가요. 그동안 세션이 커밋을 남겨야 하는 일에서 멈추거나, 커밋 없이 끝날 수 있어요. 아래 칸에 지금 적어도 되고, 나중에 설정 > 도구 점검에서 적을 수도 있어요.', 'Continuing without a git name and email. Sessions may get stuck on tasks that need commits, or finish without one. You can still fill them in below, or later in Settings > Tools.')} />
+                    : <Row state="need" title={tr('git 이름·메일', 'Git name and email')} text={tr('프로젝트마다 저장 기록(커밋)에 남길 이름과 메일이 필요해요. 이 컴퓨터에 한 번만 적으면 돼요. 공개 저장소에 올리면 다른 사람도 볼 수 있어요.', 'Each project needs a name and email to record with its commits. You only enter them once on this computer. Anyone can see them if you push to a public repository.')}>
+                        {/* 회사 PC 처럼 지금 못 정하면 넘긴다 — 첫 설정을 막지 않게(0.4.7 2차 검증) */}
+                        <button className="btn" onClick={() => setSkipped((d) => [...d, 'gitId'])}>{tr('나중에 하기', 'Skip for now')}</button>
+                      </Row>}
+                  {gitIdForm}
                 </>
               )}
               {ghRow(check) === 'ok'
@@ -681,6 +694,26 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
               </div>
             );
           })();
+  // git 을 켰는데 이름·메일이 비면 스위치 바로 아래에 칸(첫 설정 점검 단계보다 기능 단계가 뒤라 거기선 못 물었다 — 시안 git-optional)
+  const gitIdBelow = draft.features.git && check && gitIdentityRow(check, true) === 'need' && (
+    <div className="cfg-git-id">
+      <span className="su-hint">{tr('커밋에 남는 이름과 메일이에요. 공개 저장소에 올리면 다른 사람도 볼 수 있어요.', 'This name and email are saved with each commit. Anyone can see them if you publish to a public repository.')}</span>
+      {gitIdForm}
+    </div>
+  );
+  const switches = (keys: FeatureSwitch[]) => (
+    <div className="cfg-rows">
+      {features().filter(([k]) => keys.includes(k)).map(([k, label, text]) => (
+        <Fragment key={k}>
+          <label className="cfg-row">
+            <span className="cfg-rt"><b>{label}</b><span>{text}</span></span>
+            <input type="checkbox" role="switch" className="cfg-sw" checked={draft.features[k]} onChange={(e) => set('features', { ...draft.features, [k]: e.target.checked })} />
+          </label>
+          {k === 'git' && gitIdBelow}
+        </Fragment>
+      ))}
+    </div>
+  );
   const featGrid = (
           <div className="su-feats">
             {features().map(([k, label, text]) => (
@@ -706,8 +739,8 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
         <section className="su-sec">
           <h2>{tr('기능', 'Features')}</h2>
           {/* 첫 실행엔 두 줄만 — 체크 13칸·권한·애니메이션은 설정 탭에(2026-11-01 ux-start M3, 문구 소넷) */}
-          {notifyBlock}{browserBlock}
-          <p className="su-hint">{tr('지금은 알림과 브라우저 자동화만 골라요. 나머지 기능은 나중에 설정 > 기능에서 켤 수 있어요.', 'For now, just choose notifications and browser automation. You can turn on the other features later in Settings > Features.')}</p>
+          {notifyBlock}{browserBlock}{switches(['git'])}
+          <p className="su-hint">{tr('지금은 알림, 브라우저 자동화, git 만 골라요. 나머지 기능은 나중에 설정 > 기능에서 켤 수 있어요.', 'For now, just choose notifications, browser automation and git. You can turn on the other features later in Settings > Features.')}</p>
         </section>
   );
   // 마지막 단계 — 고른 것 한눈에
@@ -759,24 +792,15 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
       <div className="su-line"><span className="su-label">{tr('언어', 'Language')}</span><span className="su-control">{langSeg}</span></div>
     </div>
   );
-  const switches = (keys: FeatureSwitch[]) => (
-    <div className="cfg-rows">
-      {features().filter(([k]) => keys.includes(k)).map(([k, label, text]) => (
-        <label key={k} className="cfg-row">
-          <span className="cfg-rt"><b>{label}</b><span>{text}</span></span>
-          <input type="checkbox" role="switch" className="cfg-sw" checked={draft.features[k]} onChange={(e) => set('features', { ...draft.features, [k]: e.target.checked })} />
-        </label>
-      ))}
-    </div>
-  );
   const TAB_LABEL: Record<SettingsTab, string> = {
     general: tr('일반', 'General'), agent: name, features: tr('기능', 'Features'), voice: tr('알림과 음성', 'Alerts & voice'),
     devices: tr('기기 관리', 'Devices'), messenger: tr('메신저', 'Messenger'), accounts: tr('계정', 'Accounts'), browser: tr('브라우저', 'Browser'), tools: tr('도구 점검', 'Tools'),
   };
   const tabBody: Record<SettingsTab, ReactNode> = {
-    general: <>{langField}{memoField}{githubField}{searchField}</>,
+    general: <>{langField}{memoField}{draft.features.git && githubField}{searchField}</>,
     agent: <>{nameField}{hqField}{devField}{extrasField}{trustBlock}{switches(['autoRevive'])}</>,
-    features: <>{axBlock}{screenBlock}{switches(['office', 'tama', 'gacha', 'review', 'bubble', 'bubbleDesk', 'autoTidy', 'craftBasics', 'usagePing'])}{animField}</>,
+    // PR 리뷰는 git 을 쓸 때만(ADR 0024)
+    features: <>{axBlock}{screenBlock}{switches(['office', 'tama', 'gacha', 'git', ...(draft.features.git ? ['review' as const] : []), 'bubble', 'bubbleDesk', 'autoTidy', 'craftBasics', 'usagePing'])}{animField}</>,
     voice: <>{notifyBlock}{switches(['voice'])}{ttsField}{talkField}</>,
     devices: <DevicesSection title={tr('내 기기', 'My devices')} onAccount={() => setTab('accounts')} fallback={<><MobileSection title={tr('폰', 'Phone')} onAccount={() => setTab('accounts')} /><PeerSection title={tr('다른 기기 참모', 'Chammo on other devices')} /></>} />,
     messenger: <><TeamSoundSection title={tr('메신저 알림', 'Messenger alerts')} /><MessengerSection title={tr('텔레그램', 'Telegram')} /></>,
@@ -836,13 +860,13 @@ export function Setup({ config, firstRun, fontSize, onClose, start, tab: tab0 }:
           {note && <div className="su-note">{note}</div>}
           {error && <div className="su-error">{error}</div>}
           {/* 다음이 꺼진 까닭은 단추 바로 위에 — 점검 단계는 점검 결과가 온 뒤에만 */}
-          {(step !== 'check' || check) && nextWhy(step, check, trust, devAccess, IS_WIN, skipped) && <div className="su-hint">{nextWhy(step, check, trust, devAccess, IS_WIN, skipped)}</div>}
+          {(step !== 'check' || check) && nextWhy(step, check, trust, devAccess, IS_WIN, skipped, draft.features.git) && <div className="su-hint">{nextWhy(step, check, trust, devAccess, IS_WIN, skipped, draft.features.git)}</div>}
           <div className="su-nav">
             {at > 0 && <IconButton size="l" tone="line" className="su-nav-ib" label={tr('뒤로', 'Back')} disabled={busy} onClick={() => setStep(WIZARD[at - 1]!)}><IconBack /></IconButton>}
             <span className="grow" />
             {step === 'ready'
               ? <button className="btn pri su-go" disabled={busy || !ready} onClick={() => void finish()}>{busy ? tr('준비하는 중…', 'Getting ready…') : tr('시작하기', 'Get started')}</button>
-              : <IconButton size="l" tone="pri" className="su-nav-ib" label={tr('다음', 'Next')} disabled={!canNext(step, check, trust, devAccess, skipped)} onClick={() => setStep(WIZARD[at + 1]!)}><IconNext /></IconButton>}
+              : <IconButton size="l" tone="pri" className="su-nav-ib" label={tr('다음', 'Next')} disabled={!canNext(step, check, trust, devAccess, skipped, draft.features.git)} onClick={() => setStep(WIZARD[at + 1]!)}><IconNext /></IconButton>}
           </div>
         </footer>
       </div>

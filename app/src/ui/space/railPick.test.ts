@@ -35,7 +35,7 @@ describe('띠 고른 표시 = 그림 둘레 색 테두리 하나', () => {
 
 describe('팀 칸 테두리 = 팀 홈 팀 색', () => {
   it('팀 칸은 고른 표시 색(--rail-on)만 주고, 팀 표 자체 고리(TeamMarkIcon on)는 안 겹친다', () => {
-    expect(teamRail).toMatch(/style=\{\{ '--rail-on': color \?\? teamMark\(team\)\.color \} as React\.CSSProperties\}/);
+    expect(teamRail).toMatch(/style=\{\{ '--rail-on': color \?\? teamMark\(t\.name\)\.color \} as React\.CSSProperties\}/);
     expect(teamRail).not.toMatch(/<TeamMarkIcon[^>]*\bon=/);
   });
   it('팀 모드가 팀 홈 판 색을 띠에 넘긴다 — 프로필판과 같은 판 번호가 오르면 다시 읽는다', () => {

@@ -49,6 +49,8 @@ pub enum Kind {
     Office,
     /// 영상(mp4·mov·m4v) — 지금은 QuickLook 썸네일만, 재생은 Range 를 붙인 뒤(전략 표 8번)
     Video,
+    /// 디자인 파일(svg·ai·eps·psd) — 썸네일만(pick_thumb). 원본은 /api/file·내려받기 어디서도 안 낸다(2026-11-01)
+    Design,
     /// 나머지는 전부 글로 — html·svg 도(같은 출처에서 스크립트가 돌면 열쇠 쿠키로 /api 를 부를 수 있다)
     Text,
 }
@@ -63,6 +65,7 @@ pub fn kind_of(p: &Path) -> Kind {
         Some("pdf") => Kind::Pdf,
         Some("pptx" | "ppt" | "key" | "docx" | "doc" | "pages" | "xlsx" | "xls" | "numbers") => Kind::Office,
         Some("mp4" | "mov" | "m4v") => Kind::Video,
+        Some("svg" | "ai" | "eps" | "psd") => Kind::Design,
         _ => Kind::Text,
     }
 }
@@ -105,7 +108,7 @@ fn dot_ok(p: &Path, home: &Path) -> bool {
 }
 
 pub fn shareable(p: &Path, r: &Rules) -> bool {
-    let ext_ok = matches!(p.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(), Some("md" | "txt" | "html" | "json" | "csv" | "tsv" | "log" | "yaml" | "yml" | "toml" | "ts" | "tsx" | "js" | "jsx" | "mjs" | "py" | "rs" | "sh" | "swift" | "kt" | "css" | "sql" | "png" | "jpg" | "jpeg" | "gif" | "webp" | "heic" | "pdf" | "pptx" | "ppt" | "key" | "docx" | "doc" | "pages" | "xlsx" | "xls" | "numbers" | "mp4" | "mov" | "m4v"));
+    let ext_ok = matches!(p.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(), Some("md" | "txt" | "html" | "htm" | "json" | "csv" | "tsv" | "log" | "yaml" | "yml" | "toml" | "ts" | "tsx" | "js" | "jsx" | "mjs" | "py" | "rs" | "sh" | "swift" | "kt" | "css" | "sql" | "png" | "jpg" | "jpeg" | "gif" | "webp" | "heic" | "pdf" | "pptx" | "ppt" | "key" | "docx" | "doc" | "pages" | "xlsx" | "xls" | "numbers" | "mp4" | "mov" | "m4v"));
     ext_ok && place_ok(p, r)
 }
 
@@ -211,6 +214,17 @@ pub fn phone_attach(p: &Path, data_dir: &Path) -> bool {
 /// 요청 경로가 집합 안(또는 폰이 올린 첨부)이고, 어느 단계도 링크가 아니며 ../ 가 없나
 pub fn pick(requested: &str, allowed: &[String], rules: &Rules) -> Pick {
     pick_in(requested, allowed, rules, shareable)
+}
+
+/// 썸네일만 받을 때(/api/file?thumb=1) — pick 에 디자인 파일(svg·ai·eps·psd)을 더한다. 자리·이름·링크 거름은 같다.
+/// 원본 길(pick·pick_shown — 파일·내려받기·영상 표)은 그대로라 디자인 원본은 안 나간다
+pub fn pick_thumb(requested: &str, allowed: &[String], rules: &Rules) -> Pick {
+    pick_in(requested, allowed, rules, thumb_shareable)
+}
+
+/// 폰에 카드로 보일 수 있나 — 내보낼 수 있는 것 + 첫 장만 보이는 디자인 파일(보여 준 목록이 이걸로 거른다)
+pub fn thumb_shareable(p: &Path, r: &Rules) -> bool {
+    shareable(p, r) || (kind_of(p) == Kind::Design && place_ok(p, r))
 }
 
 /// 맥 화면에서 사람이 건네는 파일(파인더에서 보기·바깥으로 끌기, shown_share) — pick 과 같되 형식은 안 가린다(.ai·.psd·.zip 발주 파일도).
@@ -581,11 +595,57 @@ pub fn thumb_size(p: Option<&str>) -> u32 {
 /// 썸네일을 QuickLook 으로 — PDF·HTML 시안·오피스·영상(그림은 sips, 글은 폰이 앞부분을 글로)
 pub fn wants_quicklook(p: &Path) -> bool {
     matches!(p.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(), Some("pdf" | "html" | "htm"))
-        || matches!(kind_of(p), Kind::Office | Kind::Video)
+        || matches!(kind_of(p), Kind::Office | Kind::Video | Kind::Design)
 }
 
-/// QuickLook 첫 장(qlmanage -t) → JPEG(긴 변 size). 오래 걸리면(영상 등) 20초에 끊는다
+/// 팀 파일 첫 장 썸네일(QuickLook) — PDF·오피스·영상·ai·eps·psd·hwpx. 남이 올린 html·svg 는 QuickLook 이 바깥 주소를 부를 수 있어 뺀다(11-01)
+pub fn team_page(p: &Path) -> bool {
+    let ext = p.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).unwrap_or_default();
+    matches!(kind_of(p), Kind::Pdf | Kind::Office | Kind::Video) || matches!(ext.as_str(), "ai" | "eps" | "psd" | "hwpx")
+}
+
+/// 한글(hwpx) 속 첫 장 그림(Preview/PrvImage.png) — 맥 QuickLook 은 hwpx 를 못 그리고 20초 헛돈다(2026-11-01 실측).
+/// 한글로 저장한 파일엔 들어 있다. 다른 도구가 만든 파일은 흰 장일 수 있어 거의 빈 그림(PNG 가 화소당 0.012바이트 미만)은 None — 확장자 표가 낫다
+pub fn hwpx_preview(src: &Path) -> Option<Vec<u8>> {
+    if !src.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("hwpx")) {
+        return None;
+    }
+    let mut z = zip::ZipArchive::new(std::fs::File::open(src).ok()?).ok()?;
+    let mut f = z.by_name("Preview/PrvImage.png").ok()?;
+    if f.size() > 8 * 1024 * 1024 {
+        return None;
+    }
+    let mut b = Vec::new();
+    std::io::Read::read_to_end(&mut f, &mut b).ok()?;
+    let (w, h) = image_dims(&b)?;
+    (b.len() as f64 / (w as f64 * h as f64).max(1.0) >= 0.012).then_some(b)
+}
+
+/// QuickLook 첫 장(qlmanage -t) → JPEG(긴 변 size). 오래 걸리면(영상 등) 20초에 끊는다. hwpx 는 속 그림으로(QuickLook 은 헛돈다)
 pub fn ql_jpeg(src: &Path, size: u32) -> Option<Vec<u8>> {
+    if src.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("hwpx")) {
+        // 속 그림이 없으면 맥은 끝(QuickLook 은 헛돈다), 윈도우는 아래 셸 썸네일(한컴이 깔린 PC)
+        let Some(png) = hwpx_preview(src) else {
+            #[cfg(windows)]
+            return crate::win_thumb::first_page_jpeg(src, size);
+            #[cfg(not(windows))]
+            return None;
+        };
+        let tmp = std::env::temp_dir().join(format!("chammo-hwpx-{}-{}.png", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)));
+        write_private_tmp(&tmp, &png).ok()?;
+        let out = sips_jpeg(&tmp, Some(size));
+        let _ = std::fs::remove_file(&tmp);
+        return out;
+    }
+    // 윈도우 — qlmanage 대신 GDI+·Windows.Data.Pdf·셸 썸네일(win_thumb, 공개 이슈 #15)
+    #[cfg(windows)]
+    return crate::win_thumb::first_page_jpeg(src, size);
+    #[cfg(not(windows))]
+    ql_jpeg_mac(src, size)
+}
+
+#[cfg(not(windows))]
+fn ql_jpeg_mac(src: &Path, size: u32) -> Option<Vec<u8>> {
     let dir = std::env::temp_dir().join(format!("chammo-mobile-ql-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)));
     std::fs::create_dir_all(&dir).ok()?;
     let mut c = crate::platform::command("/usr/bin/qlmanage");
@@ -598,6 +658,15 @@ pub fn ql_jpeg(src: &Path, size: u32) -> Option<Vec<u8>> {
 }
 
 pub fn sips_jpeg(src: &Path, max: Option<u32>) -> Option<Vec<u8>> {
+    // 윈도우엔 sips 가 없다 — GDI+ 로(win_thumb). webp·heic 처럼 GDI+ 가 못 읽는 그림은 셸 썸네일(WIC 확장이 있으면)
+    #[cfg(windows)]
+    return crate::win_thumb::image_jpeg(src, max).or_else(|| max.and_then(|m| crate::win_thumb::first_page_jpeg(src, m)));
+    #[cfg(not(windows))]
+    sips_jpeg_mac(src, max)
+}
+
+#[cfg(not(windows))]
+fn sips_jpeg_mac(src: &Path, max: Option<u32>) -> Option<Vec<u8>> {
     let out = std::env::temp_dir().join(format!("chammo-mobile-{}-{}.jpg", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)));
     let mut c = crate::platform::command("/usr/bin/sips");
     if let Some(m) = max {

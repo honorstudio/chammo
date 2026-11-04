@@ -8,8 +8,8 @@
 // 오른쪽 클릭은 뒤따르는 click 을 삼킨다. 바꾸기는 누르면 바로 화면에(기다리는 일 domain/teamLockerPending), 실패하면 되돌리고 알린다(10-26 사용자 298.png).
 // room 을 주면 '대화 파일 보기' — 그 DM·팀챗에 붙인 파일만(팀 보관함엔 안 섞는다, 10-28 사용자 "디엠은 그 사용자랑만"). 폴더 칩은 놓으면 복사하는 자리로만
 import { invoke } from '@tauri-apps/api/core';
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
-import { allFolders, canPurge, othersOf, folderFiles, crumbsOf, dirId, dirOfId, kidFolders, moveTargets, parentOf, renamedPath, dropPlan, lockerUps, extOf, thumbKind, TEAM_LOCKER_DROP, TEAM_LOCKER_MOVE, TEAM_LOCKER_OUT, fmtBytes, inPlace, inRoom, readSort, sortItems, SORTS, usageText, whenText, type LockerItem, type LockerSort, type LockerUpload, type LockerView } from '../../domain/teamLocker';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { keyWaitNote, lockedFiles, allFolders, canPurge, othersOf, folderFiles, crumbsOf, dirId, dirOfId, kidFolders, moveTargets, parentOf, renamedPath, dropPlan, lockerUps, extOf, thumbKind, TEAM_LOCKER_DROP, TEAM_LOCKER_MOVE, TEAM_LOCKER_OUT, fmtBytes, inPlace, inRoom, readSort, sortItems, SORTS, usageText, whenText, type LockerItem, type LockerSort, type LockerUpload, type LockerView } from '../../domain/teamLocker';
 import { failText, opKey, withPending, type LockerOp } from '../../domain/teamLockerPending';
 import { needFetch, placeMemo, teamViewMemo } from '../../domain/teamViewMemo';
 import { opensOnClick } from '../../domain/ctxMenu';
@@ -26,11 +26,14 @@ import { usePick } from '../space/usePick';
 import { FolderTile, PathCrumbs } from '../space/FolderTile';
 import { SendToOrch } from '../space/SendToOrch';
 import { TeamMarkIcon } from './TeamFaces';
+import { ProfilesCtx } from './useProfiles';
+import { lookOf } from '../../domain/teamProfile';
 import { openTeamFile, type TeamOpenHow } from './openTeamFile';
 import { altOpen } from '../../domain/craftOpen';
 import { GIVE_LABEL, giveFolder, giveIds, giveItems, giveMenu, useRoster } from './teamGive';
 import { splitTeamDrop, type RosterOrch } from '../../domain/teamGive';
 import { TEAM_DROP_EVENT } from './teamDrop';
+import { DownActs, DownBar, DownLine, useTeamDowns } from './TeamDownBits';
 import { SortButton } from '../SortButton';
 import '../space/locker.css';
 import './team.css';
@@ -63,7 +66,7 @@ function Thumb({ team, item }: { team: string; item: LockerItem }) {
     teamFileThumb(team, item.id, item.name, item.size).then((u) => { if (live) setSrc(u); }, () => {});
     return () => { live = false; };
   }, [team, item.id, item.at, item.why]); // eslint-disable-line react-hooks/exhaustive-deps
-  if (src) return <span className={`tlk-thumb ${thumbKind(item.name, item.size) === 'pdf' ? 'tlk-pg' : ''}`}><img src={src} alt="" draggable={false} onError={() => { forgetTeamThumb(team, item.id); setSrc(null); }} /></span>;
+  if (src) return <span className={`tlk-thumb ${thumbKind(item.name, item.size) === 'page' ? 'tlk-pg' : ''}`}><img src={src} alt="" draggable={false} onError={() => { forgetTeamThumb(team, item.id); setSrc(null); }} /></span>;
   return <span className="tlk-thumb"><span className="tmx-ext">{extOf(item.name) || tr('파일', 'file')}</span></span>;
 }
 
@@ -72,14 +75,12 @@ const otherOne = (i: LockerItem, what: 'trash' | 'rename') => what === 'trash'
   ? tr(`'${i.name}' 파일은 ${i.by || '다른 사람'}님이 올렸어요. 휴지통으로 옮기면 팀 모두의 보관함에서 사라져요. 30일 안에는 되살릴 수 있어요.`, `'${i.name}' was uploaded by ${i.by || 'someone else'}. Moving it to the trash removes it for everyone on the team. You can restore it within 30 days.`)
   : tr(`'${i.name}' 파일은 ${i.by || '다른 사람'}님이 올렸어요. 이름을 바꾸면 팀 모두에게 바뀐 이름으로 보여요.`, `'${i.name}' was uploaded by ${i.by || 'someone else'}. Renaming it changes the name for everyone on the team.`);
 
-export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tail, icon, room, canFiles = false }: {
+export function TeamLocker({ teamId, team, people, follow, onFollow, tail, icon, room, canFiles = false }: {
   teamId: string;
   team: string;
   people: number;
   follow: boolean;
   onFollow: (on: boolean) => void;
-  /** 받은 파일을 파인더에서 보이기('이 기기에 저장') */
-  onOpen: (path: string, dir: boolean) => void;
   /** 머리 오른쪽 끝 자리 — 주면 '메신저 팀 따라가기' 링크 단추 대신 이것(팀 설정 조절 막대, team-settings) */
   tail?: ReactNode;
   /** 팀 아이콘 그림(data URL) — 없으면 첫 글자 */
@@ -112,6 +113,7 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tai
   const [note, setNote] = useState('');
   /** 누른 뒤 풀어 여는 중인 파일 id — 그 줄에 '여는 중'(10-26 사용자 "누르면 바로 안 열린다") */
   const [opening, setOpening] = useState<Set<string>>(() => new Set());
+  const downs = useTeamDowns();
   /** 보낸 뒤 서버 답을 기다리는 바꾸기 — 화면엔 이미 반영(withPending), 열쇠가 같은 건 또 안 보낸다 */
   const [pend, setPend] = useState<{ key: string; op: LockerOp }[]>([]);
   const pendRef = useRef(pend);
@@ -196,7 +198,10 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tai
     return () => window.removeEventListener(TEAM_LOCKER_DROP, f);
   }, [teamId, putIn, folder, room]);
 
-  const shown = useMemo(() => (v ? withPending(v.items, pend.map((p) => p.op)) : null), [v, pend]);
+  // 올린 사람 = 프로필 이름(대화·캘린더와 같은 lookOf — Rust 는 명부 이름을 준다, byMember 로 찾는다)
+  const { board } = useContext(ProfilesCtx);
+  const named = useMemo(() => (v && board ? v.items.map((i) => (i.byMember ? { ...i, by: lookOf(board, i.byMember, i.by).name } : i)) : v?.items), [v, board]);
+  const shown = useMemo(() => (named ? withPending(named, pend.map((p) => p.op)) : null), [named, pend]);
   const busy = shown?.busy ?? new Set<string>();
   const busyFolders = shown?.busyFolders ?? new Set<string>();
   const roomId = room?.id ?? '';
@@ -231,7 +236,9 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tai
   const open = (i: LockerItem, app: TeamOpenHow = false) => {
     if (i.why || trash || opening.has(i.id)) return;
     setOpening((x) => new Set(x).add(i.id));
-    void openTeamFile((external) => invoke<string>('team_locker_open', { team: teamId, id: i.id, external }), i.name, app)
+    const p = openTeamFile((external) => invoke<string>('team_locker_open', { team: teamId, id: i.id, external }), i.name, app);
+    void downs.watch(p); // 큰 파일은 여는 동안에도 막대
+    void p
       .catch((e: unknown) => setNote(String(e)))
       .finally(() => setOpening((x) => { const n = new Set(x); n.delete(i.id); return n; }));
   };
@@ -240,7 +247,8 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tai
     if (!opensOnClick(e) || pick.press(e, i.id)) return;
     open(i);
   };
-  const save = (i: LockerItem) => act(async () => onOpen(await invoke<string>('team_locker_save', { team: teamId, id: i.id }), true));
+  // 내 폴더에 저장 — 진행·멈추기·폴더에서 보기·열기는 줄·카드 오른쪽 아이콘(TeamDownBits, 11-01 사용자 시안)
+  const save = (i: LockerItem) => void downs.watch(invoke<string>('team_locker_save', { team: teamId, id: i.id }));
   // 내 참모에게 — 이 기기에서 풀어 그 참모 보관함(팀 보관함/<팀>/…)에 두고, 메인 창이 그 참모 채팅 입력칸에 #file 칩을 붙인다(보내기는 사람이)
   const roster = useRoster();
   const give = (ids: string[], o: RosterOrch) => {
@@ -388,7 +396,7 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tai
         ...((alt) => (alt ? [{ label: alt.label, run: () => open(i, alt.how) }] : []))(altOpen(i.name)),
         { label: tr('다른 앱으로 열기', 'Open with default app'), run: () => open(i, true) },
         giveMenu(roster, (o) => give([i.id], o)),
-        { label: tr('이 기기에 저장', 'Save to this Mac'), run: () => save(i) },
+        { label: tr('내 폴더에 저장', 'Save to my folder'), run: () => save(i) },
         { label: tr('이름 바꾸기', 'Rename'), sep: true, run: () => { const go = () => setNaming({ id: i.id, what: 'name', value: i.name }); if (i.mine) go(); else setAskOther({ body: otherOne(i, 'rename'), ok: tr('이름 바꾸기', 'Rename'), go }); } },
         ...(i.room ? (all.length ? [{
           label: tr('팀 보관함 폴더로 복사', 'Copy to a team folder'),
@@ -486,7 +494,7 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tai
         }
       }} />
   );
-  const meta = (i: LockerItem) => (i.why ? tr('이 기기에선 아직 못 열어요', 'Not openable on this Mac yet') : [i.by, whenText(i.at), fmtBytes(i.size)].filter(Boolean).join(' · '));
+  const meta = (i: LockerItem) => (i.why ? tr('아직 열 수 없어요', "Can't open yet") : [i.by, whenText(i.at), fmtBytes(i.size)].filter(Boolean).join(' · '));
   /** 그 줄 끝 글 — 여는 중 · 반영 중(보낸 바꾸기) · 평소 */
   const state = (i: LockerItem, normal: ReactNode) => (opening.has(i.id) ? tr('여는 중', 'Opening') : busy.has(i.id) ? tr('반영 중', 'Saving') : normal);
   // 올리는 중 줄 — 팀 보관함 올리기만(대화 파일 붙이기는 채팅 칸이 그린다), 휴지통·대화 파일 보기에선 안 보인다
@@ -495,6 +503,10 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tai
   /** 줄·카드 끝 '내 참모에게 보내기' — 줄이 단추라 안에 못 넣어 옆(겹친 자리)에. 고른 묶음 안이면 묶음째. 휴지통·잠긴 파일·이름 바꾸는 중엔 없다 */
   const giveBtn = (i: LockerItem) => !trash && !i.why && naming?.id !== i.id && (
     <IconButton size="s" className="tlk-give" label={GIVE_LABEL()} onClick={(e) => pickOrch(e, pick.many(i.id) ? order.filter((k) => pick.picked(k)) : [i.id])}><IconChatSend /></IconButton>
+  );
+  /** 받기 아이콘 — 늘 보인다(윈도우 팀원이 오른쪽 클릭을 몰라서, 11-01 사용자). 휴지통·잠긴 파일·이름 바꾸는 중엔 없다 */
+  const downActs = (i: LockerItem) => !trash && !i.why && naming?.id !== i.id && (
+    <DownActs className="tlk-dl" d={downs.of(i.id)} api={downs} onSave={() => save(i)} onRetry={downs.of(i.id)?.mode === 'open' ? () => open(i) : undefined} onFail={(e) => setNote(String(e))} />
   );
   const rowCls = (i: LockerItem, base: string) => [base, i.why ? 'tlk-locked' : '', opening.has(i.id) ? 'tlk-opening' : '', busy.has(i.id) ? 'tlk-pending' : '', pick.picked(i.id) ? 'picked' : ''].filter(Boolean).join(' ');
 
@@ -538,6 +550,7 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tai
 
         {err && <div className="tmx-none">{err}</div>}
         {note && <div className="tmx-hint tlk-note" role="alert" onClick={() => setNote('')}>{note}</div>}
+        {!trash && !room && keyWaitNote(lockedFiles(shown?.items ?? []), 'file') && <div className="tmx-hint">{keyWaitNote(lockedFiles(shown?.items ?? []), 'file')}</div>}
         {!!v?.skipped.length && !trash && <div className="tmx-hint">{tr(`${v.skipped.join(', ')} — 보안 번호 확인 전이라 새 파일을 아직 못 받아요`, `${v.skipped.join(', ')} can't receive new files until their security number is confirmed`)}</div>}
 
         {(tiles.length > 0 || folderIn) && (
@@ -567,8 +580,10 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tai
                   <button data-pick={i.why ? undefined : i.id} className={rowCls(i, 'tmx-lk-row')} onClick={(e) => click(e, i)} onContextMenu={(e) => onMenu(e, i)} title={i.name} aria-busy={opening.has(i.id) || busy.has(i.id)} {...dragOf(i)}>
                     <span className="tmx-ext">{extOf(i.name) || tr('파일', 'file')}</span>
                     {nameBox(i) || <b>{i.name || tr('잠긴 파일', 'Locked file')}</b>}
-                    <span className="d">{state(i, meta(i))}</span>
+                    <span className="d">{state(i, <DownLine bin d={downs.of(i.id)} normal={meta(i)} />)}</span>
+                    <DownBar d={downs.of(i.id)} className="tlk-row-bar" />
                   </button>
+                  {downActs(i)}
                   {giveBtn(i)}
                 </div>
               ))}
@@ -582,8 +597,10 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tai
                 <div key={i.id} className="tlk-rw">
                   <button data-pick={i.why ? undefined : i.id} className={rowCls(i, 'tlk-card')} onClick={(e) => click(e, i)} onContextMenu={(e) => onMenu(e, i)} title={i.name} aria-busy={opening.has(i.id) || busy.has(i.id)} {...dragOf(i)}>
                     <Thumb team={teamId} item={i} />
-                    <span className="tlk-cap">{nameBox(i) || <b>{i.name || tr('잠긴 파일', 'Locked file')}</b>}<span>{state(i, i.why ? tr('아직 못 열어요', 'Locked') : `${i.by} · ${fmtBytes(i.size)}`)}</span></span>
+                    <DownBar d={downs.of(i.id)} className="tlk-card-bar" />
+                    <span className="tlk-cap">{nameBox(i) || <b>{i.name || tr('잠긴 파일', 'Locked file')}</b>}<span>{state(i, i.why ? tr('아직 못 열어요', 'Locked') : <DownLine bin d={downs.of(i.id)} normal={`${i.by} · ${fmtBytes(i.size)}`} />)}</span></span>
                   </button>
+                  {downActs(i)}
                   {giveBtn(i)}
                 </div>
               ))}
@@ -592,7 +609,7 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, onOpen, tai
         ) : !v && !err ? (
           <div className="tmx-lk-rows tlk-skel" role="status" aria-label={tr('팀 보관함 여는 중', 'Opening the team locker')}>{[0, 1, 2, 3, 4].map((k) => <div key={k} className="tmx-lk-row"><i /><i /><i /></div>)}</div>
         ) : v && !err && !tiles.length && !folderIn && (
-          <div className="tmx-none">{trash ? tr('휴지통이 비었어요', 'Trash is empty') : room ? tr('이 대화에 붙인 파일이 없어요', 'No files in this chat yet') : place ? tr('비어 있어요 — 파일이나 폴더를 끌어 놓아요', 'Empty — drop files or folders here') : tr('팀 보관함이 비었어요 — 파인더에서 이 칸으로 끌어 넣으면 팀 모두에게 올라가요', 'The team locker is empty — drag files here from Finder to share with the team')}</div>
+          <div className="tmx-none">{trash ? tr('휴지통이 비었어요', 'Trash is empty') : room ? tr('이 대화에 붙인 파일이 없어요', 'No files in this chat yet') : place ? tr('비어 있어요 — 파일이나 폴더를 끌어 놓아요', 'Empty — drop files or folders here') : tr('팀 보관함이 비었어요 — 파일을 이 칸으로 끌어 넣으면 팀 모두에게 올라가요', 'The team locker is empty — drag files here to share with the team')}</div>
         )}
         {pick.band && <div className="lk-band" style={pick.band} aria-hidden="true" />}
         {n > 0 ? (

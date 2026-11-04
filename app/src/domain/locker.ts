@@ -1,6 +1,7 @@
 // 파일 보관함(2026-10-11 사용자) — 참모마다 하나. 내가 넣은 것(<데이터>/locker.jsonl, Rust locker.rs 가 접어 준 것)과
 // 참모·맡긴 세션이 보여 준 것(scripts/show 기록)을 한 목록으로 합친다. 폴더 = 내 폴더(사람이 만든 것) > 프로젝트(경로로 저절로) > 기타
 import { tr } from '../i18n';
+import { cardThumb } from './reader';
 import type { ShowAt } from './showAt';
 
 export type LockerItem = {
@@ -115,17 +116,13 @@ export function parseLockerPick(pick: string): { orch: string; folder: FolderKey
   return i < 0 ? { orch: rest, folder: 'recent' } : { orch: rest.slice(0, i), folder: rest.slice(i + 1) || 'recent' };
 }
 
-const IMAGE = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'heif', 'svg', 'bmp', 'tif', 'tiff'];
-/** 맥 미리보기(QuickLook)가 첫 장을 잘 그리는 것 — 그림이 곧 내용 */
-const SHOT = ['pdf', 'ppt', 'pptx', 'key', 'html', 'htm', 'mp4', 'mov', 'm4v'];
-
-/** 카드 썸네일 — image(그림 그대로) · shot(맥이 그린 첫 장) · doc(문서 모양 + 첫 줄) */
+/** 카드 썸네일 — image(그림 그대로) · shot(맥이 그린 첫 장) · doc(문서 모양 + 첫 줄). 길은 채팅 카드와 같은 cardThumb
+ *  (11-01 워드·엑셀·.ai·.psd 도 첫 장 — 전엔 종이 모양이라 어떤 파일인지 열어 봐야 알았다) */
 export function cardLook(path: string): { look: 'image' | 'shot' | 'doc'; tag: string } {
   const ext = baseName(path).toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? '';
   const tag = ext ? ext.toUpperCase() : 'FILE';
-  if (IMAGE.includes(ext)) return { look: 'image', tag };
-  if (SHOT.includes(ext)) return { look: 'shot', tag };
-  return { look: 'doc', tag };
+  const way = cardThumb(path);
+  return { look: way === 'image' || way === 'shot' ? way : 'doc', tag };
 }
 
 /** 보관함에서 열어 둔 파일이 그 뒤 고쳐졌나 — 맥 앱(키노트·한글 등)으로 고쳐 저장한 것. md·엑셀은 스페이스 편집 고리가 따로 알린다.

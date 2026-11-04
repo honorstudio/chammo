@@ -51,7 +51,7 @@
 .lk-av.grp { position: relative; color: var(--text-2); background: var(--surface-2, var(--hover)); }
 .lk-av.grp svg { width: 18px; height: 18px; }
 /* 숫자 배지 — 상태 점과 같은 기준(2026-10-12 사용자 197.png): 작게, 아이콘 위가 아니라 묶음 칸 바깥 모서리, 둘레는 띠 바탕색 1.5px */
-.lk-grp-n { position: absolute; right: -4px; bottom: -4px; min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box; border-radius: 7px; background: var(--surface); box-shadow: 0 0 0 1.5px var(--pip-ring), inset 0 0 0 1px var(--line); font-size: 11px; font-weight: 700; line-height: 1; display: flex; align-items: center; justify-content: center; color: var(--text-2); }
+.lk-grp-n { position: absolute; right: -4px; bottom: -4px; min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box; border-radius: 7px; background: var(--surface); box-shadow: 0 0 0 var(--ring-w) var(--pip-ring), inset 0 0 0 1px var(--line); font-size: 11px; font-weight: 700; line-height: 1; display: flex; align-items: center; justify-content: center; color: var(--text-2); }
 .lk-strip:not(.wide) .lk-av.grp .lk-av-pic { position: static; }
 .lk-av.rest { width: 36px; height: 36px; opacity: .45; filter: grayscale(.6); transition: opacity .15s, filter .15s; }
 .lk-av.rest:hover, .lk-av.rest:focus-visible { opacity: 1; filter: none; }
@@ -75,7 +75,7 @@
 .lk-row:hover .lk-row-n { visibility: hidden; }
 /* 단추 둘(새 폴더·휴지통)이 뜰 땐 그만큼 이름 칸 오른쪽을 비운다 — 긴 이름이 단추 밑에 깔렸다(189.png) */
 .lk-row:hover .lk-row-btn, .lk-row:focus-within .lk-row-btn { padding-right: 54px; }
-.lk-row.drop-over, .lk-row.drop-hot { box-shadow: inset 0 0 0 1.5px var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.lk-row.drop-over, .lk-row.drop-hot { box-shadow: inset 0 0 0 var(--ring-w) var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .lk-new { margin: 2px 4px; height: 30px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface); color: var(--text); font: inherit; font-size: 13px; }
 
 /* 가운데 칸 */
@@ -144,16 +144,16 @@
 .lk-av { position: relative; }
 /* 점은 그림 안쪽이 아니라 프사 칸(32) 바깥 모서리에 걸친다 — 안쪽 위에 있으면 캐릭터 얼굴·머리를 가려 '안 귀엽다'(2026-10-12 사용자 197.png).
    둘레 고리 = 그 자리 바탕색(--pip-ring: 띠)이라 그림과 떨어져 보인다 */
-.lk-pip { position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 0 1.5px var(--pip-ring); }
+.lk-pip { position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 0 var(--ring-w) var(--pip-ring); }
 /* 띠 프사 점 — 일함 파랑 · 기다림 노랑 · 새 것(다른 참모가 보여 줌) 짙은 점. 쉼·꺼짐은 점 없음 */
 .lk-pip.p-ask { background: var(--blocked); }
 .lk-pip.p-new { background: var(--text); }
 .lk-pip.p-run { background: var(--working); }
-.lk-pip.p-rest { background: var(--pip-ring); box-shadow: 0 0 0 1.5px var(--pip-ring), inset 0 0 0 1.6px var(--text-3); }
+.lk-pip.p-rest { background: var(--pip-ring); box-shadow: 0 0 0 var(--ring-w) var(--pip-ring), inset 0 0 0 var(--ring-w) var(--text-3); }
 /* 상태 점 — 색만 말고 모양으로(홈·모드 v1 9): 일함 = 채운 점 + 숨쉬는 고리 · 기다림 = 노랑 채운 점 + 굵은 고리(멈춤) · 쉼 = 빈 고리 · 꺼짐 = 점선 */
 .lk-dot { position: relative; flex: none; box-sizing: border-box; width: 9px; height: 9px; border-radius: 50%; background: var(--line-strong); }
 .lk-dot.d-run { background: var(--working); }
-.lk-dot.d-run::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; box-shadow: 0 0 0 1.5px var(--working); animation: lk-breathe 1.8s ease-out infinite; pointer-events: none; }
+.lk-dot.d-run::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; box-shadow: 0 0 0 var(--ring-w) var(--working); animation: lk-breathe 1.8s ease-out infinite; pointer-events: none; }
 .lk-dot.d-ask { background: var(--blocked); box-shadow: 0 0 0 3px color-mix(in srgb, var(--blocked) 30%, transparent); }
 .lk-dot.d-rest { background: transparent; border: 1.6px solid var(--text-3); }
 .lk-dot.d-off { background: transparent; border: 1.6px dashed var(--line-strong); }
@@ -210,15 +210,16 @@
 .lk-tab.dock { position: relative; flex: none; padding: 0 8px; }
 .lk-tab.dock img { width: 18px; height: 18px; display: block; }
 .lk-dock-letter { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; font-size: 11px; font-weight: 700; color: var(--surface); background: var(--text-3); }
-.lk-dock-dot { position: absolute; top: 5px; right: 4px; width: 7px; height: 7px; border-radius: 50%; box-shadow: 0 0 0 1.5px var(--panel, var(--surface)); }
+.lk-dock-dot { position: absolute; top: 5px; right: 4px; width: 7px; height: 7px; border-radius: 50%; box-shadow: 0 0 0 var(--ring-w) var(--panel, var(--surface)); }
 .lk-dock-dot.human { background: #1f9a62; }
 .lk-dock-dot.agent { background: #4c8dff; }
 .lk-dock-dot.dirty { background: var(--blocked, #c98a00); }
 /* 같은 앱이 세션마다 떠 있으면 아래 오른쪽 번호(1·2·3) — 누구 것인지는 title 의 세션 별명 */
 .lk-dock-no { position: absolute; right: 0; bottom: 1px; min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box; border-radius: 7px; display: grid; place-items: center; font-size: 11px; font-weight: 700; line-height: 1; color: var(--text-2); background: var(--panel, var(--surface)); box-shadow: 0 0 0 1px var(--line); font-variant-numeric: tabular-nums; }
-.lk-tab.folder.drop-over, .lk-tab.folder.drop-hot { box-shadow: inset 0 0 0 1.5px var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.lk-tab.folder.drop-over, .lk-tab.folder.drop-hot { box-shadow: inset 0 0 0 var(--ring-w) var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .lk-tab > span { overflow: hidden; text-overflow: ellipsis; }
-.lk-tab.on { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 0 0 1px var(--line); clip-path: inset(-1px -1px 0 -1px); }
+/* 고른 탭 테두리 = 위·좌·우 세 줄을 안쪽에(var(--hair-in) 와 같은 1px) — 바깥 링은 스크롤 줄(.lk-tabs-scroll) 맨 앞·맨 끝 탭에서 잘렸다(11-01 stroke-clip) */
+.lk-tab.on { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: inset 1px 0 var(--line), inset -1px 0 var(--line), inset 0 1px var(--line); }
 .lk-tab svg { width: 14px; height: 14px; color: var(--text-3); }
 .lk-tab .kit-ib { width: 22px; height: 22px; }
 /* 탭 끝 프로젝트 이름표·방금 보여 줘서 열린 탭 잠깐 테두리(홈·모드 v2 A) */
@@ -227,7 +228,7 @@
 /* 시안 검토 탭 표 — 프로젝트 이름표와 같은 알약, 글자만 '검토' */
 .lk-tab-rv { flex: none; font-style: normal; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: var(--surface-2); color: var(--text-2); }
 .lk-tab.on .lk-tab-rv { background: color-mix(in srgb, var(--working) 12%, transparent); color: var(--working); }
-.lk-tab.fresh { box-shadow: 0 0 0 1px var(--line), 0 0 0 3px color-mix(in srgb, var(--working) 28%, transparent); transition: box-shadow .4s; }
+.lk-tab.fresh { box-shadow: inset 1px 0 var(--line), inset -1px 0 var(--line), inset 0 1px var(--line), inset 0 0 0 3px color-mix(in srgb, var(--working) 28%, transparent); transition: box-shadow .4s; }
 .lk-doc-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 
 /* 활동 줄 — 34px, 펼치면 위로 세션 칸 */
@@ -285,17 +286,8 @@
 .lk-chip:hover { box-shadow: inset 0 0 0 1px var(--line-strong); }
 .lk-chip.on { background: var(--text); color: var(--surface); box-shadow: none; }
 .lk-chip.more { font-weight: 500; color: var(--text-3); padding: 0 8px 0 12px; }
-.lk-chip.more.open { box-shadow: inset 0 0 0 1.5px var(--text-2); }
-.lk-pop { position: absolute; top: 36px; right: 0; z-index: var(--z-popover); width: 280px; max-height: 360px; display: flex; flex-direction: column; padding: 6px; border-radius: 12px; background: var(--surface); box-shadow: 0 12px 32px rgba(0, 0, 0, .16), 0 0 0 1px var(--line); }
+.lk-chip.more.open { box-shadow: inset 0 0 0 var(--ring-w) var(--text-2); }
 .lk-pop-find { flex: none; height: 32px; margin: 2px 2px 6px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 13px; }
-.lk-pop-list { overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
-.lk-pop-cap { padding: 6px 10px 2px; font-size: 11px; font-weight: 700; color: var(--text-3); }
-.lk-pop-it { all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 0 10px; border-radius: 8px; font-size: 13px; }
-.lk-pop-it:hover, .lk-pop-it.on { background: var(--surface-2); }
-.lk-pop-nm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.lk-phd { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: var(--cv-r, 10px); background: var(--panel); font-size: 13px; }
-.lk-phd b { font-size: 14px; }
-.lk-phd span:not(.lk-dot) { color: var(--text-2); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lk-day { display: flex; flex-direction: column; gap: 10px; }
 .lk-list { display: flex; flex-direction: column; }
 .lk-lrow { all: unset; box-sizing: border-box; cursor: pointer; display: grid; grid-template-columns: 40px minmax(0, 1fr) minmax(0, 200px) minmax(0, 110px) 84px; align-items: center; gap: 10px; height: 36px; padding: 0 8px; border-bottom: 1px solid var(--line); font-size: 12.5px; }
@@ -319,8 +311,6 @@
 .lk-tab.sess .lk-dot { flex: none; }
 .lk-tab.sess.gone { opacity: .55; }
 /* '모든 프로젝트' 펼침 맨 아래 — 프로젝트 폴더 더하기(옛 왼쪽 메뉴에서 옮김) */
-.lk-pop-add { all: unset; box-sizing: border-box; cursor: pointer; display: block; width: 100%; margin-top: 4px; padding: 8px 10px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--text-2); }
-.lk-pop-add:hover { color: var(--text); background: var(--hover); }
 /* 띠 호버 카드(2026-10-12 사용자 — 기본 title 은 1초+) — 띠 오른쪽 옆, 바로 뜬다. 처음엔 옆에서 살짝 밀려 나오며 페이드,
    다른 항목으로 옮기면 위아래로 미끄러진다(top 전환), 띠를 벗어나면 짧게 사라진다. 앱 토큰만 — 다크도 그대로 */
 .rail-tip { position: fixed; z-index: calc(var(--z-popover) + 4); pointer-events: none; /* 세로 가운데는 JS 정수 top — 퍼센트 transform 은 반 픽셀에 놓여 글자가 흐렸다(195.png) */ background: var(--surface); color: var(--text); border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, .16), 0 0 0 1px var(--line); padding: 7px 11px; max-width: 280px; transition: top .14s ease-out, opacity .14s ease-out; }
@@ -362,7 +352,7 @@
  * 끄는 중 칸은 흐려지며 쉬는 참모 모양으로, 켜는 중 칸은 누르는 손가락 모양이 아니다 */
 .lk-ph-dot { display: none; position: absolute; top: -2px; right: -2px; width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 0 2px var(--panel); }
 .lk-ph-dot.ph-starting { background: var(--working); }
-.lk-ph-dot.ph-stopping { background: var(--panel); box-shadow: 0 0 0 2px var(--panel), inset 0 0 0 1.6px var(--text-3); }
+.lk-ph-dot.ph-stopping { background: var(--panel); box-shadow: 0 0 0 2px var(--panel), inset 0 0 0 var(--ring-w) var(--text-3); }
 .lk-av.lk-ph { cursor: default; }
 .lk-av.lk-ph:hover { background: none; }
 .lk-av.ph-stopping .lk-av-pic { opacity: .55; filter: grayscale(.6); transition: opacity .9s .25s, filter .9s .25s; }
@@ -378,9 +368,9 @@
 .lk-page-wrap { position: relative; }
 .lk-page-wrap:focus { outline: none; }
 .lk-card { isolation: isolate; }
-.lk-card.picked::before { content: ""; position: absolute; inset: -6px; z-index: calc(var(--z-base) - 1); border-radius: 13px; background: color-mix(in srgb, var(--accent) 9%, transparent); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 70%, transparent); }
-.lk-fcard.picked .lk-fbtn { box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--accent) 70%, transparent); background: color-mix(in srgb, var(--accent) 9%, var(--panel)); }
-.lk-lrow.picked, .lk-lrow.picked:hover { background: color-mix(in srgb, var(--accent) 9%, transparent); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 55%, transparent); border-radius: 6px; }
+.lk-card.picked::before { content: ""; position: absolute; inset: -6px; z-index: calc(var(--z-base) - 1); border-radius: 13px; background: color-mix(in srgb, var(--accent) 9%, transparent); box-shadow: inset 0 0 0 var(--ring-w) color-mix(in srgb, var(--accent) 70%, transparent); }
+.lk-fcard.picked .lk-fbtn { box-shadow: 0 0 0 var(--ring-w) color-mix(in srgb, var(--accent) 70%, transparent); background: color-mix(in srgb, var(--accent) 9%, var(--panel)); }
+.lk-lrow.picked, .lk-lrow.picked:hover { background: color-mix(in srgb, var(--accent) 9%, transparent); box-shadow: inset 0 0 0 var(--ring-w) color-mix(in srgb, var(--accent) 55%, transparent); border-radius: 6px; }
 .lk-band { position: absolute; z-index: calc(var(--z-base) + 3); pointer-events: none; border: 1px solid color-mix(in srgb, var(--accent) 80%, transparent); border-radius: 3px; background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .lk-selbar { position: sticky; bottom: 0; z-index: calc(var(--z-base) + 4); margin-top: auto; display: flex; align-items: center; gap: 6px; min-height: 44px; padding: 6px 8px 6px 14px; border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), 0 6px 20px rgba(0, 0, 0, .10); }
 .lk-selcount { font-size: 13px; font-weight: 700; white-space: nowrap; }
@@ -405,7 +395,7 @@
 .rest-n { font-size: 11px; font-weight: 600; line-height: 1; }
 .rail-fn.rail-more { position: relative; flex: none; }
 .rail-fn.rail-more.on { background: var(--hover); color: var(--text); }
-.rail-dot { position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--badge); box-shadow: 0 0 0 1.5px var(--pip-ring); }
+.rail-dot { position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--badge); box-shadow: 0 0 0 var(--ring-w) var(--pip-ring); }
 .rail-pop { position: fixed; left: 0; top: 0; z-index: calc(var(--z-popover) + 3); min-width: 200px; max-width: 280px; max-height: calc(100vh - 16px); overflow-y: auto; box-sizing: border-box; padding: 6px; border-radius: 12px; background: var(--surface); color: var(--text); box-shadow: 0 12px 32px rgba(0, 0, 0, .18), 0 0 0 1px var(--line); }
 .rail-pop-h { display: flex; align-items: baseline; gap: 8px; padding: 6px 8px 8px; font-size: 13px; }
 .rail-pop-h span { color: var(--text-3); font-size: 12px; }
@@ -419,4 +409,4 @@
 .rail-pop-row:hover, .rail-pop-row:focus-visible { background: var(--hover); }
 .rail-pop-row kbd { margin-left: auto; font: inherit; font-size: 11px; color: var(--text-3); }
 /* 경로 칸에 끌어 놓기 — 참모 보관함·팀 보관함 같은 빛(dragPath drop-hot) */
-.lk-crumb button.drop-hot { box-shadow: inset 0 0 0 1.5px var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.lk-crumb button.drop-hot { box-shadow: inset 0 0 0 var(--ring-w) var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }

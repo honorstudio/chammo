@@ -41,9 +41,9 @@
 .abm:focus { outline: none; }
 .abm { width: min(1400px, 100%); height: min(940px, 100%); display: flex; flex-direction: column; border-radius: 12px; overflow: hidden; background: #141417; box-shadow: 0 20px 60px rgba(0, 0, 0, .45); position: relative; }
 .abm-bar { display: flex; align-items: center; gap: 4px; padding: 8px 10px; background: #1c1c21; }
-.abm-ask { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: color-mix(in srgb, #f0a020 18%, #1c1c21); color: #f5e6c8; font-size: 13px; }
+.abm-ask { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: color-mix(in srgb, #f0a020 18%, #1c1c21); color: #f5e6c8; font-size: 14px; }
 .abm-ask span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.abm-done { all: unset; cursor: pointer; padding: 7px 14px; min-height: 30px; box-sizing: border-box; border-radius: 8px; background: #f0a020; color: #1a1205; font-weight: 700; font-size: 13px; }
+.abm-done { all: unset; cursor: pointer; padding: 9px 16px; min-height: 36px; box-sizing: border-box; border-radius: 8px; background: #f0a020; color: #1a1205; font-weight: 700; font-size: 14px; }
 .abm-done:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 /* 세션에 한마디 — 불러요 줄 안 글칸. 적으면 '다 했어'가 보내기 아이콘(44px 누름 자리) */
 .abm-say { flex: 0 1 220px; min-width: 120px; height: 30px; box-sizing: border-box; padding: 0 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, #f0a020 45%, #333); background: #18181c; color: #eee; font: inherit; font-size: 13px; }

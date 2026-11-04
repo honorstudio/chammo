@@ -204,7 +204,7 @@ export function Preview({ f, onClose, onAttach, attachTo, onSendText, onCuration
               <button onClick={() => zoomBy.current(1)} title={tr('확대 (⌘+)', 'Zoom in (⌘+)')} aria-label={tr('확대', 'Zoom in')}><IconZoomIn /></button>
             </div>
           )}
-          {file && <button className="pv-ic" onClick={() => void lockerApi.reveal(f.path).catch(() => {})} title={tr('파인더에서 보기', 'Show in Finder')} aria-label={tr('파인더에서 보기', 'Show in Finder')}><IconReveal /></button>}
+          {file && <button className="pv-ic" onClick={() => void lockerApi.reveal(f.path).catch(() => {})} title={tr('폴더에서 보기', 'Show in folder')} aria-label={tr('폴더에서 보기', 'Show in folder')}><IconReveal /></button>}
           {onAttach && <SendToOrch to={attachTo} className="pv-attach" onClick={() => { onAttach(); onClose(); }} />}
           <button className="pv-ic" onClick={() => setMax((m) => !m)} title={max ? tr('원래 크기 (⌘⇧`)', 'Restore (⌘⇧`)') : tr('가득 채우기 (⌘⇧`)', 'Fill (⌘⇧`)')} aria-label={max ? tr('원래 크기', 'Restore') : tr('가득 채우기', 'Fill')}>{max ? <IconRestore /> : <IconMaximize />}</button>
           <button className="pv-ic" onClick={onClose} title={tr('닫기 (Esc)', 'Close (Esc)')} aria-label={tr('닫기', 'Close')}><IconClose /></button>

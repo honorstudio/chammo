@@ -4,7 +4,7 @@
 import { createContext, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { teamProfileChanged, teamProfiles } from '../../data/teamProfileApi';
 import type { ProfileBoard } from '../../domain/teamProfile';
-import { every } from '../poll';
+import { teamRev } from './teamRev';
 
 export type Profiles = { board: ProfileBoard | null; reload: () => void };
 export const ProfilesCtx = createContext<Profiles>({ board: null, reload: () => {} });
@@ -12,13 +12,16 @@ export const ProfilesCtx = createContext<Profiles>({ board: null, reload: () => 
 export function useProfiles(teamId: string | null | undefined): Profiles {
   const [board, setBoard] = useState<ProfileBoard | null>(null);
   const rev = useRef(0);
+  // 지금 팀 — 팀을 바꾸는 사이 앞 팀 판이 늦게 오면 버린다(11-02 팀 여러 개: 앞 팀 판 번호로 새 팀을 물으면 '그대로'로 굳었다)
+  const cur = useRef(teamId);
+  cur.current = teamId;
   /** 읽는 중 — 3초 폴링이 읽는 중에 또 부르지 않게 */
   const busy = useRef(false);
   const reload = useCallback(() => {
     if (!teamId) return;
     busy.current = true;
     void teamProfiles(teamId).then((b) => {
-      if (b.team !== teamId) return;
+      if (b.team !== teamId || cur.current !== teamId) return;
       rev.current = b.rev;
       setBoard(b);
     }, () => {}).finally(() => { busy.current = false; });
@@ -28,7 +31,11 @@ export function useProfiles(teamId: string | null | undefined): Profiles {
     rev.current = 0;
     if (!teamId) return;
     reload();
-    return every(() => { if (!busy.current) void teamProfileChanged(teamId, rev.current).then((c) => { if (c) reload(); }, () => {}); }, 3_000);
+    // 글판·홈판과 같은 판 번호 — 팀마다 한 번만 묻고, 바뀌었다고 하면 내 판으로 다시 물어 읽는다(ui/team/teamRev)
+    return teamRev.watch(teamId, {
+      seen: () => (busy.current ? null : rev.current),
+      poke: () => { if (!busy.current) void teamProfileChanged(teamId, rev.current).then((c) => { if (c) reload(); }, () => {}); },
+    });
   }, [teamId, reload]);
   return useMemo(() => ({ board, reload }), [board, reload]);
 }

@@ -13,7 +13,10 @@ import { IconButton } from './kit/IconButton';
 
 const OPEN_EVENT = 'agent-browser-open';
 /** 그 세션 브라우저를 크게 보기(앱 맨 위 AgentAskHost 가 띄운다) — pid = 그 칸의 래퍼(같은 프로필을 둘이 쥘 수 있다) */
-export const openAgentModal = (profile: string, pid?: number, orch?: string) => window.dispatchEvent(new CustomEvent(OPEN_EVENT, { detail: { profile, pid, orch } }));
+export const openAgentModal = (profile: string, pid?: number, orch?: string) => { pressed.set(profile, Date.now()); window.dispatchEvent(new CustomEvent(OPEN_EVENT, { detail: { profile, pid, orch } })); };
+/** 사람이 이 브라우저를 막 부른 때(알림·카드·칸 단추 — openAgentModal 은 늘 사람 손) — 스페이스 칸이 패스키 창을 바로 꺼낼지 본다(paneWantsPeek) */
+const pressed = new Map<string, number>();
+export const pressedAt = (profile: string) => pressed.get(profile);
 
 const CLOSE_EVENT = 'agent-browser-close';
 /** 마지막으로 브라우저가 키를 가져간 때 — 같은 누름이 메뉴바로 늦게 와도(⌘W 로 모달이 닫힌 뒤) 앱이 세션을 끄지 않게 */
@@ -213,7 +216,11 @@ export function AgentBrowserModal({ live, gone, name, focus, waiting, onSwitch, 
   // say = 같이 넘길 한마디 — 세션은 부름 도구 안에서 기다려서 채팅은 그 도구가 끝나야 닿는다. 부름의 답으로 바로 간다(2026-10-10 사용자 "그냥 알아서 로그인해")
   const [say, setSay] = useState('');
   const done = () => void invoke('agent_ask_done', { profile: live.profile, pid, at: live.ask?.at ?? null, say: say.trim() || null })
-    .then(onClose, () => setNote(tr('세션이 그새 다른 걸 부르고 있어 — 위 줄 보고 다시', 'The session is asking something else now — check and retry')));
+    .then(() => { unpeekNow(false); onClose(); }, () => setNote(tr('세션이 그새 다른 걸 부르고 있어 — 위 줄 보고 다시', 'The session is asking something else now — check and retry')));
+  // 저절로 꺼낸 창 — 다 했어·돌려주기면 바로 숨기고, 그냥 닫으면 크롬 자체 창이 없을 때만(있으면 Rust 지킴이가 창이 닫힌 뒤 숨긴다). 사람이 크롬에서 보기로 연 창은 그대로
+  const peekedRef = useRef(false);
+  const unpeekNow = (auto: boolean) => { if (peekedRef.current) { peekedRef.current = false; void invoke('agent_hide', { profile: live.profile, auto }).catch(() => {}); } };
+  useEffect(() => () => unpeekNow(true), []); // eslint-disable-line react-hooks/exhaustive-deps
   const tabs = tabStrip(pages, current, dialogTabs);
   // 진짜 크롬 창을 꺼내면 직접 만질 수 있다 — Rust 가 개입부터 켠다(agent_focus)
   // 실패는 한 줄로 — 예전엔 삼켜서 눌러도 아무 일 없이 조용했다(2026-10-10). 사람이 직접 꺼냈으면 패스키가 끝나도 저절로 안 숨긴다(peeked 비움)
@@ -221,6 +228,7 @@ export function AgentBrowserModal({ live, gone, name, focus, waiting, onSwitch, 
   // 크롬 자체 창(패스키·QR·권한 등) — 사람이 이 브라우저를 쓰는 중이면(눌러 열었거나 30초 안에 만짐) 크롬을 작게 꺼내고, 창이 사라지거나 페이지가 넘어가면 되돌린다.
   // 세션 혼자 돌다 뜬 건 꺼내지 않는다(알림·결정 대기함 카드 — AgentAskHost)
   const [peeked, setPeeked] = useState<{ url: string | undefined } | null>(null);
+  peekedRef.current = !!peeked;
   const [peekFailed, setPeekFailed] = useState(false);
   const peekBusy = useRef(false);
   const popupNow = popup || !!live.popup;
@@ -246,7 +254,7 @@ export function AgentBrowserModal({ live, gone, name, focus, waiting, onSwitch, 
     }
   }, [popupNow, shown, peeked, peekFailed, curUrl, tick]); // eslint-disable-line react-hooks/exhaustive-deps
   const take = () => void takeOver(live.profile, pid).then(() => { setWant(true); field.current?.focus(); }, () => setNote(tr('개입을 못 켰어 — 브라우저가 바뀌었을 수 있어', 'Could not take over — the browser may have changed')));
-  const give = () => void handBack(live.profile, pid).then(() => setWant(false), () => setWant(false));
+  const give = () => { unpeekNow(false); setPeeked(null); void handBack(live.profile, pid).then(() => setWant(false), () => setWant(false)); };
   const ask = live.ask;
   const site = currentSite(pages, current);
 
@@ -384,7 +392,7 @@ export function AgentAskHost({ lives, nameOf, notify, notifyPopup, onPopupCards 
   /** live = 부른 브라우저(알림 갈 곳 — 맡긴 참모 채팅의 그 부름 카드) */
   notify: (profile: string, reason: string, name: string, live: Live) => void;
   /** 모달로 안 보는 브라우저에 크롬 자체 창이 새로 떴다 — 알림 한 번(kind = 패스키인지) */
-  notifyPopup?: (profile: string, name: string, kind: Live['popupKind']) => void;
+  notifyPopup?: (live: Live, name: string) => void;
   /** 모달로 안 보는 브라우저의 크롬 자체 창들 — 결정 대기함 카드(PopupCards) */
   onPopupCards?: (cards: Live[]) => void;
 }) {
@@ -417,7 +425,7 @@ export function AgentAskHost({ lives, nameOf, notify, notifyPopup, onPopupCards 
   useEffect(() => {
     const r = popupStep(popKeys.current, lives, st.open);
     popKeys.current = r.keys;
-    for (const l of r.notify) notifyPopup?.(l.profile, nameOf(l), l.popupKind);
+    for (const l of r.notify) notifyPopup?.(l, nameOf(l));
     // 바뀔 때만 올린다 — 목록은 1초마다 새로 와서 매번 앱 전체를 다시 그리지 않게
     const k = r.cards.map((l) => `${l.profile}:${l.pid}:${l.popupKind ?? ''}`).join('|');
     if (k !== cardKeys.current) { cardKeys.current = k; onPopupCards?.(r.cards); }

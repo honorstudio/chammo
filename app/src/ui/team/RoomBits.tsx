@@ -6,9 +6,10 @@ import { tr } from '../../i18n';
 import { IconClose, IconDoc, IconLock, IconReactAdd, REACT_MARKS } from '../Icons';
 import { Person } from './TeamFaces';
 import { personColor } from '../../domain/teamChat';
-import { thumbKind } from '../../domain/teamLocker';
+import { extOf, thumbKind } from '../../domain/teamLocker';
 import { linkParts } from '../../domain/links';
 import { OrchPickRow } from './OrchPick';
+import { DownActs, DownBar, DownLine, type DownApi } from './TeamDownBits';
 import { agentColor } from '../../domain/teamAgent';
 import './team.css';
 import './teamAgent.css';
@@ -17,8 +18,8 @@ const markOf = (k: string) => REACT_MARKS.find((m) => m.key === k);
 const markName = (k: string) => { const m = markOf(k); return m ? tr(m.ko, m.en) : k; };
 
 /** 글 — 아는 이름의 @부르기만 칩으로, 내 이름은 진하게. 웹 주소는 링크(newTab = 폰, 새 탭으로) */
-export function MentionText({ text, names, myName, newTab }: { text: string; names: string[]; myName: string; newTab?: boolean }) {
-  return <>{mentionParts(text, names, myName).map((p, i) => (p.t === 'text' ? <span key={i}><Linked s={p.s} newTab={newTab} /></span> : <span key={i} className={`tmx-mn ${p.me ? 'me' : ''}`}>{p.s}</span>))}</>;
+export function MentionText({ text, names, myName, newTab, shown }: { text: string; names: string[]; myName: string; newTab?: boolean; /** 계정 이름 → 프로필 이름(teamChat mentionParts) */ shown?: Map<string, string> }) {
+  return <>{mentionParts(text, names, myName, shown).map((p, i) => (p.t === 'text' ? <span key={i}><Linked s={p.s} newTab={newTab} /></span> : <span key={i} className={`tmx-mn ${p.me ? 'me' : ''}`}>{p.s}</span>))}</>;
 }
 
 /** 맨 글 속 웹 주소(http·https)만 링크 — 보이는 글이 곧 주소, title 도 주소. 데스크톱은 말 목록 클릭(openWebLink)이 기본 브라우저로 열고, 폰은 새 탭 */
@@ -76,21 +77,39 @@ export function ReactAdd({ mine, onPick }: { mine: string[]; onPick: (mark: stri
   );
 }
 
+/** 줄 앞 작은 첫 장(32px) — 팀 홈 최근 파일·폰 팀 보관함 줄(11-01 시안 2). 그림이 오면 첫 장, 못 그리면 확장자 표(className 그대로).
+ *  get 은 렌더마다 새 함수라 id·이름이 바뀔 때만 다시 받는다(썸네일 길이 파일마다 한 번만 받아 기억한다) */
+export function FileMini({ className, id, name, get }: { className: string; id: string; name: string; get?: () => Promise<string | null> }) {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    setSrc(null);
+    if (!get) return;
+    let live = true;
+    get().then((u) => { if (live) setSrc(u); }, () => {});
+    return () => { live = false; };
+  }, [id, name, !!get]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (src) return <span className={`${className} file-mini`} aria-hidden="true"><img src={src} alt="" draggable={false} onError={() => setSrc(null)} /></span>;
+  return <span className={className} aria-hidden="true">{extOf(name) || tr('파일', 'File')}</span>;
+}
+
 /** 썸네일 길 — 데스크톱은 풀어 둔 그림·PDF 첫 장(teamApi teamFileThumb), 폰은 맥이 줄인 JPEG. 못 그리면 null */
 export type ThumbOf = { get: (f: TeamFile) => Promise<string | null>; forget?: (f: TeamFile) => void };
 
 /** 파일 풍선 — 그림은 썸네일 크게, PDF 는 첫 장을 아이콘 자리에, 그 밖은 아이콘(10-28 사용자 "썸네일 없이 빈 네모").
  *  이름·크기·자물쇠(종단 암호). 누르면 스페이스에서 연다(보관함과 같은 길), 오른쪽 클릭 = 다른 앱으로 열기·저장
  *  onlyPics = 폰 — 그림 칸·첫 장이 뜬 PDF 칸만 눌러 크게 본다(다른 파일은 열 길이 없어 누를 수 있게 보이지 않는다, 11-01) */
-export function FileBubbles({ files, me, onOpen, onMenu, thumb, onlyPics }: { files: TeamFile[]; me?: boolean; onOpen?: (f: TeamFile) => void; onMenu?: (e: React.MouseEvent, f: TeamFile) => void; thumb?: ThumbOf; onlyPics?: boolean }) {
+/** 받기(데스크톱만) — 받기 아이콘·진행 막대·폴더에서 보기·열기(TeamDownBits) */
+export type FileDown = { api: DownApi; save: (f: TeamFile) => void };
+
+export function FileBubbles({ files, me, onOpen, onMenu, thumb, onlyPics, down }: { files: TeamFile[]; me?: boolean; onOpen?: (f: TeamFile) => void; onMenu?: (e: React.MouseEvent, f: TeamFile) => void; thumb?: ThumbOf; onlyPics?: boolean; down?: FileDown }) {
   return (
     <div className="tmx-files">
-      {files.map((f) => <FileBubble key={f.id} f={f} me={me} onOpen={onOpen} onMenu={onMenu} thumb={thumb} onlyPics={onlyPics} />)}
+      {files.map((f) => <FileBubble key={f.id} f={f} me={me} onOpen={onOpen} onMenu={onMenu} thumb={thumb} onlyPics={onlyPics} down={down} />)}
     </div>
   );
 }
 
-function FileBubble({ f, me, onOpen, onMenu, thumb, onlyPics }: { f: TeamFile; me?: boolean; onOpen?: (f: TeamFile) => void; onMenu?: (e: React.MouseEvent, f: TeamFile) => void; thumb?: ThumbOf; onlyPics?: boolean }) {
+function FileBubble({ f, me, onOpen, onMenu, thumb, onlyPics, down }: { f: TeamFile; me?: boolean; onOpen?: (f: TeamFile) => void; onMenu?: (e: React.MouseEvent, f: TeamFile) => void; thumb?: ThumbOf; onlyPics?: boolean; down?: FileDown }) {
   const kind = thumb ? thumbKind(f.name, f.size) : null;
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => {
@@ -101,22 +120,32 @@ function FileBubble({ f, me, onOpen, onMenu, thumb, onlyPics }: { f: TeamFile; m
     return () => { live = false; };
   }, [f.id, f.team, kind]); // eslint-disable-line react-hooks/exhaustive-deps
   const forget = (x: TeamFile) => thumb?.forget?.(x);
+  const d = down?.api.of(f.id);
   const pic = kind === 'image' && !!src;
-  const page = kind === 'pdf' && !!src; // 첫 장 썸네일이 뜬 PDF — 폰은 첫 장 크게 보기
+  const page = kind === 'page' && !!src && /\.pdf$/i.test(f.name); // 첫 장 썸네일이 뜬 PDF — 폰은 첫 장 크게 보기(워드·엑셀은 폰에서 볼 길이 아직 없다)
   const img = src && <img src={src} alt="" draggable={false} onError={() => { forget(f); setSrc(null); }} />;
   const inner = (
     <>
       {pic && <span className="tmx-file-pic">{img}</span>}
       <span className="tmx-file-row">
-        {!pic && <span className={`tmx-file-ic ${kind === 'pdf' && src ? 'pg' : ''}`}>{kind === 'pdf' && src ? img : <IconDoc />}</span>}
-        <span className="tmx-file-tx"><b title={f.name}>{f.name}</b><span><IconLock />{fileSize(f.size)}</span></span>
+        {!pic && <span className={`tmx-file-ic ${kind === 'page' && src ? 'pg' : ''}`}>{kind === 'page' && src ? img : <IconDoc />}</span>}
+        <span className="tmx-file-tx"><b title={f.name}>{f.name}</b><span><DownLine d={d} normal={<><IconLock />{fileSize(f.size)}</>} /></span></span>
       </span>
+      <DownBar d={d} />
     </>
   );
   const cls = `tmx-file ${me ? 'me' : ''} ${pic ? 'has-pic' : ''}`;
-  return onOpen && (!onlyPics || pic || page)
+  const body = onOpen && (!onlyPics || pic || page)
     ? <button type="button" className={cls} title={tr(`${f.name} 열기`, `Open ${f.name}`)} onClick={(e) => { e.stopPropagation(); onOpen(f); }} onContextMenu={onMenu ? (e) => { e.preventDefault(); onMenu(e, f); } : undefined}>{inner}</button>
     : <div className={cls}>{inner}</div>;
+  if (!down) return body;
+  // 말풍선이 통째로 단추라 받기 아이콘은 겹친 형제(.tmx-file-wrap) — 단추 안 단추를 안 만든다
+  return (
+    <div className={`tmx-file-wrap ${pic ? 'pic' : ''} ${d?.state === 'going' ? 'going' : ''} ${d?.state === 'done' ? 'two' : ''}`}>
+      {body}
+      <DownActs d={d} api={down.api} onSave={() => down.save(f)} onRetry={d?.mode === 'open' && onOpen ? () => onOpen(f) : undefined} />
+    </div>
+  );
 }
 
 /** 보내기 전 붙인 파일 칩 — 올리는 중이면 이름만 흐리게 */
@@ -148,7 +177,7 @@ export function MentionMenu({ items, sel, onPick }: { items: MentionPick[]; sel:
           {m.kind === 'agent' && i === 0 && <span className="tmx-mcap">{tr('팀 참모', 'Team agents')}</span>}
           <button role="option" aria-selected={i === sel} className={`tmx-mrow ${i === sel ? 'on' : ''}`} onMouseDown={(e) => { e.preventDefault(); onPick(m); }}>
             {m.kind === 'mine' && m.orch ? <OrchPickRow o={m.orch} size={24} /> : <>
-              {m.kind === 'agent' && m.agent ? <AgentFace def={m.agent} size={24} /> : m.kind === 'helper' ? <HelperFace size={24} /> : <Person name={m.name} color={personColor(m.name)} size={24} />}
+              {m.kind === 'agent' && m.agent ? <AgentFace def={m.agent} size={24} /> : m.kind === 'helper' ? <HelperFace size={24} /> : <Person name={m.label} color={personColor(m.name)} size={24} />}
               <b>{m.label}</b>
             </>}
             {m.kind === 'helper' && <span>{tr('팀 전체를 보고 답해요', 'Answers with the whole team in view')}</span>}
