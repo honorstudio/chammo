@@ -180,6 +180,10 @@ export const IconChat = () => (
 export const IconChatSend = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M3 3h10a1.2 1.2 0 0 1 1.2 1.2v5.6A1.2 1.2 0 0 1 13 11H7l-3 2.5V11H3a1.2 1.2 0 0 1-1.2-1.2V4.2A1.2 1.2 0 0 1 3 3Z" /><circle cx="5.3" cy="7" r=".55" fill="currentColor" /><circle cx="8" cy="7" r=".55" fill="currentColor" /><circle cx="10.7" cy="7" r=".55" fill="currentColor" /></svg>
 );
+/** 팀챗에 보내기: 겹친 말풍선 둘(여럿이 보는 대화) — 말풍선 하나(IconChatSend = 내 참모에게)와 가른다(11-09 팀 보관함 → 팀챗) */
+export const IconTeamChat = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M5.4 4.6V3.6A1.1 1.1 0 0 1 6.5 2.5h6.4A1.1 1.1 0 0 1 14 3.6v3.8a1.1 1.1 0 0 1-1.1 1.1h-.7v1.7l-1.9-1.7" /><path d="M3.1 5.6h6.4a1.1 1.1 0 0 1 1.1 1.1v3.8a1.1 1.1 0 0 1-1.1 1.1H6.2l-2.4 2v-2h-.7A1.1 1.1 0 0 1 2 10.5V6.7a1.1 1.1 0 0 1 1.1-1.1Z" /></svg>
+);
 /** 터미널 보기: 네모 안 >_ */
 export const IconTerminal = () => (
   <svg viewBox="0 0 16 16" {...P}><rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.6" /><path d="M4.5 6.3 6.6 8.2 4.5 10.1 M8.2 10.2h3.3" /></svg>

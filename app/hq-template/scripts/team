@@ -21,7 +21,7 @@ __doc__ = """Team messenger — talk with people on your team and their assistan
   scripts/team use <team>                               make that team the current one (when you are on several teams)
   scripts/team leave [--team <t>] --yes                 leave a team (the last owner can't) — ask the user first
   scripts/team kick <person> [--team <t>] --yes         remove someone from the team (owner only) — ask the user first
-  scripts/team role <person> owner|member [--team <t>] --yes  make someone an owner or a member (owner only; ask the user first; the last owner stays)
+  scripts/team role <person> member [--team <t>] --yes  make someone a member (owner only; ask the user first). Handing over ownership is done in the app's team settings only
   scripts/team say <person> - <<'EOF'                   send a DM — body from stdin with a quoted heredoc (keeps it out of process args and
   <lines>                                               stops the shell from expanding $(…) in quoted text), then EOF on its own line.
   EOF                                                   Short fixed words may go inline. Always sent as assistant words, never as the user's
@@ -67,7 +67,7 @@ for _io in (sys.stdin, sys.stdout, sys.stderr):  # 윈도우 파이썬 기본은
     if _io and hasattr(_io, 'reconfigure') and (_io.encoding or '').lower().replace('-', '') != 'utf8':
         _io.reconfigure(encoding='utf-8', errors='replace')
 
-USAGE = 'usage: scripts/team teamchat(=room) list | teamchat new <name> --with <a,b> [--team <t>] | teamchat say <chat> - | teamchat read <chat> [<n>] | teamchat set <chat> [--name <n>] [--add <a,b>] [--remove <c>] | teamchat leave <chat> --yes | status | create <team> --me <name> [--server <url>] [--device <d>] | invite [--team <t>] | join <link|code> --me <name> [--server <url>] [--device <d>] | members [--team <t>] | say <person> <text|-> [--team <t>] | use <team> | leave [--team <t>] --yes | kick <person> [--team <t>] --yes | role <person> owner|member [--team <t>] --yes | inbox [<n>] | deliver-to <assistant> | forget --yes | logout --yes | locker ls|put <file…>|get <name|id>|rm <name|id> [--folder <f>] [--to <dir>] [--trash] [--team <t>] | login [--server <url>] [--device <d>] | devices [rename <device> <name> | remove <device> --yes] | self-say <text|->'
+USAGE = 'usage: scripts/team teamchat(=room) list | teamchat new <name> --with <a,b> [--team <t>] | teamchat say <chat> - | teamchat read <chat> [<n>] | teamchat set <chat> [--name <n>] [--add <a,b>] [--remove <c>] | teamchat leave <chat> --yes | status | create <team> --me <name> [--server <url>] [--device <d>] | invite [--team <t>] | join <link|code> --me <name> [--server <url>] [--device <d>] | members [--team <t>] | say <person> <text|-> [--team <t>] | use <team> | leave [--team <t>] --yes | kick <person> [--team <t>] --yes | role <person> member [--team <t>] --yes | inbox [<n>] | deliver-to <assistant> | forget --yes | logout --yes | locker ls|put <file…>|get <name|id>|rm <name|id> [--folder <f>] [--to <dir>] [--trash] [--team <t>] | login [--server <url>] [--device <d>] | devices [rename <device> <name> | remove <device> --yes] | self-say <text|->'
 
 
 def data_dir(home=None, env=None, exists=os.path.isdir):

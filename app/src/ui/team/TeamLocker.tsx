@@ -14,7 +14,7 @@ import { failText, opKey, withPending, type LockerOp } from '../../domain/teamLo
 import { needFetch, placeMemo, teamViewMemo } from '../../domain/teamViewMemo';
 import { opensOnClick } from '../../domain/ctxMenu';
 import { tr } from '../../i18n';
-import { IconChatSend, IconClose, IconDashboard, IconFolderMove, IconFolderPlus, IconLink, IconList, IconPlus, IconTrash } from '../Icons';
+import { IconChatSend, IconTeamChat, IconClose, IconDashboard, IconFolderMove, IconFolderPlus, IconLink, IconList, IconPlus, IconTrash } from '../Icons';
 import { IconButton } from '../kit/IconButton';
 import { BetaTag } from '../kit/BetaTag';
 import { Confirm, ContextMenu, type MenuItem } from '../OrchDialogs';
@@ -33,6 +33,8 @@ import { altOpen } from '../../domain/craftOpen';
 import { GIVE_LABEL, giveFolder, giveIds, giveItems, giveMenu, useRoster } from './teamGive';
 import { splitTeamDrop, type RosterOrch } from '../../domain/teamGive';
 import { TEAM_DROP_EVENT } from './teamDrop';
+import { CHAT_SEND_LABEL, useChatSend } from './useChatSend';
+import type { Convo } from '../../domain/teamChat';
 import { DownActs, DownBar, DownLine, useTeamDowns } from './TeamDownBits';
 import { SortButton } from '../SortButton';
 import '../space/locker.css';
@@ -75,7 +77,7 @@ const otherOne = (i: LockerItem, what: 'trash' | 'rename') => what === 'trash'
   ? tr(`'${i.name}' 파일은 ${i.by || '다른 사람'}님이 올렸어요. 휴지통으로 옮기면 팀 모두의 보관함에서 사라져요. 30일 안에는 되살릴 수 있어요.`, `'${i.name}' was uploaded by ${i.by || 'someone else'}. Moving it to the trash removes it for everyone on the team. You can restore it within 30 days.`)
   : tr(`'${i.name}' 파일은 ${i.by || '다른 사람'}님이 올렸어요. 이름을 바꾸면 팀 모두에게 바뀐 이름으로 보여요.`, `'${i.name}' was uploaded by ${i.by || 'someone else'}. Renaming it changes the name for everyone on the team.`);
 
-export function TeamLocker({ teamId, team, people, follow, onFollow, tail, icon, room, canFiles = false }: {
+export function TeamLocker({ teamId, team, people, follow, onFollow, tail, icon, room, canFiles = false, chats, onChatSent }: {
   teamId: string;
   team: string;
   people: number;
@@ -89,6 +91,10 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, tail, icon,
   room?: { id: string; name: string };
   /** 남의 파일 영구 지우기 권한(팀장·'파일 정리') — 없으면 남의 파일엔 영구 지우기를 안 보인다 */
   canFiles?: boolean;
+  /** 이 팀 팀챗·DM — 주면 줄·카드·고른 것 막대에 '팀챗에 보내기'(11-09 사용자 "팀 보관함에서 팀챗으로 안 옮겨져") */
+  chats?: Convo[];
+  /** 팀챗에 보낸 뒤 — 그 대화를 연다 */
+  onChatSent?: (c: Convo) => void;
 }) {
   const [v, setV] = useState<LockerView | null>(null);
   const [err, setErr] = useState('');
@@ -232,6 +238,7 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, tail, icon,
   const picked = items.filter((i) => pick.picked(i.id));
   const pickedDirs = tiles.filter((f) => pick.picked(dirId(f.key)));
   const byId = (id: string) => shown?.items.find((x) => x.id === id);
+  const chatSend = useChatSend({ teamId, chats: room ? undefined : chats, byId, onSent: onChatSent, note: setNote, menu: setMenu });
 
   const act = (fn: () => Promise<unknown>) => void fn().then(() => load(), (e: unknown) => setNote(String(e)));
   /** 누르면 연다(편집 앱이 맞는 형식은 참모 앱, 그 밖은 스페이스) — app = 우클릭 '다른 앱으로 열기'(true)·'미리보기'·'참모 ○○로 열기' */
@@ -510,6 +517,10 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, tail, icon,
   const giveBtn = (i: LockerItem) => !trash && !i.why && naming?.id !== i.id && (
     <IconButton size="s" className="tlk-give" label={GIVE_LABEL()} onClick={(e) => pickOrch(e, pick.many(i.id) ? order.filter((k) => pick.picked(k)) : [i.id])}><IconChatSend /></IconButton>
   );
+  /** 줄·카드 끝 '팀챗에 보내기' — 고른 묶음 안이면 묶음째. 휴지통·잠긴 파일·이름 바꾸는 중·대화 파일 보기엔 없다 */
+  const chatBtn = (i: LockerItem) => chatSend.on && !trash && !i.why && naming?.id !== i.id && (
+    <IconButton size="s" className="tlk-give tlk-tsend" label={CHAT_SEND_LABEL()} onClick={(e) => chatSend.open(e, pick.many(i.id) ? order.filter((k) => pick.picked(k)) : [i.id], pick.end)}><IconTeamChat /></IconButton>
+  );
   /** 받기 아이콘 — 늘 보인다(윈도우 팀원이 오른쪽 클릭을 몰라서, 11-01 사용자). 휴지통·잠긴 파일·이름 바꾸는 중엔 없다 */
   const downActs = (i: LockerItem) => !trash && !i.why && naming?.id !== i.id && (
     <DownActs className="tlk-dl" d={downs.of(i.id)} api={downs} onSave={() => save(i)} onRetry={downs.of(i.id)?.mode === 'open' ? () => open(i) : undefined} onFail={(e) => setNote(String(e))} />
@@ -592,6 +603,7 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, tail, icon,
                     <DownBar d={downs.of(i.id)} className="tlk-row-bar" />
                   </Row>
                   {downActs(i)}
+                  {chatBtn(i)}
                   {giveBtn(i)}
                 </div>
               ); })}
@@ -609,6 +621,7 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, tail, icon,
                     <span className="tlk-cap">{nameBox(i) || <b>{i.name || tr('잠긴 파일', 'Locked file')}</b>}<span>{state(i, i.why ? tr('아직 못 열어요', 'Locked') : <DownLine bin d={downs.of(i.id)} normal={`${i.by} · ${fmtBytes(i.size)}`} />)}</span></span>
                   </Row>
                   {downActs(i)}
+                  {chatBtn(i)}
                   {giveBtn(i)}
                 </div>
               ); })}
@@ -625,6 +638,7 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, tail, icon,
             <b className="lk-selcount">{tr(`${n}개 고름`, `${n} selected`)}</b>
             <span className="lk-sp" />
             {trash ? <button className="btn" onClick={() => { picked.forEach((i) => verbAll(i.id, 'restore')); pick.end(); }}>{tr('되살리기', 'Restore')}</button> : <>
+              {picked.length > 0 && chatSend.on && <IconButton label={CHAT_SEND_LABEL()} onClick={(x) => chatSend.open(x, picked.map((i) => i.id), pick.end)}><IconTeamChat /></IconButton>}
               {picked.length > 0 && <IconButton label={GIVE_LABEL()} onClick={(x) => pickOrch(x, picked.map((i) => i.id))}><IconChatSend /></IconButton>}
               {(pickedDirs.length > 0 || picked.some((i) => !i.room)) && <IconButton label={tr('폴더로 옮기기', 'Move to folder')} onClick={(x) => { const r = x.currentTarget.getBoundingClientRect(); const ids = [...pickedDirs.map((f) => dirId(f.key)), ...picked.filter((i) => !i.room).map((i) => i.id)]; setMenu({ x: r.left, y: r.top - 8, items: moveItems(ids).map((m) => ({ ...m, run: () => { m.run(); pick.end(); } })) }); }}><IconFolderMove /></IconButton>}
               <IconButton label={tr('휴지통으로', 'Move to trash')} onClick={trashPicked}><IconTrash /></IconButton>

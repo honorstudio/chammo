@@ -6,7 +6,11 @@ export type ChatDrop = { id: string; hot: HTMLElement; color: string };
 
 /** 그 점이 채팅 칸 안이면 받을 세션과 강조할 자리(채팅 카드, 없으면 칸) — 탭 보기 뒤에 숨긴 창(.cell.behind)은 뺀다 */
 export function chatDropAt(x: number, y: number): ChatDrop | null {
-  const col = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest<HTMLElement>('.office-chats');
+  const hit = document.elementFromPoint(x, y) as HTMLElement | null;
+  // 팀챗·다른 기기 참모 칸은 참모 채팅 위 덮개(.och-remote) — 밑 참모 채팅은 숨어 있어 받는 자리가 아니다(11-09 사용자 "팀 보관함에서 팀챗으로 안 옮겨져":
+  // 팀 대화 칸에 놓은 파일이 숨은 참모에게 갔다). 팀 대화 칸은 dragPath·teamDrop 이 따로 받는다
+  if (!hit || hit.closest('.och-remote')) return null;
+  const col = hit.closest<HTMLElement>('.office-chats');
   if (!col) return null;
   const cells = [...col.querySelectorAll<HTMLElement>('.cell[data-session]')].filter((c) => !c.classList.contains('behind'));
   const id = chatCellAt(cells.map((c) => { const r = c.getBoundingClientRect(); return { id: c.dataset.session ?? '', left: r.left, top: r.top, right: r.right, bottom: r.bottom }; }), x, y);

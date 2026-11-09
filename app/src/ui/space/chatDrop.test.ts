@@ -27,4 +27,10 @@ describe('채팅 칸 어디든 끌어 놓기', () => {
     expect(file).toMatch(/if \(e\.type === 'drop' && e\.paths\?\.length\) attachToChat\(chat\.id, e\.paths\);/);
     expect(file.indexOf('chatDropAt(e.x, e.y)')).toBeLessThan(file.indexOf('const el = targetAt(e.x, e.y)'));
   });
+  // 11-09 사용자 "팀 보관함에서 팀챗으로 파일이 안 옮겨져" — 팀챗(·원격 참모) 칸은 참모 채팅 칸 위 덮개(.och-remote)라
+  // 놓은 점이 늘 밑에 숨은 참모 채팅으로 잡혀 '내 참모에게 주기'로 샜다. 덮개 위는 채팅 칸이 아니다
+  it('덮개(.och-remote — 팀챗·다른 기기 참모) 위 점은 밑에 숨은 참모 채팅이 아니다', () => {
+    expect(drop).toMatch(/if \(!hit \|\| hit\.closest\('\.och-remote'\)\) return null;/);
+    expect(drop.indexOf("closest('.och-remote')")).toBeLessThan(drop.indexOf("closest<HTMLElement>('.office-chats')"));
+  });
 });

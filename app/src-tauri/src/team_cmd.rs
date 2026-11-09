@@ -539,11 +539,15 @@ pub async fn team_human_say(window: tauri::WebviewWindow, to: String, text: Stri
     }
     // 처음 DM(방 열기)도 사람이 친 말의 일부 — 배경 몫에 안 막힌다
     relay::human_job(move |dir, kc, h| {
-        let room = match room.filter(|r| !r.is_empty()) {
-            Some(r) if relay::load_state(dir).rooms.iter().any(|x| x.id == r && x.kind != "self") => r,
-            Some(_) => return Err("모르는 방".to_string()),
-            None => relay::open_dm(dir, kc, h, "", &to)?.id,
+        let (room, team) = match room.filter(|r| !r.is_empty()) {
+            Some(r) => match relay::load_state(dir).rooms.into_iter().find(|x| x.id == r && x.kind != "self") {
+                Some(x) => (x.id, x.team),
+                None => return Err("모르는 방".to_string()),
+            },
+            None => relay::open_dm(dir, kc, h, "", &to).map(|x| (x.id, x.team))?,
         };
+        // 붙인 파일은 이 방 팀 파일·이 방 대화 파일만(팀 보관함 → 팀챗, 11-09)
+        extra.fits(&room, &team)?;
         crate::team_relay_ws::send_with(dir, &room, &cid, &text, Some(proof), extra).map(|seq| json!({ "room": room, "seq": seq }))
     })
     .await

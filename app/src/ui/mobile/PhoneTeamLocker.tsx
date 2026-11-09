@@ -15,6 +15,8 @@ import { IconBtn } from './kit';
 import { usePress } from './PhoneLockerParts';
 import { ProfilesCtx } from '../team/useProfiles';
 import { lookOf } from '../../domain/teamProfile';
+import { sayTarget, type Convo, type TeamFile } from '../../domain/teamChat';
+import { chatSendPlan, chatTargets, sendNote } from '../../domain/teamSendChat';
 
 /** 팀마다 마지막 목록 — 대화·팀 홈 칸을 갔다 와도 바로 그린다 */
 const memo = teamViewMemo<View>();
@@ -26,14 +28,19 @@ type Ask =
   | { kind: 'name'; what: 'mkdir' }
   | { kind: 'move'; what: 'file'; item: LockerItem }
   | { kind: 'move'; what: 'folder'; key: string }
-  | { kind: 'rm-folder'; key: string; n: number };
+  | { kind: 'rm-folder'; key: string; n: number }
+  | { kind: 'chat'; item: LockerItem };
 type OpBody = PhoneLockerOp extends infer T ? (T extends unknown ? Omit<T, 'team'> : never) : never;
 
 const errText = (e: unknown) => String((e as Error)?.message ?? e).slice(0, 160);
 const nameOf = (i: LockerItem) => i.name || tr('열 수 없는 파일', 'Unreadable file');
 
-/** onOpen = 그림·PDF·영상 줄을 누르면 크게 보기·재생(PhoneTeam 의 보기 창). 길게 누르면 메뉴 */
-export function PhoneTeamLocker({ api, teamId, onOpen }: { api: TeamPhoneApi; teamId: string; onOpen?: (i: LockerItem) => void }) {
+/** 팀챗에 보내기(11-09) — PhoneTeam 의 사람 손 문을 지나는 보내기(누른 시각 at) */
+type ChatSay = (to: string, text: string, at: number, extra?: { files?: TeamFile[] }) => Promise<unknown> | null;
+
+/** onOpen = 그림·PDF·영상 줄을 누르면 크게 보기·재생(PhoneTeam 의 보기 창). 길게 누르면 메뉴.
+ *  chats·say = 길게 누르기 메뉴 '팀챗에 보내기'(11-09 사용자 "팀 보관함에서 팀챗으로 안 옮겨져") — 고른 대화에 그 파일을 가리키는 첨부로, 보내면 onChatSent 가 그 대화를 연다 */
+export function PhoneTeamLocker({ api, teamId, onOpen, chats, say, onChatSent }: { api: TeamPhoneApi; teamId: string; onOpen?: (i: LockerItem) => void; chats?: Convo[]; say?: ChatSay; onChatSent?: (c: Convo) => void }) {
   const [v, setV] = useState<View | null>(() => memo.get(teamId)?.v ?? null);
   const [ups, setUps] = useState<PhoneTeamUps['uploads']>([]);
   const [sending, setSending] = useState<{ key: string; name: string; sent: number; total: number }[]>([]);
@@ -110,6 +117,17 @@ export function PhoneTeamLocker({ api, teamId, onOpen }: { api: TeamPhoneApi; te
     }
   };
 
+  /** 고른 대화에 보내기 — 다시 받거나 올리지 않고 팀 보관함 파일을 가리킨다. 잠긴·다른 대화 파일은 chatSendPlan 이 뺀다 */
+  const sendChat = (item: LockerItem, c: Convo, at: number) => {
+    if (!say) return;
+    const { refs, skip } = chatSendPlan([item], c.room, teamId);
+    if (!refs.length) { setNote(sendNote(skip) || tr('보낼 파일이 없어요', 'Nothing to send')); return; }
+    const p = say(sayTarget(c), '', at, { files: refs });
+    if (!p) { setNote(tr('직접 누른 것만 보내요 — 다시 눌러 줘', 'Only sends what you tap — try again')); return; }
+    setNote(tr(`${c.name}에 보내는 중…`, `Sending to ${c.name}…`));
+    void p.then(() => { setNote(''); onChatSent?.(c); }, (e: unknown) => setNote(tr(`${c.name}에 못 보냈어요 — ${errText(e)}`, `Couldn't send to ${c.name} — ${errText(e)}`)));
+  };
+
   if (!v) return err ? <div className="tmx-none" role="alert">{tr(`팀 보관함을 못 읽었어요 — ${err}`, `Couldn't read the team locker — ${err}`)}</div> : <div className="tmx-none" role="status">{tr('팀 보관함 여는 중…', 'Opening team locker…')}</div>;
 
   const folders = trash ? [] : kidFolders(v.items, place);
@@ -147,10 +165,11 @@ export function PhoneTeamLocker({ api, teamId, onOpen }: { api: TeamPhoneApi; te
       )}
       {!here && <div className="tmx-none">{trash ? tr('휴지통이 비었어요', 'Trash is empty') : place ? tr('비어 있어요', 'Empty') : tr('팀 보관함이 비었어요 — 위 더하기로 사진·파일을 올려요', 'The team locker is empty — use the plus above to add photos and files')}</div>}
 
-      {menu && <MenuSheet menu={menu} trash={trash} onClose={() => setMenu(null)}
+      {menu && <MenuSheet menu={menu} trash={trash} chat={!!(say && chats)} onClose={() => setMenu(null)}
         onPick={(a) => {
           if (menu.kind === 'file') {
-            if (a === 'rename') setAsk({ kind: 'name', what: 'file', item: menu.item });
+            if (a === 'chat') setAsk({ kind: 'chat', item: menu.item });
+            else if (a === 'rename') setAsk({ kind: 'name', what: 'file', item: menu.item });
             else if (a === 'move') setAsk({ kind: 'move', what: 'file', item: menu.item });
             else run({ op: a === 'restore' ? 'restore' : 'trash', id: menu.item.id });
           } else if (a === 'rename') setAsk({ kind: 'name', what: 'folder', key: menu.key });
@@ -173,6 +192,7 @@ export function PhoneTeamLocker({ api, teamId, onOpen }: { api: TeamPhoneApi; te
           else { const to = t ? `${t}/${baseOf(ask.key)}` : baseOf(ask.key); run({ op: 'folder-rename', from: ask.key, to }, () => { if (place === ask.key) setPlace(to); }); }
           setAsk(null);
         }} />}
+      {ask?.kind === 'chat' && <ChatSheet chats={chatTargets(chats ?? [])} onClose={() => setAsk(null)} onPick={(c, at) => { const it = ask.item; setAsk(null); sendChat(it, c, at); }} />}
       {ask?.kind === 'rm-folder' && (
         <BottomSheet label={tr('폴더 지우기', 'Delete folder')} kind="card" title={tr(`${baseOf(ask.key)} 지우기`, `Delete ${baseOf(ask.key)}`)} onClose={() => setAsk(null)}>
           <p className="m-tlk-ask">{tr(`안의 파일 ${ask.n}개도 휴지통으로 가요 — 30일 안엔 휴지통에서 되살릴 수 있어요`, `The ${ask.n} files inside go to the trash too — you can restore them from the trash within 30 days`)}</p>
@@ -201,11 +221,13 @@ function Row({ teamId, item, trash, onOpen, onMenu }: { teamId: string; item: Lo
   );
 }
 
-type Act = 'rename' | 'move' | 'trash' | 'restore';
+type Act = 'chat' | 'rename' | 'move' | 'trash' | 'restore';
 /** 줄·폴더 메뉴 — 낯선 동작이라 글자. 뜬 직후 0.45초는 손가락 밑 항목을 안 받는다 */
-function MenuSheet({ menu, trash, onClose, onPick }: { menu: Menu; trash: boolean; onClose: () => void; onPick: (a: Act) => void }) {
+function MenuSheet({ menu, trash, chat = false, onClose, onPick }: { menu: Menu; trash: boolean; chat?: boolean; onClose: () => void; onPick: (a: Act) => void }) {
   const title = menu.kind === 'file' ? nameOf(menu.item) : baseOf(menu.key);
-  const acts: [Act, string][] = trash ? [['restore', tr('되살리기', 'Restore')]] : menu.kind === 'file' && menu.item.why ? [['trash', tr('휴지통으로', 'Move to trash')]] : [['rename', tr('이름 바꾸기', 'Rename')], ['move', tr('옮기기', 'Move')], ['trash', tr('휴지통으로', 'Move to trash')]];
+  // 팀챗에 보내기 = 파일만(잠긴 파일·폴더·휴지통엔 없다)
+  const send: [Act, string][] = chat && menu.kind === 'file' ? [['chat', tr('팀챗에 보내기', 'Send to a team chat')]] : [];
+  const acts: [Act, string][] = trash ? [['restore', tr('되살리기', 'Restore')]] : menu.kind === 'file' && menu.item.why ? [['trash', tr('휴지통으로', 'Move to trash')]] : [...send, ['rename', tr('이름 바꾸기', 'Rename')], ['move', tr('옮기기', 'Move')], ['trash', tr('휴지통으로', 'Move to trash')]];
   return (
     <BottomSheet label={title} kind="card" title={title} armMs={450} onClose={onClose}>
       {({ close, armed }) => acts.map(([a, label]) => <button key={a} type="button" className="m-menu-item" onClick={() => { if (armed) { close(); onPick(a); } }}>{label}</button>)}
@@ -238,6 +260,17 @@ function MoveSheet({ targets, onClose, onPick }: { targets: string[]; onClose: (
           {t ? baseOf(t) : tr('팀 보관함(맨 위)', 'Team locker (top)')}
         </button>
       ))}
+    </BottomSheet>
+  );
+}
+
+/** 어느 대화에 — 팀챗 먼저, 그다음 DM(chatTargets). 누른 손가락이 사람 손 문을 연다(누른 시각) */
+function ChatSheet({ chats, onClose, onPick }: { chats: Convo[]; onClose: () => void; onPick: (c: Convo, at: number) => void }) {
+  return (
+    <BottomSheet label={tr('어느 대화에 보낼까요', 'Send to which chat?')} title={tr('어느 대화에 보낼까요', 'Send to which chat?')} onClose={onClose}>
+      {chats.length ? chats.map((c) => (
+        <button key={c.key} type="button" className="m-menu-item" onClick={(e) => onPick(c, e.nativeEvent.isTrusted ? Date.now() : 0)}>{c.name}</button>
+      )) : <p className="m-tlk-ask">{tr('보낼 대화가 없어요', 'No chats yet')}</p>}
     </BottomSheet>
   );
 }

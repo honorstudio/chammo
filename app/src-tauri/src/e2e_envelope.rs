@@ -84,6 +84,22 @@ pub struct React {
 pub const BY_MAX: usize = 40;
 
 impl Extra {
+    /// 사람이 보내는 말의 파일 참조가 이 방에 맞나 — 그 방 팀(room_team, 모르면 빈 글) 파일이고, 대화 파일이면 같은 방 것만.
+    /// 다른 팀·다른 방 파일은 이 방 사람 기기 몫 봉투가 없어 못 열고, 붙여 보내면 그 파일 id·이름만 새어 나간다(11-09 팀 보관함 → 팀챗)
+    pub fn fits(&self, room: &str, room_team: &str) -> Result<(), &'static str> {
+        for f in &self.files {
+            let team = f["team"].as_str().unwrap_or("");
+            let at = f["room"].as_str().unwrap_or("");
+            if !room_team.is_empty() && !team.is_empty() && team != room_team {
+                return Err("다른 팀 파일은 이 대화에 못 붙여");
+            }
+            if !at.is_empty() && at != room {
+                return Err("다른 대화 파일은 이 대화에 못 붙여 — 끌어 놓으면 다시 올려 붙여");
+            }
+        }
+        Ok(())
+    }
+
     /// 모양 확인 — 모르는 표식·너무 많은 파일·파일 칸 모양이 틀리면 Err
     pub fn check(&self) -> Result<(), &'static str> {
         if let Some(r) = &self.react {

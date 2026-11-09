@@ -268,7 +268,7 @@ export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: Re
               calBlock={(_b, editing) => <CalBlock teamId={view.teamId} wide={false} editing={editing} api={api.cal} onOpen={() => setSeg('cal')} />} /></div>
           : seg === 'cal' ? <div className="m-team-cal"><TeamCal key={view.teamId} teamId={view.teamId} members={view.members} api={api.cal} Dialog={HomeSheet} phone /></div>
           : seg === 'memory' && MemoryTab && !closed ? <div className="m-team-cal"><MemoryTab key={view.teamId} teamId={view.teamId} members={view.members} roomName={(r) => cs.find((c) => c.room === r)?.name ?? tr('팀챗', 'Team chat')} api={api.memory} homeApi={homeApi} Dialog={HomeSheet} phone /></div>
-          : <PhoneTeamLocker key={view.teamId} api={api} teamId={view.teamId} onOpen={(i) => openPic(view.teamId, i)} />}
+          : <PhoneTeamLocker key={view.teamId} api={api} teamId={view.teamId} onOpen={(i) => openPic(view.teamId, i)} chats={[...t.rs, ...cs]} say={say} onChatSent={(c) => { setSel(c.key); t.refresh(); }} />}
       </div>
       {viewer}
       {sheet && <TeamSheet api={api} t={t} onClose={() => setSheet(false)} onAgents={() => { setSheet(false); setAgentPage({ key: 0 }); }} onAdd={() => { setSheet(false); setAdding(true); }} />}

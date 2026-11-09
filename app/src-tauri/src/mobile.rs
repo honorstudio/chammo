@@ -1422,12 +1422,16 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
         // 폰 화면에서 사람이 친 말 — 짝지은 폰 열쇠로 들어온 /api/team-say 만 이 길을 부른다(사람 표). re = 이어 묻기(이은 팀 참모 답 seq, ADR 0017)
         let dir = crate::config::data_dir();
         // to = 상대 멤버 id(DM) 또는 'room:<방 id>'(단톡방·아는 방, chammo-relay team-rooms)
-        let room = match to.strip_prefix("room:") {
-            Some(r) if crate::team_relay::load_state(dir).rooms.iter().any(|x| x.id == r && x.kind != "self") => r.to_string(),
-            Some(_) => return Err("모르는 방".into()),
-            None => crate::team_relay::open_dm(dir, &crate::team_relay_keys::store(), &crate::team_relay::Curl, "", to)?.id,
+        let (room, team) = match to.strip_prefix("room:") {
+            Some(r) => match crate::team_relay::load_state(dir).rooms.into_iter().find(|x| x.id == r && x.kind != "self") {
+                Some(x) => (x.id, x.team),
+                None => return Err("모르는 방".into()),
+            },
+            None => crate::team_relay::open_dm(dir, &crate::team_relay_keys::store(), &crate::team_relay::Curl, "", to).map(|x| (x.id, x.team))?,
         };
         let extra = crate::e2e_envelope::Extra { re, files, ..Default::default() };
+        // 붙인 파일은 이 방 팀 파일·이 방 대화 파일만 — 데스크톱 team_human_say 와 같은 거름(팀 보관함 → 팀챗, 11-09)
+        extra.fits(&room, &team)?;
         crate::team_relay_ws::send_with(dir, &room, cid, text, Some(crate::team_relay_ws::HumanProof::phone()), extra).map(|seq| serde_json::json!({ "room": room, "seq": seq }))
     }
     fn team_agents(&self, team: &str) -> Result<serde_json::Value, String> {

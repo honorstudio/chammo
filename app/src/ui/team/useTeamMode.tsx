@@ -298,7 +298,9 @@ export function useTeamMode(o: { handoff: () => Handoff | undefined; wide: boole
               calBlock={(b, editing) => <CalBlock key={view.teamId} teamId={view.teamId} wide={b.w === 'full'} editing={editing} onOpen={() => setTabs((t) => pickTeamTab(t, 'cal'))} />}
               onTalk={(text) => { const c = rooms[0] ?? cur; if (!c) return; setSel(c.key); showChat(); setSeed((s) => ({ text, n: (s?.n ?? 0) + 1 })); }} />}
             // 팀 설정은 탭 줄 끝 톱니라 보관함 머리 끝 자리는 비운다(빈 조각 — 없으면 옛 '팀 따라가기' 단추가 나온다)
-            locker={<TeamLocker teamId={view.teamId} team={team} people={view.members.length} follow onFollow={() => {}} canFiles={canDo(view, 'files')} icon={profiles.board?.teamIcon || undefined} tail={<></>} />} />
+            locker={<TeamLocker teamId={view.teamId} team={team} people={view.members.length} follow onFollow={() => {}} canFiles={canDo(view, 'files')} icon={profiles.board?.teamIcon || undefined} tail={<></>}
+              // 팀챗에 보내기(11-09) — 이 팀 팀챗·DM, 보내면 그 대화를 연다(메신저를 떼어 뒀으면 그 창에서). 닫힌 팀(잠금)엔 없다
+              chats={closed ? undefined : [...rooms, ...shownDms(people, roomMenu.hidden)]} onChatSent={(c) => { data.refresh(); if (detached && !alone) { toWindow(c.room || undefined); return; } setSel(c.key); showChat(); }} />} />
         </ProfilesCtx.Provider>
       ),
     } satisfies TeamSpace : undefined,

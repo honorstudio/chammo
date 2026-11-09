@@ -407,6 +407,9 @@ button.tmx-file:hover { background: var(--hover); }
 .tlk-rw > .tlk-card ~ .tlk-give { right: 8px; top: 8px; }
 .tlk-rw:hover > .tlk-give, .tlk-give:focus-visible { opacity: 1; }
 .tlk-give:hover { background: var(--hover); }
+/* '팀챗에 보내기'(11-09) — '내 참모에게' 바로 왼쪽. 있으면 받기 아이콘·줄 오른쪽 여백을 한 칸 더 민다 */
+.tlk-rw > .tmx-lk-row ~ .tlk-tsend { right: 42px; }
+.tlk-rw > .tlk-card ~ .tlk-tsend { right: 40px; }
 /* 띠 참모 프사에 팀 보관함 파일을 끌어 오면 — 그 참모에게(dragPath) */
 .lk-av.drop-hot .lk-av-pic { border-radius: 10px; box-shadow: 0 0 0 2px var(--orch-solid, var(--accent)); }
 /* 내 참모 고르기 한 조각(OrchPick) — 프사 + 이름만, 보관함 메뉴·@ 메뉴·넘기기 카드 같은 모양 */
@@ -446,6 +449,9 @@ button.tmx-file:hover { background: var(--hover); }
 .tlk-rw > .tmx-lk-row ~ .tlk-dl { position: absolute; right: 42px; top: 50%; transform: translateY(-50%); }
 .tlk-rw:has(> .tlk-dl) > .tmx-lk-row { padding-right: 76px; }
 .tlk-rw:has(> .tlk-dl .kit-ib + .kit-ib) > .tmx-lk-row { padding-right: 106px; }
+.tlk-rw:has(> .tlk-tsend) > .tmx-lk-row ~ .tlk-dl { right: 74px; }
+.tlk-rw:has(> .tlk-tsend):has(> .tlk-dl) > .tmx-lk-row { padding-right: 108px; }
+.tlk-rw:has(> .tlk-tsend):has(> .tlk-dl .kit-ib + .kit-ib) > .tmx-lk-row { padding-right: 138px; }
 .tmx-lk-row > .tlk-row-bar { flex: 0 0 80px; }
 
 /* 팀 권한(chammo-relay ADR 0015) — 시안 docs/design-drafts/team-lock v1. 접두 tml- (전역 짧은 클래스와 안 겹치게) */

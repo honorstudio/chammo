@@ -195,3 +195,23 @@ fn 건네기는_내가_서명을_확인해_연_말만_목록에_이미_있으면
     let late = rewrap(&k(2), "d2", &body, Some(&k(1).public()), &to(&[(5, "d5")])[0]).unwrap();
     assert_eq!(open_late(&k(4), "d4", &body, Some(&k(1).public()), &late), Err(EnvErr::Shape));
 }
+
+/// 사람이 보내는 말의 파일 참조 — 그 방 팀 파일만, 다른 방 대화 파일은 안 된다(11-09 팀 보관함 → 팀챗 보내기)
+#[test]
+fn files_fit_room() {
+    use serde_json::json;
+    let ex = |files: Vec<serde_json::Value>| Extra { files, ..Default::default() };
+    // 팀 전체 파일(room 빈 글)·같은 방 대화 파일은 된다, 칸이 없는 옛 모양(폰 첨부)도
+    assert!(ex(vec![json!({"id": "a", "name": "a.pdf", "size": 1, "team": "tA", "room": ""})]).fits("r1", "tA").is_ok());
+    assert!(ex(vec![json!({"id": "a", "name": "a.pdf", "size": 1, "team": "tA", "room": "r1"})]).fits("r1", "tA").is_ok());
+    assert!(ex(vec![json!({"id": "a", "name": "a.pdf", "size": 1})]).fits("r1", "tA").is_ok());
+    // 다른 팀 파일 — 이 방 사람은 못 연다
+    assert!(ex(vec![json!({"id": "a", "name": "a.pdf", "size": 1, "team": "tB", "room": ""})]).fits("r1", "tA").is_err());
+    // 다른 방 대화 파일 — 그 방 사람만 연다
+    assert!(ex(vec![json!({"id": "a", "name": "a.pdf", "size": 1, "team": "tA", "room": "r2"})]).fits("r1", "tA").is_err());
+    // 하나라도 틀리면 통째로
+    assert!(ex(vec![json!({"id": "a", "name": "a", "size": 1, "team": "tA"}), json!({"id": "b", "name": "b", "size": 1, "team": "tA", "room": "r2"})]).fits("r1", "tA").is_err());
+    // 방 팀을 모르면(옛 상태 파일) 팀은 안 견준다 — 방은 견준다
+    assert!(ex(vec![json!({"id": "a", "name": "a", "size": 1, "team": "tB"})]).fits("r1", "").is_ok());
+    assert!(ex(vec![json!({"id": "a", "name": "a", "size": 1, "room": "r2"})]).fits("r1", "").is_err());
+}
