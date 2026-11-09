@@ -204,3 +204,21 @@ test('크롬 고르기 — 베타가 ~/Applications 에 있으면(관리자 아�
   assert.strictEqual(chromeLaunch({ platform: 'win32', exists: has(['C:\\Users\\u\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe']), env: winEnv, home }).found, true);
   assert.strictEqual(chromeLaunch({ platform: 'win32', exists: has([]), env: winEnv, home }).found, false);
 });
+
+test('크롬 고르기 윈도우 — 정식이 있으면 베타가 깔려 있어도 정식(베타는 정식이 없을 때만·직접 골랐을 때만)', () => {
+  const has = (paths) => (p) => paths.includes(p);
+  const winEnv = { LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local' };
+  const stable = 'C:\\Users\\u\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe';
+  const beta = 'C:\\Users\\u\\AppData\\Local\\Google\\Chrome Beta\\Application\\chrome.exe';
+  const pick = (paths, env = {}) => chromeLaunch({ platform: 'win32', exists: has(paths), env: { ...winEnv, ...env }, home: 'C:\\Users\\u' });
+  assert.deepStrictEqual(pick([stable, beta]), { channel: null, executablePath: null, found: true });
+  assert.deepStrictEqual(pick([beta]), { channel: 'chrome-beta', executablePath: null, found: true });
+  assert.strictEqual(pick([stable, beta], { CHAMMO_BROWSER_CHANNEL: 'chrome-beta' }).channel, 'chrome-beta');
+  assert.strictEqual(pick([stable, beta], { CHAMMO_BROWSER_CHANNEL: 'chrome' }).channel, null);
+  assert.strictEqual(pick([beta], { CHAMMO_BROWSER_CHANNEL: 'chrome' }).found, false, '정식을 골랐는데 정식이 없으면 없는 것');
+});
+
+test('크롬 고르기 맥 — 베타 먼저는 그대로(Dock·번들 id 가 사용자 크롬과 섞이지 않게)', () => {
+  const has = (paths) => (p) => paths.includes(p);
+  assert.strictEqual(chromeLaunch({ platform: 'darwin', exists: has(['/Applications/Google Chrome.app', '/Applications/Google Chrome Beta.app']), env: {}, home: '/Users/u' }).channel, 'chrome-beta');
+});

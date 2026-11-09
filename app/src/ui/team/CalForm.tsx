@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { tr } from '../../i18n';
 import { stamp } from '../../domain/teamChat';
-import { cleanDraft, draftOf, LABELS, type CalData, type CalItem, type Draft, type Label, type Occ } from '../../domain/teamCal';
+import { agentLabel, agentOf, cleanDraft, draftOf, LABELS, type CalData, type CalItem, type Draft, type Label, type Occ } from '../../domain/teamCal';
 import { IconButton } from '../kit/IconButton';
 import { IconCheck, IconClose, IconPencil, IconPeople, IconPlace, IconRepeat, IconTrash, IconNote, IconCalendar } from '../Icons';
 
@@ -135,6 +135,7 @@ export function CalView({ occ, nameOf, onEdit, onDelete, onSkip, onDone, onClose
         <IconButton label={tr('닫기', 'Close')} onClick={onClose}><IconClose /></IconButton>
       </div>
       <div className="tcal-row"><span className="tcal-ic"><IconCalendar /></span><span>{when(occ)}</span></div>
+      {agentOf(d) && <div className="tcal-row tcal-agent"><span className="tcal-ic" /><span className={`tcal-agent-tag ${agentOf(d)?.guess ? 'guess' : ''}`}>{agentLabel(d)}</span></div>}
       {d.repeat && <div className="tcal-row"><span className="tcal-ic"><IconRepeat /></span><span>{d.repeat.every === 'week' ? tr('매주', 'Weekly') : d.repeat.every === '2week' ? tr('격주', 'Every 2 weeks') : tr('매월', 'Monthly')}{d.repeat.until ? tr(` · ${d.repeat.until} 까지`, ` · until ${d.repeat.until}`) : ''}</span></div>}
       {!!d.people?.length && <div className="tcal-row"><span className="tcal-ic"><IconPeople /></span><span>{d.people.map(nameOf).join(', ')}</span></div>}
       {d.place && <div className="tcal-row"><span className="tcal-ic"><IconPlace /></span><span>{d.place}</span></div>}

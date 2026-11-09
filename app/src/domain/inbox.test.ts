@@ -135,25 +135,27 @@ describe('bornAfter — 앱을 켜기 전에 생긴 결정은 알림으로 다�
   it('시각을 못 읽으면 알린다(예전처럼)', () => expect(bornAfter(at('?'), start)).toBe(true));
 });
 
-describe('popoverOpen — 결정이 들어오면 펼치고, 내가 닫으면(나중에) 다음 새 결정까지 접어 둔다', () => {
-  const it1 = { key: 'a', kind: 'ask' as const, project: 'todo-api', where: '', text: '?', ts: '1' };
-  const it2 = { ...it1, key: 'b' };
-  it('앱을 켰을 때 쌓여 있으면 펼친다', () => expect(popoverOpen(false, null, [it1])).toBe(true));
+describe('popoverOpen — 운영 줄(결정·보내기 관문)이 들어오면 펼치고, 닫으면(나중에) 다음 새 것까지 접어 둔다', () => {
+  const ask = { key: 'a', kind: 'ask' as const, project: 'todo-api', where: '', text: '?', ts: '1' };
+  const dec = { ...ask, key: 'd', kind: 'decide' as const };
+  const dec2 = { ...dec, key: 'e' };
+  const gate = { ...ask, key: 'g', gate: true };
+  it('앱을 켰을 때 결정이 쌓여 있으면 펼친다', () => expect(popoverOpen(false, null, [dec])).toBe(true));
   it('앱을 켰을 때 없으면 접는다', () => expect(popoverOpen(false, null, [])).toBe(false));
-  it('새 결정이 오면 닫아 놨어도 펼친다', () => expect(popoverOpen(false, new Set(['a']), [it1, it2])).toBe(true));
-  it('새 게 없으면 닫아 둔 걸 그대로 둔다(나중에)', () => expect(popoverOpen(false, new Set(['a', 'b']), [it1, it2])).toBe(false));
-  it('새 게 없으면 펼쳐 둔 것도 그대로', () => expect(popoverOpen(true, new Set(['a']), [it1])).toBe(true));
+  it('새 결정이 오면 닫아 놨어도 펼친다', () => expect(popoverOpen(false, new Set(['d']), [dec, dec2])).toBe(true));
+  it('보내기 관문도 펼친다', () => expect(popoverOpen(false, new Set(['a']), [ask, gate])).toBe(true));
+  it('새 게 없으면 닫아 둔 걸 그대로 둔다(나중에)', () => expect(popoverOpen(false, new Set(['d', 'e']), [dec, dec2])).toBe(false));
+  it('새 게 없으면 펼쳐 둔 것도 그대로', () => expect(popoverOpen(true, new Set(['a']), [ask])).toBe(true));
   it('다 처리해서 비면 접는다', () => expect(popoverOpen(true, new Set(['a']), [])).toBe(false));
-  // 2026-10-22 첫 사용자 QA 21: 새 물음마다 저절로 펼쳐져 오른쪽 위를(설정 창 위로도) 덮었다
-  const dec = { ...it1, key: 'd', kind: 'decide' as const };
-  it('재현: 설정 창이 떠 있으면 새 결정이 와도 펼치지 않는다(펼쳐 둔 건 그대로)', () => {
-    expect(popoverOpen(false, new Set(['a']), [it1, dec], { hold: true })).toBe(false);
-    expect(popoverOpen(true, new Set(['a']), [it1, dec], { hold: true })).toBe(true);
+  // 2026-11-05 사용자: 그냥 물음은 종 숫자로만 — 잡담 물음도 저절로 펼쳐져 오른쪽 위를 덮었다
+  it('재현: 그냥 물음(ask·확인창)은 새로 와도 펼치지 않는다', () => {
+    expect(popoverOpen(false, new Set(['d']), [dec, ask])).toBe(false);
+    expect(popoverOpen(false, null, [ask, { ...ask, key: 'b', kind: 'blocked' as const }])).toBe(false);
   });
-  it('재현: 채팅에 이미 보이는 참모 물음(ask)은 펼치지 않는다 — 결정(decide)은 펼친다', () => {
-    expect(popoverOpen(false, new Set(['a']), [it1, it2], { askInView: true })).toBe(false);
-    expect(popoverOpen(false, new Set(['a']), [it1, dec], { askInView: true })).toBe(true);
-    expect(popoverOpen(false, null, [it1], { askInView: true })).toBe(false);
+  // 2026-10-22 첫 사용자 QA 21: 설정 창 위로도 덮었다
+  it('설정 창이 떠 있으면 새 결정이 와도 펼치지 않는다(펼쳐 둔 건 그대로)', () => {
+    expect(popoverOpen(false, new Set(['a']), [ask, dec], { hold: true })).toBe(false);
+    expect(popoverOpen(true, new Set(['a']), [ask, dec], { hold: true })).toBe(true);
   });
 });
 

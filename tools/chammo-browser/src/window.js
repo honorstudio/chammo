@@ -119,17 +119,17 @@ function pidAlive(pid) {
 }
 
 /**
- * 세션 크롬 채널 — 크롬 베타가 깔려 있으면 'chrome-beta', 아니면 null(플레이라이트 기본 = 일반 크롬).
- * 세션 크롬이 일반 크롬이면 사용자가 Dock 에서 크롬을 눌렀을 때 맥이 세션 크롬을 앞으로 가져와 사용자 프로필로 못 갔다(2026-10-03).
- * 베타는 번들이 달라(com.google.Chrome.beta) 안 섞인다. 둘 다 구글이 서명한 진짜 크롬 — Chrome for Testing·Chromium 은 받지 않는다.
- * CHAMMO_BROWSER_CHANNEL=chrome|chrome-beta 로 고정
+ * 세션 크롬 채널 — 맥은 크롬 베타가 깔려 있으면 'chrome-beta', 윈도우·리눅스는 정식이 있으면 null(플레이라이트 기본 = 일반 크롬).
+ * 맥: 세션 크롬이 일반 크롬이면 사용자가 Dock 에서 크롬을 눌렀을 때 맥이 세션 크롬을 앞으로 가져와 사용자 프로필로 못 갔다(2026-10-03).
+ * 베타는 번들이 달라(com.google.Chrome.beta) 안 섞인다. 윈도우엔 그 문제가 없어 정식 먼저 — 베타 판만 따라가다 http 수집이 막혔다(2026-11-09, src/channel.js).
+ * 둘 다 구글이 서명한 진짜 크롬 — Chrome for Testing·Chromium 은 받지 않는다. CHAMMO_BROWSER_CHANNEL=chrome|chrome-beta 로 고정
  */
 function chromeChannel(opts = {}) {
   return chromeLaunch(opts).channel;
 }
 
 /**
- * 세션 크롬 고르기 — { channel, executablePath, found }. 베타 먼저, 없으면 일반 크롬.
+ * 세션 크롬 고르기 — { channel, executablePath, found }. 맥은 베타 먼저, 윈도우·리눅스는 정식 먼저(없으면 다른 쪽).
  * 플레이라이트의 채널은 맥에서 /Applications 만 보므로 ~/Applications(관리자 아닌 계정에 앱이 깐 자리)면 실행 파일 경로를 같이 준다.
  * found = 크롬이 하나라도 있나 — 없으면 래퍼가 브라우저 도구를 '설치' 안내로 막는다(플레이라이트의 관리자 설치 안내로 새지 않게)
  */
@@ -150,8 +150,9 @@ function chromeLaunch({ platform = process.platform, exists = (p) => require('fs
   const roots = platform === 'win32' ? ['LOCALAPPDATA', 'ProgramFiles', 'ProgramFiles(x86)'].filter((k) => env[k]).map((k) => env[k]) : [];
   const beta = platform === 'win32' ? roots.map((r) => `${r}\\Google\\Chrome Beta\\Application\\chrome.exe`) : ['/opt/google/chrome-beta/chrome'];
   const stable = platform === 'win32' ? roots.map((r) => `${r}\\Google\\Chrome\\Application\\chrome.exe`) : ['/opt/google/chrome/chrome'];
-  if (forced !== 'chrome' && (forced === 'chrome-beta' || beta.some((p) => exists(p)))) return at('chrome-beta');
-  return stable.some((p) => exists(p)) ? at(null) : { channel: null, executablePath: null, found: false };
+  if (forced === 'chrome-beta') return at('chrome-beta');
+  if (stable.some((p) => exists(p))) return at(null);
+  return forced !== 'chrome' && beta.some((p) => exists(p)) ? at('chrome-beta') : { channel: null, executablePath: null, found: false };
 }
 
 const JXA = `ObjC.import("AppKit");

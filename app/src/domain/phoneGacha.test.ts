@@ -79,7 +79,7 @@ describe('phoneOp 장착 — 가진 것만, 그 칸 종류만', () => {
 describe('gachaView — 폰으로 나가는 건 필요한 칸만', () => {
   it('코인·천장·가진 것·장착·NEW 만', () => {
     const v = gachaView(file({ owned: { 'skin.neon': 1 }, history: [{ t: 1, id: 'skin.neon', dup: false }], late: { floor: 1, at: 1, keys: ['x'] }, placed: {}, phoneDone: [] }));
-    expect(Object.keys(v).sort()).toEqual(['coins', 'equip', 'fresh', 'owned', 'pity']);
+    expect(Object.keys(v).sort()).toEqual(['assign', 'chars', 'coins', 'equip', 'fresh', 'offices', 'orchSeats', 'owned', 'pity']); // 뽑기 기록·장부는 안 나간다
   });
 });
 
@@ -88,7 +88,7 @@ describe('폰 화면 도우미', () => {
   it('parseView — 깨졌거나 비면 null, 아는 칸만', () => {
     expect(parseView('{}')).toBeNull();
     expect(parseView('{깨짐')).toBeNull();
-    expect(parseView(JSON.stringify({ ...view, history: [1] }))).toEqual(view);
+    expect(parseView(JSON.stringify({ ...view, history: [1] }))).toEqual({ ...view, chars: {}, orchSeats: {}, assign: {} });
   });
   it('roomLook — 장착에서 방 스킨·장식, 입혀 보기가 이긴다', () => {
     expect(roomLook(view, { hasCat: true }, null)).toMatchObject({ skin: 'neon', deco: { hat: 'hat.crown', hasCat: true } });
@@ -163,5 +163,61 @@ describe('phoneDone 이 깨져 있어도(보안 리뷰 4)', () => {
     const f = file({ phoneDone: [{ rid: 'r-000001', results: [] }] });
     const r = earn(f, [{ t: 5, type: 'commit', lines: 10, hasTest: true } as never], 10);
     expect(r.file.phoneDone).toEqual([{ rid: 'r-000001', results: [] }]);
+  });
+});
+
+describe('사무실 고치기(폰 평면도)', () => {
+  const rid = 'abcd1234';
+  const owned = { 'furn.sofa': 1, 'floor.persian': 1, 'floor.checker': 1, 'wall.mirror': 1, 'chr.bear': 1, 'chr.a_bunny': 1 };
+  const op = (f: GachaFile, raw: Record<string, unknown>) => phoneAnswer(f, { rid, ...raw }, false, rng, 0);
+  it('모르는 모양은 거른다', () => {
+    expect(parsePhoneReq({ rid, op: 'expand', office: 3 })).toBeNull();
+    expect(parsePhoneReq({ rid, op: 'furn', office: 0, id: '../x', cell: [1, 1] })).toBeNull();
+    expect(parsePhoneReq({ rid, op: 'wall', office: 0, id: 'wall.mirror', side: 'X', at: 1 })).toBeNull();
+    expect(parsePhoneReq({ rid, op: 'orch', office: 0, name: 'a\nb', cell: [1, 1], w: 1.6 })).toBeNull();
+    expect(parsePhoneReq({ rid, op: 'orch', office: 0, name: '참모-2', cell: [1, 1], w: 9 })).toBeNull();
+    expect(parsePhoneReq({ rid, op: 'zone', office: 0, cell: null })).toBeNull();
+    expect(parsePhoneReq({ rid, op: 'furn', office: 0, id: 'furn.sofa', cell: null, x: 1 })).toEqual({ rid, op: 'furn', office: 0, id: 'furn.sofa', cell: null });
+  });
+  it('넓히기는 값을 받고, 같은 요청을 다시 보내도 한 번만', () => {
+    const f = file({ coins: 1500 });
+    const a = op(f, { op: 'expand', office: 0 });
+    expect(a.reply.ok).toBe(true);
+    expect(a.file!.coins).toBe(500);
+    expect(a.file!.offices![0]!.lv).toBe(1);
+    const again = op(a.file!, { op: 'expand', office: 0 });
+    expect(again.file).toBeNull();
+    expect(again.reply.ok).toBe(true);
+  });
+  it('코인이 모자라면 short', () => {
+    expect(op(file({ coins: 10 }), { op: 'expand', office: 0 }).reply).toMatchObject({ ok: false, why: 'short' });
+    expect(op(file({ coins: 10 }), { op: 'open' }).reply).toMatchObject({ ok: false, why: 'short' });
+  });
+  it('사무실 열기 — 2,000', () => {
+    const r = op(file({ coins: 2500 }), { op: 'open' });
+    expect(r.file!.coins).toBe(500);
+    expect(r.file!.offices).toHaveLength(2);
+  });
+  it('자리 규칙에 안 맞으면 spot, 맞으면 놓인다', () => {
+    const f = file({ owned });
+    expect(op(f, { op: 'furn', office: 0, id: 'furn.sofa', cell: [1, 3] }).reply).toMatchObject({ ok: false, why: 'spot' }); // 직원 자리
+    const a = op(f, { op: 'furn', office: 0, id: 'furn.sofa', cell: [7, 4] });
+    expect(a.file!.offices![0]!.furn['furn.sofa']).toEqual([7, 4]);
+    const stowed = op(a.file!, { op: 'furn', office: 0, id: 'furn.sofa', cell: null });
+    expect(stowed.file!.offices![0]!.furn['furn.sofa']).toBeUndefined();
+    const b = op(f, { op: 'floor', office: 0, id: 'floor.persian', cell: [1, 3] }); // 책상 아래도 된다
+    expect(b.reply.ok).toBe(true);
+    expect(op(b.file!, { op: 'floor', office: 0, id: 'floor.checker', cell: [1, 3] }).reply).toMatchObject({ ok: false, why: 'spot' }); // 끼리는 안 된다
+    expect(op(f, { op: 'wall', office: 0, id: 'wall.mirror', side: 'R', at: 1 }).reply).toMatchObject({ ok: false, why: 'spot' }); // 창문
+    expect(op(f, { op: 'wall', office: 0, id: 'wall.mirror', side: 'R', at: 5 }).file!.offices![0]!.wall).toEqual([{ id: 'wall.mirror', side: 'R', at: 5 }]);
+  });
+  it('참모 책상·캐릭터·프로젝트 사무실', () => {
+    const f = file({ owned });
+    const a = op(f, { op: 'orch', office: 0, name: '참모-2', cell: [6, 3], w: 1.6 });
+    expect(a.file!.orchSeats!['참모-2']).toEqual({ office: 0, x: 6.2, y: 3.1, w: 1.6 });
+    expect(op(f, { op: 'orch', office: 0, name: '참모-2', cell: [1, 3], w: 1.6 }).reply).toMatchObject({ ok: false, why: 'spot' });
+    expect(op(f, { op: 'char', name: '참모-2', id: 'chr.a_bunny' }).file!.chars).toEqual({ '참모-2': 'chr.a_bunny' });
+    expect(op(f, { op: 'char', name: '참모-2', id: 'chr.a_panda' }).reply).toMatchObject({ ok: false, why: 'unknown' }); // 안 가진 캐릭터
+    expect(op(f, { op: 'assign', project: 'p', office: 2 }).reply).toMatchObject({ ok: false, why: 'unknown' }); // 없는 사무실
   });
 });

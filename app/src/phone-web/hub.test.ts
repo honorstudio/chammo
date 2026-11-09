@@ -10,8 +10,8 @@ const phonePub = new Uint8Array(await subtle.exportKey('raw', phone.publicKey));
 const mac = (await subtle.generateKey(ECDH, true, ['deriveBits'])) as CryptoKeyPair;
 const macPub = new Uint8Array(await subtle.exportKey('raw', mac.publicKey));
 
-vi.mock('./keys', () => ({ phoneKeys: async () => ({ x: phone, xPub: Buffer.from(phonePub).toString('base64url') }) }));
-vi.mock('./relayClient', () => ({ wsUrl: async () => 'wss://relay.test/ws' }));
+vi.mock('./keys', () => ({ linkedKeys: async () => ({ x: phone, xPub: Buffer.from(phonePub).toString('base64url') }), NoKeysError: class extends Error {} }));
+vi.mock('./relayClient', () => ({ wsUrl: async () => 'wss://relay.test/ws', call: async () => ({ status: 200, json: {} }) }));
 
 const { HubTunnel } = await import('./hub');
 const { b64, unb64 } = await import('./tunnel');

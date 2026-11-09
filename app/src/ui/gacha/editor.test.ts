@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { makeEditor } from './editor';
-import { place, type GachaFile } from '../../domain/gacha';
+import { officesOf, placeFurnIn, type GachaFile } from '../../domain/gacha';
 
 // 느린 가짜 파일 — 읽기·쓰기가 각각 한 박자씩 걸린다(invoke 왕복)
 function slowFile(text: string) {
@@ -16,11 +16,11 @@ describe('makeEditor — gacha.json 고치기는 한 줄로(코인 적립과 가
     const edit = makeEditor(disk.read, disk.write, 0);
     await Promise.all([
       edit((f) => ({ ...f, coins: f.coins + 10 })), // 코인 적립(1분마다 읽고 다시 쓴다)
-      edit((f) => place(f, 'furn.sofa', [3, 5])),
+      edit((f) => placeFurnIn(f, 0, 'furn.sofa', [7, 5], [])),
     ]);
     const f = JSON.parse(disk.now()) as GachaFile;
     expect(f.coins).toBe(110);
-    expect(f.placed).toEqual({ 'furn.sofa': [3, 5] });
+    expect(officesOf(f)[0]!.furn).toEqual({ 'furn.sofa': [7, 5] });
   });
   it('바꿀 게 없으면(null·같은 것) 안 쓴다', async () => {
     const disk = slowFile(JSON.stringify(base));

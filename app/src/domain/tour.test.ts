@@ -62,7 +62,6 @@ describe('둘러보기는 로그인 문이 닫힌 뒤에(2026-11-01 ux-start H1)
   it('로그인 문이 떠 있으면(로그인·첫 기기·숫자 등) 둘러보기를 그리지 않는다', () => {
     expect(tourVisible(true, 'login')).toBe(false);
     expect(tourVisible(true, 'start')).toBe(false);
-    expect(tourVisible(true, 'offline')).toBe(false);
   });
   it('로그인 문 상태를 아직 못 읽었으면(null) 기다린다 — 깜빡 떴다 덮이지 않게', () => expect(tourVisible(true, null)).toBe(false));
   it('문이 닫혔으면 연 둘러보기를 그린다, 안 열었으면 안 그린다', () => {

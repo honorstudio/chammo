@@ -187,10 +187,24 @@ pub(crate) fn bytes_of(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, 
         return Ok(b);
     }
     let b = locker::get_bytes(dir, kc, http, team, id)?;
-    if std::fs::create_dir_all(cache_dir(dir)).is_ok() {
-        let _ = std::fs::write(&p, &b);
-    }
+    keep(dir, id, &b);
     Ok(b)
+}
+
+/// 푼 글(프로필 등)을 캐시에 — 폴더 700·파일 600(team_locker_app 영상 캐시와 같게). 옛 파일도 폴더 권한으로 가려진다
+fn keep(dir: &Path, id: &str, b: &[u8]) {
+    let root = cache_dir(dir);
+    if std::fs::create_dir_all(&root).is_err() {
+        return;
+    }
+    let p = root.join(id);
+    let _ = std::fs::write(&p, b);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700));
+        let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
+    }
 }
 
 /// 여럿 — 받아 둔 것은 데이터 폴더에서, 못 받은 것만 같이 받는다(locker::get_many). 돌려주는 순서는 ids 순서
@@ -198,12 +212,11 @@ pub(crate) fn bytes_many(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str
     let mut out: Vec<Option<Result<Vec<u8>, String>>> = ids.iter().map(|id| if file_id_ok(id) { std::fs::read(cache_dir(dir).join(id)).ok().map(Ok) } else { Some(Err("파일 id 모양이 아니야".into())) }).collect();
     let missing: Vec<String> = ids.iter().zip(&out).filter(|(_, o)| o.is_none()).map(|(id, _)| id.clone()).collect();
     let mut got = locker::get_many(dir, kc, http, team, &missing).into_iter();
-    let _ = std::fs::create_dir_all(cache_dir(dir));
     for (id, o) in ids.iter().zip(out.iter_mut()) {
         if o.is_none() {
             let r = got.next().unwrap_or_else(|| Err("못 받았어".into()));
             if let Ok(b) = &r {
-                let _ = std::fs::write(cache_dir(dir).join(id), b);
+                keep(dir, id, b); // 폴더 700·파일 600 — 이 길만 빠져 푼 평문이 644 로 57개 쌓였다(보안 점검 M-1)
             }
             *o = Some(r);
         }

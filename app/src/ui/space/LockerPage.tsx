@@ -29,6 +29,8 @@ import { teamUploadSub, uploadApi } from '../team/teamUpload';
 import './tools.css';
 import './locker.css';
 import { ALL_PROJECTS } from '../../domain/projectsView';
+import { LINKS_VIEW, type LockerLink } from '../../domain/lockerLinks';
+import { LinksView, type LinkActs } from './LinksView';
 import { ProjectList, ProjectPanel, type ProjectsKit } from './ProjectView';
 
 /** 폴더 안 정렬 — 팀 보관함과 같은 단추(SortButton), 고른 건 기억 */
@@ -195,6 +197,18 @@ function Crumbs({ dir, rel, count, onPlace, ro }: { dir: string; rel: string; co
   return <PathCrumbs root={tr('보관함', 'Locker')} crumbs={crumbsOf(rel).map((c) => ({ key: c.rel, name: c.name }))} count={count} dropOf={drop} onGo={(r) => onPlace(r ? { kind: 'dir', rel: r } : { kind: 'root' })} />;
 }
 
+/** 보관함 맨 위 머리 — 파일 · 링크 두 칸(시안 locker-links v1 B). '파일' 칸은 옛 '보관함' 칸처럼 맨 위로 끌어 놓는 자리 */
+function FilesLinks({ dir, on, files, links, onPlace }: { dir: string; on: 'files' | 'links'; files: number; links: number; onPlace: (p: LkPlace) => void }) {
+  return (
+    <nav className="lk-crumb lkl-switch" aria-label={tr('파일·링크', 'Files and links')}>
+      <button className={on === 'files' ? 'cur' : ''} aria-pressed={on === 'files'} data-locker-folder="" data-locker-drop="" data-locker-path={dir} onClick={() => onPlace({ kind: 'root' })}>{tr('파일', 'Files')}</button>
+      <span className="lk-count">{files}</span>
+      <button className={on === 'links' ? 'cur' : ''} aria-pressed={on === 'links'} onClick={() => onPlace({ kind: 'root', project: LINKS_VIEW })}>{tr('링크', 'Links')}</button>
+      <span className="lk-count">{links}</span>
+    </nav>
+  );
+}
+
 /** 머리 + — 새 문서(md)·새 엑셀(xlsx)·파일 넣기(홈·모드 ⑦). 지금 보는 폴더에 만들고 바로 탭으로 */
 function AddMenu({ folder, onNewDoc, onChoose, onConnect }: { folder: string; onNewDoc?: (folder: string, kind: 'md' | 'xlsx') => void; onChoose: (folder: string) => void; onConnect?: (folder: string) => void }) {
   const [open, setOpen] = useState(false);
@@ -247,7 +261,7 @@ function Chips({ active, all, on, onPick }: { active: ChipProject[]; all: ChipPr
 const VIEW_KEY = 'lockerView';
 const loadViews = (): Record<string, string> => { try { return JSON.parse(localStorage.getItem(VIEW_KEY) ?? '{}') as Record<string, string>; } catch { return {}; } };
 
-export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, onPlace, onChoose, onConnect, onNewDoc, onNewFolder, acts, onBigProject, onAddProject, kit }: {
+export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, onPlace, onChoose, onConnect, onNewDoc, onNewFolder, acts, onBigProject, onAddProject, kit, links, linkActs }: {
   dir: string;
   /** 홈(l:<참모>#h)은 HomeView 가 그린다 */
   place: Exclude<LkPlace, { kind: 'home' }>;
@@ -273,6 +287,9 @@ export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, o
   onAddProject?: () => void;
   /** 프로젝트 목록·화면 재료(뺀 것·세션·기록) */
   kit: ProjectsKit;
+  /** 링크 칸(시안 locker-links v1 B) — 모은 것 + 보여 준 주소(mergeLinks). 없으면 머리가 옛 '보관함' 칸 */
+  links?: LockerLink[];
+  linkActs?: LinkActs;
 }) {
   const [views, setViews] = useState<Record<string, string>>(loadViews);
   const vkey = place.kind === 'dir' ? `d:${place.rel}` : place.project ? `p:${place.project}` : 'root';
@@ -535,12 +552,15 @@ export function LockerPage({ dir, place, entries, log, chips, projects, whoOf, o
     ))
   );
 
+  if (place.kind === 'root' && place.project === LINKS_VIEW && links && linkActs) {
+    return <LinksView links={links} whoOf={whoOf} acts={linkActs} head={<header className="lk-head"><FilesLinks dir={dir} on="links" files={log.length} links={links.length} onPlace={onPlace} /></header>} />;
+  }
   if (place.kind === 'root') {
     const tops = kidsOf(entries, '').filter((e) => e.dir);
     return (
       <div className="lk-page-wrap" tabIndex={-1} data-select-all="" ref={box} data-locker-drop="" onContextMenu={blankMenu} onMouseDown={noShiftSelect} onPointerDown={bandStart}>
         <header className="lk-head">
-          <Crumbs dir={dir} rel="" count={items.length} onPlace={onPlace} />
+          {links ? <FilesLinks dir={dir} on="files" files={items.length} links={links.length} onPlace={onPlace} /> : <Crumbs dir={dir} rel="" count={items.length} onPlace={onPlace} />}
           <IconButton tone="line" label={tr('여기에 새 폴더', 'New folder here')} onClick={() => newFolder('')}><IconFolderPlus /></IconButton>
           {connectBtn}
           <span className="lk-sp" />

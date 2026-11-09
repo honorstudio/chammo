@@ -9,6 +9,8 @@ import { askForwardText, askKeyOf, askTextKeyOf, forwardText, forwardTo, inputWa
 import type { TaskCard, TaskEvent } from '../domain/tasks';
 import type { Session } from '../domain/session';
 
+/** 세션 값이 그대로일 때 다시 보는 주기 — 세션 목록 폴링과 같다 */
+const RECHECK_MS = 3000;
 const DONE_KEY = 'askForwarded';
 const loadDone = (): Set<string> => {
   try {
@@ -31,7 +33,8 @@ export function useForwardQuestions(subs: Session[], orch: Session | undefined, 
   const busy = useRef(false);
   const done = useRef<Set<string> | null>(null);
   const fails = useRef(new Map<string, number>());
-  useEffect(() => {
+  const step = useRef<() => void>(() => {});
+  step.current = () => {
     if (busy.current) return;
     const toOf = (s: Session) => forwardTo(s, events, orchs, sessions, orch, heir);
     const r = nextForward(subs, toOf, track.current, Date.now(), watching);
@@ -67,8 +70,10 @@ export function useForwardQuestions(subs: Session[], orch: Session | undefined, 
       })
       .catch(() => { if (retryAfterFail(fails.current, key)) { done.current?.delete(key); done.current?.delete(tkey); saveDone(done.current!); } })
       .finally(() => { busy.current = false; });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subs, orch, events, orchs]);
+  };
+  useEffect(() => step.current(), [subs, orch, events, orchs]);
+  // '30초 넘게 멈춤'은 시간으로 판단하는데 세션 값이 그대로면 위 효과가 다시 안 돈다(값이 같으면 다시 안 그린다, 11-07) — 스스로 다시 본다. 사람을 부르는 길이라 앱이 뒤여도 그대로
+  useEffect(() => { const t = setInterval(() => step.current(), RECHECK_MS); return () => clearInterval(t); }, []);
 
   /** 안 닫은 일 + 말없이 쉼(대답 없음) — 같은 일은 한 번만(done 에 열쇠), 그 턴에 참모에게 이미 말했으면 안 넣는다. 없으면 명령 오래 걸림 */
   function quiet(toOf: (s: Session) => Session | undefined) {

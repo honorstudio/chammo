@@ -186,7 +186,7 @@ The `verify-*` scripts launch a real browser and use a temporary `CHAMMO_BROWSER
 
 ## License
 
-AGPL-3.0-only, same as the Chammo app.
+Part of Chammo — AGPL-3.0, like the rest of this repository.
 
 ---
 

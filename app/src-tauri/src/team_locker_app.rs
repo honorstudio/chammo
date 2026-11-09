@@ -29,7 +29,7 @@ impl RelayNet<'_> {
         }
         // 조각 요청도 서버 nonce 칸을 쓴다 — 사람이 누른 올리기·받기는 세기만, 배경(썸네일 받기 등)은 배경 몫 안에서만
         let ts = relay::now_ms();
-        if !relay::take(&self.keys.public(), ts, method, path) {
+        if !relay::take_part(&self.keys.public(), ts, method, path) {
             return Err(relay::SLOW_DOWN.into());
         }
         let s = self.keys.sign_request(method, path, b"", ts, &new_nonce()?);
@@ -183,6 +183,10 @@ pub struct Upload {
     pub error: String,
     /// file 사람 파일 · profile·avatar·post 앱 안쪽 줄 — 화면엔 file 만(uploads)
     pub kind: String,
+    /// 들어갈 폴더(빈 글 = 맨 위) — 화면은 그 폴더에서만 이 줄을 그린다
+    pub folder: String,
+    /// 다시 해 보려고 기다리는 중 — net 망 끊김 · busy 서버가 쉬래요 · 빈 글 평소
+    pub note: String,
 }
 
 static UPLOADS: Mutex<Vec<Upload>> = Mutex::new(Vec::new());
@@ -195,6 +199,35 @@ pub fn uploads(team: &str) -> Vec<Upload> {
 fn set_upload(local: &str, f: impl FnOnce(&mut Upload)) {
     if let Some(u) = UPLOADS.lock().unwrap_or_else(|e| e.into_inner()).iter_mut().find(|u| u.local == local) {
         f(u);
+    }
+}
+
+/// 올리는 중 카드에 기다리는 까닭을 보여 주며 기다리는 중계 길
+struct CardNet<'a> {
+    net: &'a RelayNet<'a>,
+    local: &'a str,
+    wait: bool,
+}
+
+impl Net for CardNet<'_> {
+    fn call(&self, method: &str, path: &str, body: Option<&Value>) -> Result<(u16, Value), String> {
+        self.net.call(method, path, body)
+    }
+    fn put(&self, path: &str, bytes: &[u8]) -> Result<u16, String> {
+        self.net.put(path, bytes)
+    }
+    fn get(&self, path: &str) -> Result<(u16, Vec<u8>), String> {
+        self.net.get(path)
+    }
+    /// 사람이 올리는 파일만 기다린다 — 배경 일·앱 안쪽 작은 줄(프로필·글)은 예전처럼 바로 실패하고 다음 차례에
+    fn pause(&self, why: core::Pause, d: std::time::Duration) -> bool {
+        if !self.wait {
+            return false;
+        }
+        set_upload(self.local, |u| u.note = if why == core::Pause::Busy { "busy" } else { "net" }.into());
+        std::thread::sleep(d);
+        set_upload(self.local, |u| u.note.clear());
+        true
     }
 }
 
@@ -224,16 +257,35 @@ pub fn put_file_as(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, room
     if !path.is_file() {
         return Err(format!("파일이 아니야(폴더는 아직 못 올려): {name}"));
     }
+    // 같은 자리에 같은 파일을 다시 넣으면(못 보내 다시 끌어 옴·폰 다시 보내기) 앞서 올린 것을 준다 — 사람 파일만(프로필·글은 늘 새로)
+    let key = if kind == "file" { Some(crate::team_locker_sent::Key::of(&team, room, &core::safe_path(folder), &core::safe_file_name(&name), path)?) } else { None };
+    let gate = key.as_ref().map(crate::team_locker_sent::gate);
+    let _turn = gate.as_ref().map(|g| g.lock().unwrap_or_else(|e| e.into_inner()));
+    // 다른 사람이 휴지통에 보낸 게 목록 기억에 보이면 안 쓴다
+    let live = |r: &FileRef| recall(&team, &r.id).is_none_or(|(f, _)| f.state == "live");
+    if let Some(r) = key.as_ref().and_then(|k| crate::team_locker_sent::sent(k, std::time::Instant::now())).filter(live) {
+        return Ok(r);
+    }
     let local = format!("u-{}", crate::tools::tmp_tag());
-    UPLOADS.lock().unwrap_or_else(|e| e.into_inner()).push(Upload { local: local.clone(), team: team.clone(), room: room.into(), name: name.clone(), kind: kind.into(), ..Default::default() });
+    UPLOADS.lock().unwrap_or_else(|e| e.into_inner()).push(Upload { local: local.clone(), team: team.clone(), room: room.into(), name: name.clone(), kind: kind.into(), folder: core::safe_path(folder), ..Default::default() });
     let res = (|| {
-        let to = if room.is_empty() { people(dir, kc, http, &st, &team)?.0.recipients } else { crate::e2e_state::room_recipients(dir, kc, http, room)? };
         let net = RelayNet { http, server: st.server.clone(), device: st.device_id.clone(), keys: &k };
-        core::upload(&net, &Me { keys: &k, device: &st.device_id }, &to, &team, room, kind, folder, path, &name, &mut |d, t| set_upload(&local, |u| (u.done, u.total) = (d, t)))
+        let card = CardNet { net: &net, local: &local, wait: relay::human_now() && kind == "file" };
+        // 받는 사람 목록도 같은 망을 탄다 — 줄 선 다음 파일이 여기서 쉬라는 답에 막혀 실패하지 않게
+        let (_, to) = core::retrying(&card, || (if room.is_empty() { people(dir, kc, http, &st, &team).map(|x| x.0.recipients) } else { crate::e2e_state::room_recipients(dir, kc, http, room) }).map(|t| (200, t)))?;
+        core::upload(&card, &Me { keys: &k, device: &st.device_id }, &to, &team, room, kind, folder, path, &name, &mut |d, t| set_upload(&local, |u| (u.done, u.total) = (d, t)))
     })();
     match &res {
-        Ok(_) => UPLOADS.lock().unwrap_or_else(|e| e.into_inner()).retain(|u| u.local != local),
-        Err(e) => set_upload(&local, |u| u.error = e.clone()),
+        Ok(r) => {
+            UPLOADS.lock().unwrap_or_else(|e| e.into_inner()).retain(|u| u.local != local);
+            if let Some(k) = key {
+                crate::team_locker_sent::keep(k, r.clone(), std::time::Instant::now());
+            }
+        }
+        Err(e) => set_upload(&local, |u| {
+            u.error = e.clone();
+            u.note.clear();
+        }),
     }
     res
 }
@@ -885,13 +937,16 @@ fn fetch_found(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, id: &str
         // 사람이 고쳐 둔 사본(아직 안 올린 수정본)은 그대로 — 다시 받으면 고친 게 안 보였다(team_revise, 10-28 사용자 1안)
         if std::fs::metadata(&p).is_ok_and(|m| m.is_file() && m.len() == o.meta.size) || (p.is_file() && crate::team_revise::edited(dir, &p)) {
             touch(&p); // 다시 쓴 평문은 새로 받은 것으로 — 청소(sweep)가 보던 파일을 지우지 않게
+            crate::platform::mark_from_outside(&p); // 이 표시가 생기기 전에 풀어 둔 파일도
             return Ok(p);
         }
     }
     let to = if f.room.as_deref().is_some_and(|r| !r.is_empty()) { folder.join(core::CHAT_FOLDER) } else if o.meta.folder.is_empty() { folder.to_path_buf() } else { folder.join(core::safe_path(&o.meta.folder)) };
     let net = RelayNet { http, server: st.server.clone(), device: st.device_id.clone(), keys: &k };
     let at = core::download(&net, &team, &f, &o, &to, progress)?;
+    crate::platform::mark_from_outside(&at); // 팀원이 보낸 파일 — 열기·내 폴더 저장·내 참모에게 모두 이 길
     if at.starts_with(dir.join(VIEW_DIR)) {
+        private_file(&at); // 풀어 둔 평문은 나만(폰 영상처럼 오래 두는 큰 파일도)
         crate::team_revise::record(dir, &at); // 받은 그대로의 지문 — 사람이 고쳐 저장하면 '수정본 올리기'
     }
     // 지워진 자리를 가리키는 옛 줄은 이참에 뺀다
@@ -921,6 +976,17 @@ pub fn view_dir(dir: &Path, tid: &str) -> Result<PathBuf, String> {
         let _ = std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700));
     }
     Ok(root.join(tid))
+}
+
+/// 나만 읽고 쓰는 파일(600) — 뿌리가 0700 이어도 파일 자체도 좁힌다
+pub(crate) fn private_file(p: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o600));
+    }
+    #[cfg(not(unix))]
+    let _ = p;
 }
 
 /// 고친 시각을 지금으로
@@ -983,6 +1049,11 @@ pub fn view_with(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, id: &s
     fetch_to_with(dir, kc, http, &tid, id, &view_dir(dir, &tid)?, progress)
 }
 
+/// 파일 이름 — 목록 기억으로(없으면 목록을 한 번 받는다). 폰 영상 열기가 받기 전에 영상인지 본다
+pub fn name_of(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, id: &str) -> Result<String, String> {
+    find(dir, kc, http, team, id).map(|(_, _, _, _, o)| o.meta.name)
+}
+
 /// 미리보기·카드 썸네일 — 같은 자리에, 50MiB 까지
 pub fn peek(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, id: &str) -> Result<PathBuf, String> {
     let st = relay::load_state(dir);
@@ -1025,6 +1096,7 @@ pub fn copy_out(dir: &Path, src: &Path, out: &Path) -> Result<PathBuf, String> {
     std::fs::create_dir_all(out).map_err(|e| e.to_string())?;
     let to = crate::locker_fs::unique(out, &name, true);
     std::fs::copy(&real, &to).map_err(|e| format!("못 복사했어: {e}"))?;
+    crate::platform::mark_from_outside(&to);
     Ok(to)
 }
 
@@ -1108,6 +1180,7 @@ pub fn give_path(dir: &Path, src: &Path, root: &Path, orch: &str, name: &str) ->
     }
     let at = crate::locker_fs::unique(&to, file, true);
     std::fs::copy(&real, &at).map_err(|e| format!("못 복사했어: {e}"))?;
+    crate::platform::mark_from_outside(&at);
     Ok(at)
 }
 
@@ -1141,6 +1214,7 @@ pub fn mkdir(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, folder: &s
 pub fn folder(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, from: &str, to: Option<&str>) -> Result<usize, String> {
     let (st, k, team, opened, _) = opened_all(dir, kc, http, team, false)?;
     forget(&team);
+    crate::team_locker_sent::forget_team(&team);
     let net = RelayNet { http, server: st.server.clone(), device: st.device_id.clone(), keys: &k };
     let pairs: Vec<_> = opened.iter().map(|(f, o)| (f, o)).collect();
     match to {
@@ -1184,6 +1258,7 @@ fn download(http: &dyn Http, st: &TeamState, k: &DeviceKeys, team: &str, f: &Rem
 pub fn rename(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, id: &str, name: Option<&str>, folder: Option<&str>) -> Result<(), String> {
     let (st, k, team, f, o) = find(dir, kc, http, team, id)?;
     forget(&team);
+    crate::team_locker_sent::forget_team(&team);
     let net = RelayNet { http, server: st.server.clone(), device: st.device_id.clone(), keys: &k };
     core::rename(&net, &Me { keys: &k, device: &st.device_id }, &team, &f, &o, name, folder)
 }
@@ -1193,6 +1268,7 @@ pub fn act(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, id: &str, ve
     let (st, k) = ctx(dir, kc)?;
     let (team, _) = team_of(&st, team)?;
     forget(&team);
+    crate::team_locker_sent::forget_team(&team);
     let net = RelayNet { http, server: st.server.clone(), device: st.device_id.clone(), keys: &k };
     core::act(&net, &team, id, verb)
 }

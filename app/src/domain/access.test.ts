@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { accessBanner, copiesNote, wizardAccess, FULL_DISK_URL, type Access, type Copies } from './access';
-import { canNext, type EnvCheck } from './setup';
 
 const a = (state: Access['state'], dir = '/Users/me/Desktop/dev', prot = true): Access => ({ state, dir, protected: prot, detail: '' });
 
@@ -19,20 +18,13 @@ describe('프로젝트 폴더 읽기 띠 — 앱을 새로 깔거나 이름을 �
 });
 
 describe('마법사 기본 설정 — 고른 프로젝트 폴더를 실제로 읽어 본다', () => {
-  const ok = { claudePath: '/c', loggedIn: true, clt: true } as unknown as EnvCheck;
-  const trust = { dev: true, hq: true };
   it('막혔거나 권한 창 답을 기다리면 다음으로 못 간다', () => {
     expect(wizardAccess(a('denied'))).toEqual({ block: true, kind: 'mac' });
     expect(wizardAccess(a('noPerm'))).toEqual({ block: true, kind: 'perm' });
     expect(wizardAccess(a('pending'))).toEqual({ block: true, kind: 'pending' });
-    expect(canNext('basics', ok, trust, a('denied'))).toBe(false);
-    expect(canNext('basics', ok, trust, a('pending'))).toBe(false);
   });
   it('읽히거나 아직 없는 폴더(시작하기에서 만든다)·못 읽음(모름)이면 막지 않는다', () => {
     for (const s of ['ok', 'missing', 'error'] as const) expect(wizardAccess(a(s)).block).toBe(false);
-    expect(canNext('basics', ok, trust, a('ok'))).toBe(true);
-    expect(canNext('basics', ok, trust, null)).toBe(true); // 점검 전(첫 그림) — 믿기만 보던 예전과 같다
-    expect(canNext('basics', ok, trust)).toBe(true);
   });
 });
 

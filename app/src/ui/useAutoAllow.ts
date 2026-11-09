@@ -2,9 +2,10 @@
 // waitingFor=permission prompt 인 세션만. 화면을 읽어 Allow 줄을 이름으로 찾고(domain/autoAllow) 키를 넣은 뒤, 풀렸는지 확인해 기록한다.
 // 선택지 질문(input needed)·비밀번호·2FA·결제 창은 건드리지 않는다 — 결정 대기함에 그대로 남는다
 import { useEffect, useRef } from 'react';
-import { listSessionsRaw, logAutoAllow, permCardClose, permCardOpen, sendKeys, sessionScreen } from '../data/tauri';
+import { listSessionsRaw, logAutoAllow, permCardClose, permCardOpen, sendKeys, sendToSession, sessionScreen } from '../data/tauri';
 import { notifyOnce } from './notifier';
-import { leftWindow, pickAllow, retryAfter, skipPlan, type AllowOutcome } from '../domain/autoAllow';
+import { leftWindow, permStuckText, permStuckTo, pickAllow, promptTail, retryAfter, skipPlan, type AllowOutcome } from '../domain/autoAllow';
+import type { TaskEvent } from '../domain/tasks';
 import { parseAgents, type Session } from '../domain/session';
 import { tr } from '../i18n';
 
@@ -22,28 +23,31 @@ const misses = new Map<string, number>();
 const soons = new Map<string, number>();
 /** 회사 정책 아래 사람 카드를 띄운 세션 → 카드 id(ADR 0023). 창을 벗어나면 카드를 거둔다 */
 const carded = new Map<string, string>();
-/** 건너뛴 창 — 무슨 창이었는지 기록에 남긴다(마지막 구분선 아래 12줄, 300자). 왜 건너뛰었는지 나중에 볼 수 없었다 */
-const promptTail = (screen: string) => {
-  const all = screen.split('\n');
-  let from = 0;
-  all.forEach((l, i) => { if (/─{4,}/.test(l)) from = i + 1; });
-  return all.slice(from).map((l) => l.trim()).filter(Boolean).slice(0, 12).join(' / ').slice(0, 300);
-};
-
 const whereOf = (s: Session) => (s.workspace ? `${s.project} / ${s.workspace}` : s.project);
 
-/** policyBlocked = 회사 정책으로 바이패스가 막힌 기기(useOrgPolicy) — 그땐 누르지 않고 사람 카드로. false 면 예전과 똑같다 */
-export function useAutoAllow(sessions: Session[], devRoot: string | undefined, onLog: () => void, policyBlocked = false) {
+/** 세션 값이 그대로일 때 다시 보는 주기 — 세션 목록 폴링과 같다 */
+const RECHECK_MS = 3000;
+
+/** 맡긴 참모에게 알린 세션 → 그 줄. 같은 멈춤은 한 번만, 세션이 창을 벗어나면 지운다 */
+const toldOwner = new Map<string, string>();
+
+/** policyBlocked = 회사 정책으로 바이패스가 막힌 기기(useOrgPolicy) — 그땐 누르지 않고 사람 카드로. false 면 예전과 똑같다.
+ *  events·orchs = 일 기록·참모 목록 — 건너뛴 창을 그 세션에 일을 맡긴 참모 입력칸에도 한 줄(2026-11-05 ci-runner: 사용자 알림만 가고 맡긴 참모는 몰랐다) */
+export function useAutoAllow(sessions: Session[], devRoot: string | undefined, onLog: () => void, policyBlocked = false, events: TaskEvent[] = [], orchs: Session[] = []) {
   /** 세션 id → 다시 봐도 되는 때 (domain/autoAllow retryAfter) */
   const next = useRef(new Map<string, number>());
   const busy = useRef(false);
-  useEffect(() => {
+  const ledger = useRef({ events, orchs });
+  ledger.current = { events, orchs };
+  const step = useRef<() => void>(() => {});
+  step.current = () => {
     // 창을 벗어난 세션은 붙잡은 걸 놓는다 — 다음 창은 바로 본다(같은 창은 벗어날 때까지 다시 안 본다, 2026-10-11 perf 9번)
     for (const id of leftWindow(next.current.keys(), sessions, AUTO)) {
       next.current.delete(id);
       toldSkip.delete(id);
       misses.delete(id);
       soons.delete(id);
+      toldOwner.delete(id);
       if (carded.delete(id)) void permCardClose(id).catch(() => {});
     }
     if (busy.current || !devRoot) return;
@@ -54,6 +58,15 @@ export function useAutoAllow(sessions: Session[], devRoot: string | undefined, o
     inFlight.add(s.id);
     const done = (o: AllowOutcome) => next.current.set(s.id, Date.now() + retryAfter(o));
     done('failed'); // 도는 동안은 다시 안 잡게
+    /** 사용자 알림 + 맡긴 참모 입력칸 한 줄(맡긴 참모가 없으면 알림만 — 예전처럼) */
+    const tell = (title: string, body: string, why: string) => {
+      notifyOnce({ kind: 'allowFail', session: s.id, orch: false, title, body });
+      const to = permStuckTo(s, ledger.current.events, ledger.current.orchs, sessions);
+      const line = to && permStuckText(s, why);
+      if (!to || !line || toldOwner.get(s.id) === line) return;
+      toldOwner.set(s.id, line);
+      void sendToSession(to.id, line).catch(() => { toldOwner.delete(s.id); }); // 못 넣었으면 다음에 다시
+    };
     const log = (ev: object) => logAutoAllow({ ts: new Date().toISOString(), where: whereOf(s), ...ev }).then(onLog).catch(() => {});
     void (async () => {
       try {
@@ -68,7 +81,7 @@ export function useAutoAllow(sessions: Session[], devRoot: string | undefined, o
             done(plan.outcome);
             if (plan.tell && toldSkip.get(s.id) !== why) {
               toldSkip.set(s.id, why);
-              notifyOnce({ kind: 'allowFail', session: s.id, orch: false, title: tr(`${whereOf(s)} — 직접 골라야 하는 창`, `${whereOf(s)} — needs your choice`), body: tr(`${why} — 그 세션 채팅을 열면 버튼으로 고를 수 있어`, `${why} — open that session's chat to choose`) });
+              tell(tr(`${whereOf(s)} — 직접 골라야 하는 창`, `${whereOf(s)} — needs your choice`), tr(`${why} — 그 세션 채팅을 열면 버튼으로 고를 수 있어`, `${why} — open that session's chat to choose`), why);
             }
             return;
           }
@@ -95,7 +108,7 @@ export function useAutoAllow(sessions: Session[], devRoot: string | undefined, o
           await log({ result: tr(`건너뜀 — ${pick.skip}`, `Skipped — ${pick.skip}`), prompt: tail });
           // 사람이 골라야 하는 창 — 알린다. 그 세션 채팅을 열면 선택지 버튼으로 고를 수 있다(ChatDialog)
           toldSkip.set(s.id, tail);
-          notifyOnce({ kind: 'allowFail', session: s.id, orch: false, title: tr(`${whereOf(s)} — 직접 골라야 하는 창`, `${whereOf(s)} — needs your choice`), body: tr(`${pick.skip} — 그 세션 채팅을 열면 버튼으로 고를 수 있어`, `${pick.skip} — open that session's chat to choose`) });
+          tell(tr(`${whereOf(s)} — 직접 골라야 하는 창`, `${whereOf(s)} — needs your choice`), tr(`${pick.skip} — 그 세션 채팅을 열면 버튼으로 고를 수 있어`, `${pick.skip} — open that session's chat to choose`), pick.skip);
           return;
         }
         await sendKeys(s.id, pick.keys);
@@ -105,7 +118,7 @@ export function useAutoAllow(sessions: Session[], devRoot: string | undefined, o
         done(ok ? 'allowed' : 'stillOpen');
         if (ok) { toldSkip.delete(s.id); misses.delete(s.id); soons.delete(s.id); }
         await log({ option: pick.option, result: ok ? tr('허용됨', 'Allowed') : tr('풀리지 않음 — 직접 봐줘', 'Still open — please check it') });
-        if (!ok) notifyOnce({ kind: 'allowFail', session: s.id, orch: false, title: tr(`${whereOf(s)} 권한 창 자동 허용 실패`, `${whereOf(s)}: auto-allow failed`), body: tr(`"${pick.option}" 을 눌렀는데 창이 그대로야 — 열어서 봐줘`, `Pressed "${pick.option}" but the prompt is still there — open it and check`) });
+        if (!ok) tell(tr(`${whereOf(s)} 권한 창 자동 허용 실패`, `${whereOf(s)}: auto-allow failed`), tr(`"${pick.option}" 을 눌렀는데 창이 그대로야 — 열어서 봐줘`, `Pressed "${pick.option}" but the prompt is still there — open it and check`), tr(`"${pick.option}" 을 눌렀는데 창이 그대로야`, `pressed "${pick.option}" but the prompt is still there`));
       } catch (e: unknown) {
         done('failed');
         await log({ result: tr(`실패 — ${String(e)}`, `Failed — ${String(e)}`) });
@@ -114,5 +127,9 @@ export function useAutoAllow(sessions: Session[], devRoot: string | undefined, o
         inFlight.delete(s.id);
       }
     })();
-  }, [sessions, devRoot, onLog, policyBlocked]);
+  };
+  useEffect(() => step.current(), [sessions, devRoot, onLog, policyBlocked]);
+  // 같은 창이 떠 있으면 세션 값은 그대로라 위 효과가 다시 안 돈다(값이 같으면 다시 안 그린다, 11-07) — 다시 볼 때(retryAfter)를 스스로 챙긴다.
+  // 사람을 부르는 길이라 앱이 뒤에 있어도 늦추지 않는다(ui/poll)
+  useEffect(() => { const t = setInterval(() => step.current(), RECHECK_MS); return () => clearInterval(t); }, []);
 }

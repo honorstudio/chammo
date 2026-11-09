@@ -1,0 +1,10 @@
+<!doctype html>
+<html>
+  <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /><title>frame links e2e</title>
+  <script>
+    // Tauri 대신 — 부른 명령을 적는다. 참모 브라우저 띄우기는 시험 프로필, 새 탭은 탭 id
+    window.__calls = [];
+    window.__TAURI_INTERNALS__ = { transformCallback: () => 0, invoke: async (cmd, args) => { window.__calls.push({ cmd, args }); if (cmd === 'hq_browser_open') return 'hq-e2e'; if (cmd === 'agent_open_tab') return 'tab-1'; return null; } };
+  </script></head>
+  <body style="margin:0"><div id="root"></div><script type="module" src="./main.tsx"></script></body>
+</html>

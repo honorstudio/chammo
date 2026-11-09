@@ -3,16 +3,18 @@
 import { useEffect, useRef } from 'react';
 import type { RefKind } from '../domain/refChips';
 
-export type RefAsk = { kind: RefKind; who: string; text: string };
+/** plain = 이름표 없이 글 그대로 입력칸에(내 메모 보내기 아이콘 — 메모 글 통째, 11-05 사용자).
+ *  file = 그 파일을 첨부 칩(#file)으로(폰 문서 보기 '참모에게 보내기', 11-06 — 데스크톱 SendToOrch 와 같은 일) */
+export type RefAsk = { kind: RefKind; who: string; text: string; plain?: boolean; file?: { path: string; name: string } };
 type Got = (r: RefAsk) => void;
 
 const bus = new EventTarget();
 const waiting = new Map<string, RefAsk[]>();
 
-/** 그 참모 입력칸에 참조 하나 — 받는 입력칸이 있으면 true */
-export function askRef(orch: string, r: RefAsk): boolean {
+/** 그 참모 입력칸에 참조 하나 — 받는 입력칸이 있으면 true. queue=false 면 없을 때 모아 두지 않는다(받는 쪽이 터미널일 수 있을 때) */
+export function askRef(orch: string, r: RefAsk, queue = true): boolean {
   const took = !bus.dispatchEvent(new CustomEvent(orch, { detail: r, cancelable: true }));
-  if (!took) waiting.set(orch, [...(waiting.get(orch) ?? []), r]);
+  if (!took && queue) waiting.set(orch, [...(waiting.get(orch) ?? []), r]);
   return took;
 }
 

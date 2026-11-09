@@ -191,6 +191,49 @@ pub struct TeamState {
     pub pending_auto_at: u64,
     /// 계정 되찾기 기다림(relay ADR 0007 R9) — 서버 /v0/me·/v0/me/self 의 recover 를 그대로. 없으면 None
     pub recover: Option<Recover>,
+    /// 팀 권한(relay ADR 0015) — /v0/me 의 plan. 옛 중계는 칸이 없어 None(화면은 예전처럼 다 연다)
+    pub team_plan: Option<TeamPlan>,
+    /// 읽기만 되는(권한 끝난) 팀 id — /v0/me teams[].open == false
+    pub closed_teams: Vec<String>,
+}
+
+/// 팀 권한 — 서버가 판단한 것을 그대로(앱은 화면만 고른다, 판단은 늘 서버가 다시 한다)
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TeamPlan {
+    /// 서버 잠금이 켜졌나(TEAM_LOCK)
+    pub lock: bool,
+    pub can_create: bool,
+    /// team_create | team_expired | team_max | ""(만들 수 있음)
+    pub reason: String,
+    pub max: u64,
+    pub used: u64,
+    /// 문의 주소(https 또는 mailto) — 서버가 바꾼다
+    pub contact: String,
+}
+
+/// /v0/me 의 plan → TeamPlan. 칸이 없으면(옛 중계) None
+pub fn plan_of(v: &Value) -> Option<TeamPlan> {
+    let p = v.get("plan").filter(|p| p.is_object())?;
+    let t = &p["team"];
+    Some(TeamPlan {
+        lock: p["lock"] == true,
+        can_create: t["canCreate"] != false,
+        reason: t["reason"].as_str().unwrap_or("").to_string(),
+        max: t["max"].as_u64().unwrap_or(0),
+        used: t["used"].as_u64().unwrap_or(0),
+        contact: p["contact"].as_str().filter(|c| contact_ok(c)).unwrap_or("").to_string(),
+    })
+}
+
+/// 문의 주소로 받는 모양 — https 또는 mailto 만(남이 준 글이 앱 '바깥 열기'로 가서 좁힌다)
+pub fn contact_ok(c: &str) -> bool {
+    (c.starts_with("https://") || c.starts_with("mailto:")) && c.len() <= 300 && !c.chars().any(|ch| ch.is_control() || ch.is_whitespace())
+}
+
+/// /v0/me teams[] 중 닫힌(open == false) 팀 id
+pub fn closed_of(v: &Value) -> Vec<String> {
+    v["teams"].as_array().map(|a| a.iter().filter(|t| t["open"] == false).filter_map(|t| t["teamId"].as_str().map(String::from)).collect()).unwrap_or_default()
 }
 
 /// 기다리는 다시 시작 요청 하나 — 기기 이름·나라·도시는 서버가 준 남의 글(화면에서 거른다)
@@ -214,6 +257,11 @@ pub fn recover_of(v: &Value) -> Option<Recover> {
 }
 
 impl TeamState {
+    /// 읽기만 되는(권한 끝난) 팀인가 — /v0/me 의 판단을 그대로
+    pub fn is_closed(&self, team: &str) -> bool {
+        self.closed_teams.iter().any(|t| t == team)
+    }
+
     pub fn joined(&self) -> bool {
         !self.team_id.is_empty() && !self.device_id.is_empty()
     }
@@ -682,7 +730,7 @@ pub(crate) fn spend(key: &str, now_ms: u64, human: bool) -> bool {
 }
 
 // ── 몫 진단(10-30 '잠시 쉬래요' — 무엇이 배경 200 을 먹나) — 칸마다 열쇠별로 경로 셈. 메서드·뭉갠 경로(id 칸은 *)·사람/배경·횟수만,
-//    비밀값·본문 없음. 배경이 칸 몫을 처음 넘은 때 notify.log 에 한 줄(운영판에서도 그때 무엇이 몰렸는지 본다) ──
+//    비밀값·본문 없음. 배경이 처음 막힌 때 notify.log 에 한 줄(운영판에서도 그때 무엇이 몰렸는지 본다) — 배경 자신이 몫을 넘긴 때만 알림 ──
 
 static TALLY: Mutex<std::collections::BTreeMap<String, Tally>> = Mutex::new(std::collections::BTreeMap::new());
 
@@ -691,6 +739,10 @@ struct Tally {
     bucket: u64,
     paths: std::collections::BTreeMap<String, u32>,
     told: bool,
+    filled_told: bool,
+    /// 배경 시도(보낸 것 + 막힌 것) — 칸은 사람 몫까지 합쳐 차서 보낸 수만 세면 사람 동작 몇 개에 진짜 폭주가 가려진다
+    bg: u32,
+    human: u32,
 }
 
 /// 경로 모양 — 글자·하이픈만인 칸(teams·locker·key-probe)과 판(v0)만 남기고 나머지(id·조각 번호)는 *
@@ -699,8 +751,16 @@ pub(crate) fn path_shape(path: &str) -> String {
     path.split('?').next().unwrap_or("").split('/').map(|s| if keep(s) { s } else { "*" }).collect::<Vec<_>>().join("/")
 }
 
-/// 서명 하나를 셌다(sent = 보냈다, 아니면 배경 몫에 막혔다). 배경이 이 칸에서 처음 막힌 때 남길 한 줄
-pub(crate) fn tally(key: &str, now_ms: u64, method: &str, path: &str, human: bool, sent: bool) -> Option<String> {
+#[derive(Debug, PartialEq)]
+pub(crate) enum Note {
+    /// 배경 자신이 칸 몫을 넘겼다 — 알림
+    BgOver(String),
+    /// 사람 동작이 칸을 채워 배경이 막혔다 — 평소 일이라 로그 한 줄만(11-04 사람 PUT 153 · 배경 37 에 '배경이 넘쳤다' 알림)
+    Filled(String),
+}
+
+/// 서명 하나를 셌다(sent = 보냈다, 아니면 배경 몫에 막혔다). 칸마다 처음 그런 때 남길 한 줄
+pub(crate) fn tally(key: &str, now_ms: u64, method: &str, path: &str, human: bool, sent: bool) -> Option<Note> {
     let b = now_ms / BUCKET_MS;
     let mut m = TALLY.lock().unwrap_or_else(|e| e.into_inner());
     let t = m.entry(key.to_string()).or_default();
@@ -709,22 +769,44 @@ pub(crate) fn tally(key: &str, now_ms: u64, method: &str, path: &str, human: boo
     }
     let who = if human { "사람 " } else if sent { "" } else { "막힘 " };
     *t.paths.entry(format!("{who}{method} {}", path_shape(path))).or_default() += 1;
+    if human {
+        t.human += 1;
+    } else {
+        t.bg += 1;
+    }
     if sent || human || t.told {
         return None;
     }
-    t.told = true;
+    let over = t.bg > BG_CAP;
+    if !over && t.filled_told {
+        return None;
+    }
+    // 까닭 쪽 경로가 먼저 — 화면(alertKey)이 맨 앞 경로로 같은 원인을 거른다
     let mut rows: Vec<(&String, &u32)> = t.paths.iter().collect();
-    rows.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
-    let top: Vec<String> = rows.iter().take(12).map(|(k, n)| format!("{k} {n}")).collect();
-    Some(format!("배경 요청이 10분 몫 {BG_CAP}개를 다 썼어 — 경로별: {}", top.join(" · ")))
+    rows.sort_by(|a, b| (a.0.starts_with("사람 ") == over).cmp(&(b.0.starts_with("사람 ") == over)).then(b.1.cmp(a.1)).then(a.0.cmp(b.0)));
+    let top = rows.iter().take(12).map(|(k, n)| format!("{k} {n}")).collect::<Vec<_>>().join(" · ");
+    let (bg, who) = (t.bg, t.human);
+    if over {
+        t.told = true;
+        Some(Note::BgOver(format!("배경 요청이 10분 몫 {BG_CAP}개를 다 썼어 — 경로별: {top}")))
+    } else {
+        t.filled_told = true;
+        Some(Note::Filled(format!("사람 동작이 10분 칸을 채워 배경이 잠깐 멈췄어(배경 {bg} · 사람 {who}) — 경로별: {top}")))
+    }
 }
 
 /// 서명 하나 — 몫(spend)을 따지고 경로 셈(tally)에 남긴다. false = 배경 몫을 다 써서 안 보낸다
 pub(crate) fn take(key: &str, ts: u64, method: &str, path: &str) -> bool {
     let human = human_now();
     let ok = spend(key, ts, human);
-    if let Some(line) = tally(key, ts, method, path, human, ok) {
-        alert(key, "bg-cap", line.split_once("경로별: ").map_or(line.clone(), |(_, t)| t.to_string()));
+    if let Some(note) = tally(key, ts, method, path, human, ok) {
+        let line = match note {
+            Note::BgOver(line) => {
+                alert(key, "bg-cap", line.split_once("경로별: ").map_or(line.clone(), |(_, t)| t.to_string()));
+                line
+            }
+            Note::Filled(line) => line,
+        };
         // cargo test 는 데이터 폴더를 안 줘 진짜 notify.log 에 쓴다 — 시험에선 tally 가 돌려준 줄만 본다
         #[cfg(not(test))]
         crate::claude::log_out("team", &line);
@@ -735,6 +817,21 @@ pub(crate) fn take(key: &str, ts: u64, method: &str, path: &str) -> bool {
         trace_local(method, path);
     }
     ok
+}
+
+/// 보관함 조각 서명 — 중계가 조각을 따로 센다(chammo-relay ADR 0016). 사람이 누른 조각은 이 칸에 안 넣고 경로 셈에만(큰 파일 하나가 배경을 멈췄다, 11-04).
+/// 배경 조각(썸네일 받기)은 그대로 몫 안에서 — 고장 난 화면이 조각을 끝없이 부르지 못하게
+pub(crate) fn take_part(key: &str, ts: u64, method: &str, path: &str) -> bool {
+    if human_now() {
+        let _ = tally(key, ts, method, path, true, true);
+        return true;
+    }
+    take(key, ts, method, path)
+}
+
+/// 지금 10분 칸이 넘어갈 때까지 — 서버 nonce 칸과 같은 시각으로 자른다
+pub(crate) fn bucket_left(now_ms: u64) -> std::time::Duration {
+    std::time::Duration::from_millis(BUCKET_MS - now_ms % BUCKET_MS + 500)
 }
 
 // ── 예산 넘침 알림(10-31 사용자 '사람이 캡처를 보내기 전에 알아채게') — 배경이 칸 몫을 처음 넘은 때·사람 동작이 서버 429 를 받은 때.
@@ -986,6 +1083,12 @@ pub(crate) fn why(code: u16, v: &Value) -> String {
         (409, "key_in_use" | "device_registered" | "device_other_account") => "이 기기 열쇠는 이미 다른 등록에 쓰이고 있어요 — 로그아웃 뒤 다시 로그인해 주세요".into(),
         (409, e) => format!("지금은 할 수 없어요 — 이미 처리됐거나 상태가 바뀌었어요({e})"),
         (410, _) => "초대 코드가 틀렸거나 이미 썼거나 24시간이 지났어 — 팀장에게 새 코드를 받아".into(),
+        // 팀 권한(relay ADR 0015) — 닫힌 팀 쓰기·좌석(팀장이 보는 자리). 팀 만들기·들어오기는 register 가 갈래마다 따로
+        (402, _) => match v["reason"].as_str().unwrap_or("") {
+            "seat_limit" => "팀 자리가 다 찼어요. 문의하시면 자리를 늘려 드려요.".into(),
+            // 누가 보는지 여기선 모른다(팀장에게 '팀장님께'가 나갔다, 실측 11-04) — 할 일은 목록 위 '읽기만' 줄이 사람마다 말한다
+            _ => "지금은 이 팀에서 읽기만 할 수 있어요.".into(),
+        },
         (413, _) => "너무 커".into(),
         (429, "slow_down") => SLOW_DOWN.into(),
         (c, e) => format!("중계 서버 {c} {e}"),
@@ -995,6 +1098,26 @@ pub(crate) fn why(code: u16, v: &Value) -> String {
 
 pub fn device_keys(kc: &dyn Store, st: &TeamState) -> Result<DeviceKeys, String> {
     keys::load(kc, &st.key_account)?.ok_or_else(|| "이 기기의 팀 열쇠가 키체인에 없어(다른 맥으로 옮긴 데이터 폴더?) — 팀장에게 새로 초대받아".into())
+}
+
+/// 팀 만들기·들어오기 거절 — 402(팀 권한, relay ADR 0015)는 갈래마다 다른 말. 만들기는 앞에 [plan:까닭] 꼬리표를 붙여
+/// 화면(domain/teamLock planErr)이 오류 줄 대신 문의 창으로 바꾼다. 들어오기는 들어오려는 사람에게 할 말(권한 구조는 안 드러냄)
+pub(crate) fn why_register(path: &str, code: u16, v: &Value) -> String {
+    if code != 402 {
+        return why(code, v);
+    }
+    let r = v["reason"].as_str().unwrap_or("");
+    if path == "/v0/teams" {
+        return match r {
+            "team_expired" => "[plan:team_expired] 팀 만들기 권한이 끝났어요".into(),
+            "team_max" => format!("[plan:team_max] 이 계정은 팀을 {}개까지 만들 수 있어요. 더 만들려면 문의해 주세요.", v["max"].as_u64().unwrap_or(0)),
+            _ => "[plan:team_create] 새 팀은 권한이 필요해요".into(),
+        };
+    }
+    match r {
+        "seat_limit" => "이 팀은 자리가 다 찼어요. 팀장님께 자리를 늘려 달라고 말씀해 주세요.".into(),
+        _ => "이 팀은 지금 새 팀원을 받을 수 없어요. 팀장님께 문의해 달라고 말씀해 주세요.".into(),
+    }
 }
 
 /// 팀 만들기·들어오기. 로그인한 기기(계정)는 지금 열쇠·기기 서명으로(서버가 계정 멤버로 붙인다),
@@ -1016,7 +1139,7 @@ pub(crate) fn register(dir: &Path, kc: &dyn Store, http: &dyn Http, server: &str
         let k = device_keys(kc, &now)?;
         let (code, v) = call(http, &here, &k, Some(&now.device_id), "POST", path, Some(&body))?;
         if code != 201 {
-            return Err(why(code, &v));
+            return Err(why_register(path, code, &v));
         }
         let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
         let team_name = v["teamName"].as_str().or(body["name"].as_str()).unwrap_or("").to_string();
@@ -1040,7 +1163,7 @@ pub(crate) fn register(dir: &Path, kc: &dyn Store, http: &dyn Http, server: &str
     };
     if code != 201 {
         let _ = keys::remove(kc, &account);
-        return Err(why(code, &v));
+        return Err(why_register(path, code, &v));
     }
     let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
     let team_name = v["teamName"].as_str().or(body["name"].as_str()).unwrap_or("").to_string();
@@ -1532,7 +1655,7 @@ pub fn hub_url_for(st: &TeamState, k: &DeviceKeys, hub: &str, kind: &str, ts_ms:
     }
     let path = format!("/v0/hubs/{hub}/{kind}");
     if !take(&k.public(), ts_ms, "GET", &path) {
-        return Err("서버 429 — 배경 요청 몫을 다 써서 잠시 쉬어요".into());
+        return Err("배경 요청 몫을 다 써서 잠시 쉬어요".into());
     }
     trace("GET", &path, std::time::Instant::now(), 101, 0);
     let s = k.sign_request("GET", &path, b"", ts_ms, nonce);
@@ -1558,7 +1681,7 @@ fn phone_web_from(env: Option<String>, st: &TeamState) -> Option<String> {
 pub fn ws_url(st: &TeamState, k: &DeviceKeys, room: &str, ts_ms: u64, nonce: &str) -> Result<String, String> {
     let path = format!("/v0/rooms/{room}/ws");
     if !take(&k.public(), ts_ms, "GET", &path) {
-        return Err("서버 429 — 배경 요청 몫을 다 써서 잠시 쉬어요".into());
+        return Err("배경 요청 몫을 다 써서 잠시 쉬어요".into());
     }
     trace("GET", &path, std::time::Instant::now(), 101, 0);
     let s = k.sign_request("GET", &path, b"", ts_ms, nonce);

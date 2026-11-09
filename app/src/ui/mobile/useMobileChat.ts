@@ -3,8 +3,10 @@ import { useEffect, useState } from 'react';
 import { interruptSession, readTranscript } from '../../data/web';
 import { liveWork, withAttachments } from '../../domain/mobile';
 import type { Session } from '../../domain/session';
+import { chatBusy } from '../../domain/chat';
 import { chatLoaded, useChatItems, useChatStale } from '../space/useChatItems';
 import { useEarlier } from './useEarlier';
+import { outPending } from '../../domain/mobileOutbox';
 import { useOutbox } from './outbox';
 import { tr } from '../../i18n';
 
@@ -16,13 +18,13 @@ const visible = () => typeof document === 'undefined' || !document.hidden;
 export function useMobileChat(session: Session, everyMs: number, stateAt: number) {
   const [fast, setFast] = useState(false);
   const items = useChatItems(session.sessionId, fast ? LIVE_MS : everyMs, readTranscript);
-  const out = useOutbox(session.id, items, session.sessionId);
+  const out = useOutbox(session.id, items, session.sessionId, session.state !== 'blocked' && !chatBusy(session.state, items));
   const earlier = useEarlier(session.sessionId);
   const loading = !!session.sessionId && !chatLoaded(session.sessionId);
   const [now, setNow] = useState(() => Date.now());
   // 최신 아님(돌아온 뒤·다른 참모로 옮긴 뒤 첫 답 전) — 옛 '생각 중…'·멈춤 버튼이 지금 상태처럼 보이지 않게 일하는 표시를 접는다
   const stale = useChatStale(session.sessionId);
-  const work = liveWork({ state: session.state, items, pending: out.mine.filter((m) => m.status !== 'failed').length, stateAt, now });
+  const work = liveWork({ state: session.state, items, pending: out.mine.filter((m) => outPending(m, now)).length, stateAt, now });
   const live = stale ? { ...work, busy: false } : work;
   // 일하는 동안 1초마다 경과 시간을 다시 그리고, 화면이 숨으면 느리게
   useEffect(() => {

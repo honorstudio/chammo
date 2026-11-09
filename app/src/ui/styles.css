@@ -245,7 +245,7 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; user-select:
 .topbar { flex: 0 0 34px; display: flex; align-items: center; gap: 16px; padding: 0 14px; background: var(--panel); border-bottom: 1px solid var(--line); font-size: 12px; white-space: nowrap; overflow: hidden; }
 .topbar .grow { flex: 1; }
 .topbar .sep { width: 1px; height: 16px; background: var(--line); }
-.meter, .today { display: inline-flex; align-items: center; gap: 7px; }
+.meter { display: inline-flex; align-items: center; gap: 7px; }
 /* 지금 계정 — 사용량 막대 바로 옆(그 막대가 이 계정 것이라). 칸에 없는 로그인이면 흐리게 */
 .acct-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 180px; font: inherit; color: inherit; background: none; border: 1px solid transparent; border-radius: 6px; padding: 2px 8px; cursor: pointer; }
 .acct-chip:hover, .acct-chip.on { border-color: var(--line); background: var(--surface); }
@@ -402,10 +402,29 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .bell svg { width: 16px; height: 16px; }
 .bell:hover { background: var(--hover); color: var(--text); }
 .bell.on { color: var(--danger-ink); }
+.bell.calm { color: var(--text-2); }
+.bell.calm .bell-n { background: var(--text-3); }
 .bell-n { position: absolute; top: -2px; right: -2px; background: var(--danger-ink); color: #fff; display: flex; align-items: center; justify-content: center; }
 
 /* 결정 대기 드롭다운 — 종(상단 바 맨 끝) 바로 아래, 오른쪽 위. 상단 바는 overflow:hidden 이라 fixed 로 띄운다 */
-.inbox-pop { position: fixed; top: 38px; right: 10px; z-index: var(--z-popover); width: 380px; max-width: calc(100vw - 20px); max-height: calc(100vh - 60px); overflow-y: auto; box-sizing: border-box; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: 0 12px 32px rgba(0, 0, 0, .22); padding: 4px 10px 10px; }
+.inbox-pop { --bub: var(--surface); --bub-line: var(--line-strong); position: fixed; top: 40px; right: 10px; z-index: var(--z-popover); width: 380px; max-width: calc(100vw - 20px); box-sizing: border-box; background: var(--bub); border: 1px solid var(--bub-line); border-radius: 14px; box-shadow: 0 6px 18px rgba(0, 0, 0, .13); }
+/* 결정 대기함 = 종에서 나온 말풍선(시안 inbox-today v2) — 제목 막대·닫기 X 없음, 테두리가 꼬리까지 이어진다. 결제 장은 옅은 빨강 면 */
+.inbox-pop::before { content: ""; position: absolute; top: -7px; right: 13px; width: 12px; height: 12px; background: var(--bub); border-top: 1px solid var(--bub-line); border-left: 1px solid var(--bub-line); border-radius: 3px 0 0 0; transform: rotate(45deg); }
+.inbox-pop.pay { --bub: color-mix(in srgb, #b42318 6%, var(--surface)); --bub-line: color-mix(in srgb, #b42318 35%, var(--line-strong)); }
+.ibx-body { position: relative; max-height: calc(100vh - 70px); overflow-y: auto; border-radius: 14px; }
+.ibx-page.arming { pointer-events: none; }
+.inbox-pop .dc-card { border: 0; box-shadow: none; background: transparent; padding: 14px 16px 10px; }
+.ibx-card { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px 8px; font-size: 12.5px; line-height: 1.5; color: var(--text); }
+.ibx-who { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--text-2); }
+.ibx-who b { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ibx-who em { margin-left: auto; font-style: normal; color: var(--text-3); font-size: 11.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ibx-lead { color: var(--text-3); word-break: keep-all; overflow-wrap: anywhere; }
+.ibx-q { font-size: 16px; line-height: 1.5; font-weight: 600; word-break: keep-all; overflow-wrap: anywhere; margin-bottom: 2px; }
+.ibx-line { color: var(--text-2); overflow-wrap: anywhere; }
+.ibx-foot { display: flex; align-items: center; gap: 6px; padding: 6px 8px 8px 16px; border-top: 1px solid color-mix(in srgb, var(--bub-line) 45%, transparent); }
+.ibx-foot .dc-av { width: 22px; height: 22px; flex-basis: 22px; font-size: 11px; }
+.ibx-more { font-size: 11.5px; color: var(--text-3); margin-left: 2px; }
+.ibx-nav { margin-left: auto; }
 .inbox-pop .inbox { border-bottom: 0; margin-bottom: 0; padding-bottom: 0; }
 .inbox-pop .inbox-head { padding-top: 10px; }
 .inbox-later { position: absolute; top: 6px; right: 6px; }
@@ -752,14 +771,17 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 /* 가구 놓기 (ui/office/FurniturePanel) */
 
 .inbox-lead { font-size: 12px; color: var(--text-3); margin: 2px 0; }
-@keyframes doingflash { 0% { opacity: 0; transform: translateY(-3px); } 12% { opacity: .8; transform: none; } 75% { opacity: .8; } 100% { opacity: 0; } }
 .office-peek { position: absolute; z-index: calc(var(--z-base) + 6); width: 460px; height: 260px; display: flex; border-radius: 10px; overflow: hidden; box-shadow: 0 14px 40px rgba(0, 0, 0, .35); border: 1px solid var(--line-strong); background: #1e1e22; }
 .office-peek > * { flex: 1; min-width: 0; }
 
 /* 사무실 현황판 — 방 위에 떠 있는 말풍선 카드(따로 떼인 칸이 아니라 화면 위에 올라간 느낌, 사용자 2026-09-28) */
 .office-col { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
 .office-col > .office { min-height: 0; }
-.office-dock { position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: calc(var(--z-base) + 4); display: flex; flex-wrap: wrap-reverse; justify-content: center; gap: 8px; pointer-events: none; }
+.office-dock { position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: calc(var(--z-base) + 4); display: flex; flex-wrap: nowrap; align-items: flex-end; justify-content: center; gap: 8px; pointer-events: none; }
+.office-dock.open { flex-wrap: wrap-reverse; } /* +N 을 눌러 편 동안만 여러 줄 — 방 위로 덮인다 */
+.dock-more { all: unset; pointer-events: auto; box-sizing: border-box; flex: 0 0 56px; height: 48px; display: grid; place-items: center; border-radius: 10px; background: rgba(255, 253, 248, .95); color: #2a1c14; border: 2px solid #2a1c14; box-shadow: 0 3px 0 rgba(0, 0, 0, .18); font-size: 13px; font-weight: 800; cursor: pointer; }
+.dock-more svg { width: 16px; height: 16px; }
+.dock-more:hover { transform: translateY(-2px); }
 .dock-card { all: unset; pointer-events: auto; box-sizing: border-box; width: 224px; display: flex; gap: 8px; align-items: flex-start; padding: 7px 10px 7px 8px; border-radius: 10px; background: rgba(255, 253, 248, .95); color: #2a1c14; border: 2px solid #2a1c14; box-shadow: 0 3px 0 rgba(0, 0, 0, .18); cursor: pointer; transition: transform .15s; animation: sayin .25s cubic-bezier(.2, 1.4, .4, 1); }
 .dock-card:hover { transform: translateY(-2px); }
 .dock-card.st-asks { border-color: #c98a00; box-shadow: 0 3px 0 rgba(201, 138, 0, .35); }
@@ -888,6 +910,26 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .lc-ses.rest:hover { background: none; }
 .lc-ses b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
 .lc-ses.rest b { color: var(--text-3); font-weight: 500; }
+/* 오늘 한 일 칩 — 부하 칩 옆, 칸은 부하 카드(.lc-card) 모양 그대로(docs/design-drafts/inbox-today T3). 접두 tdy- */
+.tdy-group { display: inline-flex; align-items: center; gap: 2px; }
+.tdy-ic { display: inline-flex; width: 16px; height: 16px; color: var(--text-2); }
+.tdy-ic svg { width: 16px; height: 16px; }
+.tdy-quiet .tdy-ic { color: var(--text-3); opacity: .6; }
+.lc-head.tdy-head b { flex: none; }
+.tdy-since { flex: 1; min-width: 0; font-size: 11px; color: var(--text-3); }
+.tdy-empty { min-height: 44px; display: flex; align-items: center; padding: 0 10px; color: var(--text-3); }
+.tdy-chart { display: block; margin: 2px 6px 0; width: calc(100% - 12px); height: auto; overflow: visible; }
+.tdy-chart text { font-size: 11px; fill: var(--text-3); font-variant-numeric: tabular-nums; }
+.tdy-chart line { stroke: var(--line); stroke-width: 1; }
+.tdy-hit { fill: transparent; }
+.tdy-bar { fill: var(--text-3); }
+.tdy-bar.now { fill: var(--text); }
+.tdy-stats { display: grid; grid-template-columns: repeat(3, 1fr); padding: 6px 10px 8px; }
+.tdy-stats div { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.tdy-stats b { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.tdy-stats span { font-size: 11px; color: var(--text-3); }
+.tdy-code { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; min-height: 22px; padding: 0 10px 6px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.tdy-code b { font-weight: 700; color: var(--text); }
 .lc-ses span { flex: 1; min-width: 0; color: var(--text-3); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lc-ses em { font-style: normal; color: var(--text-2); width: 38px; text-align: right; }
 .lc-ses u { text-decoration: none; color: var(--text-3); width: 50px; text-align: right; }

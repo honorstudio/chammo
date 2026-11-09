@@ -2,7 +2,6 @@
 import { describe, expect, it } from 'vitest';
 import pub from '../src-tauri/tauri.conf.json';
 import indexHtml from '../index.html?raw';
-import widgetHtml from '../widget.html?raw';
 import win from '../src-tauri/tauri.windows.conf.json';
 import nsisHooks from '../src-tauri/windows/hooks.nsh?raw';
 
@@ -35,7 +34,6 @@ describe('문서 제목', () => {
   // 윈도우는 작업 표시줄 미리보기·UI 자동화에 문서 제목이 드러난다 — 'honor-orchestrator' 가 보였다(윈도우 QA 2026-10-05)
   const title = (html: string) => /<title>([^<]*)<\/title>/.exec(html)?.[1];
   it('메인 창은 Chammo', () => expect(title(indexHtml)).toBe('Chammo'));
-  it('다마고치 창은 창 제목과 같게(개인 이름 없이)', () => expect(title(widgetHtml)).toBe((pub as Conf).app?.windows[1]?.title));
 });
 
 describe('윈도우 설치기', () => {

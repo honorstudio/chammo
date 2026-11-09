@@ -28,7 +28,7 @@ describe('팀 참모 화면', () => {
   it('팀 참모를 부르는 말은 처음·바뀐 판이면 확인 장부터(P2), 이어 묻기는 re 로', () => {
     expect(convo).toContain('needsConfirm(ag, agents!.seen)) { setConfirming(');
     expect(convo).toContain('<AgentConfirm');
-    expect(convo).toContain('...(re ? { re } : {})');
+    expect(convo).toContain('...(re && b.from === 0 ? { re } : {})');
   });
   it('토큰은 이 기기 기록(부른 사람)만, 긴 답은 접는다', () => {
     expect(convo).toContain('agentsApi.usage(convo.room)');
@@ -36,7 +36,7 @@ describe('팀 참모 화면', () => {
   });
   it('폰은 맥 폰 서버 길로(/api/team-agents·확인·토큰), 이어 묻기 re 도 실어 보낸다', () => {
     expect(phone).toContain('agentsApi={agentsApi}');
-    expect(phone).toContain('api.say(to, text, cidFor(to, text), extra?.re)');
+    expect(phone).toContain('extra?.re, extra?.files)');
   });
   it('폰은 팀 시트 → 팀 참모 화면, 만들기·고치기도 맥 폰 서버 길(서랍 모양 TeamAgentEdit)', () => {
     expect(phone).toContain('onAgents={() => { setSheet(false); setAgentPage({ key: 0 }); }}');

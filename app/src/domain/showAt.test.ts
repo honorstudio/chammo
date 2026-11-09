@@ -6,6 +6,8 @@ describe('parseAt — show.jsonl 의 at', () => {
     expect(parseAt({ line: 264, lineEnd: 270, find: '네이버', page: 3, box: [0.1, 0.2, 0.3, 0.4] })).toEqual({ line: 264, lineEnd: 270, find: '네이버', page: 3, box: [0.1, 0.2, 0.3, 0.4] });
     expect(parseAt({ line: 'x', page: -1, box: [1] })).toBeUndefined();
     expect(parseAt(null)).toBeUndefined();
+    expect(parseAt({ plain: true })).toEqual({ plain: true });
+    expect(parseAt({ plain: 'yes' })).toBeUndefined();
   });
 });
 

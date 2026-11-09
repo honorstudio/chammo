@@ -68,9 +68,9 @@ export function dayLabel(d: Date, now: Date): string {
   return md;
 }
 
-/** 기록을 날짜로 묶는다(이미 최근 순) */
-export function logDays(items: LogItem[], now = new Date()): { label: string; items: LogItem[] }[] {
-  const out: { label: string; items: LogItem[] }[] = [];
+/** 기록을 날짜로 묶는다(이미 최근 순) — 파일 기록·링크 칸이 같이 쓴다 */
+export function logDays<T extends { ts: string }>(items: T[], now = new Date()): { label: string; items: T[] }[] {
+  const out: { label: string; items: T[] }[] = [];
   for (const it of items) {
     const label = dayLabel(new Date(it.ts), now);
     const last = out[out.length - 1];

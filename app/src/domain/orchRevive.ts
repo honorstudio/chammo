@@ -4,6 +4,7 @@
 // 관리 프로그램(daemon) 재시작으로 꺼진 건 재시작 복구(domain/lostTriage) 몫이라 여기선 안 건드린다. 하위 세션은 참모가 판단한다(그대로).
 // 연달아 죽으면(TRY_WINDOW 안에 MAX_TRIES 번) 멈추고 결정 대기함 카드 한 번 — 끝없이 켜다 죽기를 되풀이하지 않게
 import { tr } from '../i18n';
+import type { LiveSnap, SnapSession } from './revive';
 import { seenName } from './session';
 
 export type ReviveOrch = { id: string; sessionId: string; name: string; cwd: string };
@@ -76,6 +77,22 @@ export function planRevive(m: ReviveMemo, o: {
   return { memo: { seen, goneAt, tries, lastTry, gaveUp, cardAt }, revive, giveUp, closed };
 }
 
+/**
+ * 앱이 꺼져 있거나 멈춘 사이 꺼진 참모 — 켤 때 한 번, 지난 기록(live.json)의 참모를 '본 적 있는 참모'로 넣어 둔다. 그 뒤는 planRevive 그대로(기다림·세 번·카드).
+ * 2026-11-04: 앱이 113분 멈춘 동안 데몬이 참모 다섯을 은퇴·크래시로 끝냈는데, 기억이 메모리에만 있어 새 앱은 그 참모들을 처음 보는 셈이라 안 켰다.
+ * 재시작 복구(lostTriage)는 관리 프로그램이 다시 떴을 때만 돌아 알림도 없었다. 관리 프로그램이 새로 떴으면 기록의 daemon 이 달라 planRevive 가 잊는다.
+ * stopped = 사람이 끈 세션 번호(daemon.log 전체) · listed = agents --all 의 대화 id, 못 읽었거나 비면 아무것도 안 넣는다(지운 참모를 켜느니 지금처럼 홈에서)
+ */
+export function seedRevive(m: ReviveMemo, snap: LiveSnap | null, o: { isOrch: (s: SnapSession) => boolean; stopped: string[]; listed: string[] | null }): ReviveMemo {
+  if (!snap || !o.listed?.length) return m;
+  const seen = { ...m.seen };
+  for (const s of [...snap.sessions, ...(snap.gone ?? [])]) {
+    if (!s.id || !o.isOrch(s) || seen[s.id] || o.stopped.includes(s.id) || !o.listed.includes(s.sessionId)) continue;
+    seen[s.id] = { s: { id: s.id, sessionId: s.sessionId, name: s.name, cwd: s.cwd }, daemon: snap.daemon };
+  }
+  return { ...m, seen };
+}
+
 const who = (s: ReviveOrch) => (s.name && seenName(s.name)) || s.id;
 
 /** 멈췄을 때 결정 대기함 카드 — 작업 기록 send + ask(domain/inbox 가 마지막이 ask 인 일을 카드로). 다시 뜨면 done 으로 닫는다 */
@@ -89,3 +106,6 @@ export function reviveCard(s: ReviveOrch, ts: string, task: string): [Record<str
     ) },
   ];
 }
+
+/** 참모를 여럿 다시 켤 때 사이 간격 — 바쁘면 더 벌린다(세션 하나 뜨는 데 프로세스 수십 개) */
+export const reviveGap = (busy: 'ok' | 'busy' | 'boot') => (busy === 'ok' ? 3000 : 15_000);

@@ -276,3 +276,22 @@ fn relay_body_vectors() {
     });
     std::fs::write(out, serde_json::to_string_pretty(&v).unwrap()).unwrap();
 }
+
+#[test]
+fn 중계_푸시_답에서_본문이_빠졌으면_기록할_한_줄을_만든다() {
+    let sealed = serde_json::json!({ "to": "bbbb1111-d8d3-4", "body": "x", "sub": "y" });
+    let bare = serde_json::json!({ "to": "bbbb1111-d8d3-4" });
+    let ok = |sent: bool, s: bool| serde_json::json!({ "sent": sent, "sealed": s });
+    // 정상: 봉해서 실렸다·간격 안이라 안 보냄 — 기록 없음
+    assert_eq!(notify_note(&sealed, 202, &ok(true, true)), None);
+    assert_eq!(notify_note(&sealed, 202, &ok(false, false)), None);
+    // 중계가 본문을 뺐다(11-04 계정 폰이 이랬다)
+    assert_eq!(notify_note(&sealed, 202, &ok(true, false)).as_deref(), Some("폰 bbbb1111 에 본문 없이 감 — 중계가 뺐어(구독이 바뀜·폰 아닌 기기)"));
+    // 맥이 구독 열쇠를 몰라 봉하지 못했다
+    assert_eq!(notify_note(&bare, 202, &ok(true, false)).as_deref(), Some("폰 bbbb1111 에 본문 없이 감 — 이 컴퓨터가 그 폰 구독 열쇠를 몰라"));
+    // 끊긴 기기·다른 오류
+    assert_eq!(notify_note(&bare, 404, &serde_json::json!({ "error": "device_not_found" })).as_deref(), Some("폰 bbbb1111 이 중계에 없어(끊긴 기기) — 푸시 못 보냄"));
+    assert_eq!(notify_note(&bare, 429, &serde_json::json!({ "error": "slow_down" })).as_deref(), Some("폰 bbbb1111 푸시 부탁 429"));
+    // 받는 기기 id 에 이상한 글자가 있어도 기록엔 영숫자 8자까지만
+    assert_eq!(notify_note(&serde_json::json!({ "to": "\n[가짜]ab" }), 404, &serde_json::Value::Null).as_deref(), Some("폰 ab 이 중계에 없어(끊긴 기기) — 푸시 못 보냄"));
+}

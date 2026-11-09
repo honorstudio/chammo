@@ -1,4 +1,5 @@
 // 보이는 세션들의 프로젝트 메모를 5초마다 읽는다 — iTerm memo 로 적은 것도 곧 따라 보이게
+import { keepSame } from '../domain/keepSame';
 import { useCallback, useEffect, useState } from 'react';
 import { appendMemo, readMemos, writeMemo } from '../data/tauri';
 import { formatEntry, memoTime, parseMemo, removeEntry, serializeMemo, validMemoName, type MemoItem } from '../domain/memo';
@@ -9,7 +10,7 @@ export function useMemos(projects: string[]) {
   const key = [...new Set(projects.filter(validMemoName))].sort().join('|');
   const load = useCallback(() => {
     if (!key) return;
-    void readMemos(key.split('|')).then(setFiles).catch(() => {});
+    void readMemos(key.split('|')).then((f) => setFiles((o) => keepSame(o, f))).catch(() => {});
   }, [key]);
   useEffect(() => {
     load();

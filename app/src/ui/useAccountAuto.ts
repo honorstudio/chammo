@@ -12,6 +12,8 @@ import type { SessionActivity } from './TaskPanel';
 import { tr } from '../i18n';
 import { notifyOnce } from './notifier';
 
+/** 자동 전환 판단 주기 */
+const AUTO_EVERY_MS = 15_000;
 /** 사용량 주소가 429·실패면 이만큼 쉰다(바꾸기 실패 때 쉬는 시간은 domain/accounts switchFailure) */
 const BACKOFF_MS = 5 * 60_000;
 /** 사용량 주소 묻는 간격 — 남의 서버라 지금 로그인은 1분, 보관 칸은 5분보다 촘촘하게 안 묻는다. 429·실패면 5분 쉰다 */
@@ -29,8 +31,12 @@ export function useAccountAuto(accounts: AccountsView | null, acts: SessionActiv
   const voiceRef = useRef(voice);
   voiceRef.current = voice;
 
-  useEffect(() => {
-    // accounts 는 '돌 때'만 알려 준다(15초마다 새로 온다) — 판단은 새로 읽은 걸로
+  const accountsRef = useRef(accounts);
+  accountsRef.current = accounts;
+  const round = useRef<() => void>(() => {});
+  round.current = () => {
+    // accounts 는 '돌 때'만 알려 준다 — 판단은 새로 읽은 걸로
+    const accounts = accountsRef.current;
     if (!accounts || !accounts.accounts.length || busy.current || Date.now() < restUntil.current) return;
     busy.current = true;
     void (async () => {
@@ -120,5 +126,8 @@ export function useAccountAuto(accounts: AccountsView | null, acts: SessionActiv
         if (switched) window.dispatchEvent(new Event(ACCOUNTS_CHANGED)); // 상태 저장까지 끝난 뒤에 — 위 막대가 새로 읽는다
       }
     })();
-  }, [accounts]);
+  };
+  useEffect(() => round.current(), [accounts]);
+  // 값이 같으면 accounts 가 새로 안 온다(다시 안 그리게, 11-07) — 시간으로 도는 판단은 스스로 챙긴다
+  useEffect(() => { const t = setInterval(() => round.current(), AUTO_EVERY_MS); return () => clearInterval(t); }, []);
 }

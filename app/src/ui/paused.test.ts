@@ -4,9 +4,10 @@ import mainEntry from '../main.tsx?raw';
 import mobileEntry from '../mobile.tsx?raw';
 import readerEntry from '../reader.tsx?raw';
 import modeEntry from '../mode.tsx?raw';
+import bubbleEntry from '../bubble.tsx?raw';
 
 // 2026-10-11 perf: 안 볼 때(oa-paused)도 프사만 멈추고 도는 고리·숨쉬기는 그대로 돌아 앞+손 안 댐 GPU 39% — 무한 애니메이션은 전부 paused.css 목록에
-const sheets = import.meta.glob('/src/**/*.css', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+const sheets = import.meta.glob(['/src/**/*.css', '../../../pro/web/**/*.css'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
 
 const PREFIX = ':is(html.oa-paused, html.oa-calm) '; // 안 볼 때 + 애니메이션 줄이기(ui/calm) 같은 목록
 const noComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, '');
@@ -63,7 +64,7 @@ describe('paused.css — 안 볼 때 무한 애니메이션 전부 멈춤', () =
   });
 
   it('무한 애니메이션이 있는 창 진입점은 다 paused.css 를 불러온다', () => {
-    for (const src of [mainEntry, mobileEntry, readerEntry, modeEntry]) expect(src).toMatch(/import '\.\/ui\/paused\.css';/);
+    for (const src of [mainEntry, mobileEntry, readerEntry, modeEntry, bubbleEntry]) expect(src).toMatch(/import '\.\/ui\/paused\.css';/);
   });
 });
 

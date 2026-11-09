@@ -1,8 +1,11 @@
-// 결정 대기함 — 상단 바 종을 누르면 아래로 펼쳐지는 드롭다운. 작업 패널과 따로 논다.
-// 여기서 바로 답장(그 세션 입력칸에 들어감)·열기·처리함. 물음은 줄 그대로 — 첫 줄만 굵게, 길면 앞 3줄 + 펼침(domain/askNote, 폰 카드와 같은 판단)
-import { useState, type ReactNode } from 'react';
+// 결정 대기함 — 상단 바 종을 누르면 종에서 나온 말풍선으로 한 장씩(시안 docs/design-drafts/inbox-today v2, 2026-11-05 사용자 'C 한 장씩').
+// 여기서 바로 답장(그 세션 입력칸에 들어감)·열기·처리함. InboxRow(줄 모양)는 홈 결정 펼침·보관함 '내가 볼 차례'가 그대로 쓴다
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { gateReply, replyHint, type InboxItem } from '../domain/inbox';
-import { IconCheck, IconChevron, IconClose, IconOpen, IconSend } from './Icons';
+import { closesOnOutside, whenText, type DeckPage } from '../domain/inboxDeck';
+import { useDeck } from './useDeck';
+import { IconCheck, IconChevron, IconNext, IconOpen, IconPrev, IconSend } from './Icons';
+import { IconButton } from './kit/IconButton';
 import { askNote, foldNote } from '../domain/askNote';
 import { tr } from '../i18n';
 
@@ -17,36 +20,19 @@ const time = (iso: string) => {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleString(tr('ko-KR', 'en-US'), { hour: '2-digit', minute: '2-digit' });
 };
 
-type Props = {
-  items: InboxItem[];
+type Acts = {
   /** 답장을 못 넣는 이유(없으면 null) */
   blockedWhy: (item: InboxItem) => string | null;
   onReply: (item: InboxItem, text: string) => Promise<void>;
   onOpen: (target: string) => void;
   onDismiss: (item: InboxItem) => void;
-  /** 로그인 풀림 카드(ui/LoginCard) — 맨 위에, 하나 + 약관 카드(계정마다) */
-  login?: ReactNode;
-  /** login 안 카드 수 — 없으면 1 */
-  loginCount?: number;
-  /** 브라우저 연결 카드(ui/BrowserAttach) — 로그인 카드 다음 */
-  browser?: ReactNode;
-  browserCount?: number;
-  /** 직접 답하기 카드(하위 세션이 사람 승인을 기다림) — 맨 위에 */
-  direct?: ReactNode;
-  directCount?: number;
 };
 
-/** 물음 한 줄 — 결정 대기함과 홈 결정 펼침(그 자리에서 답장)이 같이 쓴다 */
-/** plain = 보관함 프로젝트 '내가 볼 차례' 카드 안 — 머리줄(종류·폴더 이름·시각)은 카드 제목이 대신하고 자리글은 사람 말로 */
-export function InboxRow({ item, onReply, onOpen, onDismiss, blockedWhy, plain }: { item: InboxItem; plain?: boolean } & Pick<Props, 'onReply' | 'onOpen' | 'onDismiss' | 'blockedWhy'>) {
+/** 답장 칸 — 줄(InboxRow)·한 장(InboxCard)이 같이 쓴다. 실패하면 친 글은 남기고 그 줄에 까닭(2026-11-01 ux-daily M15) */
+function useReply(item: InboxItem, onReply: Acts['onReply']) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [fail, setFail] = useState('');
-  const [open, setOpen] = useState(false);
-  const note = askNote(item.text);
-  const fold = foldNote(note, open);
-  const why = item.kind === 'blocked' ? null : item.target ? blockedWhy(item) : null;
-  const canReply = item.kind !== 'blocked' && !!item.target && !why;
   const send = async (t = text.trim()) => {
     if (!t) return;
     setBusy(true);
@@ -55,12 +41,49 @@ export function InboxRow({ item, onReply, onOpen, onDismiss, blockedWhy, plain }
       await onReply(item, t);
       setText('');
     } catch (e: unknown) {
-      // 친 글은 남기고 그 줄에 까닭 — 실패를 삼켜 글만 지워졌다(2026-11-01 ux-daily M15)
       setFail(tr(`답장 실패: ${e instanceof Error ? e.message : String(e)}`, `Reply failed: ${e instanceof Error ? e.message : String(e)}`));
     } finally {
       setBusy(false);
     }
   };
+  return { text, setText, busy, fail, send };
+}
+
+function ReplyBox({ item, r, hint }: { item: InboxItem; r: ReturnType<typeof useReply>; hint: string }) {
+  return <>
+    <div className="inbox-reply">
+      <input className="inp" placeholder={hint} value={r.text} disabled={r.busy} onChange={(e) => r.setText(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) void r.send(); }} />
+      <button className="ib pri" title={tr('보내기 (Enter)', 'Send (Enter)')} aria-label={tr('보내기', 'Send')} disabled={r.busy || !r.text.trim()} onClick={() => void r.send()}><IconSend /></button>
+    </div>
+    {/* 보내기 관문(… 보내도 돼?) — 참모가 '보내도 돼를 누르면'이라 안내하는데 단추가 없었다(QA 12). 되돌리기 어려운 동작이라 글자 단추 */}
+    {item.gate && (
+      <div className="inbox-gate">
+        <button className="btn pri" disabled={r.busy} onClick={() => void r.send(gateReply(true))}>{tr('보내도 돼', 'OK to send')}</button>
+        <button className="btn" disabled={r.busy} onClick={() => void r.send(gateReply(false))}>{tr('보내지 마', 'Do not send')}</button>
+      </div>
+    )}
+  </>;
+}
+
+function ItemActs({ item, onOpen, onDismiss }: { item: InboxItem } & Pick<Acts, 'onOpen' | 'onDismiss'>) {
+  return (
+    <div className="inbox-acts">
+      {item.target && <button className="ib" title={tr('그 세션 열기', 'Open that session')} aria-label={tr('열기', 'Open')} onClick={() => onOpen(item.target!)}><IconOpen /></button>}
+      <button className="ib" title={tr('처리함 — 목록에서 치우기', 'Done — remove from list')} aria-label={tr('처리함', 'Done')} onClick={() => onDismiss(item)}><IconCheck /></button>
+    </div>
+  );
+}
+
+/** 물음 한 줄 — 홈 결정 펼침(그 자리에서 답장)·보관함 '내가 볼 차례'가 쓴다 */
+/** plain = 보관함 프로젝트 '내가 볼 차례' 카드 안 — 머리줄(종류·폴더 이름·시각)은 카드 제목이 대신하고 자리글은 사람 말로 */
+export function InboxRow({ item, onReply, onOpen, onDismiss, blockedWhy, plain }: { item: InboxItem; plain?: boolean } & Acts) {
+  const r = useReply(item, onReply);
+  const [open, setOpen] = useState(false);
+  const note = askNote(item.text);
+  const fold = foldNote(note, open);
+  const why = item.kind === 'blocked' ? null : item.target ? blockedWhy(item) : null;
+  const canReply = item.kind !== 'blocked' && !!item.target && !why;
   return (
     <div className="inbox-item">
       {!plain && (
@@ -79,60 +102,81 @@ export function InboxRow({ item, onReply, onOpen, onDismiss, blockedWhy, plain }
         )}
         {note.answerLine && <div className="inbox-line inbox-answers">{note.answerLine}</div>}
       </div>
-      {canReply && (
-        <div className="inbox-reply">
-          <input
-            className="inp"
-            placeholder={plain ? PLAIN_HINT() : replyHint(item)}
-            value={text}
-            disabled={busy}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) void send(); }}
-          />
-          <button className="ib pri" title={tr('보내기 (Enter)', 'Send (Enter)')} aria-label={tr('보내기', 'Send')} disabled={busy || !text.trim()} onClick={() => void send()}><IconSend /></button>
-        </div>
-      )}
-      {/* 보내기 관문(… 보내도 돼?) — 참모가 '보내도 돼를 누르면'이라 안내하는데 단추가 없었다(QA 12). 되돌리기 어려운 동작이라 글자 단추 */}
-      {canReply && item.gate && (
-        <div className="inbox-gate">
-          <button className="btn pri" disabled={busy} onClick={() => void send(gateReply(true))}>{tr('보내도 돼', 'OK to send')}</button>
-          <button className="btn" disabled={busy} onClick={() => void send(gateReply(false))}>{tr('보내지 마', 'Do not send')}</button>
-        </div>
-      )}
+      {canReply && <ReplyBox item={item} r={r} hint={plain ? PLAIN_HINT() : replyHint(item)} />}
       {why && <div className="inbox-why">{why}</div>}
-      {fail && !why && <div className="inbox-why" role="alert">{fail}</div>}
-      <div className="inbox-acts">
-        {item.target && <button className="ib" title={tr('그 세션 열기', 'Open that session')} aria-label={tr('열기', 'Open')} onClick={() => onOpen(item.target!)}><IconOpen /></button>}
-        <button className="ib" title={tr('처리함 — 목록에서 치우기', 'Done — remove from list')} aria-label={tr('처리함', 'Done')} onClick={() => onDismiss(item)}><IconCheck /></button>
-      </div>
+      {r.fail && !why && <div className="inbox-why" role="alert">{r.fail}</div>}
+      <ItemActs item={item} onOpen={onOpen} onDismiss={onDismiss} />
     </div>
   );
 }
 
-function Inbox(props: Props) {
-  if (props.items.length === 0 && !props.direct && !props.login && !props.browser) return <div className="inbox-empty">{tr('결정할 거 없어', 'Nothing to decide')}</div>;
+/** 대기함 한 장 — 물음은 줄임 없이 끝까지(11-05 사용자 "질문이 잘려 보이는 게 있음"). 운영 줄은 노란 표식만, 그냥 물음은 표식 없음 */
+export function InboxCard({ item, onReply, onOpen, onDismiss, blockedWhy }: { item: InboxItem } & Acts) {
+  const r = useReply(item, onReply);
+  const note = askNote(item.text);
+  const why = item.kind === 'blocked' ? null : item.target ? blockedWhy(item) : null;
+  const canReply = item.kind !== 'blocked' && !!item.target && !why;
+  const mark = item.gate ? tr('발송', 'Send') : item.kind === 'decide' ? KIND().decide : null;
   return (
-    <div className="inbox">
-      <div className="tasks-sec inbox-head">
-        {tr('결정 대기', 'Decisions')} <span>{props.items.length + (props.directCount ?? 0) + (props.login ? props.loginCount ?? 1 : 0) + (props.browserCount ?? 0)}</span>
+    <div className="ibx-card">
+      <div className="ibx-who">
+        <span className="dc-av" aria-hidden="true">{(item.project || '?').slice(0, 1)}</span>
+        <b>{item.project}{item.where && <span className="dim"> · {item.where}</span>}</b>
+        {mark && <span className="dc-risk dc-warn">{mark}</span>}
+        <em>{whenText(item.ts, Date.now())}</em>
       </div>
-      {props.login}
-      {props.browser}
-      {props.direct}
-      {props.items.map((it) => <InboxRow key={it.key} item={it} {...props} />)}
+      {item.lead && <div className="ibx-lead">{item.lead}</div>}
+      <div className="ibx-q">{note.head}</div>
+      {note.body.map((l, i) => <div key={i} className="ibx-line">{l}</div>)}
+      {note.answerLine && <div className="ibx-line inbox-answers">{note.answerLine}</div>}
+      {canReply && <ReplyBox item={item} r={r} hint={replyHint(item)} />}
+      {why && <div className="inbox-why">{why}</div>}
+      {r.fail && !why && <div className="inbox-why" role="alert">{r.fail}</div>}
+      <ItemActs item={item} onOpen={onOpen} onDismiss={onDismiss} />
     </div>
   );
 }
 
-/** 종 아래 드롭다운. 결정이 들어오면 저절로 펼쳐지고, '나중에'나 종을 눌러야만 닫힌다.
- *  바깥 클릭·Esc 로 닫지 않는다 — 터미널을 누르거나 Claude 를 Esc 로 멈추다 결정을 놓치면 안 돼서 */
-export function InboxPopover({ open, onClose, ...props }: Props & { open: boolean; onClose: () => void }) {
+/** 대기함 한 장 — rank 0 결제·삭제 · 1 운영·결정·사람 승인 · 2 그냥 물음(domain/inboxDeck), who = 아래 줄 머리글자 */
+export type InboxPage = DeckPage & { who: string; node: ReactNode };
+
+/** 종에서 나온 말풍선 — 한 장씩, 아래 줄에 남은 카드 머리글자·넘기기. 제목 막대·닫기 X 없음.
+ *  닫힘(2026-11-05 사용자 '나눠서'): 그냥 물음만 있으면 바깥을 누르거나 Esc 로 닫힌다. 결제·운영 카드가 하나라도 있으면
+ *  바깥 클릭·Esc 로 안 닫히고 종을 다시 눌러야 닫힌다 — 터미널을 누르거나 Claude 를 Esc 로 멈추다 결정을 놓치면 안 돼서 */
+export function InboxPopover({ open, onClose, pages }: { open: boolean; onClose: () => void; pages: InboxPage[] }) {
+  const { deck, at, cur, go, arming } = useDeck(pages, open);
+  const box = useRef<HTMLDivElement>(null);
+  const loose = closesOnOutside(deck);
+  useEffect(() => {
+    if (!open || !loose) return;
+    const down = (e: PointerEvent) => {
+      const t = e.target as Element | null;
+      if (t && (box.current?.contains(t) || t.closest('.bell'))) return; // 종은 App 이 열고 닫는다
+      onClose();
+    };
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('pointerdown', down, true);
+    window.addEventListener('keydown', key);
+    return () => { document.removeEventListener('pointerdown', down, true); window.removeEventListener('keydown', key); };
+  }, [open, loose, onClose]);
   if (!open) return null;
+  const others = deck.filter((_, i) => i !== at);
   return (
-    <div className="inbox-pop" role="dialog" aria-label={tr('결정 대기', 'Decisions')}>
-      <button className="ib inbox-later" title={tr('나중에 — 다음 새 결정이 올 때까지 접어 둠', 'Later — hide until the next new decision')} aria-label={tr('나중에', 'Later')} onClick={onClose}><IconClose /></button>
-      <Inbox {...props} />
-
+    <div ref={box} className={`inbox-pop${cur?.rank === 0 ? ' pay' : ''}`} role="dialog"
+      aria-label={deck.length ? tr(`결정 대기 ${at + 1} / ${deck.length}`, `Decision ${at + 1} of ${deck.length}`) : tr('결정 대기', 'Decisions')}>
+      <div className="ibx-body">
+      {!cur ? <div className="inbox-empty">{tr('결정할 거 없어', 'Nothing to decide')}</div> : <>
+        <div key={cur.key} className={`ibx-page${arming ? ' arming' : ''}`}>{cur.node}</div>
+        {others.length > 0 && (
+          <div className="ibx-foot">
+            {others.slice(0, 4).map((p) => <span key={p.key} className="dc-av" aria-hidden="true">{(p.who || '?').slice(0, 1)}</span>)}
+            <span className="ibx-more">{tr(`${others.length}개 더`, `${others.length} more`)}</span>
+            <IconButton size="s" className="ibx-nav" label={tr('이전 물음', 'Previous')} onClick={() => go(-1)}><IconPrev /></IconButton>
+            <IconButton size="s" label={tr('다음 물음', 'Next')} onClick={() => go(1)}><IconNext /></IconButton>
+          </div>
+        )}
+      </>}
+      </div>
     </div>
   );
 }

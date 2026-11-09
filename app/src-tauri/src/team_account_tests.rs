@@ -292,7 +292,7 @@ fn 로그인_시작이_401_이고_이_기기_시계가_틀렸으면_시계를_�
 
 #[test]
 fn 로그인_길의_망_끊김·서버_장애는_오프라인_이름을_붙인다() {
-    // 화면(domain/loginGate gateErr)이 문구 대신 이름으로 '일단 쓰기'를 고른다
+    // 화면(domain/loginGate gateErr)이 문구 대신 이름으로 가른다
     let _ports = crate::test_ports::lock();
     struct Down;
     impl Http for Down {

@@ -42,6 +42,20 @@ export function deskTarget(id: string, orchIds: string[], viewing: string): { sh
   return id === viewing ? null : { tab: id };
 }
 
+/**
+ * 방에서 책상을 누르면 — 켜진 참모 = 그 참모 캐릭터 고르기(11-09 사용자 "캐릭터 선택 어떻게 하는 거임?" — 꾸미기 메뉴 깊숙이 있어 아무도 못 찾았다),
+ * 꺼진 참모 = 깨우기, 나머지 = 부르는 쪽 길(세션 창·채팅 탭). chars = 캐릭터를 고를 수 있나(뽑기 켜짐)
+ */
+export function deskAction(id: string, o: { orchIds: string[]; offIds: string[]; chars: boolean }): 'char' | 'wake' | 'open' {
+  if (o.offIds.includes(id)) return 'wake';
+  return o.chars && o.orchIds.includes(id) ? 'char' : 'open';
+}
+/** 이 사무실을 연 참모(지금 채팅 탭)가 캐릭터를 안 정했으면 그 책상 id — 방의 자기 캐릭터에 작은 점(글 안내 대신) */
+export function charDot(me: string | undefined, orchs: { id: string; name: string }[], chosen: (name: string) => boolean): string | null {
+  const o = me ? orchs.find((x) => x.id === me) : undefined;
+  return o && !chosen(o.name) ? o.id : null;
+}
+
 /** 홈 안에서 연 사무실의 책상(2026-10-25 사용자 "홈에서 누르면 홈 안에서") — 참모 책상은 그때 그 참모로(지금 탭 참모여도: 홈은 탭을 안 고른다),
  *  세션 책상은 홈 안 사무실 위 창 */
 export function homeDeskTarget(id: string, orchIds: string[]): { orch: string } | { sheet: string } {

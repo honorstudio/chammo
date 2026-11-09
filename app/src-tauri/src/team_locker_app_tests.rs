@@ -342,6 +342,22 @@ fn 조각_서명은_배경이면_배경_몫_안에서만_사람이_누른_올리
     assert!(relay::as_human(|| net.signed("PUT", "/v0/teams/t1/locker/f1/0")).is_ok(), "쉬는 중이어도 사람 동작은 한 번 두드린다");
 }
 
+#[test]
+fn 사람_조각은_배경_칸을_안_먹고_배경_조각은_먹는다() {
+    // 11-04 중계가 조각을 따로 센다(chammo-relay ADR 0016) — 사람 PUT 153 이 앱 칸을 채워 배경이 멈췄다
+    let kc = crate::accounts_store::fake::Fake::default();
+    let (k, _) = crate::team_relay_keys::create(&kc).unwrap();
+    let net = RelayNet { http: &relay::Curl, server: "https://relay.test".into(), device: "d1".into(), keys: &k };
+    let spent = || relay::spent(&k.public(), relay::now_ms());
+    let start = spent();
+    for i in 0..400 {
+        relay::as_human(|| net.signed("PUT", &format!("/v0/teams/t1/locker/files/f1/parts/{i}"))).unwrap();
+    }
+    assert_eq!(spent(), start, "사람 조각 400개가 칸을 안 먹는다");
+    net.signed("GET", "/v0/teams/t1/locker/files/f1/parts/0").unwrap();
+    assert_eq!(spent(), start + 1, "썸네일(배경) 조각은 몫을 그대로 쓴다");
+}
+
 // ── 폴더째 내 참모에게(2026-10-30 사용자 — 보관함 폴더 머리줄 '이 폴더') ──
 
 fn memo_in(id: &str, folder: &str, name: &str) -> (RemoteFile, core::Opened) {
@@ -419,4 +435,47 @@ fn 팀_바뀜_알림이면_방_찾기가_새_사람_몫_열쇠_넘기기를_뒤�
     let body = &ws[ws.find("let discover: Discover").unwrap()..];
     let body = &body[..body.find("std::thread::spawn(move || Loop::new").unwrap()];
     assert!(body.contains("for t in changed.iter().filter(|t| teams.contains(t)) {\n            crate::team_locker_app::catch_up_spawn(&dd, t);"), "바뀐 팀마다");
+}
+
+// ── 같은 파일 두 번 안 올리기(11-05 팀원 DM 에 같은 사진 세 번 — 못 보내고 다시 넣을 때마다 새로 올라갔다) ──
+
+#[test]
+fn 같은_방에_같은_파일을_다시_넣으면_중계를_안_부르고_앞서_올린_것을_준다() {
+    let (d, kc, r) = in_team("sent-again");
+    let p = d.join("IMG_0001.jpg");
+    std::fs::write(&p, b"jpeg bytes").unwrap();
+    let key = crate::team_locker_sent::Key::of("tV", "room-1", "", "IMG_0001.jpg", &p).unwrap();
+    let first = FileRef { id: "fA".into(), team: "tV".into(), room: "room-1".into(), name: "IMG_0001.jpg".into(), size: 10 };
+    crate::team_locker_sent::keep(key, first.clone(), std::time::Instant::now());
+    let got = put_file(&d, &kc, &r, "tV", "room-1", "file", &p).unwrap();
+    assert_eq!(got, first);
+    assert!(r.seen.borrow().is_empty(), "다시 안 올린다: {:?}", r.seen.borrow().iter().map(|s| s.1.clone()).collect::<Vec<_>>());
+    assert!(uploads("tV").iter().all(|u| u.name != "IMG_0001.jpg"), "올리는 중 줄도 안 생긴다");
+    // 휴지통에 보낸 뒤엔 그 기억을 안 쓴다(지운 파일을 말에 붙이지 않게)
+    crate::team_locker_sent::forget_team("tV");
+    assert!(put_file(&d, &kc, &r, "tV", "room-1", "file", &p).is_err(), "가짜 중계라 새로 올리기는 실패 — 기억을 안 썼다는 뜻");
+}
+
+// 보안 점검 H-1 — 받아 푼 팀 파일엔 격리 표시(맥), 풀어 둔 자리에서 꺼낸 사본에도. 윈도우는 같은 함수가 Zone.Identifier
+#[cfg(target_os = "macos")]
+#[test]
+fn 풀어_둔_팀_파일과_꺼낸_사본에_격리_표시() {
+    let (d, kc, r) = in_team("mark");
+    relay::mutate(&d, |s| {
+        s.teams = vec![relay::TeamEntry { id: "t-mark".into(), name: "ACME".into(), member_id: "m1".into(), role: "owner".into(), ..Default::default() }];
+        s.team_id = "t-mark".into();
+    })
+    .unwrap();
+    remember("t-mark", 1, &[memo_file("f9", 77, 5, "설치.pkg")]);
+    let vd = view_dir(&d, "t-mark").unwrap();
+    std::fs::write(vd.join("설치.pkg"), b"hello").unwrap();
+    let cache = json!({ format!("f9:77:{}", vd.display()): vd.join("설치.pkg").to_string_lossy() });
+    std::fs::write(d.join(CACHE), cache.to_string()).unwrap();
+    let has = |p: &Path| crate::platform::command("xattr").arg("-p").arg("com.apple.quarantine").arg(p).output().unwrap().status.success();
+    let got = view(&d, &kc, &r, "t-mark", "f9").unwrap();
+    assert!(has(&got), "전에 풀어 둔 파일도 다시 열 때 표시");
+    let out = d.join("받은 파일");
+    let copied = copy_out(&d, &got, &out).unwrap();
+    assert!(has(&copied), "꺼낸 사본");
+    let _ = std::fs::remove_dir_all(&d);
 }

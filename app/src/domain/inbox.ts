@@ -7,6 +7,7 @@ import { cardTarget, type Note } from './notify';
 import { seenName, type Session } from './session';
 import type { ActivityStatus } from './status';
 import type { TaskEvent } from './tasks';
+import { itemRank } from './inboxDeck';
 
 export type InboxKind = 'ask' | 'blocked' | 'decide';
 export type InboxItem = {
@@ -126,12 +127,13 @@ export function freshItems(prev: ReadonlySet<string> | null, items: InboxItem[])
 /** 앱을 켠 뒤에 생긴 결정인가 — 켤 때 목록이 늦게 채워져 옛 결정이 전부 '새 것'으로 알림이 갔다. 시각을 못 읽으면 참 */
 export const bornAfter = (i: InboxItem, sinceMs: number): boolean => !(Date.parse(i.ts) < sinceMs);
 
-/** 종 아래 결정 드롭다운을 펼칠지. 결정이 들어오면 펼치고, 사용자가 닫으면("나중에") 다음 새 결정이 올 때까지 접어 둔다.
- *  hold = 설정 창이 떠 있다(그 위를 덮었다), askInView = 채팅 뷰라 참모 물음(ask)은 이미 채팅에 보인다 — 둘 다 새로 펼치지는 않는다(2026-10-22 QA 21) */
-export function popoverOpen(wasOpen: boolean, prev: ReadonlySet<string> | null, items: InboxItem[], opts: { hold?: boolean; askInView?: boolean } = {}): boolean {
+/** 종 아래 결정 드롭다운을 펼칠지. 운영 줄(참모가 올린 결정·보내기 관문)이 들어오면 펼치고, 사용자가 닫으면("나중에") 다음 새 것이 올 때까지 접어 둔다.
+ *  그냥 물음(ask·확인창)은 종 숫자로만 — 잡담 물음도 펼쳐져 오른쪽 위를 덮었다(2026-11-05 사용자). 결제 같은 사람 승인 카드는 App 이 따로 펼친다.
+ *  hold = 설정 창이 떠 있다(그 위를 덮었다, 2026-10-22 QA 21) — 새로 펼치지는 않는다 */
+export function popoverOpen(wasOpen: boolean, prev: ReadonlySet<string> | null, items: InboxItem[], opts: { hold?: boolean } = {}): boolean {
   if (items.length === 0) return false;
   if (opts.hold) return wasOpen;
-  const pulls = (xs: InboxItem[]) => xs.some((i) => !(opts.askInView && i.kind === 'ask'));
+  const pulls = (xs: InboxItem[]) => xs.some((i) => itemRank(i) < 2);
   if (prev === null) return pulls(items);
   return pulls(freshItems(prev, items)) || wasOpen;
 }

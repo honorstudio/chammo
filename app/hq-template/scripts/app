@@ -5,8 +5,8 @@
 for p in "py -3" python; do $p -c '' >/dev/null 2>&1 && exec $p "$0" "$@"; done
 echo "python not found — install Python 3 (winget install Python.Python.3.12)" >&2; exit 127
 ':'''
-__doc__ = """Operate the Chammo app for the user — voice mode, features, screens, the Tamagotchi.
-앱을 사용자 대신 조작한다 — 음성 모드·기능 켜기·화면 열기·다마고치.
+__doc__ = """Operate the Chammo app for the user — voice mode, features, screens.
+앱을 사용자 대신 조작한다 — 음성 모드·기능 켜기·화면 열기.
 
   scripts/app status                                   current settings as JSON (language, name, folders,
                                                        features, voice mode, browser automation)
@@ -14,7 +14,7 @@ __doc__ = """Operate the Chammo app for the user — voice mode, features, scree
   scripts/app voice read <assistant>                   in voice mode only the assistant the user talks to is read aloud — other
                                                        assistants' replies wait ("New reply from X"). Read X's waiting replies now
                                                        (the user says "read X's"); the app reads them, keep your own say short
-  scripts/app feature office|tama|gacha|review|voice|autoRevive|autoTidy|computerUse|usagePing|craftBasics|bubble|bubbleDesk on|off
+  scripts/app feature office|gacha|review|voice|autoRevive|autoTidy|computerUse|usagePing|craftBasics|bubble|bubbleDesk on|off
                                                        turn a feature on/off (same as Settings > Features)
   scripts/app open settings|tour|office|review|all|replay|load|reader|tasks|inbox|home|harnitor|tools
                                                        home = the Home dashboard in the chat view (terminal view: the assistant's screen)
@@ -25,7 +25,6 @@ __doc__ = """Operate the Chammo app for the user — voice mode, features, scree
   scripts/app harness [<project name|folder>]          the user's harness as text — skills, MCP, hooks, plugins, what is
                                                        turned off, findings (the app scans it; Chammo must be open).
                                                        To change anything, open Harnitor (open harnitor) — after the user agrees
-  scripts/app pet show|hide                            the Tamagotchi's floating window
   scripts/app load [--json]                            what is loading this Mac, per session (CPU, memory, what runs),
                                                        plus processes left behind by ended sessions
   scripts/app project list                             project folders: devRoot's folders + ones added separately
@@ -83,7 +82,7 @@ for _io in (sys.stdin, sys.stdout, sys.stderr):  # 윈도우 파이썬 기본은
     if _io and hasattr(_io, 'reconfigure') and (_io.encoding or '').lower().replace('-', '') != 'utf8':
         _io.reconfigure(encoding='utf-8', errors='replace')
 
-FEATURES = ('office', 'tama', 'gacha', 'review', 'voice', 'autoRevive', 'autoTidy', 'computerUse', 'usagePing', 'craftBasics', 'bubble', 'bubbleDesk')
+FEATURES = ('office', 'gacha', 'review', 'voice', 'autoRevive', 'autoTidy', 'computerUse', 'usagePing', 'craftBasics', 'bubble', 'bubbleDesk')
 OFF_BY_DEFAULT = ('autoRevive', 'computerUse')  # 앱 기본값과 같게 — 무인 맥에서만 켠다 · 화면 조종은 사용자가 고른다
 OPEN = ('settings', 'tour', 'office', 'review', 'all', 'replay', 'load', 'reader', 'tasks', 'inbox', 'home', 'harnitor', 'tools')
 CLOSE = ('settings', 'office', 'reader', 'tasks', 'inbox', 'harnitor', 'tools', 'review')
@@ -324,14 +323,12 @@ def parse(argv):
         return ('focus', f'--terminal {t}') if t else None
     if a == 'focus' and len(rest) == 1 and rest[0].strip():
         return ('focus', rest[0].strip())
-    if a == 'pet' and len(rest) == 1 and rest[0] in ('show', 'hide'):
-        return ('pet', rest[0])
     return None
 
 
 def warning(st, action, arg):
     """꺼 둔 기능에 닿는 명령이면 한 줄 안내 — 앱은 그 명령을 무시한다(음성 켜기만 기능도 같이 켠다)"""
-    need = {('open', 'office'): 'office', ('open', 'review'): 'review', ('pet', 'show'): 'tama'}.get((action, arg))
+    need = {('open', 'office'): 'office', ('open', 'review'): 'review'}.get((action, arg))
     if need and not st['features'][need]:
         return f'{need} is turned off in Settings — the app will ignore this. Run: scripts/app feature {need} on'
     if action == 'voice-read' and not st['voiceMode']:
@@ -348,7 +345,6 @@ DONE = {
     'open': 'opening {arg}',
     'close': 'closing {arg}',
     'focus': 'going to {arg}',
-    'pet': 'Tamagotchi window: {arg}',
 }
 
 

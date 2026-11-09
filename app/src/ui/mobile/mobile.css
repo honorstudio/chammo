@@ -707,7 +707,10 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-page.m-md blockquote p:last-child { margin-bottom: 0; }
 .m-page.m-md hr { border: 0; border-top: 1px solid var(--line); margin: 32px 0; }
 .m-page.m-md table { display: block; max-width: 100%; overflow-x: auto; margin: 12px 0 18px; font-size: 15px; line-height: 1.5; }
-.m-page.m-md th, .m-page.m-md td { padding: 8px 10px; min-width: 7em; white-space: normal; }
+/* 표 칸 — 문서의 overflow-wrap:anywhere 가 칸 최소 폭을 0 으로 만들어 긴 글 칸이 7em 에 눌려 글자 하나씩 꺾였다(11-06) — 낱말은 안 쪼개고,
+   긴 글 칸(m-td-long, MdDoc 이 붙인다)엔 읽을 폭을 줘서 표를 가로로 민다 */
+.m-page.m-md th, .m-page.m-md td { padding: 8px 10px; min-width: 4em; white-space: normal; overflow-wrap: normal; word-break: keep-all; }
+.m-page.m-md td.m-td-long { min-width: 14em; }
 /* 표 칸 속 경로는 통째로 — anywhere 는 칸 최소 폭을 0으로 만들어 경로가 한두 글자씩 깎였다. 넓어지면 표가 가로로 민다 */
 .m-page.m-md td code, .m-page.m-md th code { overflow-wrap: normal; white-space: nowrap; }
 .m-page.m-md img { margin: 8px 0; }
@@ -784,6 +787,25 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-br-type { flex: none; display: flex; align-items: center; gap: 4px; padding: 8px 8px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); }
 .m-br-type input { flex: 1; min-width: 0; min-height: 44px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font-size: 16px; }
 .m-br-type .m-plain svg { width: 20px; height: 20px; }
+/* 사람 부르기 카드(채팅 끝, 입력칸 바로 위) — 화면의 40% 안, 뒤 채팅이 남게. 전문·조작은 눌러서 크게 보기에서(2026-11-05 사용자 "화면 다 가림").
+   .dc-row > * { flex: 1 } 을 끊는다 — 세로 flex 인 이 카드에선 이름 칸과 화면이 높이를 반씩 나눠 이름 밑이 비고 '다 했어'가 잘렸다.
+   50% = 키보드로 시트가 작아질 때(아이폰 dvh 는 키보드에 안 줄어든다). 공간이 모자라면 그림만 줄어든다 */
+.m-br-foot { display: contents; } /* 세션 판은 줄마다, 카드에서만 한 줄 */
+.m-bask-list { flex: 0 1 auto; min-height: 0; max-height: min(40dvh, 50%); }
+.m-direct .m-bask { flex: 0 1 auto; min-height: 0; overflow: hidden; }
+.m-direct .m-bask > * { flex: none; }
+.m-direct .m-bask > .m-br { flex: 0 1 auto; min-height: 0; margin: 0; display: flex; flex-direction: column; }
+.m-bask .m-br-shot { flex: 0 1 auto; position: relative; aspect-ratio: 16 / 9; min-height: 56px; max-height: none; }
+.m-bask .m-br-shot img { position: absolute; inset: 0; height: 100%; object-fit: contain; }
+.m-bask .m-br-shot .m-muted { padding: 16px 0; }
+.m-bask .m-br-line { display: none; } /* 사이트 이름은 크게 보기 머리에 */
+.m-bask .m-br-foot { flex: none; display: flex; align-items: center; gap: 8px; padding: 8px 10px; }
+.m-bask .m-br-status.m-br-inline { flex: 1; min-width: 0; margin: 0; padding: 0; background: none; font-size: 13px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.m-bask .m-br-acts { flex: none; padding: 0; margin-left: auto; }
+/* 여러 장이면 묶음 안에서 민다 — 눌리지 않게 그림을 낮춘다 */
+.m-bask-list.m-many { overflow-y: auto; }
+.m-bask-list.m-many > * { flex: none; }
+.m-bask-list.m-many .m-br-shot { aspect-ratio: auto; height: 88px; }
 
 /* 채팅 안 파일 카드(ChatFileCard) — 참모 말풍선처럼 왼쪽에, 대시보드 파일 카드와 같은 썸네일. 카드 전체가 누르는 곳 */
 .m-chatfile { flex: none; align-self: flex-start; width: min(240px, 72%); min-height: 44px; display: flex; flex-direction: column; gap: 3px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; text-decoration: none; font: inherit; cursor: pointer; }
@@ -875,6 +897,22 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-lk-saved.error { color: var(--danger-ink); }
 .m-lk-ed { flex: 1; min-height: 0; width: 100%; margin: 0; padding: 12px 16px calc(24px + env(safe-area-inset-bottom)); border: 0; outline: 0; resize: none; background: var(--panel); color: var(--text); font: 16px/1.6 -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif; }
 .m-lk-edpad { padding: 16px; }
+/* 링크 칸(시안 locker-links v1 B2, 2026-11-06) — 위 '파일 | 링크', 붙여넣기 칸, 카드 안 밀기 줄(둥근 모서리는 카드가, 줄 사이 선) */
+.m-lkl-switch { display: inline-flex; gap: 2px; padding: 2px; border-radius: 12px; background: var(--tag-bg); }
+.m-lkl-switch button { min-width: 64px; min-height: 44px; padding: 0 14px; border: 0; border-radius: 10px; background: transparent; color: var(--text-3); font: inherit; font-size: 14.5px; font-weight: 600; }
+.m-lkl-switch button.m-on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, .10); }
+.m-lkl-n { font-weight: 500; opacity: .6; }
+.m-lkl-paste { display: flex; align-items: center; gap: 4px; margin: 6px 0 4px; padding: 0 2px 0 14px; min-height: 52px; border-radius: 14px; background: var(--surface); box-shadow: 0 0 0 1px var(--line); }
+.m-lkl-paste input { flex: 1; min-width: 0; height: 48px; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 16px; }
+.m-lkl-paste input::placeholder { color: var(--text-3); }
+.m-lkl-list { display: flex; flex-direction: column; overflow: hidden; border-radius: 14px; background: var(--surface); box-shadow: 0 0 0 1px var(--line); }
+.m-lkl-list .m-swipe { border-radius: 0; }
+.m-lkl-list .m-swipe + .m-swipe { border-top: 1px solid var(--surface-2); }
+.m-lkl-list .m-swipe-front { background: var(--surface); }
+.m-lkl-list .m-swipe-btn { border-radius: 0; }
+.m-lkl-row { width: 100%; min-height: 64px; padding: 0 14px; }
+.m-lkl-nm { display: block; }
+.m-lkl-path { font-weight: 500; color: var(--text-3); }
 
 /* 폰 홈 모드 카드(폰 홈·보관함 v1 1) — 세션 줄 아래 카드 한 칸, 알약 = 여럿일 때 고르기, 오른쪽 위 = 꽉 채워 보기 */
 .m-ring-dot.st-done, .m-ring-dot.st-off { background: var(--surface); }
@@ -1004,11 +1042,8 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-team-strip::-webkit-scrollbar { display: none; }
 .m-team-mk { all: unset; flex: none; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; border-radius: 14px; cursor: pointer; }
 .m-team-mk.on .tmx-tm { outline: 2px solid var(--rail-on, var(--accent)); outline-offset: 3px; }
-.m-team-mk:focus-visible, .m-team-add:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.m-team-add { all: unset; flex: none; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 12px; color: var(--text-3); box-shadow: inset 0 0 0 1px var(--line-strong); cursor: pointer; }
-.m-team-add svg { width: 20px; height: 20px; }
+.m-team-mk:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .m-team-name { display: flex; align-items: center; min-height: 48px; padding: 0 12px 0 16px; }
-.m-team-none { font-size: 20px; font-weight: 800; }
 .m-ts-head { display: flex; align-items: center; margin-left: -8px; }
 .m-ts-go { height: 44px; justify-content: center; margin-top: 4px; }
 .m-seg { display: flex; gap: 2px; margin: 0 16px 8px; padding: 3px; border-radius: 12px; background: var(--surface-2); }
@@ -1041,6 +1076,8 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-team-convo .tmx-head .kit-ib { width: 44px; height: 44px; } /* 데스크톱 kit 34 — 폰은 누름 칸 44 */
 .m-team-convo .tmx-head .kit-ib svg { width: 20px; height: 20px; }
 .m-team-convo .tmx-comp textarea { font-size: 16px; } /* 16 아래면 iOS 가 확대한다 */
+.m-team-convo .tmx-comp .kit-ib { width: 44px; height: 44px; flex: none; } /* 붙이기·보내기 — 폰은 누름 칸 44(11-06) */
+.m-team-convo .tmx-comp .kit-ib svg { width: 20px; height: 20px; }
 .m-team-convo .tmx-hand { opacity: 1; pointer-events: auto; top: 100%; right: auto; left: 37px; margin-top: 6px; box-shadow: none; border: 1px solid var(--line); min-height: 32px; }
 .m-team-convo .tmx-row.picked { margin-bottom: 40px; }
 .m-team-convo .tmx-row:not(.picked) .tmx-hand { display: none; }
@@ -1227,6 +1264,11 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-mo-static { cursor: default; }
 .m-al-sec { margin: 10px 2px 4px; color: var(--text-3); font-size: 13px; font-weight: 650; }
 .m-al-wait { display: flex; flex-direction: column; gap: 8px; }
+/* 답 기다림 한 장씩(시안 inbox-today V2P) — 넘기기·답한 직후엔 카드 안 누름을 잠깐 안 받는다(따닥이 다음 결제 승인에 떨어지지 않게) */
+.m-pg { display: flex; flex-direction: column; gap: 4px; }
+.m-pg-page.arming { pointer-events: none; }
+.m-pg-foot { display: flex; align-items: center; gap: 4px; padding: 2px 0 0 4px; }
+.m-pg-more { flex: 1; color: var(--text-3); font-size: 13px; }
 .m-al-row { min-height: 60px; }
 .m-al-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--blocked); }
 .m-al-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
@@ -1245,3 +1287,57 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-tlk-ask { margin: 4px 0 12px; font-size: 15px; color: var(--text-2); line-height: 1.5; }
 .m-team-lk-folders { margin: 8px 16px 0; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
 .m-team-lk-folders .lk-fbtn { min-height: 48px; font-size: 14px; }
+
+/* 팀 권한 문의 칸(chammo-relay ADR 0015, 시안 team-lock v1 A2) — 접두 m-tl- */
+.m-tl-body { margin: 2px 0 8px; font-size: 14px; line-height: 1.55; color: var(--text-2); }
+.m-tl-go { display: flex; align-items: center; text-decoration: none; }
+.m-tl-ghost { border-color: transparent; color: var(--text-2); }
+
+/* 영상 검토 시트 — 작업면은 ui/videoReview/videoReview.css, 머리만 폰 틀에 맞춘다. 글 칸 흔들림은 키보드 위 틀이 받는다 */
+.m-vr { background: #232326; color: #e7e7ea; color-scheme: dark; }
+.m-vr-head { background: #2b2b2e; color: #e7e7ea; min-height: 48px; padding: 0 0 0 14px; font-size: 15px; gap: 2px; }
+.m-vr-head .m-view-title { flex: 1; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-vr-n { flex: none; padding: 0 2px; font: 600 13px/1 ui-monospace, "SF Mono", Menlo, monospace; color: var(--orch-solid, var(--accent)); }
+.m-vr-head .m-rt-btn { background: transparent; border: 0; color: #c4c4c9; }
+.m-vr-head .m-vr-send { color: var(--orch-text-dark, #f2a65a); }
+.m-vr-head .m-vr-send:disabled { opacity: .45; }
+.m-vr .vr-go { width: 44px; height: 44px; border-radius: 22px; background: #fff; color: #000; }
+
+/* 내 메모 탭(시안 memo-panel C폰) */
+.m-nt { height: 100%; display: flex; flex-direction: column; background: var(--surface); padding-top: env(safe-area-inset-top); position: relative; }
+.m-nt-head { flex: none; display: flex; align-items: center; gap: 2px; min-height: 52px; padding: 0 6px 0 10px; }
+.m-nt-title { all: unset; display: inline-flex; align-items: center; gap: 4px; min-height: 44px; padding: 0 6px; cursor: pointer; color: var(--text); }
+.m-nt-title b { font-size: 17px; font-weight: 750; }
+.m-nt-title svg { width: 14px; height: 14px; color: var(--text-3); flex: none; }
+.m-nt-sp { flex: 1; min-width: 0; }
+.m-nt-note { flex: none; margin: 0 12px 6px; padding: 8px 12px; border-radius: 10px; background: var(--surface-2); font-size: 12.5px; line-height: 1.45; color: var(--text-2); }
+.m-nt-ed { display: block; width: 100%; box-sizing: border-box; border: 0; outline: 0; resize: none; overflow: hidden; background: transparent; color: var(--sk-ink); font: 16px/1.7 -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif; padding: 6px 14px 14px; }
+.m-nt-ed::placeholder { color: var(--sk-mute); }
+/* 여러 장(시안 v2 M) — 띄운 메모 카드를 쌓고 탭 전체가 스크롤 */
+.m-nt-stack { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 12px 88px; display: flex; flex-direction: column; gap: 12px; }
+.m-nt-stack > * { flex: none; } /* 카드가 많아도 납작해지지 않게(scrollListShrink.test) */
+.m-nt-card .nt-ch { flex-basis: 44px; padding: 0 0 0 12px; }
+.m-nt-card .m-lk-saved { font-size: 12px; color: var(--sk-mute); }
+.m-nt-ib { width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; border: 0; background: transparent; color: var(--sk-mute, var(--text-2)); border-radius: 10px; flex: none; }
+.m-nt-ib svg { width: 18px; height: 18px; }
+.m-nt-ib.on { color: var(--text); background: var(--surface-2); }
+.nt-sk.sk-lined .m-nt-ed { line-height: 30px; background-image: repeating-linear-gradient(to bottom, transparent 0 29px, var(--sk-line) 29px 30px); background-position: 0 6px; }
+.nt-sk.sk-term .m-nt-ed { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 14px; }
+.m-nt-go { all: unset; flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; min-height: 52px; cursor: pointer; }
+.m-nt-row.off .m-nt-tx b { color: var(--text-3); font-weight: 500; }
+.m-nt-skin { cursor: default; min-height: 64px; }
+.m-nt-sw button { width: 44px; height: 44px; border-radius: 12px; }
+.m-nt-say { position: absolute; left: 16px; right: 16px; bottom: 16px; padding: 8px 12px; border-radius: 10px; background: var(--text); color: var(--surface); font-size: 13px; text-align: center; z-index: var(--z-panel); }
+.m-nt-list { display: flex; flex-direction: column; }
+.m-nt-row { all: unset; display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 6px 2px; border-bottom: 1px solid var(--line); cursor: pointer; flex: none; }
+.m-nt-row:last-child { border-bottom: 0; }
+.m-nt-tx { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.35; }
+.m-nt-tx b { font-size: 15px; font-weight: 650; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-nt-tx span { font-size: 12.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-nt-row em { font-style: normal; font-size: 12px; color: var(--text-3); flex: none; }
+.m-nt-row.on .m-nt-tx b { font-weight: 800; }
+.m-nt-row.warn .m-nt-tx b { color: var(--danger-ink); }
+
+/* 폰 DM 보관함(이 대화 파일) — 시트 본문 여백 안에 줄 묶음, 누르는 줄은 손가락 커서 없이 눌림만 */
+.m-room-files .m-team-lk { margin: 4px 0 16px; }
+.m-room-files .tmx-lk-row { width: 100%; color: inherit; background: none; text-align: left; font: inherit; }

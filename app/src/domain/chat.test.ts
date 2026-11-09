@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatItem } from './chat';
 import { chatEscStops, enterDelay, sendControls } from './chat';
-import { appendChat, chatBusy, mdSafe, parseChat, promptInput, splitPaths, splitRefs, stillPending, pendingLeft, clickFocusesInput, stuckInInput, taskCounts, termRest, typedChunks, withRefs } from './chat';
+import { appendChat, chatBusy, mdSafe, parseChat, promptInput, splitPaths, splitRefs, staleRefs, stillPending, pendingLeft, clickFocusesInput, stuckInInput, taskCounts, termRest, typedChunks, withRefs } from './chat';
 
 const line = (o: object) => JSON.stringify(o);
 const user = (uuid: string, content: unknown, extra: object = {}) => line({ type: 'user', uuid, timestamp: `t-${uuid}`, message: { role: 'user', content }, ...extra });
@@ -40,6 +40,22 @@ describe('parseChat — 대화 기록을 말풍선 항목으로', () => {
   it('도구 사이 없이 이어진 답 조각은 한 말풍선으로 합친다', () => {
     const t = [asst('a1', [text('첫 문단')]), asst('a2', [text('둘째 문단')])].join('\n');
     expect(parseChat(t)).toEqual([{ kind: 'assistant', id: 'a1', ts: 't-a1', text: '첫 문단\n\n둘째 문단' }]);
+  });
+
+  // 2026-11-04 사용자 폰(다른 참모 기록): Claude Code 가 다른 세션 말을 isMeta 로 적는다 — 메타로 버리니 그 턴 답이 앞 답에 붙었다
+  const peerLine = (uuid: string) => user(uuid, 'Another Claude session sent a message:\n<cross-session-message from="uds:/tmp/x.sock" from-name="참모-2 · 참모 업데이트" from-mode="bypass">\n내가 바로 말할게\n</cross-session-message>', { isMeta: true, origin: { kind: 'peer', from: 'uds:/tmp/x.sock' } });
+  it('재현: isMeta 인 다른 세션 말은 가운데 카드로 남고, 그 뒤 답은 앞 답과 따로 말풍선', () => {
+    const t = [asst('a1', [text('운영에 올릴까?')], { message: { role: 'assistant', content: [text('운영에 올릴까?')], stop_reason: 'end_turn' } }), peerLine('p1'), asst('a2', [text('나는 빠질게.')], { message: { role: 'assistant', content: [text('나는 빠질게.')], stop_reason: 'end_turn' } })].join('\n');
+    expect(parseChat(t).map((i) => [i.kind, 'text' in i ? i.text : ''])).toEqual([
+      ['assistant', '운영에 올릴까?'],
+      ['relay', '내가 바로 말할게'],
+      ['assistant', '나는 빠질게.'],
+    ]);
+  });
+  it('턴 끝 답(end_turn) 뒤에 숨은 줄로 깬 턴의 답은 앞 답에 붙지 않는다 — 한 턴 안 조각만 합친다', () => {
+    const done = (id: string, t: string) => asst(id, [text(t)], { message: { role: 'assistant', content: [text(t)], stop_reason: 'end_turn' } });
+    const t = [done('a1', '배포할까?'), user('m1', '<task-notification>끝</task-notification>', { isMeta: true }), done('a2', '빌드 끝났어')].join('\n');
+    expect(parseChat(t).map((i) => ('text' in i ? i.text : ''))).toEqual(['배포할까?', '빌드 끝났어']);
   });
 
   it('생각·메타·훅 주입·분신(sidechain)은 안 보인다', () => {
@@ -130,7 +146,7 @@ describe('parseChat — 대화 기록을 말풍선 항목으로', () => {
   it('일하는 중에 그림 칩과 같이 들어간 말 — prompt 가 글+그림 배열(2.1.305 실측), 보통 말처럼 썸네일도', () => {
     const t = line({ type: 'attachment', uuid: 'q3', timestamp: 't-q3', attachment: { type: 'queued_command', origin: { kind: 'human' }, imagePasteIds: [255],
       prompt: [{ type: 'text', text: '[Image #255] #img1 \n고치는 중이지?' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBOR' } }] } });
-    expect(parseChat(t)).toEqual([{ kind: 'user', id: 'q3', ts: 't-q3', text: '#img1 \n고치는 중이지?', images: ['data:image/png;base64,iVBOR'] }]);
+    expect(parseChat(t)).toEqual([{ kind: 'user', id: 'q3', ts: 't-q3', text: '#img1 \n고치는 중이지?', images: ['data:image/png;base64,iVBOR'], chip: 255 }]);
   });
 
   it('붙여넣기 태그(<pasted_content …>)는 말풍선에서 벗긴다 — 채팅으로 보낸 긴 글이 이렇게 감싸져 온다', () => {
@@ -151,7 +167,7 @@ describe('parseChat — 대화 기록을 말풍선 항목으로', () => {
 
   it('그림은 썸네일(data URL)로, 글에 붙은 [Image #n] 표시는 뺀다', () => {
     const img = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAA' } };
-    expect(parseChat(user('i1', [text('[Image #2]이 화면 봐'), img]))[0]).toEqual({ kind: 'user', id: 'i1', ts: 't-i1', text: '이 화면 봐', images: ['data:image/png;base64,AAA'] });
+    expect(parseChat(user('i1', [text('[Image #2]이 화면 봐'), img]))[0]).toEqual({ kind: 'user', id: 'i1', ts: 't-i1', text: '이 화면 봐', images: ['data:image/png;base64,AAA'], chip: 2 });
     expect(parseChat(user('i2', [text('[Image #1]'), img]))[0]).toMatchObject({ kind: 'user', text: '', images: ['data:image/png;base64,AAA'] });
   });
 
@@ -292,6 +308,35 @@ describe('splitPaths — 말풍선 속 파일 경로를 이름 칸으로', () =>
     expect(splitPaths('앞 /Users/x/샘플_제안서.pptx 와 ~/a/b.png')).toEqual([
       { text: '앞 ' }, { path: '/Users/x/샘플_제안서.pptx', name: '샘플_제안서.pptx' }, { text: ' 와 ' }, { path: '~/a/b.png', name: 'b.png' },
     ]);
+  });
+});
+
+describe('staleRefs — 이미 간 말의 그림 칩만 입력칸에 보이면 낡은 화면(2026-11-05 사용자 [Image #26] ×)', () => {
+  // 크기가 다른 attach 가 같은 세션에 붙으면 Claude 가 그 크기로 다시 그려 앱 터미널 사본이 엉킨다 — 그 토막을 입력칸 글로 읽었다.
+  // Claude 는 그림 번호를 세션 안에서 다시 안 쓰니(다음 그림은 #29) 이미 간 번호뿐인 입력칸은 가짜다
+  const img = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'A' } };
+  const items = parseChat(user('u1', [text('[Image #26] [Image #27] [Image #28] #img1 드래그 안되는데'), img, img, img]));
+  it('간 말에 든 번호를 기억한다', () => {
+    expect(items[0]).toMatchObject({ kind: 'user', chip: 28 });
+  });
+  it('간 번호의 칩뿐이면 낡은 것', () => {
+    expect(staleRefs('[Image #26]', items)).toBe(true);
+    expect(staleRefs('[Image #26] [Image #28]', items)).toBe(true);
+  });
+  it('간 말에 든 이름표(#file1 경로·#img1)뿐이어도 낡은 것 — 좁은 칸에서 경로가 꺾여 읽혀도(2026-11-05 34.png)', () => {
+    const sent = parseChat(user('u2', '#file1 "/Users/me/drafts/v6-uc.html" #file1 아 이거야?'));
+    expect(staleRefs('#file1 "/Users/me/drafts/v6-uc.html"', sent)).toBe(true);
+    expect(staleRefs('#file1 "/Users/me/dr\nafts/v6-uc.html"', sent)).toBe(true);
+    expect(staleRefs('#file1', sent)).toBe(true);
+    expect(staleRefs('#file1 "/Users/me/다른파일.html"', sent)).toBe(false); // 아직 안 간 파일
+    expect(staleRefs('#file1 "/Users/me/drafts/v6-uc.html" 이거 봐', sent)).toBe(false); // 글은 가리지 않는다
+    expect(staleRefs('아 이거야?', sent)).toBe(false); // 이름표가 아닌 글 — Esc 로 되돌아온 말일 수 있다
+  });
+  it('새로 붙인 그림·글이 섞였거나 아직 안 간 말이면 그대로', () => {
+    expect(staleRefs('[Image #29]', items)).toBe(false);
+    expect(staleRefs('[Image #26] 이거 봐', items)).toBe(false); // 글은 가리지 않는다
+    expect(staleRefs('[Image #1]', [])).toBe(false);
+    expect(staleRefs('', items)).toBe(false);
   });
 });
 

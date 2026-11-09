@@ -96,7 +96,7 @@ export function BrowserPane({ live, name, onHide, onClosed, openMenu }: { live: 
   // 맥 패스키 탈출구 — ad-hoc 사본(Dock 숨김·선명한 칸)엔 맥 패스키가 없다. 같은 프로필을 구글 서명 크롬으로 다시 띄웠다 돌아온다(agent_signed).
   // auto = 래퍼가 페이지의 패스키 부름을 보고 스스로 바꿨다(2026-10-29) — 칸에 까닭 한 줄과 돌아오기
   const mac = IS_WIN ? undefined : { signable: !!t.signable, signed: !!t.signed, auto: !!t.signedAuto };
-  const card = turnCardAfterDone(turnCard(live, { dialog: t.dialog, chooser: t.chooser }, mac), live.ask?.at, sentAt);
+  const card = turnCardAfterDone(turnCard(live, { dialog: t.dialog, chooser: t.chooser, permission: t.permission, fedcm: t.fedcm }, mac), live.ask?.at, sentAt);
   const signedNow = signedLine(mac);
   const signed = (on: boolean) => void (on ? mine() : Promise.resolve()).then(() => invoke('agent_signed', { profile, on })).catch(() => {});
   // 패스키로 바꾼 구글 크롬의 Touch ID 시트는 숨은 크롬 창에 붙어 칸 그림 밖이다(10-30 사용자) — 모달과 같은 길로 크롬 창을 사람 화면에 작게 꺼내고(agent_peek),
@@ -148,6 +148,9 @@ export function BrowserPane({ live, name, onHide, onClosed, openMenu }: { live: 
   };
   const give = () => { unpeekNow(); void handBack(profile, live.pid).catch(() => {}); };
   const reply = (accept: boolean) => void mine().then(() => invoke('agent_dialog', { profile, pid: live.pid, target: t.current, accept, prompt: card?.kind === 'dialog' && card.prompt ? prompt : null })).catch(() => {});
+  // 사이트 권한·구글 원탭(FedCM) — 크롬 자체 창은 칸에서 안 눌려서 카드 단추로 답한다(모달과 같은 Rust 길, 사람 조작이라 개입부터)
+  const answerPerm = (allow: boolean) => void mine().then(() => invoke('agent_permission', { profile, pid: live.pid, target: t.current, allow })).catch(() => {});
+  const answerFedcm = (dialogId: string, account: number | null) => void mine().then(() => invoke('agent_fedcm', { profile, pid: live.pid, dialogId, account })).catch(() => {});
   // 브라우저 끄기 — 크롬만 닫는다(세션은 그대로, 다음 브라우저 도구가 새로 띄운다). 끄면 칸은 바로 닫힌다(SpaceView 가 직전 탭으로)
   const [asking, setAsking] = useState(false);
   const closeNow = () => { setAsking(false); void invoke('agent_close_browser', { profile }).then(() => onClosed?.(profile, live.pid), () => {}); };
@@ -231,11 +234,14 @@ export function BrowserPane({ live, name, onHide, onClosed, openMenu }: { live: 
         </div>
       )}
       {card && (
-        <div className="bp-turn" role="alert">
+        <div className={`bp-turn ${card.kind === 'fedcm' ? 'bp-turn-many' : ''}`} role="alert">
           <i className="bp-turn-dot" aria-hidden="true" />
           <span className="bp-turn-text"><b>{tr('네 차례', 'Your turn')}</b> {card.text}</span>
           {card.kind === 'dialog' && card.prompt && <input className="bp-turn-in" value={prompt} onChange={(e) => setPrompt(e.target.value)} aria-label={tr('페이지가 묻는 값', 'Value the page asks for')} />}
           {card.kind === 'dialog' && <><button className="cv-btn" onClick={() => reply(false)}>{tr('취소', 'Cancel')}</button><button className="cv-btn solid" onClick={() => reply(true)}>{tr('확인', 'OK')}</button></>}
+          {card.kind === 'perm' && <><button className="cv-btn" onClick={() => answerPerm(false)}>{tr('차단', 'Block')}</button><button className="cv-btn solid" onClick={() => answerPerm(true)}>{tr('허용', 'Allow')}</button></>}
+          {/* 계정은 읽을 글이라 글자 단추(모달과 같다) */}
+          {card.kind === 'fedcm' && card.choices.map((c) => <button key={c.account ?? 'close'} className={c.account == null ? 'cv-btn' : 'cv-btn solid'} onClick={() => answerFedcm(card.dialogId, c.account)}>{c.label}</button>)}
           {card.kind === 'ask' && <>
             <input className="bp-turn-in" value={say} onChange={(e) => setSay(e.target.value)} placeholder={tr('세션에 한마디', 'A note for the session')} aria-label={tr('세션에 한마디', 'A note for the session')}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); done(); } }} />

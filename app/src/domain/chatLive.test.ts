@@ -150,3 +150,66 @@ describe('liveStep·liveView — 쓰는 중 글은 기록에 들어올 때까지
     expect(liveView(h, [])).toEqual(['둘 글이야', '셋 글이야', '넷 글이야']);
   });
 });
+
+// 2026-11-05 사용자 캡처: 새 말을 보내고 '작업 중'인데 지난 답이 표가 풀린 모양으로 다시 떴다. 아래는 일회용 세션(Claude Code 2.1.318, 70칸) 실측 그대로 —
+// 좁은 칸은 표를 '형식: …' 줄과 ─── 줄로 그려서 글자 순서가 기록(마크다운 표)과 달라, 앞 40글자 맞대기로는 이미 기록에 있는 글을 못 알아봤다
+describe('표가 든 지난 답 — 새 턴에 다시 그리지 않는다', () => {
+  const screen = [
+    '❯ 표로 답해 줘', '',
+    '⏺ CS6로 저장 기능은 참모 벡터에 없어.', '',
+    '  형식: AI (일러스트레이터 원본)',
+    '  내용: 레이어, 패스, 색상 정보를 그대로 담는 편집용 원본 파일이라',
+    '    나중에 수정하기 좋다. 다른 사람에게 넘길 때도 편집 가능한 상태를',
+    '    유지해야 할 때 가장 적합하다.',
+    '  CS6에서: 파일 메뉴의 다른 이름으로 저장에서 형식을 Illustrator',
+    '    형식으로 고르면 된다. 저장할 때 호환성 옵션을 확인하지 않으면 최신', '',
+    '    버전에서 일부 기능이 깨질 수 있다.',
+    `  ${'─'.repeat(40)}`,
+    '  형식: SVG (웹용 벡터)',
+    '  내용: 웹 페이지에 바로 넣을 수 있는 벡터 이미지 형식이라 용량이 작고', '',
+    '    확대해도 선명하다. 다만 텍스트나 특수 효과는 브라우저에서 다르게',
+    '    보일 수 있어서 저장 후 한 번은 직접 열어 확인해야 한다.', '',
+    '  추천은 원본은 AI로 보관하고, 웹이나 배포용으로만 SVG를 따로 뽑는',
+    '  것이다.', '',
+    '✻ Crunched for 6s · done 12:46 PM', '',
+    '  3 tasks (1 done, 2 open)', '  ◻ 가', '  ✔ 다', '',
+    ...box,
+  ];
+  const record = 'CS6로 저장 기능은 참모 벡터에 없어.\n\n| 형식 | 내용 | CS6에서 |\n|---|---|---|\n'
+    + '| AI (일러스트레이터 원본) | 레이어, 패스, 색상 정보를 그대로 담는 편집용 원본 파일이라 나중에 수정하기 좋다. 다른 사람에게 넘길 때도 편집 가능한 상태를 유지해야 할 때 가장 적합하다. | 파일 메뉴의 다른 이름으로 저장에서 형식을 Illustrator 형식으로 고르면 된다. 저장할 때 호환성 옵션을 확인하지 않으면 최신 버전에서 일부 기능이 깨질 수 있다. |\n'
+    + '| SVG (웹용 벡터) | 웹 페이지에 바로 넣을 수 있는 벡터 이미지 형식이라 용량이 작고 확대해도 선명하다. 다만 텍스트나 특수 효과는 브라우저에서 다르게 보일 수 있어서 저장 후 한 번은 직접 열어 확인해야 한다. | 다른 이름으로 저장에서 SVG 형식을 고르고, 옵션 창에서 글꼴 처리 방식을 정하면 된다. |\n\n'
+    + '추천은 원본은 AI로 보관하고, 웹이나 배포용으로만 SVG를 따로 뽑는 것이다.';
+  const said = (text: string, id = 'a1'): ChatItem => ({ kind: 'assistant', id, text, ts: '' } as ChatItem);
+  const me = (id: string): ChatItem => ({ kind: 'user', id, text: '어 팀 한정 아님', ts: '' } as ChatItem);
+
+  it('화면의 표 풀린 지난 답은 이미 기록에 있는 글이다', () => {
+    const live = liveReply(screen)!;
+    expect(live).toContain('형식: AI');
+    expect(liveShown(live, [said(record)])).toBe(true);
+  });
+  it('새 말을 보낸 뒤 새 글이 없으면 쓰는 중 말풍선이 안 뜬다 — 화면에 지난 답이 남아 있어도', () => {
+    const items = [me('u1'), said(record), me('u2')];
+    const h = liveStep(NO_LIVE, { now: 1000, answering: true, text: liveReply(screen), items });
+    expect(liveView(h, items)).toEqual([]);
+  });
+  it('이어서 쓰는 새 글은 그대로 보이고 자란다', () => {
+    const items = [me('u1'), said(record), me('u2')];
+    const first = '비는 하늘에서 내려오는 물이지만 그 한 방울이 땅에 닿기까지는 긴 여정을 거친다.';
+    let h = liveStep(NO_LIVE, { now: 1000, answering: true, text: liveReply(screen), items });
+    h = liveStep(h, { now: 1400, answering: true, text: first, items });
+    expect(liveView(h, items)).toEqual([first]);
+    const more = `${first} 그래서 사람들은 창가에 앉아 그 소리를 오래 듣는다.`;
+    h = liveStep(h, { now: 1800, answering: true, text: more, items });
+    expect(liveView(h, items)).toEqual([more]);
+  });
+  it('지난 답과 낱말이 조금 겹치는 새 글은 지난 답으로 안 본다', () => {
+    const fresh = '참모 벡터에 없어서 일러스트레이터로 열어 형식을 바꿔야 해요 오늘 안으로 끝내고 인쇄소에 넘긴 뒤 다시 알려 드릴게요';
+    expect(liveShown(fresh, [said(record)])).toBe(false);
+  });
+  it('짧은 새 글은 낱말이 다 겹쳐도 지난 답으로 안 본다 — 짧으면 우연히 겹친다', () => {
+    expect(liveShown('형식 내용 파일 확인 필요', [said(record)])).toBe(false);
+  });
+  it('마지막 몇 개 답만 본다 — 아주 옛날 표는 새 글로', () => {
+    expect(liveShown(liveReply(screen)!, [said(record), said('둘째', 'a2'), said('셋째', 'a3'), said('넷째', 'a4')])).toBe(false);
+  });
+});

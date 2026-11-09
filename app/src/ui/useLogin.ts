@@ -42,7 +42,7 @@ async function unblock(id?: string) {
   } catch { /* 계정 칸이 없거나 저장 실패 — 다음 다시 시도에 */ }
 }
 
-export function useLogin(acts: SessionActivity[], accounts: AccountsView | null, voice: boolean): { need: LoginNeed | null; terms: TermsCard[]; retryTerms: (id?: string) => void; closeTerms: (c: TermsCard) => void; missing: boolean } {
+export function useLogin(acts: SessionActivity[], accounts: AccountsView | null, voice: boolean, ready: boolean): { need: LoginNeed | null; terms: TermsCard[]; retryTerms: (id?: string) => void; closeTerms: (c: TermsCard) => void; missing: boolean } {
   const mem = useRef(emptyLogin());
   const probe = useRef<{ loggedIn: boolean | null; credAt: number | null; at: number; falses: number; termsRetryAt: number | null }>({ loggedIn: null, credAt: null, at: 0, falses: 0, termsRetryAt: null });
   const [need, setNeed] = useState<LoginNeed | null>(null);
@@ -67,6 +67,9 @@ export function useLogin(acts: SessionActivity[], accounts: AccountsView | null,
   actsRef.current = acts;
   const voiceRef = useRef(voice);
   voiceRef.current = voice;
+  // 첫 설치를 마치기 전엔 로그인한 적이 없다 — '풀렸어요' 알림을 부르지 않는다(0.4.9 아이맥 실측)
+  const readyRef = useRef(ready);
+  readyRef.current = ready;
 
   const stalled = stalledOf(acts.map((a) => ({ session: a.session, activity: a.activity })));
   // 한 번 false 를 봤으면(아직 모름) 빨리 다시 잰다 — 두 번째로 확인
@@ -141,13 +144,13 @@ export function useLogin(acts: SessionActivity[], accounts: AccountsView | null,
     }
     termsShown.current = ids;
     // 새로 생긴 '로그인 필요'만 알린다 — 세션이 늘어도 같은 카드
-    if (plan.need && shownSince.current === null) {
+    if (plan.need && shownSince.current === null && readyRef.current) {
       const t = needText(plan.need);
       const soon = plan.need.keep === 'late' && !plan.need.sessions.length;
       notifyOnce({ kind: 'login', session: 'login', orch: false, title: t.title, body: tr(`${t.where} — 결정 대기함에서 로그인`, `${t.where} — sign in from Decisions`) });
       if (voiceRef.current) void speak(soon ? tr('Claude 로그인이 곧 끝나. 결정 대기함이나 폰에서 한 번 로그인해 줘', 'Claude sign-in ends soon. Sign in once from Decisions or your phone') : tr('Claude 로그인이 풀렸어. 결정 대기함이나 폰에서 로그인해 줘', 'Claude sign-in expired. Sign in from Decisions or your phone')).catch(() => {});
     }
-    shownSince.current = plan.need ? plan.need.since : null;
+    shownSince.current = plan.need && readyRef.current ? plan.need.since : null;
     // 폰 /api/login — 로그인 판단 + 약관 카드(있을 때만 terms)
     const file = JSON.stringify(plan.need || cards.length ? { ...(plan.need ?? {}), ...(cards.length ? { terms: cards } : {}), at: now } : null);
     const sig = JSON.stringify([plan.need, cards]);

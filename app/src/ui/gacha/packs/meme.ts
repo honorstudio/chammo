@@ -80,6 +80,13 @@ const flames = (d: D, w: number, base: number, t: number, s = 0) => {
     d(i, base - h, 1, h, '#d93a2f'); if (h > 3) d(i, base - h + 2, 1, h - 2, '#ff8a1f'); if (h > 5) d(i, base - h + 4, 1, h - 4, '#ffd23f');
   }
 };
+/** 벽 밑 불씨 — 바닥에 낮게 깔린다(4칸 안). 키 큰 불길은 벽 앞 책상·사람 뒤로 솟아 '책상이 탄다'처럼 보였다(11-09 사용자) */
+const embers = (d: D, w: number, base: number, t: number, s = 0) => {
+  for (let i = 0; i < w; i++) {
+    const h = Math.max(1, 2 + Math.round(1.2 * Math.sin(i * 0.9 + t * 1.1 + s) + 0.8 * Math.sin(i * 2.3 - t * 0.7)));
+    d(i, base - h, 1, h, '#d93a2f'); if (h > 1) d(i, base - h + 1, 1, h - 1, '#ff8a1f'); if (h > 2) d(i, base - 1, 1, 1, '#ffd23f');
+  }
+};
 /** 경광등(벽에 붙음) — 도는 빛이 좌우로 번갈아 */
 const beacon = (d: D, u: number, v: number, t: number) => {
   const dir = t % 8 < 4 ? -1 : 1;
@@ -129,7 +136,7 @@ export const MEME: Pack = {
         for (let r = 0; r < 8; r++) { d(u + 2, 2 + r * 3, 7, 2, '#3a3642'); d(u + 3, 2 + r * 3, 1, 1, (r + t + u) % 4 ? '#7cf08a' : '#1d3a22'); d(u + 6, 2 + r * 3, 1, 1, (r * 3 + t) % 5 < 2 ? '#ff5a3c' : '#4a1a14'); }
       }
     } },
-    'mm-fire': { draw: (b, P, _sk, t) => { flames(left(b, P, 6.6, 12), 26, 10, t, 2); flames(left(b, P, 2.95, 12), 30, 10, t); flames(sh(L1(b, P), 17, 0), 9, 13, t, 4); } },
+    'mm-fire': { draw: (b, P, _sk, t) => { embers(left(b, P, 6.6, 12), 26, 12, t, 2); embers(left(b, P, 2.95, 12), 30, 12, t); flames(sh(L1(b, P), 17, 0), 9, 13, t, 4); } },
     'mm-finemug': { k: 40, draw: (b, P, _sk, t, _c, rows) => {
       const d = corner(b, P, rows);
       spr(d, -6, -11, MUG, { o: '#120c0e', w: '#f2ece4', c: '#6b3f22', e: '#120c0e', r: '#ff9a9a', m: '#120c0e', s: '#c9bfb2' });

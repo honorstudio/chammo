@@ -10,6 +10,26 @@ export const PRELOAD_GRACE = 800;
 /** 첫 받기(맥 정보·세션) 시간 제한 — 맥이 꺼져 요청이 매달리면 모찌만 20초 보이지 않게 이만큼에 '못 닿음'으로(다시 시도는 그대로 돈다) */
 export const BOOT_LIMIT_MS = 10_000;
 
+/** 맥이 느렸다는 소식의 이유 낱말(맥 기록 phone-diag — 폰 글·경로는 안 보낸다) */
+export function failWord(e: unknown, late: boolean): string {
+  if (late) return 'late';
+  const name = e instanceof Error || e instanceof DOMException ? e.name : '';
+  if (name === 'AbortError') return 'abort';
+  if (name === 'OfflineError') return 'offline';
+  if (name === 'TrustError') return 'trust';
+  if (e instanceof TypeError) return 'net';
+  const msg = e instanceof Error ? e.message : String(e);
+  const http = /^HTTP (\d{3})$/.exec(msg);
+  if (http) return `http${http[1]}`;
+  return msg === 'busy' ? 'busy' : 'other';
+}
+
+/** 폰이 늦게 받았을 때 맥 notify.log 에 남길 한 줄 — '맥이 느렸다'를 맥 쪽 기록으로 볼 수 있게(11-07 사용자). 3초 안에 처음 받았으면 안 남긴다 */
+export function bootDiag(o: { ms: number; fails: number; why: string }): string | null {
+  if (o.ms < 3000 && !o.fails) return null;
+  return `ms=${Math.round(o.ms)} fails=${o.fails} why=${o.why || 'none'}`;
+}
+
 /** 첫 받기 상태 — wait = 맥 정보·세션을 아직 못 받음, ready = 받음, nokey = 짝짓기 안 됨, error = 못 닿음 */
 export type BootBase = 'wait' | 'ready' | 'nokey' | 'error';
 

@@ -1,0 +1,255 @@
+#!/bin/sh
+''':'
+[ "$OS" = Windows_NT ] || exec python3 "$0" "$@"
+for p in "py -3" python; do $p -c '' >/dev/null 2>&1 && exec $p "$0" "$@"; done
+echo "python not found — install Python 3 (winget install Python.Python.3.12)" >&2; exit 127
+':'''
+__doc__ = """Video review notes <-> Chammo Film timeline markers. Open the film project first: scripts/craft open filmcraft --native <project.fcproj>
+영상 검토 말 ↔ 참모 필름 타임라인 마커. 먼저 필름 프로젝트를 연다: scripts/craft open filmcraft --native <프로젝트.fcproj>
+
+  scripts/video-review film <video>             put the open notes on the open sequence as markers (once each), turns on Ripple Sequence Markers
+                                                남긴 말을 열린 시퀀스에 마커로(한 번씩) — 편집 때 마커가 따라오게 잔물결도 켠다
+  scripts/video-review pull <video>             read the markers back: moved -> new time, deleted -> done, a new comment marker -> a new note
+                                                마커를 읽어 기록에: 옮김 → 새 시각, 지움 → 처리됨, 새 글 마커 → 새 말
+  scripts/video-review pull <video> --to <new>  after rendering a new cut: carry the notes to the new file at their marker times; a note whose
+                                                marker was cut out stays on the old file as 'cut', one never put on the timeline as 'lost'
+                                                새로 뽑은 뒤: 말을 마커 자리로 새 판에 옮긴다. 마커가 잘려 나간 말은 옛 판에 '잘림', 타임라인에 안 올린 말은 '못 옮김'
+
+The sequence must start at 0:00 and render the whole timeline — marker times are read as times in the video file.
+시퀀스는 0:00 에서 시작해 통째로 뽑는다고 본다 — 마커 시각 = 영상 파일 시각.
+"""
+import csv, datetime, hashlib, json, os, subprocess, sys, tempfile
+for _io in (sys.stdin, sys.stdout, sys.stderr):  # 윈도우 파이썬 기본은 cp949 — 한글·'—' 를 UTF-8 로(다른 도구와 같은 머리)
+    if _io and hasattr(_io, 'reconfigure') and (_io.encoding or '').lower().replace('-', '') != 'utf8':
+        _io.reconfigure(encoding='utf-8', errors='replace')
+
+TICK = 254016000000  # 참모 필름 1초(filmcraft-cli --help)
+COLOR = 'Mango'  # 검토 마커 색 — 앱의 마커 색(참모 색 계열)과 맞춘다
+STATES_OPEN = (None, 'open')
+
+
+class FilmError(Exception):
+    pass
+
+
+def data_dir(home=None, env=None, exists=os.path.isdir):
+    """Data folder — same rule as the app: $CHAMMO_HOME -> ~/.chammo (-> ~/.honor-orchestrator for old installs)"""
+    home = home or os.path.expanduser('~')
+    env = os.environ.get('CHAMMO_HOME', '') if env is None else env
+    if env.strip():
+        return os.path.expanduser(env.strip())
+    new, old = os.path.join(home, '.chammo'), os.path.join(home, '.honor-orchestrator')
+    return old if not exists(new) and exists(old) else new
+
+
+def record_path(data, video):
+    """앱(reader.rs curation_name)과 같은 이름 — <폴더>-<이름>-<경로 sha256 앞 2바이트>.state.json"""
+    stem = os.path.splitext(os.path.basename(video))[0]
+    parent = os.path.basename(os.path.dirname(video))
+    h = hashlib.sha256(video.encode('utf-8')).digest()
+    stem = f'{stem}-{h[0]:02x}{h[1]:02x}'
+    return os.path.join(data, 'curation', f'{parent}-{stem}.state.json' if parent else f'{stem}.state.json')
+
+
+def tenth(t):
+    """domain/videoReview fmtTenth 와 같게 — 01:36.0, 한 시간 넘으면 1:02:05.4"""
+    d = round(max(0.0, float(t)) * 10)
+    s = d // 10
+    h, m = s // 3600, (s % 3600) // 60
+    head = f'{h}:{m:02d}' if h else f'{m:02d}'
+    return f'{head}:{s % 60:02d}.{d % 10}'
+
+
+def short(t):
+    s = int(max(0.0, float(t)))
+    h, m = s // 3600, (s % 3600) // 60
+    return f'{h}:{m:02d}:{s % 60:02d}' if h else f'{m}:{s % 60:02d}'
+
+
+def result_text(video, duration, notes, record):
+    """domain/videoReview resultText 와 같은 모양(한국어판)"""
+    head = ' · '.join(x for x in (f'길이 {short(duration)}' if duration else '', f'말 {len(notes)}개', f'기록 {record}' if record else '') if x)
+    items = '\n'.join(f"- {tenth(n['t'])} {' '.join(str(n['text']).split())}" for n in notes)
+    return f'## 영상 검토 — {os.path.basename(video)}\n{head}\n\n{items}'
+
+
+def load(data, video):
+    p = record_path(data, video)
+    try:
+        with open(p, encoding='utf-8') as f:
+            r = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(r, dict) or (r.get('source') or {}).get('path') != video or not isinstance(r.get('notes'), list):
+        return None
+    return r
+
+
+def save(data, video, rec):
+    """state.json 은 원본, .md 는 사람·참모가 읽는 사본 — 앱(save_curation)과 같은 꼴로 둘 다 바꾼다. 반쪽 파일이 안 남게 바꿔치기로"""
+    p = record_path(data, video)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    rec['notes'].sort(key=lambda n: n['t'])
+    live = [n for n in rec['notes'] if n.get('state') in STATES_OPEN]
+    md = f"<!-- 시안: {video} -->\n{result_text(video, rec['source'].get('duration'), live, p)}\n"
+    for path, body in ((p, json.dumps(rec, ensure_ascii=False)), (p[:-len('.state.json')] + '.md', md)):
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(p), prefix='.vr-')
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(body)
+        os.replace(tmp, path)
+
+
+def need(data, video):
+    rec = load(data, video)
+    if rec is None:
+        raise FilmError(f'no review notes for this video yet — show it first (scripts/show) / 이 영상엔 아직 남긴 말이 없어 — 먼저 scripts/show: {video}')
+    return rec
+
+
+def push(data, video, film):
+    """열린 말 중 아직 마커가 없는 것만 마커로 — 돌려받은 id 를 film.marker 에"""
+    rec = need(data, video)
+    film('markers.rippleSequenceMarkers', {'on': True})
+    # 이 프로젝트에 원래 있던 마커는 검토 말이 아니다 — 처음 볼 때 적어 두고 pull 이 건너뛴다(11-04 진짜 필름: Open·Music hit … 이 새 말로 들어왔다)
+    linked = {(n.get('film') or {}).get('marker') for n in rec['notes']} - {None}
+    seen = set(rec['source'].get('filmSeen') or [])
+    rec['source']['filmSeen'] = sorted(seen | (set(markers(film)) - linked))
+    save(data, video, rec)
+    added = 0
+    for n in rec['notes']:
+        if n.get('state') not in STATES_OPEN or (n.get('film') or {}).get('marker') is not None:
+            continue
+        text = str(n['text'])
+        r = film('markers.add', {'time': round(float(n['t']) * TICK), 'name': ' '.join(text.split())[:40], 'comment': text, 'color': COLOR})
+        if not isinstance(r, dict) or not isinstance(r.get('marker'), int):
+            raise FilmError(f'film did not return a marker id: {r}')
+        n['film'] = {'marker': r['marker']}
+        added += 1
+        save(data, video, rec)  # 하나씩 — 중간에 끊겨도 넣은 마커는 기록에 남아 다시 안 넣는다
+    return {'added': added, 'record': record_path(data, video)}
+
+
+def unguard(s):
+    """필름 CSV 가 수식 글자(=+-@) 앞에 붙인 ' 를 뗀다"""
+    t = s.lstrip()
+    return t[1:] if t.startswith("'") and t[1:2] in ('=', '+', '-', '@') else s
+
+
+def markers(film):
+    """지금 시퀀스 마커 — {id: (초, 글 칸, 종류, 글 칸 없으면 이름)}"""
+    fd, tmp = tempfile.mkstemp(suffix='.csv', prefix='vr-markers-')
+    os.close(fd)
+    try:
+        film('markers.exportCsv', {'path': tmp})
+        with open(tmp, encoding='utf-8', newline='') as f:
+            rows = list(csv.DictReader(f))
+    finally:
+        os.remove(tmp)
+    out = {}
+    for r in rows:
+        try:
+            i = int(r['Marker ID'])
+            t = int(r['Start Ticks']) / TICK
+        except (KeyError, ValueError, TypeError):
+            continue
+        text = unguard(r.get('Comment') or '').strip() or unguard(r.get('Name') or '').strip()
+        # 새 말로 받는 건 글(Comment)이 있는 마커만 — 이름뿐인 마커(Marker 2·Chapter 1)는 편집자 표시다
+        out[i] = (round(t, 3), unguard(r.get('Comment') or '').strip(), r.get('Kind') or '', text)
+    return out
+
+
+def now_iso():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')
+
+
+def pull(data, video, film, to=None):
+    rec = need(data, video)
+    ms = markers(film)
+    linked = {(n.get('film') or {}).get('marker') for n in rec['notes']} - {None}
+    counts = dict(moved=0, done=0, added=0, carried=0, cut=0, lost=0)
+    seen = set(rec['source'].get('filmSeen') or [])
+    fresh = [(i, t, text) for i, (t, text, kind, _) in sorted(ms.items(), key=lambda x: x[1][0]) if i not in linked and i not in seen and text and kind in ('Comment', '')]
+    label = lambda mid: ms[mid][1] or ms[mid][3]  # 우리가 넣은 마커의 글(사람이 필름에서 고쳤을 수 있다)
+    if to is None:
+        for n in rec['notes']:
+            mid = (n.get('film') or {}).get('marker')
+            if mid is None or n.get('state') not in STATES_OPEN:
+                continue
+            if mid not in ms:
+                n['state'] = 'done'
+                counts['done'] += 1
+            elif abs(ms[mid][0] - float(n['t'])) > 0.0005 or (label(mid) and label(mid) != n['text']):
+                if abs(ms[mid][0] - float(n['t'])) > 0.0005:
+                    counts['moved'] += 1
+                n['t'] = ms[mid][0]
+                n['text'] = label(mid) or n['text']
+        for i, t, text in fresh:
+            rec['notes'].append(dict(id=f'f{i}', t=t, text=text, at=now_iso(), **{'from': 'film'}, film={'marker': i}))
+            counts['added'] += 1
+        save(data, video, rec)
+        return dict(counts, record=record_path(data, video))
+    # 새 판 — 마커 자리로 옮기고, 옛 판엔 어디로 갔는지·잘렸는지를 남긴다
+    to = os.path.realpath(to)
+    if not os.path.isfile(to):
+        raise FilmError(f'new video not found / 새 판이 없어: {to}')
+    new = load(data, to) or {'v': 1, 'source': {'path': to, 'filmSeen': sorted(seen)}, 'notes': []}
+    have = {n['id'] for n in new['notes']}
+    for n in rec['notes']:
+        if n.get('state') not in STATES_OPEN:
+            continue
+        mid = (n.get('film') or {}).get('marker')
+        if mid is None:
+            n['state'] = 'lost'
+            counts['lost'] += 1
+        elif mid not in ms:
+            n['state'] = 'cut'
+            counts['cut'] += 1
+        else:
+            if n['id'] not in have:
+                new['notes'].append({**{k: v for k, v in n.items() if k not in ('state', 'moved')}, 't': ms[mid][0], 'text': label(mid) or n['text']})
+            n['state'], n['moved'] = 'carried', to
+            counts['carried'] += 1
+    for i, t, text in fresh:
+        if f'f{i}' not in have:
+            new['notes'].append(dict(id=f'f{i}', t=t, text=text, at=now_iso(), **{'from': 'film'}, film={'marker': i}))
+            counts['added'] += 1
+    save(data, video, rec)
+    save(data, to, new)
+    return dict(counts, record=record_path(data, to))
+
+
+def film_runner(here):
+    """참모 필름 조작 채널 — scripts/craft run filmcraft <명령> <json> 을 부르고 답 JSON 을 돌려준다"""
+    craft = os.path.join(here, 'craft')
+
+    def call(cmd, params):
+        r = subprocess.run([sys.executable, craft, 'run', 'filmcraft', cmd, json.dumps(params, ensure_ascii=False)], capture_output=True, text=True, timeout=120)
+        if r.returncode:
+            msg = (r.stderr or r.stdout).strip().splitlines()
+            raise FilmError(f"Chammo Film did not take {cmd} — is it open? scripts/craft open filmcraft --native <project.fcproj> / 참모 필름이 {cmd} 를 못 받았어 — 열려 있나? : {msg[-1] if msg else r.returncode}")
+        lines = [l for l in r.stdout.strip().splitlines() if l.strip()]
+        try:
+            return json.loads(lines[-1]) if lines else {}
+        except ValueError:
+            return {'raw': lines[-1]}
+    return call
+
+
+def main(argv):
+    if len(argv) < 2 or argv[0] not in ('film', 'pull'):
+        print(__doc__, file=sys.stderr)
+        return 2
+    video = os.path.realpath(argv[1])
+    to = argv[argv.index('--to') + 1] if '--to' in argv and argv.index('--to') + 1 < len(argv) else None
+    film = film_runner(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        r = push(data_dir(), video, film) if argv[0] == 'film' else pull(data_dir(), video, film, to=to)
+    except FilmError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    print(json.dumps(r, ensure_ascii=False))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

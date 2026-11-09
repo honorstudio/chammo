@@ -64,7 +64,8 @@ pub fn safe_name(name: &str, fallback: &str) -> String {
 /// < > " | ? * 는 -, 끝 점·공백은 뗀다(윈도우가 말없이 떼서 다른 이름이 된다), CON·NUL·COM1 같은 장치 이름은 앞에 _
 pub fn safe_name_for(name: &str, fallback: &str, win: bool) -> String {
     let bad = |c: char| matches!(c, '/' | '\\' | ':') || (win && matches!(c, '<' | '>' | '"' | '|' | '?' | '*'));
-    let s: String = name.chars().filter(|c| !c.is_control()).map(|c| if bad(c) { '-' } else { c }).collect();
+    // 보이지 않는 글자도 — 글자 방향 뒤집기(U+202E)로 .exe 를 .pdf 처럼 보이게 했다(보안 점검 H-1)
+    let s: String = name.chars().filter(|c| !c.is_control() && !crate::peer_link::invisible(*c)).map(|c| if bad(c) { '-' } else { c }).collect();
     let mut s: String = s.trim().trim_start_matches('.').trim().chars().take(120).collect();
     if win {
         s = s.trim_end_matches(['.', ' ']).to_string();
@@ -102,7 +103,7 @@ pub fn unique(dir: &Path, name: &str, split_ext: bool) -> PathBuf {
         .expect("끝없는 번호")
 }
 
-fn id_of(dir: &Path) -> Option<String> {
+pub(crate) fn id_of(dir: &Path) -> Option<String> {
     let t = std::fs::read_to_string(dir.join(ID_FILE)).ok()?;
     t.lines().next().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
 }
@@ -1266,7 +1267,7 @@ pub fn write_md_from(owner: &Path, file: &Path, text: &str, base: Option<&str>) 
 }
 
 /// 폰이 열어도 되는 경로 — 보관함 집 파일 + 별칭이 가리키는 진짜 파일(링크 경로는 문지기가 어차피 막는다). 끊긴 건 뺀다. 거름(mobile_files::pick)은 그대로 지난다
-pub fn phone_paths(root: &Path, home: &Path) -> Vec<String> {
+fn phone_paths_now(root: &Path, home: &Path) -> Vec<String> {
     let mut v = Vec::new();
     for (_, dir) in owners(root) {
         for e in phone_entries(&dir, home).into_iter().filter(|e| !e.dir && !e.gone) {
@@ -1274,6 +1275,27 @@ pub fn phone_paths(root: &Path, home: &Path) -> Vec<String> {
             v.push(phone_path(&if e.link.is_some() || e.ro { canon(&p) } else { p }));
         }
     }
+    v
+}
+
+/// 폰이 열 수 있는 보관함 파일 — 3초 같이 쓴다. 폰 파일 요청마다 보관함 전체를 훑어(canonicalize·readdir) 썸네일 열 장이면 열 번 돌았다(11-07 표본, 그 요청 시간의 87%).
+/// 그사이 넣은 파일은 3초 뒤부터 열린다(폰은 다시 받는다), 뺀 파일은 3초까지 더 열린다
+pub fn phone_paths(root: &Path, home: &Path) -> Vec<String> {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    if cfg!(test) {
+        return phone_paths_now(root, home); // 시험은 같은 폴더를 고치고 바로 다시 본다
+    }
+    type Entry = (Instant, std::path::PathBuf, Vec<String>);
+    static CACHE: Mutex<Option<Entry>> = Mutex::new(None);
+    let mut g = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, r, v)) = g.as_ref() {
+        if r == root && at.elapsed() < Duration::from_secs(3) {
+            return v.clone();
+        }
+    }
+    let v = phone_paths_now(root, home);
+    *g = Some((Instant::now(), root.to_path_buf(), v.clone()));
     v
 }
 
@@ -1365,6 +1387,42 @@ pub fn app_ctx() -> AppCtx {
     dirs.extend(c.extra_projects.iter().cloned());
     let settled = settled_of(&home, &dirs);
     AppCtx { home, data, root, settled }
+}
+
+/// 오늘 보관함에 들어온 파일 수(위 띠 '오늘 한 일', 칸을 열 때 한 번) — 만든 때로 센다(copy_verified 는 새 파일이라 넣은 때가 된다, 내용만 고친 건 안 센다).
+/// 점 폴더(이전 판 등)는 건너뛰고 바로가기는 따라가지 않는다 — 시작 전이면 문서 폴더를 건드리지 않는다(맥 권한 창, started)
+pub fn today_files(data: &Path, root: &Path, since: u64) -> usize {
+    if !started(data) {
+        return 0;
+    }
+    let (mut seen, mut n) = (0, 0);
+    count_since(root, 0, since, &mut seen, &mut n);
+    n
+}
+
+fn count_since(dir: &Path, depth: usize, since: u64, seen: &mut usize, n: &mut usize) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    if depth > MAX_DEPTH + 1 {
+        return;
+    }
+    for e in rd.flatten() {
+        if *seen >= MAX_ENTRIES || e.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
+        *seen += 1;
+        let Ok(lm) = std::fs::symlink_metadata(e.path()) else { continue };
+        if lm.is_dir() {
+            count_since(&e.path(), depth + 1, since, seen, n);
+        } else if lm.created().or_else(|_| lm.modified()).ok().and_then(ms).is_some_and(|t| t >= since) {
+            *n += 1;
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn locker_today_files(since: u64) -> usize {
+    let a = app_ctx();
+    tauri::async_runtime::spawn_blocking(move || today_files(&a.data, &a.root, since)).await.unwrap_or(0)
 }
 
 /// 보관함을 시작했나 — 한 번 열었거나(OPENED_MARK), 이 판 전부터 쓰던 사람(스크린샷 연결·옛 보관함 옮기기 표식). 데이터 폴더만 본다

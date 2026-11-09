@@ -7,7 +7,7 @@ import { dropSig } from './orchLabel';
 
 export type ChatTool = { name: string; target: string };
 export type ChatItem =
-  | { kind: 'user'; id: string; ts: string; text: string; /** 붙인 그림(data URL) — 말풍선 썸네일 */ images?: string[] }
+  | { kind: 'user'; id: string; ts: string; text: string; /** 붙인 그림(data URL) — 말풍선 썸네일 */ images?: string[]; /** 그 말에 든 가장 큰 그림 번호([Image #n], staleRefs) */ chip?: number }
   | { kind: 'assistant'; id: string; ts: string; text: string; /** 턴 끝 답(stop_reason end_turn) — 아니면 턴 중간 글(이어서 도구·생각) */ end?: true }
   | { kind: 'tools'; id: string; ts: string; tools: ChatTool[] }
   /** 슬래시 명령 — 말풍선 대신 작은 줄. out = 명령 결과(/context·/cost 등, 색 코드 뺀 글) */
@@ -16,7 +16,7 @@ export type ChatItem =
   | { kind: 'relay'; id: string; ts: string; from: string; text: string; /** from = 보낸 세션의 진짜 이름 — 화면엔 seenName 으로 */ session?: true };
 
 type Block = { type?: string; text?: string; name?: string; input?: Record<string, unknown>; source?: { type?: string; media_type?: string; data?: string } };
-type Rec = { type?: string; subtype?: string; content?: unknown; uuid?: string; parentUuid?: string | null; timestamp?: string; isMeta?: boolean; isSidechain?: boolean; isCompactSummary?: boolean; message?: { content?: unknown; stop_reason?: string | null };
+type Rec = { type?: string; subtype?: string; content?: unknown; uuid?: string; parentUuid?: string | null; timestamp?: string; isMeta?: boolean; origin?: { kind?: string }; isSidechain?: boolean; isCompactSummary?: boolean; message?: { content?: unknown; stop_reason?: string | null };
   /** 일하는 중에 끼어든 메시지는 user 줄이 아니라 queued_command 첨부로 남는다(2026-09-30 실측) */
   attachment?: { type?: string; prompt?: unknown; origin?: { kind?: string } } };
 
@@ -30,20 +30,26 @@ const PASTED_TAG = /<\/?pasted_content[^>]*>/g;
 const IMAGE_SOURCE = /^(\s*\[Image: source: [^\]]*\]\s*)+$/;
 
 /** 사람이 친 글 + 붙인 그림. 도구 결과만 있으면 둘 다 빈 것 */
-function userParts(content: unknown): { text: string; images: string[] } {
+function userParts(content: unknown): { text: string; images: string[]; chip: number } {
   const bs = blocks(content);
-  const text = bs
+  const raw = bs
     .filter((b) => b.type === 'text')
     .map((b) => b.text ?? '')
-    .join('\n')
+    .join('\n');
+  const chip = Math.max(0, ...[...raw.matchAll(/\[Image #(\d+)\]/g)].map((m) => Number(m[1])));
+  const text = raw
     .replace(IMAGE_TOKEN, '')
     .replace(PASTED_TAG, '') // 긴 글은 붙여넣기 태그로 감싸져 기록된다 — 사람 눈엔 태그 없이
     .trim();
   const images = bs
     .filter((b) => b.type === 'image' && b.source?.type === 'base64' && b.source.data)
     .map((b) => `data:${b.source!.media_type ?? 'image/png'};base64,${b.source!.data}`);
-  return { text: IMAGE_SOURCE.test(text) ? '' : text, images };
+  return { text: IMAGE_SOURCE.test(text) ? '' : text, images, chip };
 }
+
+/** 사람 말 항목 — 그림이 있으면 썸네일과 그림 번호도 */
+const userItem = (id: string, ts: string, text: string, images: string[], chip: number): ChatItem =>
+  images.length ? { kind: 'user', id, ts, text, images, ...(chip ? { chip } : {}) } : { kind: 'user', id, ts, text };
 
 /** 도구 결과의 사람 개입 꼬리표 → 첫 줄('사람이 브라우저를 3분 조작하고 돌려줬어'). 아직 조작 중 안내·다른 결과는 null */
 const TAKEOVER = /\[사람 개입\] (사람이 [^\n]*조작하고 돌려줬어)/;
@@ -117,13 +123,14 @@ function itemsOf(r: Rec): (ChatItem | Out)[] {
     return inj && inj !== 'hide' ? [{ kind: 'note', id, ts, text: inj.note }] : [];
   }
   if (r.type === 'user') {
-    if (r.isMeta) return [];
+    // 다른 세션 말도 isMeta 로 적힌다(origin peer) — 버리면 그 말로 깬 턴의 답이 앞 답에 붙고 물음 카드가 안 빠졌다(2026-11-04 사용자 폰)
+    if (r.isMeta && r.origin?.kind !== 'peer') return [];
     // 사람이 세션 브라우저에 개입했다 돌려줌 — 도구 결과의 꼬리표([사람 개입], tools/chammo-browser src/takeover.js)를 한 줄로
     const take = takeoverNote(r.message?.content);
     if (take) return [{ kind: 'note', id, ts, text: take }];
     // 컨텍스트가 차서 앞부분을 요약해 넣은 글 — 사용자가 친 말이 아니다
     if (r.isCompactSummary) return [{ kind: 'note', id, ts, text: '대화가 길어서 앞부분을 요약했어' }];
-    const { text: said, images } = userParts(r.message?.content);
+    const { text: said, images, chip } = userParts(r.message?.content);
     const text = humanBody(said);
     if (!text && !images.length) return [];
     const rel = text ? relayOf(text) : null;
@@ -134,7 +141,7 @@ function itemsOf(r: Rec): (ChatItem | Out)[] {
     const inj = text ? injected(text) : null;
     if (inj === 'hide') return [];
     if (inj) return [{ kind: 'note', id, ts, text: inj.note }];
-    return [images.length ? { kind: 'user', id, ts, text, images } : { kind: 'user', id, ts, text }];
+    return [userItem(id, ts, text, images, chip)];
   }
   if (r.type === 'attachment') {
     const a = r.attachment;
@@ -143,12 +150,12 @@ function itemsOf(r: Rec): (ChatItem | Out)[] {
     const take = typeof a.prompt === 'string' && a.prompt.startsWith('<task-notification>') ? a.prompt.match(TAKEOVER) : null;
     if (take) return [{ kind: 'note', id, ts, text: take[1]! }];
     // 그림을 붙여 보낸 말은 prompt 가 글+그림 블록 배열이다(2.1.305 실측) — 보통 사람 말처럼 썸네일도
-    const { text: said, images } = userParts(a.prompt);
+    const { text: said, images, chip } = userParts(a.prompt);
     const text = humanBody(said);
     const rel = text ? relayOf(text) : null;
     if (rel) return [{ kind: 'relay', id, ts, ...rel }]; // 일하는 중에 들어온 다른 세션 말
     if (a.origin?.kind !== 'human' || (!text && !images.length)) return [];
-    return [images.length ? { kind: 'user', id, ts, text, images } : { kind: 'user', id, ts, text }];
+    return [userItem(id, ts, text, images, chip)];
   }
   if (r.type === 'assistant') {
     const out: ChatItem[] = [];
@@ -171,7 +178,8 @@ function push(list: ChatItem[], it: ChatItem | Out) {
     return;
   }
   if (last?.kind === 'tools' && it.kind === 'tools') list[list.length - 1] = { ...last, tools: [...last.tools, ...it.tools] };
-  else if (last?.kind === 'assistant' && it.kind === 'assistant') { const { end: _, ...head } = last; list[list.length - 1] = { ...head, text: `${last.text}\n\n${it.text}`, ...(it.end ? { end: true as const } : {}) }; } // 턴 끝은 뒤 조각이 정한다
+  // 턴 끝 답(end) 뒤는 새 턴 — 숨은 줄(끝 알림 등)로 깬 답까지 앞 답에 붙이면 앞 턴 물음이 마지막 말로 남는다
+  else if (last?.kind === 'assistant' && !last.end && it.kind === 'assistant') { const { end: _, ...head } = last; list[list.length - 1] = { ...head, text: `${last.text}\n\n${it.text}`, ...(it.end ? { end: true as const } : {}) }; } // 턴 끝은 뒤 조각이 정한다
   else list.push(it);
 }
 
@@ -238,6 +246,23 @@ export const stripMarks = (t: string) => t.replace(MARKS, '');
 
 /** 보낸 글과 기록·큐의 글을 맞댈 모양 — 역슬래시는 빼고(줄 끝 \ 는 Claude 입력칸이 '줄 이어 쓰기'로 먹는다),
  *  표시 글자(▬ 등)도 빼고(음성으로 받아 적은 글을 입력칸에서 읽으면 끝에 붙어 와 영영 안 맞았다, 2026-10-01 사용자) */
+/** 이미 간 말의 붙임 표시만 입력칸에 보이면 낡은 읽기다 — 그림 칩 [Image #n](세션 안에서 번호를 다시 안 쓴다, 다음 그림은 더 큰 번호)·이름표 #file1 "경로"·#img1.
+ *  크기가 다른 attach 가 같은 세션에 붙으면 Claude 가 그 크기로 다시 그려 앱 터미널 사본이 엉키고(재현) 그 토막을 입력칸 글로 읽어, 말이 간 뒤에도 입력칸 위 줄에
+ *  '[Image #26]'·'#file1 "…"' 이 남았다 — 진짜 입력칸은 비어 있었다(2026-11-05 사용자 '구라', 다음 말에 안 딸려 감). 부르는 쪽은 첨부 줄이 빈 때만(붙여 두고 안 보낸 건 진짜다). 글이 섞이면 가리지 않는다 */
+const REF_ONLY = /^(?:\[Image#\d+\]|[#@](?:img|file|chat)\d+(?:"[^"]*")?)+$/;
+export function staleRefs(termText: string, items: ChatItem[]): boolean {
+  const t = termText.replace(/\s+/g, '');
+  if (!t || !REF_ONLY.test(t)) return false;
+  const nos = [...t.matchAll(/\[Image#(\d+)\]/g)].map((m) => Number(m[1]));
+  const said = items.filter((i): i is Extract<ChatItem, { kind: 'user' }> => i.kind === 'user');
+  let sent = 0;
+  for (const i of said) if (i.chip && i.chip > sent) sent = i.chip;
+  if (!nos.every((n) => n <= sent)) return false;
+  const refs = t.replace(/\[Image#\d+\]/g, '').match(/[#@](?:img|file|chat)\d+(?:"[^"]*")?/g) ?? [];
+  const recent = said.slice(-20).map((i) => i.text.replace(/\s+/g, ''));
+  return refs.every((r) => recent.some((x) => x.includes(r)));
+}
+
 export const chatNorm = (t: string) => stripMarks(t).replace(IMAGE_TOKEN, '').replace(/\\/g, '').replace(/\s+/g, ' ').trim();
 
 /** 내가 보낸 말 — 사람 말 + 앱이 이 세션 입력칸에 친 줄([앱] …, 기록엔 relay 로 잡힌다). 앱 줄은 머리말을 붙여 친 글 그대로.

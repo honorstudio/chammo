@@ -2,6 +2,7 @@
 // 이름·모양은 tauri.ts 와 같게 둬서 domain/* 을 그대로 쓴다.
 // 인증 = 이 기기 토큰을 localStorage 에 두고 Authorization: Bearer 로만(쿠키는 포트를 안 가려 같은 호스트 다른 포트 서버로 샌다 — 2026-10-02 재검토).
 // localStorage 는 출처(스킴+호스트+포트)마다 따로라 다른 포트·홈 화면 앱과 안 섞인다
+import type { VrPrep } from '../domain/videoReview';
 import { tr } from '../i18n';
 import { makeApi } from './peerApi';
 import { parseCardOpen, type NumberApi } from '../domain/e2eNumber';
@@ -9,9 +10,11 @@ import { readLink } from '../phone-web/link';
 import { tunnelFor } from '../phone-web/hub';
 import { netRetry, retryable } from '../domain/netRetry';
 import { installProxy } from '../phone-web/proxy';
+import { seeNoteStamp } from '../domain/noteStamp';
 import { makeTagTail, parseTagChunk } from '../domain/tagTail';
 import { READ_LIMIT_MS, readCheck } from '../domain/readLimit';
 import { PHONE_PART, partsOf, upId } from '../domain/teamPhoneUp';
+import { thumbLine } from '../domain/thumbLine';
 export type { MobileEnv } from './peerApi';
 
 /** 열쇠가 없거나 바뀌었다 — 맥 앱 설정의 QR(열쇠 든 주소)로 다시 열어야 한다 */
@@ -176,7 +179,8 @@ export const farHumanSay = (dev: string, to: string, text: string) => post<{ id?
 
 /** `claude agents --json` 원문(+컨텍스트) — 3초마다 받는다. 안 바뀌었으면 맥이 글 없이 꼬리표만 준다(domain/tagTail).
  *  다른 기기 참모(remote)는 판이 다를 수 있어 since 없이 그대로(peerApi) — 폰은 화면과 서버가 늘 같은 판 */
-export const listSessionsRaw = makeTagTail((since, signal) => getText(`/api/sessions?since=${encodeURIComponent(since)}`, signal).then(parseTagChunk));
+// 머리줄의 메모 도장은 메모 탭에(domain/noteStamp) — 바뀌면 그 카드만 다시 받는다
+export const listSessionsRaw = makeTagTail((since, signal) => getText(`/api/sessions?since=${encodeURIComponent(since)}`, signal).then(parseTagChunk).then((c) => { seeNoteStamp(c.notes); return c; }));
 
 /** 계정 칸 — 이름·요금제·사용량·쉬는 때만(맥이 이메일·토큰을 안 낸다). 읽기는 domain/phoneAccounts readPhoneAccounts */
 /** 짝지은 다른 기기의 카드(ADR 0011) — 이 맥이 거쳐 읽고, 누른 답은 이 맥이 사람 길로 그 기기에 넘긴다 */
@@ -214,13 +218,15 @@ export type ThumbSize = 360 | 720 | 1600;
 export const fileUrl = (path: string, thumb = false, size?: ThumbSize) => `/api/file?path=${encodeURIComponent(path)}${thumb ? `&thumb=1${size ? `&size=${size}` : ''}` : ''}`;
 /** 대화 파일 썸네일 — 맥이 풀어 줄인 JPEG(원본은 안 준다). 그림·PDF 만, 그 밖은 서버가 415 → null */
 const teamThumbs = new Map<string, Promise<string | null>>();
+/** 썸네일 줄 — 동시에 둘, busy 면 다시(한꺼번에 나가면 맥 일꾼을 넘겨 503 으로 끝났다, domain/thumbLine) */
+const thumbTurn = thumbLine(2);
 /** at = 그 판을 맥이 이미 풀어 뒀을 때만(팀 홈 최근 파일 줄 — 내려받기를 일으키지 않는다, 11-01). 아직이면 실패 → 확장자 표 */
 export function teamThumbBlob(team: string, id: string, at?: number): Promise<string | null> {
   // 파일마다 한 번만 받는다(대화를 다시 열어도 같은 blob 주소) — 실패는 잊어서 다음에 다시
   const k = `${team}\n${id}`;
   let p = teamThumbs.get(k);
   if (!p) {
-    p = call(`/api/team-file-thumb?team=${encodeURIComponent(team)}&id=${encodeURIComponent(id)}&size=360${at !== undefined ? `&at=${at}` : ''}`).then((r) => r.blob()).then((b) => URL.createObjectURL(b));
+    p = thumbTurn(() => call(`/api/team-file-thumb?team=${encodeURIComponent(team)}&id=${encodeURIComponent(id)}&size=360${at !== undefined ? `&at=${at}` : ''}`).then((r) => r.blob())).then((b) => URL.createObjectURL(b));
     p.catch(() => teamThumbs.delete(k));
     teamThumbs.set(k, p);
   }
@@ -242,6 +248,9 @@ export function teamFileView(team: string, id: string, kind: 'image' | 'pdf'): (
   return () => call(`/api/team-file-thumb?team=${encodeURIComponent(team)}&id=${encodeURIComponent(id)}&size=1600`).then((r) => r.blob()).then((b) => ({ url: URL.createObjectURL(b), w: 0, h: 0 }));
 }
 
+/** 팀 문서 열기(11-06) — 맥이 풀어 둔 자리. 그 파일은 이제 폰 파일 보기(/api/file)로 읽힌다. 큰 파일은 맥이 받는 동안 오래 걸려 시간 제한을 안 건다(시트를 닫으면 끝) */
+export const teamDocPath = (team: string, id: string) => call(`/api/team-file-open?team=${encodeURIComponent(team)}&id=${encodeURIComponent(id)}`).then((r) => r.json() as Promise<{ path: string }>);
+
 export async function teamFileImage(team: string, id: string, original = false): Promise<{ url: string; w: number; h: number }> {
   const r = await call(`/api/team-file-image?team=${encodeURIComponent(team)}&id=${encodeURIComponent(id)}${original ? '' : '&view=1'}`);
   const m = /^(\d+)x(\d+)$/.exec(r.headers.get('X-Image-Size') ?? '');
@@ -250,7 +259,11 @@ export async function teamFileImage(team: string, id: string, original = false):
 export const readFileText = (path: string) => getText(fileUrl(path));
 /** html 시안 표 주소 — iframe 은 열쇠를 못 실어서 10분 사는 표로 연다(서버가 sandbox allow-scripts 로 낸다) */
 /** 영상 표 주소(+크기) — <video> 는 열쇠를 못 실어서 표로, 서버가 Range 로 나눠 준다 */
-export const mediaTicket = (path: string) => post<{ url: string; size: number }>('/api/media-ticket', { path });
+export type MediaTicket = { url: string; size: number; ticket?: string; prep?: VrPrep | null };
+export const mediaTicket = (path: string) => post<MediaTicket>('/api/media-ticket', { path });
+/** 폰 팀 보관함 영상 — 맥이 뒤에서 받아 푼다. 받는 중이면 진행, 다 받으면 영상 표(path = 맥에 풀어 둔 자리 — 검토 기록 이름표) */
+export type TeamMedia = { state: 'going'; done: number; total: number } | { state: 'failed'; why: string } | (MediaTicket & { state: 'ready'; path: string });
+export const teamMedia = (team: string, id: string) => post<TeamMedia>('/api/team-media', { team, id });
 /** 워드 → html(맥 textutil) — 폰이 거른 뒤 그린다 */
 export const wordHtml = (path: string) => getText(`/api/file?path=${encodeURIComponent(path)}&as=html`);
 /** 엑셀 표(읽기만) — 맥 스페이스와 같은 Rust 읽기, 시트마다 앞 2000행(cut = 잘린 행 수) */
@@ -280,7 +293,9 @@ export const attachFile = (file: File) =>
 export type TeamPhoneApi = {
   feed: () => Promise<import('./teamApi').TeamFeed>;
   /** cid = 이 말의 id — 다시 보내면 같은 cid(서버가 한 번만 저장) */
-  say: (to: string, text: string, cid: string, re?: number) => Promise<{ room: string; seq: number }>;
+  say: (to: string, text: string, cid: string, re?: number, files?: import('../domain/teamChat').TeamFile[]) => Promise<{ room: string; seq: number }>;
+  /** 대화 첨부 — 보관함 올리기와 같은 조각 길(room 만 더), 맥이 그 방 사람 기기마다 올린 뒤 참조를 준다(같은 파일은 앞서 올린 참조) */
+  fileAttach: (team: string, room: string, file: File, sent?: (n: number) => void) => Promise<import('../domain/teamChat').TeamFile>;
   /** 팀 참모(ADR 0017) — 목록(확인한 판 같이)·보내기 직전 확인·이 맥이 부른 답 토큰 */
   agents: (team: string) => Promise<import('../domain/teamAgent').AgentList>;
   agentConfirm: (team: string, id: string) => Promise<unknown>;
@@ -308,6 +323,8 @@ export type TeamPhoneApi = {
   home: (team: string, rev: number) => Promise<import('../domain/teamHome').HomeBoard | { same: true }>;
   homeSave: (team: string, home: import('../domain/teamHome').Home) => Promise<unknown>;
   homeContent: (team: string, block: string, content: import('../domain/teamHome').ContentDraft) => Promise<unknown>;
+  /** 공식 설치 파일의 팀 판 — 맥이 푼 판을 그대로, 쓰기 권한은 맥이 본다(공개 빌드는 404) */
+  memory: import('../domain/proSlot').ProBoardApi;
   /** 팀 캘린더(relay ADR 0011) — 같은 기록장을 맥이 읽고 쓴다(봉하기·판 맞추기는 맥) */
   cal: import('./teamCalApi').CalApi;
   /** 팀 홈 새 글(고치기·지우기는 데스크톱) — pin 은 팀장만, 고정만 실패하면 pinError */
@@ -319,7 +336,7 @@ export type TeamPhoneApi = {
   /** 올리기 — 조각으로 차례로(마지막 조각이면 맥이 팀 보관함에 올린다). sent = 맥에 보낸 바이트 */
   lockerPut: (team: string, file: File, folder: string, sent?: (n: number) => void) => Promise<void>;
 };
-export type PhoneTeamUps = { uploads: { name: string; done: number; total: number; error: string }[] };
+export type PhoneTeamUps = { uploads: { name: string; done: number; total: number; folder?: string; note?: string; error: string }[] };
 export type PhoneTeamLocker = import('../domain/teamLocker').LockerView & PhoneTeamUps;
 export type PhoneLockerOp = { team: string } & (
   | { op: 'mkdir'; folder: string }
@@ -330,21 +347,32 @@ export type PhoneLockerOp = { team: string } & (
   | { op: 'folder-trash'; from: string }
 );
 /** 조각 하나씩 — 앞 조각 답을 받은 뒤 다음(맥이 차례를 본다). 실패한 조각은 한 번 더(같은 조각은 맥이 한 번만 붙인다) */
-async function putTeamFile(team: string, file: File, folder: string, sent?: (n: number) => void): Promise<void> {
+async function putTeamFile(team: string, file: File, folder: string, sent?: (n: number) => void, room = '', up = upId()): Promise<void> {
   const n = partsOf(file.size);
   if (n === null) throw new Error('too large');
-  const up = upId();
   for (let i = 0; i < n; i++) {
-    const q = `team=${encodeURIComponent(team)}&up=${up}&part=${i}&last=${i === n - 1 ? 1 : 0}&name=${encodeURIComponent(file.name)}&folder=${encodeURIComponent(folder)}`;
+    const q = `team=${encodeURIComponent(team)}&up=${up}&part=${i}&last=${i === n - 1 ? 1 : 0}&name=${encodeURIComponent(file.name)}&folder=${encodeURIComponent(folder)}${room ? `&room=${encodeURIComponent(room)}` : ''}`;
     const body = file.slice(i * PHONE_PART, (i + 1) * PHONE_PART);
     const once = () => call(`/api/team-locker-put?${q}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body });
     await once().catch(once);
     sent?.(Math.min(file.size, (i + 1) * PHONE_PART));
   }
 }
+/** 대화 첨부 — 조각을 다 보낸 뒤 맥이 중계에 올리는 동안 참조를 묻는다(0.8초마다, 10분까지) */
+async function attachTeamFile(team: string, room: string, file: File, sent?: (n: number) => void): Promise<import('../domain/teamChat').TeamFile> {
+  const up = upId();
+  await putTeamFile(team, file, '', sent, room, up);
+  for (const end = Date.now() + 10 * 60_000; Date.now() < end; await new Promise((r) => setTimeout(r, 800))) {
+    const r = await getJson<{ wait?: boolean; file?: import('../domain/teamChat').TeamFile; error?: string }>(`/api/team-file-ref?up=${up}`).catch(() => ({ wait: true }) as { wait: boolean; file?: undefined; error?: undefined });
+    if (r.file) return r.file;
+    if (r.error) throw new Error(r.error);
+  }
+  throw new Error('timeout');
+}
 export const teamViaMac: TeamPhoneApi = {
   feed: () => getJson('/api/team'),
-  say: (to, text, cid, re) => post('/api/team-say', re ? { to, text, cid, re } : { to, text, cid }),
+  say: (to, text, cid, re, files) => post('/api/team-say', { to, text, cid, ...(re ? { re } : {}), ...(files?.length ? { files } : {}) }),
+  fileAttach: attachTeamFile,
   agents: (team) => getJson(`/api/team-agents?team=${encodeURIComponent(team)}`),
   agentConfirm: (team, id) => post('/api/team-agent-confirm', { team, id }),
   agentUsage: (room) => getJson(`/api/team-agent-usage?room=${encodeURIComponent(room)}`),
@@ -364,6 +392,10 @@ export const teamViaMac: TeamPhoneApi = {
   home: (team, rev) => getJson(`/api/team-home?team=${encodeURIComponent(team)}&rev=${rev}`),
   homeSave: (team, home) => post('/api/team-home-save', { team, home }),
   homeContent: (team, block, content) => post('/api/team-home-content', { team, block, content }),
+  memory: {
+    board: (team, seen) => getJson(`/api/team-memory?team=${encodeURIComponent(team)}&rev=${seen ?? 0}`),
+    write: (team, op) => post('/api/team-memory-write', { team, op }),
+  },
   cal: {
     cached: (team) => getJson(`/api/team-cal?team=${encodeURIComponent(team)}`),
     sync: (team) => getJson(`/api/team-cal?team=${encodeURIComponent(team)}&fresh=1`),
@@ -379,11 +411,22 @@ export const readLocker = () => getJson<import('../domain/locker').LockerView>('
 export const lockerAdd = (owner: string, path: string) => post<{ path: string }>('/api/locker-add', { owner, path });
 /** 폰 홈·보관함 v1 — 그 참모 보관함 안에만(맥이 다시 거른다). 바로가기(폰이 보는 파일만)·되돌리기(바로가기만 뺌)·새 문서(md)·새 폴더·md 저장 */
 export const lockerAlias = (owner: string, path: string, folder: string) => post<{ path: string }>('/api/locker-alias', { owner, path, folder });
+/** 보관함 링크 칸(시안 locker-links v1 B) — 맥이 그 참모 대화 기록을 이어 읽은 목록 · 넣기 · 빼기(hide=false 면 되돌리기) */
+export const lockerLinks = (owner: string) => getJson<import('../domain/lockerLinks').LinksStore>(`/api/locker-links?owner=${encodeURIComponent(owner)}`);
+export const lockerLinkAdd = (owner: string, url: string) => post<import('../domain/lockerLinks').LockerLink>('/api/locker-link-add', { owner, url });
+export const lockerLinkHide = (owner: string, id: string, hide: boolean) => post<{ ok: true }>('/api/locker-link-hide', { owner, id, hide });
 export const lockerUnalias = (owner: string, rel: string) => post<{ ok: true }>('/api/locker-unalias', { owner, rel });
 export const lockerNewDoc = (owner: string, folder: string, title: string) => post<{ path: string }>('/api/locker-new', { owner, folder, title });
 export const lockerMkdir = (owner: string, parent: string, name: string) => post<{ rel: string }>('/api/locker-mkdir', { owner, parent, name });
 /** base = 열 때(지난 저장 때) 받은 글 — 맥에서 그새 바뀌었으면 맥이 409 CHANGED_OUTSIDE 로 안 쓴다 */
 export const lockerWrite = (owner: string, path: string, text: string, base?: string) => post<{ ok: true }>('/api/locker-write', { owner, path, text, ...(base === undefined ? {} : { base }) });
+/** 내 메모 — 맥 notes 폴더. 저장은 base(알던 글)가 지금 파일과 다르면 409 CHANGED_OUTSIDE */
+export const notesRead = () => getJson<import('../domain/notes').NoteRow[]>('/api/notes');
+export const noteRead = (name: string) => getText(`/api/note?name=${encodeURIComponent(name)}`);
+export const noteNew = () => post<import('../domain/notes').NoteRow>('/api/note-new', {});
+export const noteWrite = (name: string, text: string, base: string) => post<import('../domain/notes').NoteRow>('/api/note-write', { name, text, base });
+export const noteMeta = (name: string, patch: { skin?: string; shown?: boolean }) => post<import('../domain/notes').NoteRow>('/api/note-meta', { name, ...patch });
+export const noteTrash = (name: string) => post<{ ok: true }>('/api/note-trash', { name });
 /** 폰 홈 모드 카드 — 목록 · 한 칸(상태 + 보이는 칸 트리, 크기는 글자 칸) · 누름 · 맛보기 예시 켜기(그 참모 홈에) */
 export type PhoneModeRow = { name: string; title: string; source: string; on: boolean; where: string; dash: string | null; alive: boolean; hidden?: boolean };
 export const readModes = () => getJson<PhoneModeRow[]>('/api/modes');

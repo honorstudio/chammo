@@ -78,8 +78,54 @@ pub fn data_dir() -> &'static Path {
     D.get_or_init(|| {
         let d = resolve_data_dir(&home(), std::env::var("CHAMMO_HOME").ok().as_deref(), |p| Path::new(p).is_dir());
         let _ = std::fs::create_dir_all(&d);
+        #[cfg(unix)]
+        only_me(&d); // 새로 만든 폴더도 처음부터 나만 — 안쪽 파일은 앱 켤 때 harden_data
         d
     })
+}
+
+/// 그룹·다른 사람 권한 빼기(주인 권한은 그대로 — 실행 비트 포함). 링크는 안 따라간다
+#[cfg(unix)]
+fn only_me(p: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let Ok(m) = std::fs::symlink_metadata(p) else { return };
+    let mode = m.permissions().mode() & 0o777;
+    if !m.file_type().is_symlink() && mode & 0o077 != 0 {
+        let _ = std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode & 0o700));
+    }
+}
+
+/// 사람 글·종단 암호를 푼 평문이 있는 폴더 — 앱을 켤 때 안쪽까지 고친다. 나머지(도구·브라우저 프로필처럼 큰 폴더)는 위 폴더 700 이 가린다
+const PRIVATE_DIRS: [&str; 6] = ["team-profile-cache", "curation", "attach", "team-locker-peek", "notes", "locker"];
+
+#[cfg(unix)]
+fn only_me_deep(p: &Path) {
+    let is_dir = std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir());
+    only_me(p);
+    if is_dir {
+        for e in std::fs::read_dir(p).into_iter().flatten().flatten() {
+            only_me_deep(&e.path());
+        }
+    }
+}
+
+/// 데이터 폴더를 나만 읽게(보안 점검 M-1, 2026-11-07) — 폴더 700, 맨 위 파일과 PRIVATE_DIRS 안쪽 600·700. 옛 판이 남긴 644 를 앱 켤 때마다 고친다(뒤 스레드에서).
+/// 맥의 다른 계정이 team-profile-cache(푼 평문)·notify.log·attach 를 읽었다. 윈도우는 사용자 폴더 권한을 따른다
+pub fn harden_data(dir: &Path) {
+    #[cfg(unix)]
+    {
+        only_me(dir);
+        for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            if std::fs::symlink_metadata(e.path()).is_ok_and(|m| m.is_file()) {
+                only_me(&e.path());
+            }
+        }
+        for d in PRIVATE_DIRS {
+            only_me_deep(&dir.join(d));
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = dir;
 }
 
 /// 진짜 데이터 폴더인가(~/.chammo·~/.honor-orchestrator) — 시험 폴더(CHAMMO_HOME=~/.chammo-test 등)면 false.
@@ -102,7 +148,6 @@ pub fn data_file(name: &str) -> PathBuf {
 #[serde(rename_all = "camelCase", default)]
 pub struct Features {
     pub office: bool,
-    pub tama: bool,
     pub gacha: bool,
     pub review: bool,
     pub voice: bool,
@@ -135,7 +180,7 @@ pub struct Features {
 
 impl Default for Features {
     fn default() -> Self {
-        Features { office: true, tama: true, gacha: true, review: true, voice: true, auto_revive: false, auto_tidy: true, agent_view: true, computer_use: false, usage_ping: true, craft_basics: false, bubble: true, bubble_desk: true, git: None, animation: "auto".into() }
+        Features { office: true, gacha: true, review: true, voice: true, auto_revive: false, auto_tidy: true, agent_view: true, computer_use: false, usage_ping: true, craft_basics: false, bubble: true, bubble_desk: true, git: None, animation: "auto".into() }
     }
 }
 
@@ -240,7 +285,12 @@ pub enum Boot {
 
 /// 켤 때 설정 정하기. text = config.json 내용(없으면 None). 깨진 파일은 없는 것처럼
 pub fn boot(home: &str, data: &Path, text: Option<&str>) -> Boot {
-    if let Some(c) = text.and_then(|t| serde_json::from_str::<Config>(t).ok()) {
+    if let Some(mut c) = text.and_then(|t| serde_json::from_str::<Config>(t).ok()) {
+        // setupDone 칸이 아예 없는 옛 설정 = 이미 쓰던 사람 — 첫 설치 창을 다시 안 띄운다. 첫 설치 중이면 칸이 false 로 적혀 있다(ADR 0027)
+        let key = text.and_then(|t| serde_json::from_str::<serde_json::Value>(t).ok()).is_some_and(|v| v.get("setupDone").is_some());
+        if !key {
+            c.setup_done = true;
+        }
         return Boot::Saved(c);
     }
     if data == Path::new(&format!("{home}/{LEGACY}")) {
@@ -385,6 +435,7 @@ pub fn write_config<R: tauri::Runtime>(app: tauri::AppHandle<R>, config: Config)
     let basics_was = current().features.craft_basics;
     let lang_changed = current().language != config.language;
     write_file(&config)?;
+    crate::base_tools::kick_git(config.features.git == Some(true));
     #[cfg(target_os = "macos")]
     {
         // 말하기 키 설정은 바로 — 앱 밖 모니터는 메인 스레드에서 깐다
@@ -420,9 +471,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn 옛_설정은_첫_설치를_안_띄우고_첫_설치_중이면_이어_간다() {
+        let d = Path::new("/h/.chammo");
+        let done = |t: &str| match boot("/h", d, Some(t)) {
+            Boot::Saved(c) => c.setup_done,
+            _ => panic!("저장된 설정이어야"),
+        };
+        assert!(done(r#"{"devRoot":"~/dev"}"#), "칸이 없으면 이미 쓰던 사람");
+        assert!(done(r#"{"setupDone":true}"#));
+        assert!(!done(r#"{"setupDone":false}"#), "시작을 누른 뒤 끈 사람은 이어 간다");
+        assert!(matches!(boot("/h", d, None), Boot::Fresh), "파일이 없으면 새 설치");
+    }
+
+    #[test]
     fn git_칸은_없으면_비워_두고_화면엔_짐작으로() {
         // 옛 설정 파일(칸 없음)은 None — 저장해도 칸을 안 만든다. 화면엔 전역 git 메일 짐작으로 채워 준다(ADR 0024)
-        let c: Config = serde_json::from_str(r#"{"features":{"tama":false}}"#).unwrap();
+        let c: Config = serde_json::from_str(r#"{"features":{"gacha":false}}"#).unwrap();
         assert_eq!(c.features.git, None);
         assert!(!serde_json::to_string(&c).unwrap().contains("\"git\""));
         assert_eq!(with_git_guess(c.clone(), || true).features.git, Some(true));
@@ -455,10 +519,13 @@ mod tests {
 
     #[test]
     fn 빠진_칸은_기본값() {
-        let c: Config = serde_json::from_str(r#"{"language":"en","features":{"tama":false}}"#).unwrap();
+        let c: Config = serde_json::from_str(r#"{"language":"en","features":{"gacha":false}}"#).unwrap();
         assert_eq!(c.language, "en");
-        assert!(!c.features.tama);
-        assert!(c.features.office && c.features.gacha && c.features.review && c.features.voice);
+        assert!(!c.features.gacha);
+        assert!(c.features.office && c.features.review && c.features.voice);
+        // 옛 설정 파일의 tama 칸(다마고치는 11-06 없앰)은 그냥 무시 — 파일을 못 읽으면 설정이 통째로 날아간다
+        let old: Config = serde_json::from_str(r#"{"language":"en","features":{"tama":false,"office":false}}"#).unwrap();
+        assert!(!old.features.office && old.features.gacha);
         assert!(c.features.agent_view, "세션 브라우저 앱에서 보기는 기본 켬");
         assert!(c.features.usage_ping, "익명 사용 통계는 기본 켬");
         assert_eq!(c.ping_channel, "", "숨은 칸 pingChannel 은 비어 있으면 release");
@@ -481,7 +548,7 @@ mod tests {
     #[test]
     fn 기능_칸은_쓰기_읽기_왕복에서_안_사라진다() {
         // 앱(TS)이 보낸 설정을 그대로 저장했다가 다시 읽는다 — 구조체에 없는 칸은 serde 가 조용히 버린다
-        let sent = r#"{"features":{"office":true,"tama":true,"gacha":true,"review":true,"voice":true,"autoRevive":true,"agentView":false}}"#;
+        let sent = r#"{"features":{"office":true,"gacha":true,"review":true,"voice":true,"autoRevive":true,"agentView":false}}"#;
         let c: Config = serde_json::from_str(sent).unwrap();
         let back = serde_json::to_value(&c).unwrap();
         assert_eq!(back["features"]["autoRevive"], serde_json::json!(true), "자동으로 다시 켜기가 저장에서 사라짐");
@@ -718,5 +785,57 @@ mod tests {
         // 홈 밖이면 그 경로의 나눔 기호 그대로
         let c = default_config(r"C:\Users\me", Path::new(r"D:\chammo"), "ko", |_| false);
         assert_eq!((c.hq_dir.as_str(), c.memo_dir.as_str()), (r"D:\chammo\hq", r"D:\chammo\memo"));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod harden_tests {
+    use super::harden_data;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
+
+    fn mode(p: &Path) -> u32 {
+        std::fs::symlink_metadata(p).unwrap().permissions().mode() & 0o777
+    }
+    fn put(p: &Path, m: u32) {
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, b"x").unwrap();
+        std::fs::set_permissions(p, std::fs::Permissions::from_mode(m)).unwrap();
+    }
+
+    // 보안 점검 M-1(2026-11-07) — 이 맥 실측: 데이터 폴더 755, notify.log·tasks.jsonl 644, team-profile-cache 평문 57개 644. 맥의 다른 계정이 읽었다
+    #[test]
+    fn 앱을_켜면_데이터_폴더는_나만() {
+        let d = std::env::temp_dir().join(format!("chammo-harden-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let outside = std::env::temp_dir().join(format!("chammo-harden-out-{}", std::process::id()));
+        put(&outside, 0o644);
+        for f in ["notify.log", "tasks.jsonl", "team-profile-cache/abc", "curation/a-b.md", "attach/x/폰.png", "team-locker-peek/t/계약서.pdf", "notes/메모.md"] {
+            put(&d.join(f), 0o644);
+        }
+        put(&d.join("도구.sh"), 0o755);
+        put(&d.join("tools/deep/그대로.bin"), 0o755);
+        std::os::unix::fs::symlink(&outside, d.join("curation/밖으로")).unwrap();
+        std::os::unix::fs::symlink(&outside, d.join("밖으로2")).unwrap();
+        for s in ["team-profile-cache", "curation", "attach", "attach/x"] {
+            std::fs::set_permissions(d.join(s), std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        harden_data(&d);
+
+        assert_eq!(mode(&d), 0o700);
+        for f in ["notify.log", "tasks.jsonl", "team-profile-cache/abc", "curation/a-b.md", "attach/x/폰.png", "team-locker-peek/t/계약서.pdf", "notes/메모.md"] {
+            assert_eq!(mode(&d.join(f)), 0o600, "{f}");
+        }
+        for s in ["team-profile-cache", "curation", "attach", "attach/x"] {
+            assert_eq!(mode(&d.join(s)), 0o700, "{s}");
+        }
+        assert_eq!(mode(&d.join("도구.sh")), 0o700, "실행 권한은 남긴다");
+        assert_eq!(mode(&d.join("tools/deep/그대로.bin")), 0o755, "목록 밖 큰 폴더는 안 돈다 — 위 폴더 700 이 가린다");
+        assert_eq!(mode(&outside), 0o644, "링크를 따라 밖 파일을 고치지 않는다");
+        harden_data(&d.join("없는 폴더")); // 없어도 조용히
+        let _ = std::fs::remove_dir_all(&d);
+        let _ = std::fs::remove_file(&outside);
     }
 }

@@ -1,8 +1,9 @@
 // 폰 화면 — 시안 A(겹친 시트): 바닥 = 지금 참모 대시보드, 위 = 채팅 시트(살짝·반·전체). 참모를 바꾸면 바닥과 시트가 같이 바뀐다
 // 상태는 이것만 위에 둔다(a-build-notes): orch(기억) · view(대시보드|예약) · snap. picker·taskFold 는 그 아래
 // 예약 판을 열면 시트는 예약 담당 참모로(domain/mobile routineOrch)
+import { MemoTab } from './MemoTab';
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { getEnv, getPushLast, listBrowsers, listSessionsRaw, NoKeyError, readShowLog, readTasksSince, routinesList, teamViaMac, type MobileEnv } from '../../data/web';
+import { getEnv, getPushLast, listBrowsers, listSessionsRaw, NoKeyError, phoneDiag, readShowLog, readTasksSince, routinesList, teamViaMac, type MobileEnv } from '../../data/web';
 import { PhoneTeam, usePhoneTeam } from './PhoneTeam';
 import { chatFiles, showOwnerOf, type ChatFile } from '../../domain/chatFiles';
 import { titleOf } from '../../domain/reader';
@@ -48,7 +49,7 @@ import { useOrchAsks } from './useOrchAsks';
 import { useMemoPoll, usePoll } from './usePoll';
 import { useViewport, type Viewport } from './useViewport';
 import { BrandMark } from '../avatar';
-import { BOOT_LIMIT_MS, envFromCache, envIsWin, ENV_KEY, splashDeadline, splashDone, type BootBase } from '../../domain/boot';
+import { BOOT_LIMIT_MS, bootDiag, failWord, envFromCache, envIsWin, ENV_KEY, splashDeadline, splashDone, type BootBase } from '../../domain/boot';
 import { hideBootSplash } from './bootSplash';
 import { IconRefresh } from '../Icons';
 import { makePoller, RESUME_EVENT } from '../../domain/poller';
@@ -57,11 +58,13 @@ import { installResume } from './resume';
 import { installFreshBuild } from './freshBuild';
 import { Notice } from './Notice';
 import { PhoneLoginCard } from './PhoneLogin';
+import { unlinkPhone } from '../../phone-web/reset';
 import { preloadFirstScreen } from './bootPreload';
 import { PhoneFar, useFarDevices, type FarPick } from './PhoneFar';
 
 const ORCH_KEY = 'm.orch';
 const TAB_KEY = 'm.tab';
+type PhoneTab = 'orch' | 'team' | 'notes';
 const NO_LIVES: Live[] = [];
 /** 작업 기록 — 5초마다 바뀐 줄만(예전엔 꼬리 512KB 통째로, 2026-10-08) */
 const readTaskLog = makeTaskTail(readTasksSince);
@@ -214,6 +217,8 @@ export function MobileApp() {
   const [pick, setPick] = useState<string | null>(saved);
   const [snap, setSnap] = useState<Snap>('peek');
   const [noKey, setNoKey] = useState(false);
+  // 중계가 이 폰을 거절(401)·열쇠 없음 — 저절로 안 풀린다, 다시 잇기를 보인다(받기 고리는 계속 돌아 풀리면 사라진다)
+  const [denied, setDenied] = useState(false);
   // 다른 기기 보기(peer-panel) — 기억하지 않는다(새로 열면 늘 이 맥)
   const [far, setFar] = useState<FarPick | null>(null);
   const farDevs = useFarDevices();
@@ -228,8 +233,8 @@ export function MobileApp() {
   const frame = useRef<HTMLDivElement>(null);
   const vp = useViewport(frame);
   // 맨 아래 탭바 참모 | 팀(시안 v2 C) — 고른 탭은 기억, 키보드가 뜨면 탭바는 숨긴다
-  const [tab, setTabState] = useState<'orch' | 'team'>(() => { try { return localStorage.getItem(TAB_KEY) === 'team' ? 'team' : 'orch'; } catch { return 'orch'; } });
-  const setTab = (t: 'orch' | 'team') => { setTabState(t); try { localStorage.setItem(TAB_KEY, t); } catch { /* 이번만 */ } };
+  const [tab, setTabState] = useState<PhoneTab>(() => { try { const t = localStorage.getItem(TAB_KEY); return t === 'team' || t === 'notes' ? t : 'orch'; } catch { return 'orch'; } });
+  const setTab = (t: PhoneTab) => { setTabState(t); try { localStorage.setItem(TAB_KEY, t); } catch { /* 이번만 */ } };
   const team = usePhoneTeam(teamViaMac, tab === 'team');
   const tabBar = useRef<HTMLElement>(null);
   const [tabH, setTabH] = useState(0);
@@ -316,6 +321,9 @@ export function MobileApp() {
     };
     // 실패 줄(domain/unreach) — 허브가 몇 초 끊겼다 붙는 동안은 보던 화면 그대로, 유예를 넘게 이어질 때만 '못 닿음'(2026-11-02)
     let un: Unreach = { since: 0 };
+    const bootAt = Date.now();
+    let fails = 0;
+    let why = '';
     type Got = { ok: true; env: MobileEnv; raw: string } | { ok: false; err: unknown; at: number };
     const p = makePoller<Got>({
       read: async (signal) => {
@@ -327,6 +335,9 @@ export function MobileApp() {
           takeEnv(v);
           return { ok: true, env: v, raw };
         } catch (err) {
+          // 왜 못 받았나 — 폰 글은 맥에 안 남으니 낱말로 모았다가 받으면 한 줄(/api/diag)
+          fails += 1;
+          why = failWord(err, lim.late());
           return { ok: false, at, err: lim.late() ? new Error(tr(`${machine()} 답을 기다리고 있어요. 저절로 다시 해요`, `Waiting for your ${machine()}. Retrying automatically`)) : err };
         }
       },
@@ -336,9 +347,18 @@ export function MobileApp() {
           if (g.err instanceof NoKeyError) { forgetEnv(); setNoKey(true); p.stop(); return; } // 열쇠가 없으면 더 묻지 않는다
           const step = unreachStep(un, { ok: false, startedAt: g.at, now: Date.now() });
           un = { since: step.since };
-          if (step.show) setError(netText(g.err));
+          const trust = (g.err as Error)?.name === 'TrustError';
+          if (trust) setDenied(true);
+          if (step.show || trust) setError(netText(g.err));
           return;
         }
+        setDenied(false);
+        // 처음 받기까지 오래 걸렸거나 끊겼다 붙었으면 맥 기록에 한 줄 — 맥 쪽에서 원인을 볼 수 있게(한 번 시도당 10초 막이는 서버가 한다)
+        const gap = got ? (un.since ? Date.now() - un.since : 0) : Date.now() - bootAt;
+        const line = bootDiag({ ms: gap, fails, why });
+        if (line) void phoneDiag(got ? 'net-gap' : 'boot-slow', line);
+        fails = 0;
+        why = '';
         un = { since: 0 };
         got = true;
         show(g.env, g.raw);
@@ -398,6 +418,17 @@ export function MobileApp() {
   if (noKey) {
     return cover(<PairHelp />);
   }
+  if (denied) {
+    return cover(
+      <div className="m-center m-unreach">
+        <BrandMark size={64} className="m-brand" />
+        <p>{tr('이 폰 연결이 풀렸어요', 'This phone got disconnected')}</p>
+        <p className="m-unreach-why">{tr('다시 로그인하면 바로 이어져요', 'Sign in again to reconnect')}</p>
+        <button type="button" className="m-send" onClick={() => void unlinkPhone().finally(() => location.replace('/pair'))}>{tr('다시 잇기', 'Reconnect')}</button>
+        <button type="button" className={retrying ? 'm-icon m-retrying' : 'm-icon'} disabled={retrying} onClick={retry} aria-label={tr('다시 시도', 'Try again')} title={tr('다시 시도', 'Try again')}><IconRefresh /></button>
+      </div>,
+    );
+  }
   // 한 번도 못 받았으면 — 맥에 못 닿은 이유 + 다시 시도(받기 고리는 3초마다 저절로도 다시 한다). 받기 전엔 모찌가 덮고 있어 글자 화면이 없다
   if (!stateAt || !env) {
     return cover(
@@ -425,7 +456,8 @@ export function MobileApp() {
     <div ref={frame} className={`m-app ${vp.kb ? '' : 'm-tabbed'}`} style={{ top: vp.top, height: vp.h }}>
       {error && <div className="m-error m-top-err">{error}</div>}
       <div className="m-tabpage" style={{ height: pageVp.h }}>
-        {tab === 'team'
+        {tab === 'notes' ? <MemoTab onShare={(text) => { askRef(orch.id, { kind: 'chat', who: tr('내 메모', 'My notes'), text }); }}
+          onPaste={(text) => { askRef(orch.id, { kind: 'chat', who: tr('내 메모', 'My notes'), text, plain: true }); setTab('orch'); }} /> : tab === 'team'
           ? <PhoneTeam kb={vp.kb} api={teamViaMac} t={team} orch={{ id: orch.id, name: orch.name || env.assistantName }} open={teamRoom} />
           : <OrchSpace key={orch.id} far={farDevs.length ? { devices: farDevs, onPick: setFar } : undefined} orch={orch} orchs={orchs} sessions={sessions} events={events} waiting={waiting} waitSent={waitSent} ask={asks[orch.id] ?? null} ctx={ctx} env={env} snap={snap} setSnap={setSnap} vp={pageVp} stateAt={stateAt} lines={lines}
             view={view} setView={setView} onPick={go} onTalk={talkTo} onStopped={stopped} wake={wake} lives={lives} push={push} jump={jump} />}
@@ -434,6 +466,7 @@ export function MobileApp() {
         <nav ref={tabBar} className="m-tabbar" role="tablist" aria-label={tr('화면', 'Screens')}>
           <button role="tab" aria-selected={tab === 'orch'} className={tab === 'orch' ? 'on' : ''} onClick={() => setTab('orch')}>{env.assistantName}</button>
           <button role="tab" aria-selected={tab === 'team'} className={tab === 'team' ? 'on' : ''} onClick={() => setTab('team')}>{tr('팀', 'Team')}{team.unread > 0 && <i className="tmx-ur in">{team.unread > 99 ? '99+' : team.unread}</i>}</button>
+          <button role="tab" aria-selected={tab === 'notes'} className={tab === 'notes' ? 'on' : ''} onClick={() => setTab('notes')}>{tr('메모', 'Notes')}</button>
         </nav>
       )}
     </div>,

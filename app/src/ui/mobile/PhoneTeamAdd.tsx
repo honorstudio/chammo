@@ -6,17 +6,19 @@ import type { TeamPhoneApi } from '../../data/web';
 import type { TeamView } from '../../data/teamApi';
 import { teamMark } from '../../domain/teamChat';
 import { defaultMe, sameTeamName } from '../../domain/teamAdd';
+import { contactOf, createLock, planErr, type CreateLock } from '../../domain/teamLock';
+import { lockText } from '../team/TeamLock';
 import { tr } from '../../i18n';
-import { IconBack, IconCopy, IconPlus, IconShare } from '../Icons';
+import { IconBack, IconCopy, IconShare } from '../Icons';
 import { TeamMarkIcon } from '../team/TeamFaces';
 import { BottomSheet } from './BottomSheet';
 import { IconBtn } from './kit';
 
 type Stacked = { id: string; name: string; current: boolean };
 
-export function PhoneTeamStrip({ stack, icon, color, unreadOf, onPick, onCurrent, onAdd }: {
+export function PhoneTeamStrip({ stack, icon, color, unreadOf, onPick, onCurrent }: {
   stack: Stacked[]; icon?: string; color?: string; unreadOf: (id: string) => number;
-  onPick: (id: string) => void; onCurrent: () => void; onAdd: () => void;
+  onPick: (id: string) => void; onCurrent: () => void;
 }) {
   return (
     <div className="m-team-strip">
@@ -31,7 +33,6 @@ export function PhoneTeamStrip({ stack, icon, color, unreadOf, onPick, onCurrent
           </button>
         );
       })}
-      <button className="m-team-add" aria-label={tr('팀 추가', 'Add a team')} onClick={onAdd}><IconPlus /></button>
     </div>
   );
 }
@@ -48,6 +49,8 @@ export function TeamAddSheet({ api, view, onClose, onChanged }: { api: TeamPhone
   const me = meIn ?? defaultMe(view);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<{ msg: string; raw: string } | null>(null);
+  /** 만들기를 서버가 402 로 거절함 — 오류 줄 대신 문의 칸(chammo-relay ADR 0015) */
+  const [lockErr, setLockErr] = useState<CreateLock | null>(null);
   const [made, setMade] = useState('');
   const [link, setLink] = useState('');
   const [copied, setCopied] = useState(false);
@@ -60,7 +63,11 @@ export function TeamAddSheet({ api, view, onClose, onChanged }: { api: TeamPhone
       setMade(n);
       onChanged();
       return api.invite().then((l) => setLink(l.link), fail(tr('초대 링크를 못 만들었어요', "Couldn't make the invite link")));
-    }, fail(tr('팀을 만들지 못했어요. 잠시 뒤에 다시 해 주세요.', "Couldn't create the team. Please try again in a moment."))));
+    }, (e: unknown) => {
+      const l = planErr(errText(e));
+      if (l) setLockErr(l);
+      else fail(tr('팀을 만들지 못했어요. 잠시 뒤에 다시 해 주세요.', "Couldn't create the team. Please try again in a moment."))(e);
+    }));
   };
   const join = () => go(api.join(code, me).then(() => { onChanged(); onClose(); },
     fail(tr('들어가지 못했어요. 링크가 만료됐거나 이미 사용됐어요.', "Couldn't join. The link has expired or was already used."))));
@@ -70,8 +77,11 @@ export function TeamAddSheet({ api, view, onClose, onChanged }: { api: TeamPhone
       <div className="m-ts-make"><input value={me} onChange={(e) => setMe(e.target.value)} maxLength={40} aria-label={tr('이 팀에서 보일 내 이름', 'Your name in this team')} /></div>
     </>
   );
-  const back = <IconBtn label={tr('뒤로', 'Back')} onClick={() => { setStep('menu'); setErr(null); }}><IconBack /></IconBtn>;
-  const title = made ? tr(`${made} 팀을 만들었어요`, `${made} is ready`) : step === 'make' ? tr('새 팀 만들기', 'Create a team') : step === 'join' ? tr('초대 링크로 들어가기', 'Join with an invite link') : tr('팀 추가', 'Add a team');
+  const back = <IconBtn label={tr('뒤로', 'Back')} onClick={() => { setStep('menu'); setErr(null); setLockErr(null); }}><IconBack /></IconBtn>;
+  // 새 팀은 권한 받은 계정만 — 같은 시트가 문의 칸으로(시안 team-lock v1 A2). 들어가기는 그대로
+  const lock = step === 'make' && !made ? (lockErr ?? createLock(view?.plan)) : null;
+  const lt = lock && lockText(lock);
+  const title = lt ? lt.title : made ? tr(`${made} 팀을 만들었어요`, `${made} is ready`) : step === 'make' ? tr('새 팀 만들기', 'Create a team') : step === 'join' ? tr('초대 링크로 들어가기', 'Join with an invite link') : tr('팀 추가', 'Add a team');
   return (
     <BottomSheet label={title} title={title} onClose={onClose}>
       <div className="m-team-sheet">
@@ -79,7 +89,13 @@ export function TeamAddSheet({ api, view, onClose, onChanged }: { api: TeamPhone
           <button className="m-ts-act" onClick={() => setStep('make')}>{tr('새 팀 만들기', 'Create a team')}</button>
           <button className="m-ts-act" onClick={() => setStep('join')}>{tr('초대 링크로 들어가기', 'Join with an invite link')}</button>
         </>}
-        {step === 'make' && !made && <>
+        {lock && lt && <>
+          <div className="m-ts-head">{back}</div>
+          <p className="m-tl-body">{lt.body}</p>
+          <a className="tmx-btn pri m-ts-go m-tl-go" href={contactOf(view?.plan)} target="_blank" rel="noopener noreferrer">{tr('문의하기', 'Contact us')}</a>
+          {lock.kind !== 'expired' && <button className="tmx-btn m-ts-go m-tl-ghost" onClick={() => { setLockErr(null); setStep('join'); }}>{tr('초대 링크로 들어가기', 'Join with an invite link')}</button>}
+        </>}
+        {step === 'make' && !made && !lock && <>
           <div className="m-ts-head">{back}</div>
           <span className="m-ts-sec">{tr('팀 이름', 'Team name')}</span>
           <div className="m-ts-make"><input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} aria-label={tr('팀 이름', 'Team name')} autoFocus /></div>

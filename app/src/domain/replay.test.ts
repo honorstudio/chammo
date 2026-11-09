@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildReplay, dayWindow, parseDayCommits, repoToday, shiftDay } from './replay';
+import { buildReplay, codeToday, dayWindow, parseDayCommits, shiftDay } from './replay';
 import type { TaskEvent } from './tasks';
 
 // 2026-09-27 새벽 5시(로컬) 기준 하루
@@ -33,7 +33,7 @@ describe('parseDayCommits — 저장소 표시가 붙은 커밋 기록', () => {
   });
 });
 
-describe('repoToday — 위 막대 오늘 커밋 (저장소별)', () => {
+describe('codeToday — 위 띠 오늘 한 일 개발자 칸', () => {
   const raw = [
     '@@R\tsign-shop',
     `@@C\ta1\t${sec(at(9))}\tp1\t시안 v3`,
@@ -48,14 +48,11 @@ describe('repoToday — 위 막대 오늘 커밋 (저장소별)', () => {
     `@@C\tb2\t${sec(at(12))}\tp1 p2\tMerge branch x`,
   ].join('\n');
 
-  it('디자인 파일 줄은 빼고, 머지 커밋은 개수에서 빼고, 커밋 많은 저장소 먼저', () => {
-    expect(repoToday(parseDayCommits(raw))).toEqual([
-      { name: 'sign-shop', commits: 2, added: 13, deleted: 4 },
-      { name: 'my-app', commits: 1, added: 40, deleted: 5 },
-    ]);
+  it('디자인 파일 줄은 빼고, 머지 커밋은 따로 센다', () => {
+    expect(codeToday(parseDayCommits(raw))).toEqual({ commits: 3, merges: 1, added: 53, deleted: 9, repos: 2 });
   });
 
-  it('커밋 없으면 빈 목록', () => expect(repoToday(parseDayCommits('@@R\tx\n'))).toEqual([]));
+  it('커밋 없으면 다 0', () => expect(codeToday(parseDayCommits('@@R\tx\n'))).toEqual({ commits: 0, merges: 0, added: 0, deleted: 0, repos: 0 }));
 });
 
 describe('buildReplay — 하루를 한 화면으로', () => {

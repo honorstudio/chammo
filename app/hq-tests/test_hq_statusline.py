@@ -94,5 +94,88 @@ class Chain(unittest.TestCase):
             self.assertEqual(sl.branch(d), 'feat+')
 
 
+class Cheap(unittest.TestCase):
+    """상태줄은 바쁜 세션마다 초에 몇 번 돈다(11-07 맥 전체 새 프로세스 초당 75개의 대부분) — 프로세스를 아낀다"""
+
+    def run_script(self, path_dirs, stdin='{}', env=None):
+        import subprocess
+        e = {'PATH': ':'.join(path_dirs), 'HOME': env.pop('HOME') if env and 'HOME' in env else tempfile.gettempdir(), **(env or {})}
+        return subprocess.run([str(SCRIPTS / 'statusline')], input=stdin, capture_output=True, text=True, env=e, timeout=30)
+
+    def fake_shim(self, d, log):
+        shims = pathlib.Path(d, '.pyenv/shims')
+        shims.mkdir(parents=True)
+        real = sys.executable
+        shim = shims / 'python3'
+        shim.write_text(f'#!/bin/sh\necho shim >> {log}\nexec {real} "$@"\n')
+        shim.chmod(0o755)
+        return str(shims)
+
+    def real_dir(self, d):
+        r = pathlib.Path(d, 'real')
+        r.mkdir()
+        (r / 'python3').symlink_to(sys.executable)
+        return str(r)
+
+    def test_pyenv_심을_건너뛰고_진짜_파이썬으로(self):
+        # 심 한 번에 bash 20개·1초 — 진짜 파이썬이 PATH 에 있으면 그걸로
+        with tempfile.TemporaryDirectory() as d:
+            log = pathlib.Path(d, 'log')
+            shims = self.fake_shim(d, log)
+            r = self.run_script([shims, self.real_dir(d), '/usr/bin', '/bin'], env={'CHAMMO_HOME': d, 'HOME': d})
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertFalse(log.exists(), '심을 탔다')
+
+    def test_심밖에_없으면_심으로(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = pathlib.Path(d, 'log')
+            r = self.run_script([self.fake_shim(d, log), '/bin'], env={'CHAMMO_HOME': d, 'HOME': d})
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue(log.exists(), '심밖에 없으면 심으로')
+
+    def test_사용자_상태줄은_원래_PATH_로_돈다(self):
+        # 심을 뺀 PATH 가 사용자 명령까지 가면 그 사람 pyenv 파이썬이 바뀐다
+        with tempfile.TemporaryDirectory() as d:
+            home = pathlib.Path(d, 'home')
+            (home / '.claude').mkdir(parents=True)
+            (home / '.claude/settings.json').write_text(json.dumps({'statusLine': {'command': 'printf %s "$PATH"'}}))
+            log = pathlib.Path(d, 'log')
+            shims = self.fake_shim(d, log)
+            r = self.run_script([shims, self.real_dir(d), '/usr/bin', '/bin'], stdin=json.dumps({'session_id': 'p1'}), env={'CHAMMO_HOME': str(pathlib.Path(d, 'data')), 'HOME': str(home)})
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue(r.stdout.startswith(shims), r.stdout)
+
+    def test_사용자_상태줄은_세션마다_10초에_한_번만_돌린다(self):
+        calls = []
+        def run(cmd, raw):
+            calls.append(raw)
+            return f'줄{len(calls)}'
+        with tempfile.TemporaryDirectory() as d:
+            raw = json.dumps({'session_id': 'c1'})
+            self.assertEqual(sl.user_line('cmd', raw, d, run=run, now=100), '줄1')
+            self.assertEqual(sl.user_line('cmd', raw, d, run=run, now=105), '줄1', '10초 안이면 지난 줄')
+            self.assertEqual(sl.user_line('cmd', raw, d, run=run, now=111), '줄2', '지나면 새로')
+            self.assertEqual(sl.user_line('cmd', json.dumps({'session_id': 'c2'}), d, run=run, now=111), '줄3', '세션마다 따로')
+            self.assertEqual(sl.user_line('cmd', '{깨짐', d, run=run, now=111), '줄4', '세션을 모르면 늘 돌린다')
+            self.assertEqual(len(calls), 4)
+
+    def test_끝난_세션_줄은_하루_뒤_지워진다(self):
+        with tempfile.TemporaryDirectory() as d:
+            sl.user_line('cmd', json.dumps({'session_id': 'old'}), d, run=lambda c, r: 'x', now=1000)
+            sl.user_line('cmd', json.dumps({'session_id': 'new'}), d, run=lambda c, r: 'y', now=64 * 2000)
+            names = os.listdir(pathlib.Path(d, 'tmp/statusline'))
+            self.assertEqual(names, ['new.txt'])
+
+    def test_세션_번호에_경로가_섞여도_데이터_폴더_밖에_안_쓴다(self):
+        with tempfile.TemporaryDirectory() as d:
+            sl.user_line('cmd', json.dumps({'session_id': '../../밖'}), d, run=lambda c, r: 'x', now=1)
+            self.assertFalse(pathlib.Path(d).parent.joinpath('밖').exists())
+
+    def test_시작_때_subprocess_를_안_읽는다(self):
+        # 파이썬 시작 비용의 큰 몫 — 사용자 명령을 돌릴 때만 읽는다
+        src = (SCRIPTS / 'statusline').read_text()
+        self.assertNotRegex(src.split('def data_dir')[0], r'import [^\n]*subprocess')
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -37,3 +37,16 @@ html.cv-block-dragging, html.cv-block-dragging * { cursor: grabbing !important; 
 .space-editor div:has(> .bn-suggestion-menu) { display: flex; flex-direction: column; }
 .space-editor .bn-mantine .bn-suggestion-menu,
 .space-editor .bn-suggestion-menu { max-height: 360px; min-height: 0; flex: 0 1 auto; }
+/* 표 칸 선택(여러 칸 끌기) — 파란 칸(노션처럼, 2026-11-09 사용자). 글 선택은 위 회색 그대로라 칸 단위인지 글 단위인지 바로 갈린다.
+   BlockNote 기본은 칸 위 연보라 덮개(::after)라 글까지 흐려졌다 — 덮개는 끄고 칸 바탕에 칠한다(칸 배경색 위에 겹쳐 칠해지게 그림 층으로) */
+.space-editor .ProseMirror .selectedCell::after { background: none; }
+.space-editor .ProseMirror .selectedCell { background-image: linear-gradient(rgba(35, 131, 226, .2), rgba(35, 131, 226, .2)); }
+/* 블록 고르기(blockPick.ts) — 고른 블록은 파란 면(표 칸 선택과 같은 파랑), 그동안 덮어 둔 글 선택색·커서는 숨긴다 */
+.space-editor { --bp-bg: rgba(35, 131, 226, .16); }
+.space-editor[data-bp] .bn-editor ::selection { background: transparent; }
+.space-editor[data-bp] .bn-editor { caret-color: transparent; }
+/* 손잡이 메뉴(HandleMenu.tsx) — 아이콘만, 가로 한 줄 */
+.bn-drag-handle-menu { display: flex; gap: 2px; padding: 4px; min-width: 0 !important; }
+.bn-drag-handle-menu .bn-menu-item { width: 32px; height: 32px; padding: 0; justify-content: center; }
+.bn-drag-handle-menu .doc-hm-ico { display: inline-flex; width: 16px; height: 16px; }
+.bn-drag-handle-menu .doc-hm-ico svg { width: 16px; height: 16px; }

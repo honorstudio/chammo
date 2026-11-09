@@ -4,12 +4,12 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { teamThumbBlob, type PhoneLockerOp, type PhoneTeamLocker as View, type PhoneTeamUps, type TeamPhoneApi } from '../../data/web';
 import { FileMini } from '../team/RoomBits';
-import { keyWaitNote, lockedFiles, baseOf, crumbsOf, extOf, fmtBytes, thumbKind, inPlace, kidFolders, moveTargets, parentOf, phoneView, renamedPath, usageText, whenText, type LockerItem } from '../../domain/teamLocker';
+import { keyWaitNote, lockedFiles, upNote, baseOf, crumbsOf, extOf, fmtBytes, thumbKind, inPlace, kidFolders, moveTargets, parentOf, phoneView, renamedPath, usageText, whenText, type LockerItem } from '../../domain/teamLocker';
 import { partsOf } from '../../domain/teamPhoneUp';
 import { teamViewMemo } from '../../domain/teamViewMemo';
 import { machine, tr } from '../../i18n';
 import { FolderTile, PathCrumbs } from '../space/FolderTile';
-import { IconFolder, IconMore, IconPlus, IconTrash } from '../Icons';
+import { IconFolder, IconFolderPlus, IconMore, IconPlus, IconTrash } from '../Icons';
 import { BottomSheet } from './BottomSheet';
 import { IconBtn } from './kit';
 import { usePress } from './PhoneLockerParts';
@@ -32,7 +32,7 @@ type OpBody = PhoneLockerOp extends infer T ? (T extends unknown ? Omit<T, 'team
 const errText = (e: unknown) => String((e as Error)?.message ?? e).slice(0, 160);
 const nameOf = (i: LockerItem) => i.name || tr('열 수 없는 파일', 'Unreadable file');
 
-/** onOpen = 그림·PDF 줄을 누르면 크게 보기(PhoneTeam 의 보기 창) */
+/** onOpen = 그림·PDF·영상 줄을 누르면 크게 보기·재생(PhoneTeam 의 보기 창). 길게 누르면 메뉴 */
 export function PhoneTeamLocker({ api, teamId, onOpen }: { api: TeamPhoneApi; teamId: string; onOpen?: (i: LockerItem) => void }) {
   const [v, setV] = useState<View | null>(() => memo.get(teamId)?.v ?? null);
   const [ups, setUps] = useState<PhoneTeamUps['uploads']>([]);
@@ -43,7 +43,8 @@ export function PhoneTeamLocker({ api, teamId, onOpen }: { api: TeamPhoneApi; te
   const [trash, setTrash] = useState(false);
   const [menu, setMenu] = useState<Menu | null>(null);
   const [ask, setAsk] = useState<Ask | null>(null);
-  const [adding, setAdding] = useState(false);
+  /** + — 폰 기본 첨부 창(iOS: 사진 보관함·사진 찍기·파일 선택). 우리 모달은 한 단계 더라 뺐다(11-06 사용자) */
+  const pick = useRef<HTMLInputElement>(null);
   const rev = useRef(0);
   /** 읽는 중인 팀 id(빈 값 = 쉼) — 팀마다 따로라 앞 팀을 읽는 중에도 새 팀은 바로 읽는다 */
   const busy = useRef('');
@@ -93,9 +94,9 @@ export function PhoneTeamLocker({ api, teamId, onOpen }: { api: TeamPhoneApi; te
   };
 
   // 올리기 — 지금 보는 폴더에, 하나씩 차례로. 상한(1GB)을 넘는 파일은 한 줄 안내
-  const upload = async (files: FileList) => {
+  const upload = async (files: File[]) => {
     const to = place;
-    for (const f of Array.from(files)) {
+    for (const f of files) {
       if (partsOf(f.size) === null) { setNote(tr(`${f.name} — 1GB 넘는 파일은 ${machine()} 팀 보관함에서 올려 줘요`, `${f.name} — files over 1GB have to be uploaded from the team locker on your ${machine()}`)); continue; }
       const key = `${f.name}:${f.size}:${Date.now()}`;
       setSending((s) => [...s, { key, name: f.name, sent: 0, total: f.size }]);
@@ -124,7 +125,10 @@ export function PhoneTeamLocker({ api, teamId, onOpen }: { api: TeamPhoneApi; te
         <span className="m-tlk-sp" />
         {!trash && place && <IconBtn label={tr('이 폴더', 'This folder')} onClick={() => setMenu({ kind: 'folder', key: place, n: nIn(place) })}><IconMore /></IconBtn>}
         <IconBtn label={trash ? tr('팀 보관함으로', 'Back to team locker') : tr('휴지통', 'Trash')} onClick={() => { setTrash((x) => !x); setPlace(''); }}>{trash ? <IconFolder /> : <IconTrash />}</IconBtn>
-        {!trash && <IconBtn label={tr('추가', 'Add')} onClick={() => setAdding(true)}><IconPlus /></IconBtn>}
+        {!trash && <IconBtn label={tr('새 폴더', 'New folder')} onClick={() => setAsk({ kind: 'name', what: 'mkdir' })}><IconFolderPlus /></IconBtn>}
+        {!trash && <IconBtn label={tr('올리기', 'Upload')} onClick={() => pick.current?.click()}><IconPlus /></IconBtn>}
+        {/* 고른 목록은 배열로 옮긴 뒤 칸을 비운다 — 같은 파일을 다시 골라도 change 가 온다 */}
+        <input ref={pick} type="file" multiple hidden onChange={(e) => { const f = Array.from(e.currentTarget.files ?? []); e.currentTarget.value = ''; if (f.length) void upload(f); }} />
       </div>
       {!trash && place && <PathCrumbs root={tr('팀 보관함', 'Team locker')} crumbs={crumbsOf(place)} onGo={setPlace} dropOf={() => ({})} back={() => setPlace(parentOf(place))} />}
       {!trash && keyWaitNote(lockedFiles(v.items), 'file') && <span className="tmx-hint m-tlk-note">{keyWaitNote(lockedFiles(v.items), 'file')}</span>}
@@ -137,7 +141,7 @@ export function PhoneTeamLocker({ api, teamId, onOpen }: { api: TeamPhoneApi; te
       {(files.length > 0 || sending.length > 0 || ups.length > 0) && (
         <div className="tmx-lk-rows m-team-lk">
           {!trash && sending.map((s) => <div key={s.key} className="tmx-lk-row tlk-up"><span className="tmx-ext">{extOf(s.name) || tr('파일', 'File')}</span><b>{s.name}</b><span className="d">{tr(`보내는 중 ${s.total ? Math.floor((s.sent / s.total) * 100) : 0}%`, `Sending ${s.total ? Math.floor((s.sent / s.total) * 100) : 0}%`)}</span></div>)}
-          {!trash && ups.map((u, k) => <div key={`u${k}`} className="tmx-lk-row tlk-up"><span className="tmx-ext">{extOf(u.name) || tr('파일', 'File')}</span><b>{u.name}</b><span className="d">{u.error ? tr(`못 올렸어요 — ${u.error}`, `Couldn't upload — ${u.error}`) : tr(`올리는 중 ${u.total ? Math.floor((u.done / u.total) * 100) : 0}%`, `Uploading ${u.total ? Math.floor((u.done / u.total) * 100) : 0}%`)}</span></div>)}
+          {!trash && ups.filter((u) => (u.folder ?? '') === place).map((u, k) => <div key={`u${k}`} className="tmx-lk-row tlk-up"><span className="tmx-ext">{extOf(u.name) || tr('파일', 'File')}</span><b>{u.name}</b><span className="d">{u.error ? tr(`못 올렸어요 — ${u.error}`, `Couldn't upload — ${u.error}`) : upNote(u) || tr(`올리는 중 ${u.total ? Math.floor((u.done / u.total) * 100) : 0}%`, `Uploading ${u.total ? Math.floor((u.done / u.total) * 100) : 0}%`)}</span></div>)}
           {files.map((i) => <Row key={i.id} teamId={teamId} item={i} trash={trash} onOpen={onOpen} onMenu={() => setMenu({ kind: 'file', item: i })} />)}
         </div>
       )}
@@ -154,7 +158,6 @@ export function PhoneTeamLocker({ api, teamId, onOpen }: { api: TeamPhoneApi; te
           else if (menu.n > 0) setAsk({ kind: 'rm-folder', key: menu.key, n: menu.n });
           else run({ op: 'folder-trash', from: menu.key }, () => setPlace(parentOf(menu.key)));
         }} />}
-      {adding && <AddSheet onClose={() => setAdding(false)} onFiles={(f) => void upload(f)} onFolder={() => setAsk({ kind: 'name', what: 'mkdir' })} />}
       {ask?.kind === 'name' && <NameSheet title={ask.what === 'mkdir' ? tr('새 폴더', 'New folder') : tr('이름 바꾸기', 'Rename')} start={ask.what === 'file' ? ask.item.name : ask.what === 'folder' ? baseOf(ask.key) : ''} cta={ask.what === 'mkdir' ? tr('만들기', 'Create') : tr('바꾸기', 'Rename')}
         onClose={() => setAsk(null)}
         onOk={(name) => {
@@ -193,7 +196,7 @@ function Row({ teamId, item, trash, onOpen, onMenu }: { teamId: string; item: Lo
   const d = [fmtBytes(item.size), whenText(item.at), by].filter(Boolean).join(' · ');
   return (
     <button type="button" className={`tmx-lk-row ${item.why ? 'tlk-locked' : ''}`} title={item.why || undefined} {...press}>
-      <FileMini className="tmx-ext" id={item.id} name={item.name} get={thumbKind(item.name, item.size) && !item.why && !trash ? () => teamThumbBlob(teamId, item.id) : undefined} /><b>{nameOf(item)}</b><span className="d">{d}</span>
+      <FileMini className="tmx-ext" id={item.id} name={item.name} lazy get={thumbKind(item.name, item.size) && !item.why && !trash ? () => teamThumbBlob(teamId, item.id) : undefined} /><b>{nameOf(item)}</b><span className="d">{d}</span>
     </button>
   );
 }
@@ -206,30 +209,6 @@ function MenuSheet({ menu, trash, onClose, onPick }: { menu: Menu; trash: boolea
   return (
     <BottomSheet label={title} kind="card" title={title} armMs={450} onClose={onClose}>
       {({ close, armed }) => acts.map(([a, label]) => <button key={a} type="button" className="m-menu-item" onClick={() => { if (armed) { close(); onPick(a); } }}>{label}</button>)}
-    </BottomSheet>
-  );
-}
-
-/** 더하기 — 사진·파일 올리기(지금 보는 폴더에) · 새 폴더 */
-function AddSheet({ onClose, onFiles, onFolder }: { onClose: () => void; onFiles: (f: FileList) => void; onFolder: () => void }) {
-  const photo = useRef<HTMLInputElement>(null);
-  const file = useRef<HTMLInputElement>(null);
-  const pick = (el: HTMLInputElement | null, close: () => void) => {
-    if (!el) return;
-    el.onchange = () => { if (el.files?.length) onFiles(el.files); close(); };
-    el.click();
-  };
-  return (
-    <BottomSheet label={tr('팀 보관함에 더하기', 'Add to team locker')} kind="card" title={tr('팀 보관함에', 'To team locker')} onClose={onClose}>
-      {({ close }) => (
-        <>
-          <button type="button" className="m-menu-item" onClick={() => pick(photo.current, close)}>{tr('사진 올리기', 'Upload photo')}</button>
-          <button type="button" className="m-menu-item" onClick={() => pick(file.current, close)}>{tr('파일 올리기', 'Upload file')}</button>
-          <button type="button" className="m-menu-item" onClick={() => { close(); onFolder(); }}>{tr('새 폴더', 'New folder')}</button>
-          <input ref={photo} type="file" accept="image/*,video/*" multiple hidden />
-          <input ref={file} type="file" multiple hidden />
-        </>
-      )}
     </BottomSheet>
   );
 }

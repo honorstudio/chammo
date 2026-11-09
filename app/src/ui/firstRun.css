@@ -1,0 +1,73 @@
+/* 층은 DOM 순서로(채움 → 머리 → 글 → 선) — 숫자 z-index 금지. 첫 설치 — 큰 글자 한 줄과 바닥 선 하나(시안 onboarding v1 C). 끝에서 선이 창을 파랗게 채운다. 왼쪽 띠·그라데이션 없음 */
+.fr { position: fixed; inset: 0; z-index: var(--z-modal); background: var(--surface); color: var(--text); overflow: hidden; -webkit-font-smoothing: antialiased; letter-spacing: -.01em; }
+.fr-top { position: absolute; left: 56px; top: 44px; font-size: 12.5px; color: var(--text-3); }
+.fr-top b { color: var(--text); font-weight: 700; transition: color .6s ease 1s; }
+.fr-win .fr-top { top: 24px; }
+.fr-body { position: absolute; inset: 0; }
+.fr-scr { position: absolute; left: 56px; right: 56px; top: 96px; bottom: 52px; display: flex; flex-direction: column; animation: frIn .45s cubic-bezier(.2, .8, .2, 1) both; }
+.fr-end { justify-content: flex-end; }
+.fr-scr h1 { margin: 0; font-size: 46px; line-height: 1.08; font-weight: 700; letter-spacing: -.045em; }
+.fr-scr p { margin: 12px 0 0; font-size: 15px; color: var(--text-3); }
+@keyframes frIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+.fr-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-top: 26px; }
+.fr-foot { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.fr-foot > :only-child { margin-left: 0; }
+.fr-sub { font-size: 12.5px; color: var(--text-3); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; min-width: 0; }
+.fr-sub code { font: 600 12px ui-monospace, Menlo, monospace; color: var(--text); overflow-wrap: anywhere; }
+.fr-btn { height: 44px; padding: 0 26px; border-radius: 999px; border: 1.5px solid var(--text); background: var(--text); color: var(--surface); font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; flex: 0 0 auto; transition: transform .12s, background .15s, color .15s, border-color .15s; }
+.fr-btn:hover:not(:disabled) { background: var(--surface); color: var(--text); }
+.fr-btn:active:not(:disabled) { transform: scale(.97); }
+.fr-btn:disabled { opacity: .55; cursor: default; }
+.fr-lnk { background: none; border: 0; padding: 0 2px; min-height: 28px; font: inherit; font-size: 12.5px; color: var(--text-3); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.fr-lnk:hover { color: var(--text); }
+.fr :focus-visible { outline: 2px solid var(--working); outline-offset: 2px; }
+
+/* 준비 — 항목 단위 + 지금 항목의 움직임 */
+.fr-list { list-style: none; margin: 22px 0 0; padding: 0; display: flex; flex-direction: column; gap: 9px; }
+.fr-list li { font-size: 15px; color: var(--text-3); display: flex; align-items: center; gap: 10px; transition: color .3s; opacity: .7; }
+.fr-list li svg { width: 14px; height: 14px; flex: 0 0 auto; }
+.fr-list li svg path { stroke: var(--text); stroke-width: 2; fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 20; stroke-dashoffset: 20; transition: stroke-dashoffset .4s ease; }
+.fr-list li small { font-size: 12.5px; color: var(--text-3); }
+.fr-list li.now { color: var(--text); opacity: 1; }
+.fr-list li.now small::after { content: ""; display: inline-block; width: 7px; height: 1.5px; background: var(--text); margin-left: 4px; vertical-align: middle; animation: frCaret 1s steps(2) infinite; }
+.fr-list li.ok, .fr-list li.skip { color: var(--text-2); opacity: 1; }
+.fr-list li.ok svg path { stroke-dashoffset: 0; }
+.fr-list li.fail { color: var(--text); opacity: 1; }
+.fr-list li .fr-fail { color: var(--danger-ink); }
+@keyframes frCaret { 50% { opacity: 0; } }
+.fr-acts { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 14px; }
+
+/* 로그인 — 기다리는 동안 밑줄이 오간다 */
+.fr-line { margin-top: 14px; font-size: 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.fr-slide { position: relative; display: inline-block; }
+.fr-slide::after { content: ""; position: absolute; left: 0; bottom: -5px; height: 2px; width: 34%; background: var(--text); animation: frSlide 1.6s ease-in-out infinite alternate; }
+@keyframes frSlide { to { left: 66%; } }
+.fr-tick { width: 16px; height: 16px; }
+.fr-tick path { stroke: var(--text); stroke-width: 2.2; fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 24; stroke-dashoffset: 24; animation: frDraw .45s ease .1s forwards; }
+@keyframes frDraw { to { stroke-dashoffset: 0; } }
+.fr-accts { list-style: none; margin: 12px 0 0; padding: 0; font-size: 13px; color: var(--text-2); display: flex; flex-direction: column; gap: 4px; }
+
+/* 바닥 선 → 끝 장면: 선이 창을 채운다 */
+.fr-hair { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--text); transition: width .7s cubic-bezier(.2, .8, .2, 1); }
+.fr-flood { position: absolute; inset: 0; background: #2f74e0; transform: scaleY(0); transform-origin: 50% 100%; }
+.fr.party .fr-flood { transform: scaleY(1); transition: transform 1.1s cubic-bezier(.7, 0, .2, 1) .9s; }
+.fr.party .fr-top b { color: #fff; }
+.fr.party .fr-hair { background: #fff; transition: background .4s ease 1.4s; }
+.fr-big { position: absolute; right: -6px; top: -22px; width: 170px; height: 170px; opacity: 0; }
+.fr-big path { stroke: #fff; stroke-width: 9; fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 200; stroke-dashoffset: 200; }
+.fr.party .fr-big { opacity: 1; }
+.fr.party .fr-big path { transition: stroke-dashoffset .7s cubic-bezier(.6, 0, .2, 1) 2.05s; stroke-dashoffset: 0; }
+.fr-ch { display: inline-block; transform: translateY(.6em); opacity: 0; }
+.fr.party .fr-ch { animation: frRise .55s cubic-bezier(.2, .9, .2, 1) forwards; animation-delay: calc(var(--i) * 55ms); }
+@keyframes frRise { to { transform: none; opacity: 1; } }
+.fr.party .fr-last h1, .fr.party .fr-last p { color: #fff; transition: color .5s ease 1.4s; }
+.fr-scr p.fr-note { margin-top: 8px; font-size: 12px; line-height: 1.5; max-width: 440px; }
+.fr.party .fr-last p.fr-note { color: rgba(255, 255, 255, .78); }
+.fr.party .fr-last .fr-btn { background: #fff; color: #2f74e0; border-color: #fff; transition: background .4s ease 1.4s, color .4s ease 1.4s, border-color .4s ease 1.4s; }
+.fr.party .fr-last .fr-btn:hover:not(:disabled) { background: #eaf1fd; }
+.fr-err { position: absolute; left: 56px; right: 56px; bottom: 12px; font-size: 12.5px; color: var(--danger-ink); overflow-wrap: anywhere; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fr *, .fr { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; transition-delay: 0s !important; }
+}

@@ -132,8 +132,6 @@ describe('menuAction — 메뉴바 항목 → 앱 동작 (단축키와 같은 �
     expect(menuAction('goto_all')).toEqual({ type: 'goto', to: 'all' });
     expect(menuAction('goto_review')).toEqual({ type: 'goto', to: 'review' });
     expect(menuAction('goto_office')).toEqual({ type: 'goto', to: 'office' });
-    expect(menuAction('goto_tama')).toEqual({ type: 'goto', to: 'tama' });
-    expect(menuAction('open_dex')).toEqual({ type: 'goto', to: 'tama' });
     expect(menuAction('sidebar')).toEqual({ type: 'toggleSidebar' });
     expect(menuAction('tasks')).toEqual({ type: 'toggleTasks' });
     expect(menuAction('search')).toEqual({ type: 'search' });
@@ -142,7 +140,6 @@ describe('menuAction — 메뉴바 항목 → 앱 동작 (단축키와 같은 �
     expect(menuAction('font_reset')).toEqual({ type: 'fontReset' });
     expect(menuAction('new_session')).toEqual({ type: 'newSession' });
     expect(menuAction('close_pane')).toEqual({ type: 'closePane' });
-    expect(menuAction('widget_toggle')).toEqual({ type: 'widget' });
     expect(menuAction('settings')).toEqual({ type: 'settings' });
   });
   it('모르는 항목은 null', () => {

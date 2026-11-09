@@ -148,6 +148,41 @@ class Effort(unittest.TestCase):
         self.assertEqual(task.effort_for('draft the README')[0], 'low')
         self.assertEqual(task.effort_for('add an approve button')[0], 'medium')
 
+    def test_분류표(self):
+        table = json.loads((pathlib.Path(__file__).parent / 'effort.fixture.json').read_text(encoding='utf-8'))
+        for lang in ('ko', 'en'):
+            for level, cases in table[lang].items():
+                for t in cases:
+                    self.assertEqual(task.effort_for(t)[0], level, f'{lang}: {t}')
+
+    def test_시안_일엔_빠르게_대신_스스로_깎으라는_줄(self):
+        self.assertEqual(set(task.EFFORT_LINE), {'high', 'low', 'design'})
+        line = task.effort_for('시안 3개 뽑기')[1]
+        self.assertEqual(line, task.EFFORT_LINE['design'])
+        self.assertNotEqual(line, task.EFFORT_LINE['low'])
+        self.assertIn('깎', line)
+        self.assertNotIn('빠르게', line)
+
+    def test_영어_줄도_있다(self):
+        src = (SCRIPTS / 'task').read_text(encoding='utf-8')
+        self.assertIn("Don't hand in your first pass of a design", src)
+
+    def test_공개판엔_개인_스킬_이름과_모델_지시가_없다(self):
+        src = (SCRIPTS / 'task').read_text(encoding='utf-8')
+        self.assertNotIn('design-toolkit', src)
+        self.assertNotIn('xhigh', src)
+
+    def test_시안_send_줄(self):
+        with tempfile.TemporaryDirectory() as d:
+            with unittest.mock.patch.object(task, 'LOG', os.path.join(d, 'tasks.jsonl')), unittest.mock.patch.object(task, 'LESSONS', os.path.join(d, 'lessons')), unittest.mock.patch.object(task, 'DEV', d):
+                err = io.StringIO()
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                    self.assertEqual(task.main(['send', 'x', '시안 3개 뽑기']), 0)
+                ev = json.loads(pathlib.Path(task.LOG).read_text(encoding='utf-8').splitlines()[0])
+        self.assertEqual(ev['effort'], 'design')
+        self.assertIn(task.EFFORT_LINE['design'], err.getvalue())
+        self.assertNotIn(task.T('빠르게', 'quick first version'), err.getvalue())
+
 
 
 class Harness(unittest.TestCase):

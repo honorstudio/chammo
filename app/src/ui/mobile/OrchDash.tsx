@@ -33,7 +33,9 @@ import { MoreSheet } from './MoreSheet';
 import { AlertsSheet } from './AlertsSheet';
 import { WaitCard } from './OrchPicker';
 import { DirectCards } from './DirectCards';
-import { needsAnswer } from '../../domain/directAsk';
+import { WaitPager } from './WaitPager';
+import { directRank, kindRank } from '../../domain/inboxDeck';
+import { needsAnswer, needsLook } from '../../domain/directAsk';
 import { alertCount, recentAlerts } from '../../domain/phoneAlerts';
 import { officeDot as officeDotOf } from '../../domain/phoneOffice';
 import type { Push } from './usePush';
@@ -304,7 +306,10 @@ export function OrchDash({ orch, orchs, asking, sessions, events, routinesRunnin
         onAccount={() => setAcctOpen(true)} onPush={bell} onClose={() => setMoreOpen(false)} />}
       {alertsOpen && <AlertsSheet rows={alertRows} onClose={() => setAlertsOpen(false)}
         nameOf={(t) => seenName(findTarget(sessions, t)?.name || t)} onOpen={(r) => { const s = findTarget(sessions, r.target); if (s) setPeek(s); }}
-        waiting={myWait.length || direct.length ? <>{myWait.map((w) => <WaitCard key={w.taskId} w={w} orchs={orchs} sent={waitSent} />)}<DirectCards mine={direct} sessions={sessions} /></> : null} />}
+        waiting={myWait.length || direct.some(needsLook) ? <WaitPager pages={[
+          ...direct.filter(needsLook).map((c) => ({ key: `d:${c.id}`, rank: directRank(c.kind), node: <DirectCards mine={[c]} sessions={sessions} /> })),
+          ...myWait.map((w) => ({ key: `w:${w.taskId ?? w.ts}`, rank: kindRank(w.kind), node: <WaitCard w={w} orchs={orchs} sent={waitSent} /> })),
+        ]} /> : null} />}
       {acctOpen && <AccountSheet text={acct} onChanged={setAcctNow} onClose={() => setAcctOpen(false)} />}
       {loadOpen && <LoadSheet text={loadNow ?? loadText} onChanged={setLoadNow} onClose={() => setLoadOpen(false)} />}
       {profile && <ProfileSheet orch={orch} orchs={orchs} voiceBase={voiceBase} onClose={() => setProfile(false)} />}

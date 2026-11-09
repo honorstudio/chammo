@@ -23,7 +23,9 @@ describe('진행 칸 참모에게 묻기', () => {
     expect(goal).toMatch(/onAsk=\{onAsk \?\? \(\(r\) => askRef\(p\.orch\.id, r\)\)\}/);
   });
   it('데스크톱 입력칸은 자기 칸 id 로 받는다(원격 칸은 빼고)', () => {
-    expect(chatView).toMatch(/useRefInbox\(remote \? undefined : paneId, \(r\) => addRef\(r\.who, r\.text, r\.kind\)\)/);
+    expect(chatView).toMatch(/useRefInbox\(remote \? undefined : paneId, \(r\) => \{\s*if \(!r\.plain\) \{ addRef\(r\.who, r\.text, r\.kind\); return; \}/);
+    // plain(내 메모 글 통째)은 이름표 없이 입력칸 글 뒤에
+    expect(chatView).toMatch(/setDraft\(\(d\) => withPlain\(d, r\.text\)\)/);
   });
   it('데스크톱은 줄에 올릴 때만, 폰(hover: none)은 늘 보이고 누름 칸 44px, 왼쪽 색 띠 없음', () => {
     expect(css).toMatch(/\.gp-top:hover \.gp-ref/);

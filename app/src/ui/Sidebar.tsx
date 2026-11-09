@@ -12,7 +12,7 @@ import { keyLabel } from '../domain/keys';
 import { IS_WIN } from '../domain/reader';
 import type { ProjectGroup, Session } from '../domain/session';
 
-export type Selection = { kind: 'orchestrator' } | { kind: 'orchHome' } | { kind: 'all' } | { kind: 'tama' } | { kind: 'replay' } | { kind: 'helpers' } | { kind: 'loose' } | { kind: 'review'; key?: string } | { kind: 'project'; name: string } | { kind: 'routine'; name: string } | { kind: 'external'; id: string };
+export type Selection = { kind: 'orchestrator' } | { kind: 'orchHome' } | { kind: 'all' } | { kind: 'replay' } | { kind: 'helpers' } | { kind: 'loose' } | { kind: 'review'; key?: string } | { kind: 'project'; name: string } | { kind: 'routine'; name: string } | { kind: 'external'; id: string };
 
 type Props = {
   /** 루틴(반복 업무) 줄 — 이름·상태·한 줄 설명. cloud = claude.ai 클라우드 루틴("클라우드" 배지) */

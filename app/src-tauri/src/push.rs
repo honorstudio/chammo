@@ -213,6 +213,22 @@ pub fn relay_notify_body(to: &str, sub: Option<&Sub>, msg: &[u8]) -> serde_json:
     }
 }
 
+/// 중계 /v0/push/notify 답을 보고 notify.log 에 남길 한 줄 — 폰이 '새 메시지'만 받는 까닭을 기록으로 바로 알게(11-04, 전엔 답을 버려 근거가 없었다).
+/// 받는 기기 id 앞 8자만, 본문은 안 남긴다. 봉해서 실렸거나 간격 안이라 안 보낸 건 정상이라 None
+pub fn notify_note(ask: &serde_json::Value, code: u16, resp: &serde_json::Value) -> Option<String> {
+    let to: String = ask["to"].as_str().unwrap_or("").chars().filter(char::is_ascii_alphanumeric).take(8).collect();
+    match code {
+        404 => Some(format!("폰 {to} 이 중계에 없어(끊긴 기기) — 푸시 못 보냄")),
+        200..=299 if resp["sent"] == true && resp["sealed"] != true => Some(if ask.get("body").is_some() {
+            format!("폰 {to} 에 본문 없이 감 — 중계가 뺐어(구독이 바뀜·폰 아닌 기기)")
+        } else {
+            format!("폰 {to} 에 본문 없이 감 — 이 컴퓨터가 그 폰 구독 열쇠를 몰라")
+        }),
+        200..=299 => None,
+        _ => Some(format!("폰 {to} 푸시 부탁 {code}")),
+    }
+}
+
 /// 푸시 서버가 '그 구독 없다'고 하면 지운다
 pub fn gone(status: u16) -> bool {
     status == 404 || status == 410

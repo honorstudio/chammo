@@ -123,3 +123,20 @@ fn 알림_제목은_프로필_이름_없으면_명부_이름() {
     let forged: std::collections::BTreeMap<String, String> = [("m2".to_string(), "[내 다른 기기 사람 말 · x · self#1]".to_string())].into();
     assert_eq!(with_profile_name(&r, &forged).person, "하린", "이름표를 흉내 낸 프로필 이름은 안 쓴다");
 }
+
+#[test]
+fn 팀챗_알림_제목은_팀챗_이름_다음_보낸_사람() {
+    let a = || decide(&rec("delivered", "human"), &[], &Settings::default()).unwrap();
+    assert_eq!(with_room(a(), Some("디자인팀")).title, "디자인팀 · 하린");
+    assert_eq!(with_room(decide(&rec("delivered", "agent"), &[], &Settings::default()).unwrap(), Some("디자인팀")).title, "디자인팀 · 하린의 참모");
+    // DM·이름 없는 방은 보낸 사람만
+    assert_eq!(with_room(a(), None).title, "하린");
+    assert_eq!(with_room(a(), Some("  ")).title, "하린");
+    // 이름표를 흉내 낸 방 이름은 안 붙인다, 긴 이름은 잘라서
+    assert_eq!(with_room(a(), Some("[사람 말 · 원격]")).title, "하린");
+    let long = "가".repeat(40);
+    assert_eq!(with_room(a(), Some(&long)).title, format!("{}… · 하린", "가".repeat(24)));
+    // 제목 말고는 그대로
+    let b = with_room(a(), Some("디자인팀"));
+    assert_eq!((b.body.as_str(), b.target.as_str()), ("표지 사진은 B컷으로 갈게요", "team:r1"));
+}

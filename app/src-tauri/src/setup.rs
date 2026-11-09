@@ -109,7 +109,7 @@ pub struct EnvCheck {
     pub logged_in: bool,
     /// 로그인 확인이 시간 안에 안 끝남(모름) — 화면은 '로그인 필요' 대신 '다시 확인'
     pub login_unknown: bool,
-    /// Xcode 명령줄 도구 — 없으면 /usr/bin/git 이 설치 안내 창만 띄우는 빈 껍데기다
+    /// git 을 바로 쓸 수 있나 — 맥은 Xcode 명령줄 도구나 앱이 받은 git(base_tools). 맥 /usr/bin/git 은 도구가 없으면 설치 창만 띄우는 껍데기다
     pub clt: bool,
     pub gh_path: Option<String>,
     /// gh 로그인 아이디(로그인 안 했으면 None)
@@ -118,7 +118,7 @@ pub struct EnvCheck {
     pub gh_stale: bool,
     /// 끊긴 winget 업그레이드가 남긴 claude.exe.old-* 를 이번 점검에서 claude.exe 로 되살렸으면 그 이름(claude_src)
     pub claude_restored: Option<String>,
-    /// 파이썬 3 — 윈도우의 scripts/*(참모 도구)·참모 앱·예약이 쓴다. 맥은 늘 true(명령줄 도구에 들어 있어 git 줄이 본다)
+    /// 파이썬 3 — scripts/*(참모 도구)·참모 앱·예약이 쓴다. 맥은 명령줄 도구나 앱이 받은 것(base_tools)
     pub python: bool,
     /// 윈도우 winget 이 도나 — git·파이썬이 없을 때만 본다. 없으면(LTSC·스토어 막은 회사 PC) 설치 단추 대신 받기 링크(win-env H3)
     pub winget: bool,

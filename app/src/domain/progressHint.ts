@@ -1,6 +1,6 @@
 // [앱] 줄(재시작으로 꺼진 세션·정리할 세션·오래 조용)에 붙는 '어디까지 했나' — 대화 끝 두어 문장 + 하던 도구 + git 가지@짧은 해시(커밋 안 한 변경 N).
 // 참모가 그 세션 대화·git 을 안 열고 이어 할지 정하게(2026-10-31 — 남의 에이전트 복구 알림이 대화 끝·branch@sha 를 싣는 것을 배움).
-// 입력칸에 Enter 로 들어가는 한 줄이라 줄바꿈 없이, 길이를 자르고, 키·비번처럼 생긴 것은 가린다(notify.log 에도 앞부분이 남는다)
+// 입력칸에 Enter 로 들어가는 한 줄이라 줄바꿈 없이, 길이를 자르고, 키·비번처럼 생긴 것은 가린다
 import { tr } from '../i18n';
 import type { Activity } from './activity';
 import { safeDoing, SECRET_PREFIX, SECRET_WORD } from './phoneOffice';

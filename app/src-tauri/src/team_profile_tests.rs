@@ -149,3 +149,16 @@ fn 캐시_프로필_이름은_망을_안_쓴다() {
     assert!(body.contains("locker::cached("), "{body}");
     assert!(!body.contains("http") && !body.contains("bytes_of("), "{body}");
 }
+
+#[cfg(unix)]
+#[test]
+fn 푼_글_캐시는_나만_읽는다() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = std::env::temp_dir().join(format!("profile-cache-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    keep(&d, "AbCdEfGhIjKlMnOp", b"memory");
+    assert_eq!(std::fs::metadata(cache_dir(&d)).unwrap().permissions().mode() & 0o777, 0o700);
+    assert_eq!(std::fs::metadata(cache_dir(&d).join("AbCdEfGhIjKlMnOp")).unwrap().permissions().mode() & 0o777, 0o600);
+    let _ = std::fs::remove_dir_all(&d);
+}

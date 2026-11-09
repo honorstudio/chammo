@@ -86,6 +86,8 @@ export function MdDoc({ path, text, at }: { path: string; text: string; at?: Sho
     });
     return () => { alive = false; urls.forEach((u) => URL.revokeObjectURL(u)); };
   }, [html, path]);
+  // 긴 글 칸(24자 넘음)엔 읽을 폭 — 짧은 칸만 있는 표는 화면 폭에 맞고, 긴 칸이 있으면 가로로 민다(CSS m-td-long)
+  useEffect(() => { box.current?.querySelectorAll('td').forEach((td) => td.classList.toggle('m-td-long', (td.textContent ?? '').trim().length > 24)); }, [html]);
   useLineFlash(box, at, text, false);
   return <div ref={box} className="m-doc m-md m-page" dangerouslySetInnerHTML={{ __html: html }} />;
 }

@@ -11,6 +11,13 @@ struct Srv {
     /// 이 조각에서 올리기를 실패시킨다
     fail_put_at: Option<u64>,
     aborted: Vec<String>,
+    /// 이 조각의 다음 올리기 답들(앞에서부터 하나씩) — 비면 평소대로 받는다
+    put_script: BTreeMap<u64, std::collections::VecDeque<Result<u16, String>>>,
+    /// done 의 다음 답들 — Err 면 서버는 받았는데 답만 잃은 것
+    done_script: std::collections::VecDeque<Result<(u16, Value), String>>,
+    /// pause 가 불린 까닭·시간
+    waits: Vec<(Pause, std::time::Duration)>,
+    puts: u32,
 }
 
 struct FakeNet {
@@ -24,6 +31,10 @@ fn tail(path: &str) -> Vec<String> {
 }
 
 impl Net for FakeNet {
+    fn pause(&self, why: Pause, d: std::time::Duration) -> bool {
+        self.srv.borrow_mut().waits.push((why, d));
+        true
+    }
     fn call(&self, method: &str, path: &str, body: Option<&Value>) -> Result<(u16, Value), String> {
         let mut s = self.srv.borrow_mut();
         let t = tail(path);
@@ -59,6 +70,15 @@ impl Net for FakeNet {
                 let id = id.to_string();
                 match *verb {
                     "done" => {
+                        if let Some(r) = s.done_script.pop_front() {
+                            if r.is_err() {
+                                s.files.get_mut(&id).unwrap()["state"] = json!("live");
+                            }
+                            return r;
+                        }
+                        if s.files[&id]["state"] == "live" {
+                            return Ok((409, json!({ "error": "not_uploading" })));
+                        }
                         s.files.get_mut(&id).unwrap()["state"] = json!("live");
                     }
                     "abort" => {
@@ -93,6 +113,12 @@ impl Net for FakeNet {
         let t = tail(path);
         let n: u64 = t[3].parse().unwrap();
         let mut s = self.srv.borrow_mut();
+        s.puts += 1;
+        if let Some(r) = s.put_script.get_mut(&n).and_then(|q| q.pop_front()) {
+            if !matches!(r, Ok(200)) {
+                return r;
+            }
+        }
         if s.fail_put_at == Some(n) {
             return Ok(500);
         }
@@ -247,6 +273,115 @@ fn 조각_올리기가_실패하면_서버_줄을_치운다() {
     assert!(e.is_err());
     assert_eq!(w.srv.borrow().aborted.len(), 1);
     assert!(w.srv.borrow().files.is_empty());
+}
+
+// ── 다시 해 보기(11-04 18:18 와이파이가 바뀌자 920MiB 파일의 조각 하나가 끊겨 30% 에서 파일 통째 실패) ──
+
+const NET_ERR: &str = "중계 서버에 못 닿았어요: error sending request";
+
+/// 조각 둘짜리 파일 올리기 + 받아서 같은지
+fn up_two(tag: &str, script: impl FnOnce(&mut Srv)) -> (World, Result<FileRef, String>) {
+    let w = world();
+    script(&mut w.srv.borrow_mut());
+    let dir = tmp(tag);
+    let src = write(&dir, "x.bin", &data(CHUNK + 5));
+    let r = upload(&w.net("dA"), &Me { keys: &w.a, device: "dA" }, &w.people.recipients, "t1", "", "file", "", &src, "x.bin", &mut |_, _| {});
+    (w, r)
+}
+
+#[test]
+fn 망이_끊겨도_같은_조각을_다시_올려_끝까지_간다() {
+    let (w, r) = up_two("retry-net", |s| {
+        s.put_script.insert(1, [Err(NET_ERR.to_string()), Err(NET_ERR.to_string())].into_iter().collect());
+    });
+    let r = r.unwrap();
+    assert!(w.srv.borrow().aborted.is_empty(), "치우지 않는다");
+    assert_eq!(w.srv.borrow().puts, 4, "조각 0 한 번 + 조각 1 세 번");
+    let secs = |n| std::time::Duration::from_secs(n);
+    assert_eq!(w.srv.borrow().waits, vec![(Pause::Net, secs(2)), (Pause::Net, secs(4))]);
+    let nb = w.net("dB");
+    let f = find(&nb, &r.id);
+    let o = open_file(&Me { keys: &w.b, device: "dB" }, &w.people, "t1", &f).unwrap();
+    let out = download(&nb, "t1", &f, &o, &tmp("retry-net-out"), &mut |_, _| Ok(())).unwrap();
+    assert_eq!(std::fs::read(out).unwrap(), data(CHUNK + 5), "다시 올린 조각도 그대로 열린다");
+}
+
+#[test]
+fn 서버가_잠깐_5xx_면_다시_올린다() {
+    let (w, r) = up_two("retry-5xx", |s| {
+        s.put_script.insert(0, [Ok(503), Ok(520)].into_iter().collect());
+    });
+    assert!(r.is_ok(), "{r:?}");
+    assert_eq!(w.srv.borrow().waits.len(), 2);
+}
+
+#[test]
+fn 쉬라는_429_면_칸이_넘어갈_때까지_기다렸다_이어_간다() {
+    let (w, r) = up_two("retry-429", |s| {
+        s.put_script.insert(1, [Ok(429)].into_iter().collect());
+    });
+    assert!(r.is_ok(), "{r:?}");
+    let waits = w.srv.borrow().waits.clone();
+    assert_eq!(waits.len(), 1);
+    assert_eq!(waits[0].0, Pause::Busy);
+    assert!(waits[0].1 > std::time::Duration::ZERO && waits[0].1 <= std::time::Duration::from_secs(601), "칸 끝까지 {waits:?}");
+    assert!(w.srv.borrow().aborted.is_empty());
+}
+
+#[test]
+fn 끊김이_15분_넘게_이어지면_포기하고_서버_줄을_치운다() {
+    let (w, r) = up_two("retry-giveup", |s| {
+        s.put_script.insert(1, std::iter::repeat_with(|| Err(NET_ERR.to_string())).take(100).collect());
+    });
+    assert!(r.unwrap_err().contains("못 닿았어요"), "마지막 까닭을 그대로");
+    let waited: std::time::Duration = w.srv.borrow().waits.iter().map(|x| x.1).sum();
+    assert!(waited >= std::time::Duration::from_secs(15 * 60) && waited < std::time::Duration::from_secs(17 * 60), "{waited:?}");
+    assert_eq!(w.srv.borrow().aborted.len(), 1);
+}
+
+#[test]
+fn 쉬라는_답이_이어져도_세_번_기다리면_포기한다() {
+    let (w, r) = up_two("retry-429-giveup", |s| {
+        s.put_script.insert(0, std::iter::repeat_with(|| Ok(429)).take(100).collect());
+    });
+    assert!(r.is_err());
+    assert_eq!(w.srv.borrow().waits.len(), 3);
+    assert_eq!(w.srv.borrow().aborted.len(), 1);
+}
+
+#[test]
+fn 다시_해도_소용없는_답은_기다리지_않고_바로_실패() {
+    for c in [400u16, 401, 403, 404, 409, 413] {
+        let (w, r) = up_two("retry-no", |s| {
+            s.put_script.insert(0, [Ok(c)].into_iter().collect());
+        });
+        assert!(r.is_err(), "{c}");
+        assert!(w.srv.borrow().waits.is_empty(), "{c}");
+    }
+    let (w, r) = up_two("retry-cfg", |s| {
+        s.put_script.insert(0, [Err("team.json 의 서버 주소가 https 가 아니야".to_string())].into_iter().collect());
+    });
+    assert!(r.is_err());
+    assert!(w.srv.borrow().waits.is_empty(), "설정 오류는 망 끊김이 아니다");
+}
+
+#[test]
+fn 끝내기_답을_잃어도_다시_물어_이미_받았다면_성공() {
+    let (w, r) = up_two("retry-done", |s| {
+        s.done_script.push_back(Err(NET_ERR.to_string()));
+    });
+    assert!(r.is_ok(), "{r:?}");
+    assert!(w.srv.borrow().aborted.is_empty(), "다 올린 파일을 치우면 안 된다");
+    assert_eq!(w.srv.borrow().waits.len(), 1);
+}
+
+#[test]
+fn 처음부터_409_면_답을_잃은_게_아니라_실패() {
+    let (w, r) = up_two("done-409", |s| {
+        s.done_script.push_back(Ok((409, json!({ "error": "parts_missing" }))));
+    });
+    assert!(r.is_err());
+    assert_eq!(w.srv.borrow().aborted.len(), 1);
 }
 
 #[test]

@@ -1,8 +1,8 @@
 // 폰 → 중계 허브 → 컴퓨터 터널 (ADR 0013). fetch 와 같은 모양(Response)으로 돌려줘서 data/web.ts 의 call() 이 그대로 쓴다.
 // 틀 봉하기·열기는 번호 차례가 생명이라 줄(queue) 하나로만. 끊기면 기다리던 요청은 망 오류(fetch 처럼 TypeError)로 끝나고 다음 요청이 다시 붙는다
 import { agree, b64, DATA, HELLO, helloFrame, NONCE_LEN, RESET, Session, unb64 } from './tunnel';
-import { phoneKeys } from './keys';
-import { wsUrl } from './relayClient';
+import { linkedKeys, NoKeysError, type PhoneKeys } from './keys';
+import { call, wsUrl } from './relayClient';
 import type { RelayLink } from './link';
 
 const CHUNK = 128 * 1024; // Rust phone_relay_core::CHUNK 와 같게
@@ -13,6 +13,10 @@ const PASS = ['authorization', 'content-type', 'range', 'accept'];
  *  중계는 모르는 틀(ping)에 error 로 바로 답해서, 맥 일이 오래 걸려도 중계가 살아 있으면 안 끊는다 */
 const STALL_MS = 12_000;
 const PROBE_MS = 8_000;
+/** 소켓이 안 열렸을 때 HTTP 로 까닭을 묻는 간격 — 망이 끊긴 동안 실패마다 서명 요청을 쏘지 않게 */
+export const ASK_EVERY_MS = 30_000;
+/** 거절(401)을 확인한 뒤 소켓을 다시 안 여는 동안 — 화면 받기 고리가 초당 1번 두드렸다(2026-11-07 13:39). 지나면 한 번 다시 본다(폰 시계가 틀렸던 것이면 저절로 풀린다) */
+export const DENIED_HOLD_MS = 60_000;
 /** 맥에 응답 압축(gzip)을 부탁한다 — 대화 기록 JSON 이 4~5배 준다. 옛 맥은 무시하고, 압축한 답엔 같은 머리를 단다 */
 export const GZ = 'x-chammo-gz';
 const enc = new TextEncoder();
@@ -26,11 +30,11 @@ export class OfflineError extends TypeError {
   }
 }
 
-/** 붙은 상대가 QR 의 그 컴퓨터인지 확인이 안 됨 — 다시 짝지어야 한다 */
+/** 다시 이어야 한다 — 중계가 이 폰 서명을 거절(401)·열쇠가 없음·붙은 상대가 그 컴퓨터가 아님. 저절로 안 풀린다 */
 export class TrustError extends TypeError {
   override name = 'TrustError';
   constructor() {
-    super('컴퓨터 확인 실패');
+    super('이 폰 연결이 풀렸어요');
   }
 }
 
@@ -51,6 +55,8 @@ export class HubTunnel {
   /** 마지막으로 뭐라도 받은 때(ms) — 받기 시간 한도(data/web.ts)가 '느리지만 오고 있나'를 본다 */
   lastRx = 0;
   private probedAt = 0;
+  private askedAt = 0;
+  private deniedAt = 0;
   private watch: ReturnType<typeof setInterval> | null = null;
   private readonly stallMs: number;
   private readonly probeMs: number;
@@ -105,13 +111,31 @@ export class HubTunnel {
     return this.opening;
   }
 
+  /** 소켓이 안 열렸다 — 브라우저는 401 을 못 보여 줘서(onerror 뿐) 같은 서명으로 HTTP 한 번. 401 만 TrustError, 그 밖(망 오류·서버 오류)은 원래 오류 */
+  private async whyFailed(k: PhoneKeys, e: unknown): Promise<unknown> {
+    if (!(e instanceof TypeError) || e instanceof TrustError || e instanceof OfflineError) return e;
+    const now = Date.now();
+    if (now - this.askedAt < ASK_EVERY_MS) return e;
+    this.askedAt = now;
+    try {
+      const r = await call(this.link.relay, k, this.link.device, 'GET', '/v0/me/self');
+      if (r.status !== 401) return e;
+      this.deniedAt = Date.now();
+      return new TrustError();
+    } catch {
+      return e;
+    }
+  }
+
   private async open(): Promise<void> {
-    const k = await phoneKeys();
+    if (Date.now() - this.deniedAt < DENIED_HOLD_MS) throw new TrustError();
+    // 링크가 있는데 열쇠가 없으면 소켓을 안 연다 — 새 열쇠로 옛 기기 id 를 서명해 봐야 401 이다
+    const k = await linkedKeys().catch((e: unknown) => { throw e instanceof NoKeysError ? new TrustError() : e; });
     const shared = await agree(k.x.privateKey, unb64(this.link.macX));
     const nP = crypto.getRandomValues(new Uint8Array(NONCE_LEN));
     const ws = new WebSocket(await wsUrl(this.link.relay, `/v0/hubs/${this.link.mac}/ws`, k, this.link.device));
     this.ws = ws;
-    await new Promise<void>((ok, no) => {
+    const up = new Promise<void>((ok, no) => {
       const t = setTimeout(() => { no(new TypeError('허브 연결 시간 초과')); this.fail(new TypeError('timeout')); }, CONNECT_MS);
       const done = (e?: unknown) => { clearTimeout(t); if (e) no(e); else ok(); };
       ws.onerror = () => done(new TypeError('허브에 못 붙었어요'));
@@ -151,6 +175,8 @@ export class HubTunnel {
         });
       };
     });
+    await up.catch(async (e: unknown) => { throw await this.whyFailed(k, e); });
+    this.deniedAt = 0;
   }
 
   private take(pt: Uint8Array) {

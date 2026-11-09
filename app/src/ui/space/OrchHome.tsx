@@ -1,8 +1,9 @@
 import { keyLabel } from '../../domain/keys';
 import { IS_WIN } from '../../domain/reader';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { readTranscriptTails } from '../../data/tauri';
 import { summarizeTranscript, type Activity } from '../../domain/activity';
+import { foldTails } from '../../domain/tailFold';
 import { homeAction, homeRows, whenLabel, type HomeRow } from '../../domain/orchHome';
 import type { Session } from '../../domain/session';
 import type { SnapSession } from '../../domain/revive';
@@ -44,12 +45,16 @@ export function OrchHome({ live, off, ctx, lines, starting, ready, creating, wai
 }) {
   // 꺼진 참모의 마지막 하던 일 — 대화 기록 꼬리(켜진 참모는 부르는 쪽이 이미 읽는다). 홈이 떠 있는 동안 30초마다
   const [act, setAct] = useState<Record<string, Activity>>({});
+  const fold = useRef<{ raws: Record<string, string>; sums: Record<string, Activity> }>({ raws: {}, sums: {} });
   const offKey = off.map((x) => x.sessionId).join(',');
   useEffect(() => {
     if (!offKey) return;
     let alive = true;
     const tick = () => void readTranscriptTails(offKey.split(',')).then((m) => {
-      if (alive) setAct(Object.fromEntries(Object.entries(m).map(([k, v]) => [k, summarizeTranscript(v)])));
+      if (!alive) return;
+      const f = foldTails(fold.current.raws, fold.current.sums, m, summarizeTranscript); // 안 바뀐 꼬리는 다시 안 푼다
+      fold.current = f;
+      if (f.changed) setAct(f.sums);
     }, () => {});
     tick();
     const stop = every(tick, 30_000);

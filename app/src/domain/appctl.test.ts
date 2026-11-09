@@ -14,7 +14,7 @@ describe('intentOf — scripts/app 한 줄 → 앱이 할 일', () => {
 
   it('기능 켜기·끄기 — "이름 on|off"', () => {
     expect(intentOf({ action: 'feature', arg: 'office off' })).toEqual({ kind: 'feature', name: 'office', on: false });
-    expect(intentOf({ action: 'feature', arg: 'tama on' })).toEqual({ kind: 'feature', name: 'tama', on: true });
+    expect(intentOf({ action: 'feature', arg: 'gacha on' })).toEqual({ kind: 'feature', name: 'gacha', on: true });
     // 무인 기계 — 참모가 scripts/app feature autoRevive on 으로 켠다(2026-10-01 아이맥)
     expect(intentOf({ action: 'feature', arg: 'autoRevive on' })).toEqual({ kind: 'feature', name: 'autoRevive', on: true });
     // 화면 조종 모든 프로젝트(2026-10-05)
@@ -27,8 +27,7 @@ describe('intentOf — scripts/app 한 줄 → 앱이 할 일', () => {
     expect(intentOf({ action: 'open', arg: 'settings' })).toEqual({ kind: 'open', what: 'settings' });
     expect(intentOf({ action: 'close', arg: 'reader' })).toEqual({ kind: 'close', what: 'reader' });
     expect(intentOf({ action: 'focus', arg: ' acme-shop ' })).toEqual({ kind: 'focus', target: 'acme-shop' });
-    expect(intentOf({ action: 'pet', arg: 'show' })).toEqual({ kind: 'pet', show: true });
-    expect(intentOf({ action: 'pet', arg: 'hide' })).toEqual({ kind: 'pet', show: false });
+    expect(intentOf({ action: 'pet', arg: 'show' })).toBeNull(); // 다마고치 창은 없앴다(11-06)
   });
 
   it('하니터 열고 닫기 — 오케스트레이터가 하네스를 보여 줄 때(2026-10-01 사용자)', () => {

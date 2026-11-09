@@ -82,10 +82,15 @@ function tmpProfile(prefs) {
 }
 const readPrefs = (dir) => JSON.parse(fs.readFileSync(path.join(dir, 'Default', 'Preferences'), 'utf8'));
 
-test('로그인 권유 끄기 — 새 프로필이면 Default/Preferences 를 만들어 interception_enabled=false 만 넣는다', () => {
+// 알림 권한 기본 차단(2026-11-08 거래소) — 세션 크롬은 알림 쓸 일이 없는데, 크롬 자체 권한 풍선은 앱 칸(CDP 입력)에서 안 눌렸다
+// https 균형 모드 끄기(2026-11-09 윈도우 PC 수집 스크립트) — 크롬 베타 158 은 이게 기본으로 켜져, https 가 안 되는 http 사이트를 net::ERR_BLOCKED_BY_CLIENT 로 막았다.
+// 158 에선 기능 스위치(HttpsFirstBalancedModeAutoEnable)가 없어져 실행 인자로는 못 끈다 — 설정 칸 하나로 끈다(맥 베타 158 실측)
+const QUIET = { signin: { interception_enabled: false }, profile: { default_content_setting_values: { notifications: 2 } }, https_first_balanced_mode_enabled: false };
+
+test('로그인 권유 끄기 — 새 프로필이면 Default/Preferences 를 만들어 interception_enabled=false 와 알림 기본 차단만 넣는다', () => {
   const dir = tmpProfile();
   assert.strictEqual(quietSignin(dir), 'set');
-  assert.deepStrictEqual(readPrefs(dir), { signin: { interception_enabled: false } });
+  assert.deepStrictEqual(readPrefs(dir), QUIET);
   assert.deepStrictEqual(fs.readdirSync(path.join(dir, 'Default')), ['Preferences'], '임시 파일이 남지 않는다');
 });
 
@@ -94,12 +99,12 @@ test('로그인 권유 끄기 — 있던 설정(사이트 로그인·다른 sign
   const dir = tmpProfile(before);
   assert.strictEqual(quietSignin(dir), 'set');
   const after = readPrefs(dir);
-  assert.deepStrictEqual(after, { ...before, signin: { ...before.signin, interception_enabled: false } });
+  assert.deepStrictEqual(after, { ...before, signin: { ...before.signin, interception_enabled: false }, profile: { name: 'project-x', default_content_setting_values: { notifications: 2 } }, https_first_balanced_mode_enabled: false });
   assert.strictEqual(after.signin.allowed, true, 'signin.allowed 를 끄면 크롬에 로그인된 프로필이 로그아웃된다 — 건드리지 않는다');
 });
 
 test('로그인 권유 끄기 — 이미 꺼져 있으면 파일을 다시 쓰지 않는다', () => {
-  const dir = tmpProfile({ signin: { interception_enabled: false }, z: 1 });
+  const dir = tmpProfile({ ...QUIET, z: 1 });
   const f = path.join(dir, 'Default', 'Preferences');
   const t = new Date('2020-01-01');
   fs.utimesSync(f, t, t);
@@ -124,7 +129,51 @@ test('로그인 권유 끄기 — 깨진 파일·객체가 아닌 JSON 은 손�
 test('로그인 권유 끄기 — signin 칸이 객체가 아니면 객체로 바꿔 넣는다', () => {
   const dir = tmpProfile({ signin: 'x', k: 2 });
   assert.strictEqual(quietSignin(dir), 'set');
-  assert.deepStrictEqual(readPrefs(dir), { signin: { interception_enabled: false }, k: 2 });
+  assert.deepStrictEqual(readPrefs(dir), { ...QUIET, k: 2 });
+});
+
+test('알림 기본 차단 — 로그인 권유만 꺼져 있던 프로필(어제까지 판)에도 넣고, 다른 기본값·사이트별 예외는 그대로', () => {
+  const before = { signin: { interception_enabled: false }, profile: { default_content_setting_values: { geolocation: 1 }, content_settings: { exceptions: { notifications: { 'https://a.com:443,*': { setting: 1 } } } } } };
+  const dir = tmpProfile(before);
+  assert.strictEqual(quietSignin(dir), 'set');
+  const after = readPrefs(dir);
+  assert.deepStrictEqual(after.profile.default_content_setting_values, { geolocation: 1, notifications: 2 });
+  assert.deepStrictEqual(after.profile.content_settings, before.profile.content_settings, '사람이 허용해 둔 사이트는 그대로 받는다');
+});
+
+test('알림 기본 차단 — 사람이 크롬 설정에서 고른 기본값(허용 1·차단 2)은 안 바꾼다, 물어봄(3)이면 차단으로', () => {
+  for (const [v, want, r] of [[1, 1, 'already'], [2, 2, 'already'], [3, 2, 'set']]) {
+    const dir = tmpProfile({ signin: { interception_enabled: false }, profile: { default_content_setting_values: { notifications: v } }, https_first_balanced_mode_enabled: false });
+    assert.strictEqual(quietSignin(dir), r, String(v));
+    assert.strictEqual(readPrefs(dir).profile.default_content_setting_values.notifications, want, String(v));
+  }
+});
+
+test('알림 기본 차단 — profile·기본값 칸이 객체가 아니면 객체로 바꿔 넣는다', () => {
+  for (const profile of ['x', [1], null]) {
+    const dir = tmpProfile({ profile });
+    assert.strictEqual(quietSignin(dir), 'set');
+    assert.deepStrictEqual(readPrefs(dir), QUIET, JSON.stringify(profile));
+  }
+  const dir = tmpProfile({ profile: { default_content_setting_values: 7, name: 'n' } });
+  assert.strictEqual(quietSignin(dir), 'set');
+  assert.deepStrictEqual(readPrefs(dir).profile, { name: 'n', default_content_setting_values: { notifications: 2 } });
+});
+
+test('https 균형 모드 끄기 — 어제까지 판으로 손본 프로필(로그인 권유·알림만 꺼짐)에도 넣는다', () => {
+  const dir = tmpProfile({ signin: { interception_enabled: false }, profile: { default_content_setting_values: { notifications: 2 } }, k: 1 });
+  assert.strictEqual(quietSignin(dir), 'set');
+  assert.deepStrictEqual(readPrefs(dir), { ...QUIET, k: 1 });
+});
+
+test('https 균형 모드 끄기 — 사람이 크롬 설정에서 켠 것(균형 true·엄격 https_only_mode_enabled true)은 그대로', () => {
+  const base = { signin: { interception_enabled: false }, profile: { default_content_setting_values: { notifications: 2 } } };
+  const on = tmpProfile({ ...base, https_first_balanced_mode_enabled: true });
+  assert.strictEqual(quietSignin(on), 'already');
+  assert.strictEqual(readPrefs(on).https_first_balanced_mode_enabled, true);
+  const strict = tmpProfile({ ...base, https_only_mode_enabled: true });
+  assert.strictEqual(quietSignin(strict), 'already', '엄격 모드를 켠 사람은 http 를 막길 원한 것');
+  assert.strictEqual(readPrefs(strict).https_first_balanced_mode_enabled, undefined);
 });
 
 test('로그인 권유 끄기 — 못 써도 던지지 않는다(크롬은 그대로 뜬다)', () => {

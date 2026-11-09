@@ -85,7 +85,7 @@ describe('knockLink — 허용 뒤 허브가 바로 닫아도', () => {
   it('link5 를 받은 직후 닫힘이 와도 토큰을 저장한다(10-26 사용자 폰 "못 열었어요")', async () => {
     const { knockLink } = await import('./linkKnock');
     const sas = sasOnScreen();
-    const run = knockLink('https://relay.test', 'dev-phone', computer(), (s) => onSas(s), async () => true);
+    const run = knockLink('https://relay.test', 'dev-phone', computer(), (s) => onSas(s), async () => true) as Promise<import('./knock').Paired>;
     await sas;
     await mac.approve(FakeWs.last);
     const r = await run;
@@ -98,7 +98,7 @@ describe('knockLink — 끊겼을 때 문구는 QR 이 아니라 지금 할 일'
   it('숫자를 띄운 뒤 허용 전에 끊기면: 다시 눌러 새 숫자로', async () => {
     const { knockLink, LINK_ERRORS } = await import('./linkKnock');
     const sas = sasOnScreen();
-    const run = knockLink('https://relay.test', 'dev-phone', computer(), (s) => onSas(s), async () => true);
+    const run = knockLink('https://relay.test', 'dev-phone', computer(), (s) => onSas(s), async () => true) as Promise<import('./knock').Paired>;
     await sas;
     FakeWs.last.hubClose();
     await expect(run).rejects.toThrow(LINK_ERRORS.cut);
@@ -116,5 +116,23 @@ describe('knockLink — 끊겼을 때 문구는 QR 이 아니라 지금 할 일'
     const run = knockLink('https://relay.test', 'dev-phone', computer(), () => {}, async () => true);
     mac.onKnock = async (ws) => ws.hubClose(4004);
     await expect(run).rejects.toThrow(LINK_ERRORS.replaced);
+  });
+});
+
+describe('메일 코드를 켠 맥 — 숫자 대신 코드', () => {
+  it('step mail 이 오면 숫자 없이 그 뜻을 돌려주고 소켓을 닫는다', async () => {
+    const was = mac.onKnock;
+    mac.onKnock = async function (ws: FakeWs, m: { box: string }) {
+      const body = JSON.parse(dec.decode(await open(this.keys!.privateKey, this.pub, unb64(m.box)))) as Record<string, string>;
+      expect(body.step).toBe('link1');
+      ws.push({ t: 'reply', box: b64(await seal(unb64(body.x!), enc.encode(JSON.stringify({ step: 'mail', sent: true, ttl: 600 })))) });
+      ws.hubClose();
+    };
+    let sas = false;
+    const { knockLink } = await import('./linkKnock');
+    const r = await knockLink('https://relay.test', 'dev-phone', computer(), () => { sas = true; }, async () => true);
+    mac.onKnock = was;
+    expect(r).toEqual({ mail: true, sent: true, wait: 0, locked: 0 });
+    expect(sas).toBe(false);
   });
 });

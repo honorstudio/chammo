@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 // 2026-10-11 UI 재조사(사용자 "추천대로"): 익숙한 동작(닫기·빼기·열기·보내기·접기·다시 읽기…)은 글자 버튼이 아니라 직접 그린 SVG 아이콘.
 // <button> 자식 글자에 이 이름이 다시 들어오면 걸린다. 이름은 aria-label·title 로(kit/IconButton).
 // 그대로 두는 것: 취소·저장·확인 쌍, 되돌리기 어려운 확인(정말 끄기·한 번 더), 이름 글, 메뉴 항목(role=menuitem). 폰(ui/mobile)은 폰 세션 몫.
-const files = import.meta.glob(['/src/**/*.tsx', '!/src/ui/mobile/**'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+const files = import.meta.glob(['/src/**/*.tsx', '!/src/ui/mobile/**', '../../../pro/web/**/*.tsx'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
 
 const FAMILIAR = [
   '닫기', '빼기', '열기', '보기', '이전', '뒤로', '다음', '접기', '건너뛰기', '추가', '폴더 추가', '계정 추가', '마켓플레이스 추가', '새 페이지',
@@ -14,6 +14,7 @@ const FAMILIAR = [
 
 // 아이콘이 동작이 아니라 상태 표시인 이름 버튼(펼침 화살표·뒤로 가는 이름 칩) — 파일:첫 글
 const NAME_WITH_ICON = new Set<string>([
+  '/src/ui/notes/NotesPanel.tsx 내 메모', // 머리 '내 메모 ⌄' — 이름 + 펼침 표시(누르면 목록, 시안 memo-panel C)
   '/src/ui/AgentBrowser.tsx 사람 필요', // 브라우저 띠 — 썸네일·페이지 제목·상태 꼬리표를 읽는 줄, 화살표는 펼침 표시
   '/src/ui/AgentBrowserModal.tsx 다 했어', // 보낼 말이 있으면 종이비행기, 없으면 '다 했어' 글자 — 둘 중 하나만 나온다
   '/src/ui/space/OrchHome.tsx 켜는 중…', // 참모 줄 — 프사·이름·상태를 읽는 줄
@@ -57,6 +58,8 @@ describe('익숙한 동작은 아이콘 버튼', () => {
     const bad: string[] = [];
     for (const [f, src] of Object.entries(files)) for (const b of buttons(src)) {
       if (/role="menuitem"/.test(b.open)) continue;
+      // 첫 설치의 작은 글 링크(fr-lnk) — 처음 보는 사람용, 문구는 사용자 11-05 지정('계정 추가')
+      if (/className="fr-lnk"/.test(b.open)) continue;
       for (const w of said(b.kids)) if (FAMILIAR.includes(w)) bad.push(`${f}:${b.line} ${w}`);
     }
     expect(bad).toEqual([]);

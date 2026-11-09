@@ -2,12 +2,14 @@
 // 모양: 풍선 = 사람(내 말은 오른쪽), 얼굴 + 맨 글 = 참모(남의 참모는 '하린의 참모' 꼬리표). 남의 말 위에 올리면 '내 참모에게' → 카드로 넘긴다.
 // 보내기는 사람 말(team_human_say) — 이 칸 안의 진짜(isTrusted) 키·클릭 뒤 1.5초 안만(HUMAN_POSTS 와 같은 문, teamApi)
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { forgetTeamThumb, teamClipFiles, teamFileAttach, teamFileOpen, teamFileSave, teamFileThumb, teamHumanSay, teamPickFiles, teamViewing, type HeldMsg, type SayExtra } from '../../data/teamApi';
+import { forgetTeamThumb, teamClipFiles, teamFileAttach, teamFileOpen, teamFileSave, teamFileThumb, teamHumanSay, teamPickFiles, teamUploadProgress, teamViewing, type HeldMsg, type SayExtra } from '../../data/teamApi';
 import { rekeyNotices, rekeyText, slotNotices, type SafetyPerson } from '../../domain/e2eSafety';
 import { SafetyPanel } from '../e2e/Safety';
 import '../e2e/e2e.css';
 import { toMineText, unseenCount, atQuery, dayLabel, pasteName, pasteTakes, handoffText, lineOf, mentionList, mentionParts, mentionsMe, personColor, reactionsOf, roomItems, sayTarget, stamp, withMyReacts, type Convo, type MentionPick, type Reaction, type TeamFile, type TeamItem } from '../../domain/teamChat';
 import { tr } from '../../i18n';
+import { attachQueue, sendBatches, upPct } from '../../domain/teamAttach';
+import { phoneView } from '../../domain/teamLocker';
 import { IconBack, IconChevronDown, IconChevronUp, IconClose, IconEnter, IconFolder, IconPencil, IconPlus, IconWindowOut } from '../Icons';
 import { IconButton } from '../kit/IconButton';
 import { JumpBottom } from '../kit/JumpBottom';
@@ -39,7 +41,8 @@ import { AgentConfirm, AgentFace } from './TeamAgents';
 /** 이 말을 아직 안 읽은 사람 수(카톡처럼) — 0 이면 안 그린다 */
 const ReadLeft = ({ n }: { n: number }) => (n > 0 ? <b className="tmx-rd" title={tr(`안 읽은 사람 ${n}`, `${n} not read yet`)} aria-label={tr(`안 읽은 사람 ${n}`, `${n} not read yet`)}>{n}</b> : null);
 
-type Att = { key: string; name: string; size?: number; busy?: boolean; err?: string; ref?: TeamFile };
+/** wait = 차례 기다림 · busy = 올리는 중(pct 몇 %) · path = 올릴 파일(차례가 오면 올린다) */
+type Att = { key: string; name: string; size?: number; busy?: boolean; wait?: boolean; pct?: number | null; path?: string; err?: string; ref?: TeamFile };
 
 // 참모 말 마크다운 → HTML 은 한 번 바꾼 걸 기억한다 — 팀 피드를 다시 읽을 때마다 말 수십 개를 다시 바꾸지 않게(참모 채팅 mdCache 와 같은 까닭)
 const mdCache = new Map<string, string>();
@@ -60,11 +63,11 @@ export type Handoff = { name: string; send: (text: string, to?: string) => Promi
 
 // 기본값은 모듈 상수로 — 매개변수 자리에 { … }·[] 를 쓰면 그릴 때마다 새 값이라 그걸 의존성에 둔 훅이 매번 다시 돈다
 // (10-31: agentsApi 가 그래서 팀챗을 열면 team_agents 를 초당 10번씩 끝없이 불렀다 — stableDeps.test.ts)
-const FILES = { attach: teamFileAttach, open: teamFileOpen, save: teamFileSave, pick: teamPickFiles, clip: teamClipFiles };
+const FILES = { attach: teamFileAttach, open: teamFileOpen, save: teamFileSave, pick: teamPickFiles, clip: teamClipFiles, progress: teamUploadProgress };
 const AGENTS = { cached: teamAgentsCached, fresh: teamAgents, confirm: teamAgentConfirm, usage: teamAgentUsage };
 const NO_MEMBERS: never[] = [];
 
-export function TeamConvo({ convo, items, team, myName, handed, onRead, onHanded, onSent, handoff, detach, onFiles, focused = true, say = teamHumanSay, viewing = teamViewing, back, safety, held, phone, people, onEditRoom, seed = '', onSeeded, teamId = '', members = NO_MEMBERS, reads, drafts = teamDrafts, files = FILES, thumb = teamFileThumb, agentsApi = AGENTS, viewImage }: {
+export function TeamConvo({ convo, items, team, myName, handed, onRead, onHanded, onSent, handoff, detach, onFiles, focused = true, say = teamHumanSay, viewing = teamViewing, back, safety, held, phone, people, onEditRoom, seed = '', onSeeded, teamId = '', members = NO_MEMBERS, reads, drafts = teamDrafts, files = FILES, thumb = teamFileThumb, agentsApi = AGENTS, viewImage, phoneAttach }: {
   convo: Convo;
   items: TeamItem[];
   team: string;
@@ -110,13 +113,15 @@ export function TeamConvo({ convo, items, team, myName, handed, onRead, onHanded
   /** 팀 사람(부르기 목록·이름 칩) — 단톡방은 방 사람만, DM 은 상대만 목록에 */
   members?: { id: string; name: string; me: boolean }[];
   /** 파일 길(팀 보관함 명령) — 시험이 바꿔 끼운다 */
-  files?: { attach: typeof teamFileAttach; open: typeof teamFileOpen; save: typeof teamFileSave; pick: typeof teamPickFiles; clip: typeof teamClipFiles };
+  files?: { attach: typeof teamFileAttach; open: typeof teamFileOpen; save: typeof teamFileSave; pick: typeof teamPickFiles; clip: typeof teamClipFiles; progress?: typeof teamUploadProgress };
   /** 말풍선 썸네일 주소 — 데스크톱은 풀어 둔 그림·PDF 첫 장, 폰은 맥이 줄인 JPEG(teamThumbBlob). 못 그리면 null */
   thumb?: (team: string, id: string, name: string, size: number) => Promise<string | null>;
   /** 팀 참모(ADR 0017) 길 — 시험·폰이 바꿔 끼운다. 폰은 아직 없음(null) */
   agentsApi?: { cached: typeof teamAgentsCached; fresh: typeof teamAgents; confirm: typeof teamAgentConfirm; usage: typeof teamAgentUsage } | null;
-  /** 폰 — 그림 칸을 누르면 화면 가득 보기(11-01 사용자). 데스크톱은 스페이스에서 연다(openFile) */
+  /** 폰 — 파일 칸을 누르면 폰 보기로(11-01 그림, 11-06 문서). 데스크톱은 스페이스에서 연다(openFile) */
   viewImage?: (f: TeamFile) => void;
+  /** 폰 대화 첨부(11-06) — 고른 파일을 맥 폰 서버로 올려 참조를 받는다. sent = 맥에 보낸 바이트 */
+  phoneAttach?: (team: string, room: string, file: File, sent: (n: number) => void) => Promise<TeamFile>;
 }) {
   const group = convo.kind === 'group';
   const { board } = useContext(ProfilesCtx);
@@ -265,17 +270,57 @@ export function TeamConvo({ convo, items, team, myName, handed, onRead, onHanded
 
   const mark = (e: React.SyntheticEvent) => { trustedAt.current = e.nativeEvent.isTrusted ? Date.now() : 0; };
   const ready = atts.filter((a) => a.ref).map((a) => a.ref!);
-  const uploading = atts.some((a) => a.busy);
-  // 파일 붙이기 — 팀 보관함에 방 사람 기기마다 봉투로 올리고(team_locker) 참조만 말에 싣는다. 새 DM(방 아직 없음)은 첫 말 뒤에
+  const uploading = atts.some((a) => a.busy || a.wait);
+  // 파일 붙이기 — 팀 보관함에 방 사람 기기마다 봉투로 올리고(team_locker) 참조만 말에 싣는다. 새 DM(방 아직 없음)은 첫 말 뒤에.
+  // 하나씩 차례로(11-05 여러 장 올리기): 칩마다 대기 → 올리는 중 n% → 크기, 한 장 실패가 묶음 전체를 실패로 만들지 않는다.
+  // 같은 파일을 다시 넣으면 Rust(team_locker_sent)가 앞서 올린 것을 준다 — 다시 시도해도 두 번 안 올라간다
+  const patch = (key: string, f: (a: Att) => Att) => setAtts((list) => list.map((x) => (x.key === key ? f(x) : x)));
+  // 차례마다 올릴 것 — 칩 키 → 팀·방·경로(넣은 때 값으로)
+  // 폰은 경로 대신 고른 파일(file) — 같은 차례 줄을 탄다
+  const jobs = useRef(new Map<string, { team: string; room: string; path: string; file?: File; attach: typeof teamFileAttach }>());
+  const [queue] = useState(() => attachQueue(async (key) => {
+    const j = jobs.current.get(key);
+    jobs.current.delete(key);
+    if (!j) return;
+    patch(key, (x) => ({ ...x, wait: false, busy: true }));
+    try {
+      const [r] = j.file && phoneAttach
+        ? [await phoneAttach(j.team, j.room, j.file, (n) => patch(key, (x) => ({ ...x, pct: Math.min(99, Math.floor((n * 100) / Math.max(1, j.file!.size))) })))]
+        : await j.attach(j.team, j.room, [j.path]);
+      patch(key, (x) => (r ? { ...x, busy: false, pct: null, size: r.size, name: r.name, ref: r } : { ...x, busy: false, err: tr('못 올렸어요', 'Upload failed') }));
+    } catch (e) {
+      patch(key, (x) => ({ ...x, busy: false, pct: null, err: String(e) }));
+    }
+  }));
+  const dropAtt = (key: string) => { queue.drop(key); jobs.current.delete(key); setAtts((a) => a.filter((x) => x.key !== key)); };
   const attach = (paths: string[]) => {
     if (!paths.length || !rich) return;
     if (!convo.room || !teamId) { setErr(tr('첫 말을 보낸 뒤에 파일을 붙일 수 있어요', 'Send a first message, then attach files')); return; }
-    const added = paths.map((p) => ({ key: `${p}#${Math.random()}`, name: p.split(/[\\/]/).pop() || p, busy: true }));
+    const room = convo.room;
+    const added: Att[] = paths.map((p) => ({ key: `${p}#${Math.random()}`, name: p.split(/[\\/]/).pop() || p, path: p, wait: true }));
+    for (const a of added) jobs.current.set(a.key, { team: teamId, room, path: a.path!, attach: files.attach });
     setAtts((a) => [...a, ...added]);
-    void files.attach(teamId, convo.room, paths).then((refs) => {
-      setAtts((a) => a.map((x) => { const i = added.findIndex((y) => y.key === x.key); const r = i >= 0 ? refs[i] : undefined; return r ? { ...x, busy: false, size: r.size, name: r.name, ref: r } : x; }));
-    }, (e: unknown) => setAtts((a) => a.map((x) => (added.some((y) => y.key === x.key) ? { ...x, busy: false, err: String(e) } : x))));
+    void queue.add(added.map((a) => a.key));
   };
+  /** 폰 — 폰 기본 첨부 창(iOS: 사진 보관함·사진 찍기·파일 선택)에서 고른 파일 */
+  const pickRef = useRef<HTMLInputElement>(null);
+  const attachFiles = (fs: File[]) => {
+    if (!fs.length || !phoneAttach) return;
+    if (!convo.room || !teamId) { setErr(tr('첫 말을 보낸 뒤에 파일을 붙일 수 있어요', 'Send a first message, then attach files')); return; }
+    const room = convo.room;
+    const added: Att[] = fs.map((f) => ({ key: `${f.name}:${f.size}#${Math.random()}`, name: f.name, size: f.size, wait: true }));
+    added.forEach((a, i) => jobs.current.set(a.key, { team: teamId, room, path: '', file: fs[i], attach: files.attach }));
+    setAtts((a) => [...a, ...added]);
+    void queue.add(added.map((a) => a.key));
+  };
+  // 올리는 동안 몇 % — 메모리만 읽는 가벼운 명령(망 안 씀), 올리는 칩이 있을 때만. 폰은 맥에 보낸 바이트로(attachFiles)
+  const upBusy = atts.some((a) => a.busy);
+  useEffect(() => {
+    if (!rich || !upBusy || !teamId || !convo.room || !files.progress) return;
+    const room = convo.room, progress = files.progress;
+    const t = setInterval(() => void progress(teamId).then((ups) => setAtts((list) => (list.some((a) => a.busy) ? list.map((a) => (a.busy ? { ...a, pct: upPct(ups, room, a.name) } : a)) : list)), () => {}), 1000);
+    return () => clearInterval(t);
+  }, [rich, upBusy, teamId, convo.room, files.progress]);
   useEffect(() => {
     const el = box.current;
     if (!el) return;
@@ -303,7 +348,7 @@ export function TeamConvo({ convo, items, team, myName, handed, onRead, onHanded
   const downs = useTeamDowns(rich);
   const saveFile = (f: TeamFile) => void downs.watch(files.save(f.team || teamId, f.id));
   const openFile = (f: TeamFile, app = false) => {
-    const p = openTeamFile((external) => files.open(f.team || teamId, f.id, external), f.name, app);
+    const p = openTeamFile((external, runOk) => files.open(f.team || teamId, f.id, external, runOk), f.name, app);
     void downs.watch(p);
     p.catch(fileFail);
   };
@@ -362,30 +407,48 @@ export function TeamConvo({ convo, items, team, myName, handed, onRead, onHanded
     const ag = agents ? calledAgent(t, agents.agents) : null;
     if (ag && checked !== ag.id && needsConfirm(ag, agents!.seen)) { setConfirming({ id: ag.id, t }); return; }
     const re = follow && t.includes(`@${follow.name}`) ? follow.seq : 0;
-    const extra: SayExtra = { ...(ready.length ? { files: ready } : {}), ...(re ? { re } : {}) };
-    const p = ready.length || re ? say(sayTarget(convo), t, trustedAt.current, extra) : say(sayTarget(convo), t, trustedAt.current);
+    // 10장씩 나눠 보낸다(받는 쪽이 10장 넘는 말의 파일을 통째 버린다 — e2e_envelope MAX_FILES). 사람 손 문(1.5초)을 넘지 않게 한꺼번에 부른다
+    const sent = atts.filter((a) => a.ref);
+    const batches = sendBatches(t, sent);
+    const ps = batches.map((b) => {
+      const extra: SayExtra = { ...(b.files.length ? { files: b.files.map((a) => a.ref!) } : {}), ...(re && b.from === 0 ? { re } : {}) };
+      return extra.files || extra.re ? say(sayTarget(convo), b.text, trustedAt.current, extra) : say(sayTarget(convo), b.text, trustedAt.current);
+    });
     trustedAt.current = 0;
-    if (!p) { setErr(tr('이 칸에서 직접 친 말만 보내요 — 다시 쳐 줘', 'Only what you type here is sent — type it again')); return; }
-    const id = Date.now() + Math.random();
-    setSending((s) => [...s, { id, text: t || ready.map((f) => f.name).join(', ') }]);
+    if (ps.some((p) => !p)) { setErr(tr('이 칸에서 직접 친 말만 보내요 — 다시 쳐 줘', 'Only what you type here is sent — type it again')); return; }
+    const ids = batches.map(() => Date.now() + Math.random());
+    setSending((s) => [...s, ...batches.map((b, i) => ({ id: ids[i]!, text: b.text || b.files.map((a) => a.name).join(', ') }))]);
     setText('');
     lastSent.current = t ? { text: t, at: Date.now() } : null;
-    setAtts([]);
+    // 보낸 칩만 뺀다 — 못 보낸 묶음은 아래에서 되살린다(전엔 다 지워서 다시 끌어 넣다 같은 사진이 또 올라갔다)
+    setAtts((list) => list.filter((a) => !sent.includes(a)));
     setMenu(null);
     setErr(null);
     setFollow(null);
     setBusy(true);
-    void p.then((r) => {
-      const seq = (r as { seq?: number } | null)?.seq;
-      setSending((s) => s.map((x) => (x.id === id ? { ...x, seq } : x)));
-      onSent();
-    }, (e: unknown) => {
-      setSending((s) => s.filter((x) => x.id !== id));
+    void Promise.allSettled(ps as Promise<unknown>[]).then((rs) => {
+      let ok = false;
+      const back: Att[] = [];
+      let fail = '';
+      rs.forEach((r, i) => {
+        if (r.status === 'fulfilled') {
+          ok = true;
+          const seq = (r.value as { seq?: number } | null)?.seq;
+          setSending((s) => s.map((x) => (x.id === ids[i] ? { ...x, seq } : x)));
+          return;
+        }
+        setSending((s) => s.filter((x) => x.id !== ids[i]));
+        // 보안 번호가 바뀌어 멈춘 말 — '멈춤' 풍선으로 보여 준다(받아들이면 보낸다)
+        if (String(r.reason).includes('멈춤')) { ok = true; return; }
+        back.push(...batches[i]!.files);
+        if (i === 0) setText((cur) => cur || t);
+        fail = String(r.reason);
+      });
+      if (ok) onSent();
+      if (!fail) return;
       lastSent.current = null;
-      // 보안 번호가 바뀌어 멈춘 말 — '멈춤' 풍선으로 보여 준다(받아들이면 보낸다)
-      if (String(e).includes('멈춤')) { onSent(); return; }
-      setText((cur) => cur || t);
-      setErr(tr(`못 보냈어요 — ${String(e)}`, `Not sent — ${String(e)}`));
+      setAtts((list) => [...back, ...list]);
+      setErr(tr(`못 보냈어요 — ${fail}`, `Not sent — ${fail}`));
     }).finally(() => setBusy(false));
   };
   // 입력기가 아직 글을 넣는 Enter(229)는 다음 차례에 — 그때의 send(새 글을 본)를 부른다
@@ -457,7 +520,7 @@ export function TeamConvo({ convo, items, team, myName, handed, onRead, onHanded
           const canReact = rich && (l.kind === 'bubble' || l.kind === 'agent');
           const add = canReact && <ReactAdd mine={rs.filter((r: { mine: boolean }) => r.mine).map((r: { mark: string }) => r.mark)} onPick={(k, on) => react(it.seq, k, on)} />;
           const chips = <Reacts list={rs} onToggle={canReact ? (k, on) => react(it.seq, k, on) : undefined} />;
-          const fs = it.files?.length ? <FileBubbles files={it.files} me={l.kind === 'bubble' && l.side === 'me'} onOpen={rich ? (f) => openFile(f) : viewImage} onlyPics={!rich} onMenu={rich ? onFileMenu : undefined} thumb={thumbOf} down={fileDown} /> : null;
+          const fs = it.files?.length ? <FileBubbles files={it.files} me={l.kind === 'bubble' && l.side === 'me'} onOpen={rich ? (f) => openFile(f) : viewImage} canOpen={rich ? undefined : (f: TeamFile) => !!phoneView(f)} lazy={!rich} onMenu={rich ? onFileMenu : undefined} thumb={thumbOf} down={fileDown} /> : null;
           const hl = l.kind !== 'blocked' && l.kind !== 'e2e' && !(l.kind === 'bubble' && l.side === 'me') && mentionsMe(it.body, myName);
           const rd = <ReadLeft n={unread.get(it.seq) ?? 0} />;
           return (
@@ -541,9 +604,13 @@ export function TeamConvo({ convo, items, team, myName, handed, onRead, onHanded
       {dnd && <div className="tmp-dnd" role="note">{dnd}</div>}
       <div className="tmx-compw">
         {menu && <MentionMenu items={picks} sel={Math.min(menu.sel, Math.max(0, picks.length - 1))} onPick={pickMention} />}
-        <Attachments list={atts} onRemove={(k) => setAtts((a) => a.filter((x) => x.key !== k))} />
+        <Attachments list={atts} onRemove={dropAtt} />
         {follow && <div className="tma-re" role="status">{tr(`${follow.name} 답에 이어 묻기`, `Following up on ${follow.name}`)}<IconButton size="s" label={tr('이어 묻기 빼기', 'Cancel follow-up')} onClick={() => setFollow(null)}><IconClose /></IconButton></div>}
         <div className="tmx-comp">
+          {!rich && phoneAttach && convo.room && <>
+            <IconButton label={tr('사진·파일 붙이기', 'Attach photos or files')} onClick={() => pickRef.current?.click()}><IconPlus /></IconButton>
+            <input ref={pickRef} type="file" multiple hidden onChange={(e) => { const f = Array.from(e.currentTarget.files ?? []); e.currentTarget.value = ''; attachFiles(f); }} />
+          </>}
           {rich && convo.room && <IconButton label={tr('파일 붙이기', 'Attach files')} onClick={() => void files.pick().then(attach, (e: unknown) => setErr(tr(`파일 창을 못 열었어요 — ${String(e)}`, `Could not open the file picker — ${String(e)}`)))}><IconPlus /></IconButton>}
           <textarea ref={input} rows={1} value={text} onChange={(e) => { if (echoOfSent(e.target.value, text, lastSent.current, Date.now())) { lastSent.current = null; setText(''); return; } typed(e.target.value, e.target.selectionStart ?? e.target.value.length); }} placeholder={group ? tr(`${convo.name}에 보내기 — @ 로 부르기`, `Message ${convo.name} — @ to mention`) : tr(`${convo.name}에게`, `To ${convo.name}`)} aria-label={tr(`${convo.name}에게 보낼 말`, `Message to ${convo.name}`)}
             onBlur={() => setMenu(null)}
@@ -561,7 +628,7 @@ export function TeamConvo({ convo, items, team, myName, handed, onRead, onHanded
                 if ((e.key === 'Enter' || e.key === 'Tab') && !e.nativeEvent.isComposing) { e.preventDefault(); pickMention(picks[Math.min(menu.sel, picks.length - 1)]!); return; }
                 if (e.key === 'Escape') { e.preventDefault(); setMenu(null); return; }
               }
-              const act = enterAction({ key: e.key, keyCode: e.keyCode, isComposing: e.nativeEvent.isComposing, shiftKey: e.shiftKey });
+              const act = enterAction({ key: e.key, keyCode: e.keyCode, isComposing: e.nativeEvent.isComposing, shiftKey: e.shiftKey, phone });
               if (act === 'skip') return;
               e.preventDefault();
               if (act === 'send') send();

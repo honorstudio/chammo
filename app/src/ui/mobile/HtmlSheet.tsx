@@ -3,13 +3,14 @@
 // (전략 표 6번, 2026-10-03 사용자 "큐레이션 폰에서 누르기 예 + curation/ 에 남김")
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { curationSave, curationState, htmlTicket, viaRelay } from '../../data/web';
-import { canCurSend, curSendState, emptyStore, readCurSent, writeCurSent, type CurSend } from '../../domain/curation';
+import { canCurSend, curationOutgoing, curSendState, emptyStore, readCurSent, writeCurSent, type CurSend } from '../../domain/curation';
 import { sendOut, storage } from './outbox';
 import { draftFit, pinchZoom } from '../../domain/htmlFit';
-import { sendPreview } from '../../domain/sendPreview';
-import { IconClose, IconSend } from '../Icons';
+import { IconClose, IconRefresh, IconSend } from '../Icons';
 import { htmlFrame } from './htmlFrame';
 import { fileError } from '../../domain/phoneFile';
+import { frameLink } from '../../domain/frameLink';
+import { useFrameGuard } from '../frameGuard';
 import { machine, tr } from '../../i18n';
 import { ShareButton } from './ShareButton';
 import { BottomSheet } from './kit';
@@ -21,6 +22,8 @@ export default function HtmlSheet({ path, title, orch, onClose }: { path: string
   const frame = useRef<HTMLIFrameElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const [url, setUrl] = useState<string | null>(null);
+  // 칸이 바깥 사이트로 새면 원래 시안으로(ui/frameGuard) — 계속 비면 다시 불러오기 단추
+  const guard = useFrameGuard(frame, url ?? '');
   const [err, setErr] = useState<{ text: string; gone: boolean } | null>(null);
   const [boxW, setBoxW] = useState(0);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
@@ -52,7 +55,7 @@ export default function HtmlSheet({ path, title, orch, onClose }: { path: string
     if (!orch || busy.current || !canCurSend(curSendState(phase, sentText, text))) return false;
     busy.current = true;
     setPhase('sending');
-    const r = await sendOut(orch, text, phase === 'fail' ? failId : undefined);
+    const r = await sendOut(orch, curationOutgoing(text), phase === 'fail' ? failId : undefined);
     busy.current = false;
     if (!r.ok) { setFailId(r.id); setPhase('fail'); return false; }
     writeCurSent(storage(), path, text);
@@ -77,6 +80,9 @@ export default function HtmlSheet({ path, title, orch, onClose }: { path: string
       const d = e.data as { hodoc?: string; w?: number; h?: number; k?: number; done?: boolean | number; total?: number; title?: string; text?: string; store?: Record<string, Record<string, unknown> | undefined> } | null;
       if (!d?.hodoc) return;
       if (d.hodoc === 'html-size' && d.w && d.h) setSize({ w: d.w, h: d.h });
+      // 시안 안 웹 링크(링크 다리) — 폰엔 앱 브라우저가 없어 폰 브라우저 새 창으로(칸은 sandbox 라 target=_blank 가 막힌다, 2026-11-05)
+      const link = frameLink(d);
+      if (link) window.open(link, '_blank', 'noopener,noreferrer');
       if (d.hodoc === 'html-pinch') {
         if (d.done === true) {
           const nz = pinchZoom(zRef.current, liveRef.current, 1, 4);
@@ -103,7 +109,7 @@ export default function HtmlSheet({ path, title, orch, onClose }: { path: string
         if (!ready) return;
         window.clearTimeout(saveT);
         const text = d.text, store = d.store ?? {};
-        saveT = window.setTimeout(() => void curationSave(path, text, store).catch(() => {}), 600);
+        saveT = window.setTimeout(() => void curationSave(path, curationOutgoing(text), store).catch(() => {}), 600);
       }
       // 껍데기 안 '참모에게 보내기' — 바로 안 보내고 폰 화면에서 묻는다. 답(curation-sent)은 사람이 고른 뒤에
       if (d.hodoc === 'curation' && typeof d.text === 'string' && orch) setAsk(d.text);
@@ -132,7 +138,7 @@ export default function HtmlSheet({ path, title, orch, onClose }: { path: string
           return (
             <>
               {say && <span className={`m-cur-st ${st}`} role="status">{say}</span>}
-              <button type="button" className={`m-rt-btn m-ico m-cur-send ${st}`} disabled={!canCurSend(st)} onClick={() => void send(cur.text)}
+              <button type="button" className={`m-rt-btn m-ico m-cur-send ${st}`} disabled={!canCurSend(st)} onClick={() => setAsk(cur.text)}
                 aria-label={st === 'sent' ? tr('참모에게 보냈어요', 'Sent to your assistant') : st === 'fail' ? tr('다시 보내기', 'Send again') : tr('검토 결과 참모에게 보내기', 'Send review to your assistant')} title={st === 'sent' ? tr('이 결과는 보냈어요', 'This result was sent') : st === 'fail' ? tr('못 보냄 — 다시 누르기', "Couldn't send — tap to retry") : tr('참모에게 보내기', 'Send to your assistant')}><IconSend /></button>
             </>
           );
@@ -141,7 +147,7 @@ export default function HtmlSheet({ path, title, orch, onClose }: { path: string
         <button type="button" className="m-rt-btn m-ico" onClick={onClose} aria-label={tr('닫기', 'Close')} title={tr('닫기', 'Close')}><IconClose /></button>
       </div>}>
       {ask !== null && (() => {
-        const p = sendPreview(ask);
+        const shown = curationOutgoing(ask);
         const answer = (go: boolean) => {
           setAsk(null);
           if (!go) { post({ hodoc: 'curation-sent', ok: false, error: tr('취소했어요', 'Canceled') }); return; }
@@ -149,8 +155,8 @@ export default function HtmlSheet({ path, title, orch, onClose }: { path: string
         };
         return (
           <div className="m-confirm m-send-ask" role="alertdialog" aria-label={tr('참모에게 보낼까요', 'Send to your assistant?')}>
-            <div>{tr(`시안이 이 글을 참모에게 보내자고 해요 — 보낼까요? (${p.chars}자)`, `This draft wants to send this text to your assistant — send it? (${p.chars} chars)`)}</div>
-            <pre className="m-send-peek">{p.lines.join('\n')}{p.more ? '\n…' : ''}</pre>
+            <div>{tr(`시안이 이 글을 참모에게 보내자고 해요 — 보낼까요? (${[...shown].length}자)`, `This draft wants to send this text to your assistant — send it? (${[...shown].length} chars)`)}</div>
+            <pre className="m-send-peek">{shown}</pre>
             <div className="m-new-row">
               <button type="button" className="m-btn" onClick={() => answer(false)}>{tr('취소', 'Cancel')}</button>
               <button type="button" className="m-send" onClick={() => answer(true)}>{tr('보내기', 'Send')}</button>
@@ -171,9 +177,10 @@ export default function HtmlSheet({ path, title, orch, onClose }: { path: string
       <div className={cur ? 'm-html-body m-html-cur' : 'm-html-body'} ref={wrap}>
         {err && <p className={`${err.gone ? 'm-muted' : 'm-error'} m-pad`}>{err.text}</p>}
         {!url && !err && <p className="m-muted m-pad">{tr('여는 중…', 'Opening…')}</p>}
+        {url && guard.gone && <button type="button" className="m-chip" style={{ margin: 12 }} onClick={guard.reload} aria-label={tr('시안 다시 불러오기', 'Reload the draft')} title={tr('시안 다시 불러오기', 'Reload the draft')}><IconRefresh /></button>}
         {url && (
           <div className="m-html-sizer" style={fw && fh ? { width: fw * k, height: fh * k } : undefined}>
-            <iframe ref={frame} title={title} {...htmlFrame(url, viaRelay())}
+            <iframe ref={frame} title={title} {...htmlFrame(url, viaRelay())} onLoad={guard.onLoad}
               style={fw && fh ? { width: fw, height: fh, transform: `scale(${k})` } : undefined} />
           </div>
         )}

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setLang } from '../i18n';
-import { CATALOG, COIN_RULES, dexCatalog, EVENTS, liveEvent, pick, dayStartAt, earn, EMPTY_GACHA, starOf, starTotal, nextStar, softPay, ownedOf, ownedSkins, parseGacha, place, pull, rarityLabel, rollRarity, seeItem, setSkin, skinOfFile, toggleEquip, WORK_MIN, type GachaFile } from './gacha';
+import { CATALOG, COIN_RULES, dexCatalog, EVENTS, liveEvent, pick, dayStartAt, earn, EMPTY_GACHA, starOf, starTotal, nextStar, softPay, ownedOf, ownedSkins, parseGacha, pull, rarityLabel, rollRarity, seeItem, setSkin, skinOfFile, toggleEquip, WORK_MIN, type GachaFile } from './gacha';
 
 /** 한정 이벤트가 끝난 뒤 — 평소 풀만 나오게(날짜 따라 시험이 흔들리지 않게) */
 const NOV = new Date(2026, 10, 20, 12).getTime();
@@ -279,23 +279,6 @@ describe('새 종류 — 책상 소품·칭호·조명(2026-10-10 사용자: 뽑
   });
 });
 
-describe('place — 가구 놓기', () => {
-  const f = { ...EMPTY_GACHA, owned: { 'furn.sofa': 1, 'furn.lamp': 1 } };
-  it('가진 가구를 칸에 놓고, null 이면 창고로', () => {
-    const a = place(f, 'furn.sofa', [3, 4]);
-    expect(a.placed).toEqual({ 'furn.sofa': [3, 4] });
-    expect(place(a, 'furn.sofa', null).placed).toEqual({ 'furn.sofa': null });
-  });
-  it('안 가진 가구·가구 아닌 건 못 놓는다', () => {
-    expect(place(f, 'furn.tank', [1, 1])).toBe(f);
-    expect(place({ ...f, owned: { 'hat.crown': 1 } }, 'hat.crown', [1, 1]).placed ?? {}).toEqual({});
-  });
-  it('이미 다른 가구가 있는 칸에 놓으면 그 가구는 창고로', () => {
-    const a = place(place(f, 'furn.sofa', [3, 4]), 'furn.lamp', [3, 4]);
-    expect(a.placed).toEqual({ 'furn.sofa': null, 'furn.lamp': [3, 4] });
-  });
-});
-
 describe('영어 — 등급·아이템 이름', () => {
   afterEach(() => { setLang('ko'); vi.resetModules(); });
   it('등급 글자만 바뀌고 등급 키(흔함…)는 그대로', () => {
@@ -378,7 +361,7 @@ describe('코인 버는 법 표 — 화면 글과 실제 계산이 같다', () =
     expect(one({ t: 1, type: 'task' })).toBe(val[5]);
     expect([one({ t: 1, type: 'ci', pass: true }), one({ t: 1, type: 'review' }), one({ t: 1, type: 'routine', pass: true }), one({ t: 1, type: 'commit', lines: 900, hasTest: true })]).toEqual([2, 2, 2, 2]);
     expect([one({ t: 1, type: 'commit', lines: 300, hasTest: false }), one({ t: 1, type: 'talk' }), one({ t: 1, type: 'doc' }), one({ t: 1, type: 'work', minutes: WORK_MIN })]).toEqual([1, 1, 1, 1]);
-    expect(one({ t: 1, type: 'slay', kind: 'slime', lv: 1 })).toBe(val[5]);
+    expect(one({ t: 1, type: 'slay', kind: 'slime', lv: 1 })).toBe(0); // 몬스터 코인은 없앴다
     expect(COIN_RULES.map(([n]) => n)).toEqual([10, 5, 2, 1]);
   });
 });

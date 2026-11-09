@@ -5,12 +5,18 @@ import phoneLocker from './PhoneTeamLocker.tsx?raw';
 import phoneAdd from './PhoneTeamAdd.tsx?raw';
 import web from '../../data/web.ts?raw';
 
-describe('폰 — 머리 팀 줄 + (B2)', () => {
-  it('머리에 teamStack 줄과 끝에 +, 누르면 팀 바꾸기(api.use)', () => {
+describe('폰 — 머리 팀 줄 · 팀 추가는 팀 시트에(11-06)', () => {
+  it('머리에 teamStack 줄, 누르면 팀 바꾸기(api.use) — 머리 + 는 자리를 차지해 뺐다', () => {
     expect(phone).toContain('teamStack(view)');
     expect(phone).toContain('api.use(');
     expect(phone).toContain('<PhoneTeamStrip stack={stack}');
-    expect(phoneAdd).toMatch(/className="m-team-add" aria-label=\{tr\('팀 추가', 'Add a team'\)\}/);
+    expect(phoneAdd).not.toContain('m-team-add');
+    expect(phone).not.toContain('onAdd={() => setAdding(true)}');
+  });
+  it('팀 이름 꺾쇠 시트에 \'팀 추가\' 줄 → + 시트, 팀이 없어도 꺾쇠로 연다', () => {
+    expect(phone).toMatch(/className="m-ts-act" onClick=\{onAdd\}>\{tr\('팀 추가', 'Add a team'\)\}/);
+    expect(phone).toContain('onAdd={() => { setSheet(false); setAdding(true); }}');
+    expect(phone).not.toContain("<b className=\"m-team-none\">");
   });
   it('+ 시트 두 줄 → 만들기·들어가기 칸(내 이름 포함)', () => {
     expect(phone).toContain('<TeamAddSheet api={api}');
@@ -43,5 +49,16 @@ describe('팀 바꿀 때 섞이지 않게(폰) — 프로필판·팀 홈', () =>
   it('폰 팀 홈·보관함은 팀마다 새로 그린다(key)', () => {
     expect(phone).toContain('<TeamHome key={view.teamId}');
     expect(phone).toContain('<PhoneTeamLocker key={view.teamId}');
+  });
+});
+
+describe('폰 팀 보관함 + = 폰 기본 첨부 창(11-06 사용자)', () => {
+  it('+ 는 우리 모달 없이 바로 파일 고르기(여러 개) — iOS 가 사진 보관함·사진 찍기·파일 선택을 띄운다', () => {
+    expect(phoneLocker).not.toContain('function AddSheet');
+    expect(phoneLocker).toMatch(/<input ref=\{pick\} type="file" multiple hidden/);
+    expect(phoneLocker).toMatch(/label=\{tr\('올리기', 'Upload'\)\} onClick=\{\(\) => pick\.current\?\.click\(\)\}><IconPlus \/>/);
+  });
+  it('새 폴더는 + 옆 아이콘', () => {
+    expect(phoneLocker).toMatch(/label=\{tr\('새 폴더', 'New folder'\)\} onClick=\{\(\) => setAsk\(\{ kind: 'name', what: 'mkdir' \}\)\}><IconFolderPlus \/>/);
   });
 });

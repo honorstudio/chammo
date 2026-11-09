@@ -85,7 +85,7 @@ describe('놓기', () => {
 describe('모양', () => {
   it('층은 변수(숫자 z-index 금지), 도는 고리는 멈춤 목록에', () => {
     expect(css).not.toMatch(/z-index:\s*\d/);
-    expect(paused).toContain('.obb-ring.r-ask');
+    expect(paused).toContain('.obb-wave');
   });
   it('고리는 정수 테두리 — 반 픽셀 퍼짐 그림자는 웹킷 1배 화면에서 한쪽 2px·반대쪽 3px(사용자 348)', () => {
     const r = css.match(/^\.obb-ring \{[^}]*\}/m)![0];
@@ -140,11 +140,11 @@ describe('바탕 배지(앱을 내려도 — 10-28 사용자)', () => {
     expect(css).not.toMatch(/\.obd-peek \{[^}]*pointer-events: none/);
   });
   it('배너·부채에서 대화창을 열 땐 무대 창 안 배지 상자 자리에서(무대 창 = 배지 + 펼칠 자리, 왼쪽 위가 배지가 아니다)', () => {
-    expect(desk).toContain('{ x: s.win.x + boxOffRef.current.x, y: s.win.y + boxOffRef.current.y, w: DESK, h: DESK }');
+    expect(desk).toContain('const b = { x: s.win.x + frameRef.current.box.x, y: s.win.y + frameRef.current.box.y };');
     expect(desk).toContain('openingRef.current = true;');
   });
   it('올림·뺌·배너는 창 크기·자리를 안 바꾼다 — 창은 늘 무대 크기, 바뀌는 건 웹뷰 안 그림뿐(10-28 사용자 "호버하면 깜빡이면서 잠깐 위치가 바뀜", 실측 올림 6번 중 4번 -150px 튐·뺌 1번 사라짐)', () => {
-    expect(desk).toContain('deskStage(');
+    expect(desk).toContain('deskFrame(');
     expect(desk).not.toMatch(/w: DESK \+ FAN, h: DESK \+ FAN/); // 부채만큼 창을 키우던 것
     expect(desk).not.toContain('placePeek'); // 배너만큼 창을 키우던 것
     const fanFx = desk.slice(desk.indexOf('// 부채 —'), desk.indexOf('const press = useRef'));
@@ -152,7 +152,8 @@ describe('바탕 배지(앱을 내려도 — 10-28 사용자)', () => {
     expect(desk).not.toMatch(/useEffect\(\(\) => \{[^\n]*peek[^\n]*toBadge/);
   });
   it('무대 쪽이 바뀌어 창 자리와 웹뷰 안 배지 자리가 같이 바뀔 땐 배지를 감춘 채 옮기고 다 그린 뒤 보인다(한 프레임 어긋남이 안 보이게)', () => {
-    expect(desk).toMatch(/if \(flip\) \{ setHide\(true\); await paint\(\); \}[\s\S]{0,200}await place\(st\.win, false, 0\);[\s\S]{0,120}setSide\(st\.side\);[\s\S]{0,120}if \(flip\) \{ await paint\(\); setHide\(false\); \}/);
+    expect(desk).toMatch(/if \(flip\) \{ setHide\(true\); await paint\(\); \}[\s\S]{0,200}await place\(f\.win, false, 0\);[\s\S]{0,120}setFrame\(f\);[\s\S]{0,120}if \(flip\) \{ await paint\(\); setHide\(false\); \}/);
+    expect(desk).toContain('const flip = f.box.x !== frameRef.current.box.x || f.box.y !== frameRef.current.box.y;'); // 창 안 배지 자리가 바뀔 때만
     expect(css).toMatch(/\.obd-wrap\.hide \{[^}]*visibility: hidden/);
   });
   it('끄는 동안엔 창 크기·제자리 당김을 안 한다 — 놓은 뒤 한 번', () => {
@@ -171,6 +172,14 @@ describe('바탕 배지(앱을 내려도 — 10-28 사용자)', () => {
     expect(rust).toContain('setCollectionBehavior: (1usize) | (1 << 6)');
     expect(rust).toContain('Bool::new(KEYABLE.load(Ordering::SeqCst))');
     expect(rust).toContain('orderFrontRegardless');
+    // 창 한 판이 대화창 자리까지 품어 배지보다 한참 위로 뻗는다 — 끌 때 맥이 위쪽을 메뉴줄 밑으로 당기면 배지를 화면 위쪽으로 못 끈다
+    expect(rust).toContain('b.add_method(sel!(constrainFrameRect:toScreen:), free as extern "C" fn(_, _, _, _) -> _);');
+  });
+  it('맥 끌기는 창이 커서를 직접 따라간다 — 맥 창 끌기(performDrag)는 위쪽이 메뉴줄에서 멈춰 한 판 창이면 배지를 화면 위쪽으로 못 끈다(11-05 아이맥 실측)', () => {
+    expect(rust).toMatch(/#\[cfg\(target_os = "macos"\)\]\s*follow\(w\);\s*#\[cfg\(not\(target_os = "macos"\)\)\]\s*let _ = w\.start_dragging\(\);/); // 윈도우는 창 끌기 그대로
+    expect(rust).toMatch(/while button_down\(\) \{[\s\S]{0,300}w\.set_position\(tauri::LogicalPosition::new\(win\.x \+ m\.0 - m0\.0, win\.y \+ m\.1 - m0\.1\)\)/);
+    expect(rust).toMatch(/pub fn moved\(app: &tauri::AppHandle\) \{\s*if FOLLOWING\.load\(Ordering::SeqCst\) \{\s*return;/); // 끄는 중엔 자리 저장·제자리 확인을 안 깨운다
+    expect(rust).toContain('let pass = !FOLLOWING.load(Ordering::SeqCst) &&'); // 끄는 중 커서가 받는 자리를 벗어나도 놓음이 바탕 앱으로 안 샌다
   });
   it('보내기는 폰과 같은 길(참모에게만·제어 문자 빼고) — 대화창은 터미널 없는 ChatView', () => {
     expect(desk).toContain("invoke('bubble_send', { id: chatId, text })");
@@ -181,25 +190,43 @@ describe('바탕 배지(앱을 내려도 — 10-28 사용자)', () => {
   it('자리는 모니터별 화면 + 비율, 사람이 끈 것만 기억(앱이 놓은 자리도 옮김 사건이 온다)', () => {
     expect(desk).toContain('screenPlace(readSpot(read(SPOT_KEY)), s.screens, s.app, DESK)');
     expect(desk).toContain('if (!draggedRef.current) return;');
-    expect(desk).toContain('deskPop({ x: b.x, y: b.y, w: DESK, h: DESK }, s.screens, sizeRef.current, isBig)');
+    expect(desk).toContain('const f = frameAt(b, s.screens, isBig);');
   });
 });
 
 describe('대화창 톡 열림·닫힘(10-28 사용자 "눌러서 채팅하는 작은 창 애니메이션으로 팝업")', () => {
   const desk = src('./DeskBubble.tsx');
-  it('열 때: 접힌 대화창(from)을 먼저 그리고 창을 대화창 크기로 키운 뒤 펼친다(in) — 맥 창 크기 바뀌는 순간을 가린다', () => {
-    expect(desk).toMatch(/setAnim\('from'\)[\s\S]{0,400}await place\(l\.win, true, l\.badge \? 0 : 14\)[\s\S]{0,200}setAnim\('in'\)/);
+  it('열 때: 접힌 대화창(from)을 먼저 그리고 펼친다(in) — 창은 이미 대화창 자리까지 품은 한 판이라 키 창만 된다', () => {
+    expect(desk).toMatch(/if \(grow\) setAnim\('from'\);[\s\S]{0,300}if \(grow\) await paint\(\);[\s\S]{0,200}await place\(f\.win, true, 0\);[\s\S]{0,200}setAnim\('in'\)/);
   });
   it('이미 열린 대화창의 키우기·참모 바꾸기는 다시 톡 하지 않는다', () => {
     expect(desk).toContain('const grow = !openRef.current;');
   });
-  it('닫을 때: 배지 쪽으로 접고(out) 안 보이게(gone) 한 뒤 창을 배지로, 그다음 배지 — 큰 창에 배지가 한 번 튀지 않게', () => {
-    expect(desk).toMatch(/setAnim\('out'\)[\s\S]{0,300}POP_MS\.close[\s\S]{0,300}setAnim\('gone'\)[\s\S]{0,300}await toBadge\(true\)[\s\S]{0,200}setOpen\(false\)/);
+  it('닫을 때: 배지 쪽으로 접고(out) 대화창만 내린 뒤 키를 내려놓는다 — 창은 같은 판 그대로, 배지는 한 번도 안 감춘다', () => {
+    expect(desk).toMatch(/setAnim\('out'\)[\s\S]{0,300}POP_MS\.close[\s\S]{0,300}setAnim\('gone'\);\s*setOpen\(false\);[\s\S]{0,300}await place\(s\?\.win \?\? frameRef\.current\.win, false, 0\);\s*await toBadge\(true\)/);
+  });
+  it('열기·접기에 배지를 감추거나 다시 붙이지 않는다(11-05 사용자 "펼칠 때·닫힐 때 깜빡" — 감췄다 보이는 게 깜빡임) — 배지는 닫혀도 열려도 같은 button 하나', () => {
+    expect(css).not.toMatch(/\.a-(from|gone) \.obd-wrap/);
+    expect(css).not.toContain('obd-back');
+    expect(desk).not.toContain('obd-back');
+    expect(desk.match(/className=\{`obb-badge obd-badge/g)).toHaveLength(1);
+    expect(desk).toContain("aria-label={open ? tr(`${who.label} 대화창 접기`");
+    expect(desk).toContain('onClick={() => { if (!pressed()) void openPop(!open); }}');
+    // 대화창이 배지를 덮을 땐(키우기) 대화창이 배지보다 위 층 — 배지를 감추는 대신 층으로 가린다
+    const z = (re: RegExp) => Number(css.match(re)![1]);
+    expect(z(/\.obd-desk > \.obd-pop \{ z-index: calc\(var\(--z-panel\) \+ (\d)\)/)).toBeGreaterThan(z(/^\.obb-badge \{[^}]*z-index: calc\(var\(--z-panel\) \+ (\d)\)/m));
+  });
+  it('창 한 판(deskFrame) — 닫힌 배지·열기·크기 손잡이가 같은 계산(frameAt), 판이 같으면 창을 안 바꾼다', () => {
+    expect(desk).toContain('deskFrame({ x: b.x, y: b.y, w: DESK, h: DESK }, { x: b.x + BX, y: b.y + BY, w: 52, h: 52 }, screens, EXT, size, isBig)');
+    expect(desk).toContain('const f = frameAt(p, s.screens, bigRef.current);'); // 닫힌 배지
+    expect(desk).toContain('const f = frameAt(d.b, d.screens, false, next);'); // 크기 손잡이
+    expect(desk).toContain('const moved = !sameRect(s.win, f.win);');
+    expect(desk).not.toMatch(/place\([^)]*\? 0 : 14\)/); // 창 모서리 깎기 없음 — 대화창 둥근 모서리는 CSS
   });
   it('자라 나오는 점은 배지 가운데(popOrigin) — 부채·배너에서 열어도 같은 openPop 한 길', () => {
-    expect(desk).toContain('popLayout(b, { x: b.x + BX, y: b.y + BY, w: 52, h: 52 }, r)');
+    expect(desk).toContain('const f = frameAt(b, s.screens, isBig);');
     expect(desk).toMatch(/onPick=\{\(id\) => \{[^}]*openPop\(true, big, id\)/);
-    expect(desk).toContain('transformOrigin: `${lay.origin.x}px ${lay.origin.y}px`');
+    expect(desk).toContain('transformOrigin: `${frame.origin.x}px ${frame.origin.y}px`');
   });
   it('바탕 대화창 테두리는 안쪽 정수 border — 창이 대화창 가장자리에 딱 맞아 바깥 퍼짐 그림자는 잘린다(10-28 사용자 "테두리 획 안 보임")', () => {
     const rule = css.match(/\.obd-pop \{[^}]*\}/)?.[0] ?? '';
@@ -227,7 +254,8 @@ describe('바탕 배지 물결·그림자가 창 끝에서 안 잘린다(10-28 �
   const num = (re: RegExp, t: string) => Number(t.match(re)![1]);
   it('창 여백 + 배지 상자 여백이 고리(7)·물결·그림자의 가장 먼 퍼짐보다 크다 — 위·옆·아래', () => {
     const ring = num(/\.obb-ring \{[^}]*inset: -(\d+)px/, css);
-    const wave = num(/100% \{ box-shadow: var\(--obb-drop\), 0 0 0 (\d+)px transparent/, css);
+    // 물결 = 고리 바깥 반지름(26 + 2)에서 scale 만큼 — 0→12px 퍼짐
+    const wave = Math.round(28 * (Number(css.match(/@keyframes obb-wave[^\n]*scale\((1\.\d+)\)/)![1]) - 1));
     const dy = num(/^\.obb-ring \{ --obb-drop: 0 (\d+)px \d+px rgba/m, css), blur = num(/^\.obb-ring \{ --obb-drop: 0 \d+px (\d+)px rgba/m, css);
     const pad = num(/export const DESK_PAD = (\d+);/, dom);
     const [box, bx, by] = [num(/const DESK = (\d+);/, desk), num(/const BX = (\d+)/, desk), num(/BY = (\d+);/, desk)];
@@ -237,25 +265,24 @@ describe('바탕 배지 물결·그림자가 창 끝에서 안 잘린다(10-28 �
     expect(box - bx - 52 + pad).toBeGreaterThan(reach.side);
     expect(box - by - 52 + pad).toBeGreaterThan(reach.bottom);
   });
-  it('배지·부채·배너 창(무대)은 상자에 여백·펼칠 자리를 더해 놓고(deskStage), 읽을 땐 무대 안 상자 자리로 — 놓는 자리·작업 영역 당김·누름은 배지 상자 기준 그대로', () => {
-    expect(desk).toContain('const st = deskStage({ x: p.x, y: p.y, w: DESK, h: DESK }, s.screens, EXT);');
-    expect(desk).toContain('const boxOff = stageBox(side, EXT);');
+  it('배지·부채·배너·대화창 창(한 판)은 상자에 여백·펼칠 자리를 더해 놓고(deskFrame), 읽을 땐 판 안 상자 자리로 — 놓는 자리·작업 영역 당김·누름은 배지 상자 기준 그대로', () => {
+    expect(desk).toContain('const p = screenPlace(readSpot(read(SPOT_KEY)), s.screens, s.app, DESK);');
+    expect(desk).toContain('const boxOff = frame.box;');
     expect(desk).not.toMatch(/place\(\{ x: (p|side)\./); // 상자 창을 맨 place 로 놓지 않는다
     expect(desk).toContain("<div className={`obd-wrap${hide ? ' hide' : ''}`} style={{ inset: DESK_PAD }}");
-    expect(desk).toMatch(/await place\(l\.win, true, l\.badge \? 0 : 14\)/); // 대화창 창은 popLayout 그대로(배지 상자 여백은 그 안에)
+    expect(desk).toMatch(/await place\(f\.win, true, 0\)/); // 대화창도 같은 판(배지 상자 여백은 그 안에)
   });
 });
 
 describe('열린 동안 배지는 제자리, 대화창은 끌어 옮긴다(10-28 사용자 "최소화할 때 위치가 불분명·채팅창 이동 불가")', () => {
   const desk = src('./DeskBubble.tsx');
   it('열린 대화창 옆에 배지가 남고, 누르면 접힌다', () => {
-    expect(desk).toContain('{lay.badge && (');
-    expect(desk).toMatch(/aria-label=\{tr\(`\$\{who\.label\} 대화창 접기`[\s\S]{0,400}onClick=\{\(\) => \{ if \(!pressed\(\)\) void openPop\(false\); \}\}/);
-    expect(css).toMatch(/\.obd-open\.a-from \.obd-wrap, \.obd-open\.a-gone \.obd-wrap \{ visibility: hidden; \}/); // 창 크기가 바뀌는 동안은 안 보이게
+    expect(desk).toMatch(/aria-label=\{open \? tr\(`\$\{who\.label\} 대화창 접기`[\s\S]{0,800}onClick=\{\(\) => \{ if \(!pressed\(\)\) void openPop\(!open\); \}\}/);
+    expect(desk).toContain('...(frame.badge ? [badgeAt] : [])'); // 대화창이 배지를 덮으면(키우기) 받는 자리에서 뺀다
   });
   it('대화창 머리 빈 곳을 끌면 맥 창 끌기(단추 위는 아님) — 놓으면 같이 옮겨진 배지 자리를 기억', () => {
     expect(desk).toMatch(/className="obb-head obd-head"[^>]*onPointerDown=\{\(e\) => \{ if \(e\.button === 0 && !\(e\.target as Element\)\.closest\('button'\)\) \{ draggedRef\.current = true; void invoke\('bubble_drag'\)/);
-    expect(desk).toContain('const b = openRef.current ? { x: w0.x + layRef.current.box.x, y: w0.y + layRef.current.box.y } : { x: w0.x + boxOffRef.current.x, y: w0.y + boxOffRef.current.y };');
+    expect(desk).toContain('const b = { x: w0.x + frameRef.current.box.x, y: w0.y + frameRef.current.box.y };');
   });
 });
 
@@ -277,7 +304,7 @@ describe('누르기 = 대화창, 올리기 = 부채, 끌기 = 옮기기 — 비�
   it('접힘 — 얼굴들이 배지로 빨려 들어가는 동안 그려 두고(out) 내린다, 움직임 줄이기·고르기(close)는 바로', async () => {
     expect(fan).toContain('const fold = anim && was && motionOn();');
     expect(fan).toContain('close: () => { over.current = false; shut(false); }');
-    expect(desk).toContain('{fanShown && <BubbleFan');
+    expect(desk).toContain('{!open && fanShown && <BubbleFan');
     expect(desk).toContain("out={hover.out}");
     expect(desk).toContain("${hover.out ? ' out' : ''}"); // 앞 참모 별명 칩도 같이
     expect(desk).toContain('{ hot: [fanAt], hover: [badgeAt] }'); // 접히는 동안 받는 자리는 fan(펴짐) 기준 — 이미 배지로
@@ -296,13 +323,13 @@ describe('누르기 = 대화창, 올리기 = 부채, 끌기 = 옮기기 — 비�
   it('누를 때 부채를 접지 않는다(꾹 누르면 부채·누르는 순간 창 크기 바뀜 없음) — 누르고 놓으면 대화창, 5px 넘게 움직이면 끌기', () => {
     expect(desk).not.toMatch(/onPointerDown=\{\(e\) => \{ if \(e\.button === 0\) \{ hover\.close\(\)/);
     expect(desk).toContain('isDrag(e.screenX - p.x, e.screenY - p.y)');
-    expect(desk).toMatch(/onClick=\{\(\) => \{ if \(!pressed\(\)\) void openPop\(true\); \}\}/);
+    expect(desk).toMatch(/onClick=\{\(\) => \{ if \(!pressed\(\)\) void openPop\(!open\); \}\}/);
   });
   it('끄는 동안엔 제자리 확인(3초)·부채 크기 바꾸기·올림이 끼어들지 않는다 — 놓은 뒤 배지 상자 자리를 기억하고 배지로', () => {
     expect(desk).toContain('draggingRef.current = true;');
     expect(desk).toMatch(/setInterval\(\(\) => \{ if \(!draggingRef\.current && !openRef\.current/);
     expect(desk).toContain('const fan = hover.on && !dragging;');
-    expect(desk).toContain(': { x: w0.x + boxOffRef.current.x, y: w0.y + boxOffRef.current.y };'); // 부채·배너로 넓은 창을 끌어도 배지 상자 자리
+    expect(desk).toContain('const b = { x: w0.x + frameRef.current.box.x, y: w0.y + frameRef.current.box.y };'); // 부채·배너·대화창 자리로 넓은 창을 끌어도 배지 상자 자리
   });
   it('받는 자리만 클릭을 받고 투명 여백은 바탕으로 — 배지 원·배너·대화창(열린 동안 배지도), 부채가 펴진 동안은 창 전체', () => {
     expect(desk).toContain("void invoke('bubble_hot', hits).catch(() => {});");
@@ -325,7 +352,7 @@ describe('누가 누구인지 — 별명(10-28 사용자 "호버하면 이름 �
     expect(rust).toContain('window.__bubbleMouse && window.__bubbleMouse(');
     expect(desk).toContain("document.elementFromPoint(x, y)?.closest('[data-hot]')");
     expect(desk).toContain("setTip(t && r ? { text: t, x: r.left + r.width / 2, y: r.bottom + 4 } : null);"); // 얼굴 줄은 가로 스크롤이라 잘린다 — 창 맨 위 층에 따로
-    expect(desk).toContain('{tip && <span className="obd-tip"');
+    expect(desk).toContain('{open && tip && <span className="obd-tip"');
   });
   it('부채 얼굴은 올리면 별명(obb-fn), 대화창 머리 얼굴은 별명 툴팁, 머리엔 지금 상대 별명을 늘 글자로', () => {
     expect(fan).toContain('data-hot');
@@ -335,7 +362,7 @@ describe('누가 누구인지 — 별명(10-28 사용자 "호버하면 이름 �
   });
   it('부채가 펴지면 앞 참모 별명 칩이 배지 옆(화면 가운데 쪽)에 — 별명은 이름 줄의 " · " 뒤', () => {
     expect(desk).toContain('const nick = (l: string) => shownName(l);');
-    expect(desk).toMatch(/\{fanShown && <span className=\{`obd-name/);
+    expect(desk).toMatch(/\{!open && fanShown && <span className=\{`obd-name/);
   });
 });
 
@@ -371,7 +398,7 @@ describe('대화창 = 메인 참모 채팅과 같은 ChatView 그대로(10-28 �
     expect(desk).toContain("clearTerminal={() => { term.current = ''; }}");
   });
   it('모델 칩·컨텍스트·음성 모드 — 메인과 같은 자료(read_ctx·voiceMode)와 같은 길(__appctl model-pick·voice)', () => {
-    expect(desk).toContain('setCtxs(parseCtx(await readCtx()))');
+    expect(desk).toContain('parseCtx(await readCtx([a.sessionId]))');
     expect(desk).toContain("invoke('bubble_appctl', { action: 'model-pick'");
     expect(desk).toContain("invoke('bubble_appctl', { action: 'voice'");
     expect(desk).toContain("readVoice()");
@@ -448,11 +475,11 @@ describe('얼굴은 원 안에만, 고리는 정수 테두리 한 겹(10-28 21�
 describe('대화창 크기를 사람이 끌어 바꾼다(10-28 사용자 "늘렸다 줄였다")', () => {
   const desk = src('./DeskBubble.tsx');
   it('배지 반대쪽 두 변·모서리에 손잡이 — 끄는 동안 맥 창을 그 크기로 다시 놓고, 놓으면 보통 크기로 기억', () => {
-    expect(desk).toContain('const far = farEdges(lay.origin, lay.pop);');
+    expect(desk).toContain('const far = farEdges(frame.origin, pop);');
     expect(desk).toMatch(/className=\{`obd-grip g-\$\{g\}/);
     expect(desk).toContain('resizedPop(d.size, e.screenX - d.x, e.screenY - d.y, d.far, d.axis)');
     expect(desk).toContain("write(SIZE_KEY, JSON.stringify(sizeRef.current));");
-    expect(desk).toContain('deskPop({ x: b.x, y: b.y, w: DESK, h: DESK }, s.screens, sizeRef.current, isBig)');
+    expect(desk).toContain('const f = frameAt(b, s.screens, isBig);');
   });
   it("'크게' 는 화면 높이 꽉 찬 따로 모드(기억 안 함) — 손으로 끌기 시작하면 크게 모드는 풀린다", () => {
     expect(desk).toMatch(/onPointerDown=\{\(e\) => void startGrip\(e, g\)\}/);
@@ -484,42 +511,55 @@ describe('v3 N 모양(BubbleFan) — 사용자 10-28 "이게 맞는 듯"', () =>
     expect(h).toContain('>+6</button>');
     expect(css).toMatch(/\.obb-fo:hover \.obb-fn, \.obb-fo:focus-visible \.obb-fn \{ opacity: 1; \}/);
   });
+  it('물결은 합성기가 돌린다 — 프레임마다 칠하는 속성을 안 움직인다(11-07 작은 창 하나가 웹 9%·GPU 18%)', async () => {
+    const kf = css.match(/@keyframes obb-wave \{[\s\S]*?\n/)![0];
+    expect(kf).toMatch(/transform: scale\(1\)/);
+    expect(kf).not.toMatch(/box-shadow|border|width|height|inset|background/);
+    expect(css).toMatch(/\.obb-ring \{[^}]*box-shadow: var\(--obb-drop\)/); // 떨어지는 그림자는 그대로 고리에
+    expect(css).not.toMatch(/\.obb-ring\.r-ask \{[^}]*animation/);
+    const { BadgeCore } = await import('./BubbleFan');
+    const one = (pip: 'ask' | 'run') => renderToStaticMarkup(createElement(BadgeCore, { face: o('a', pip), node: null, orchs: [o('a', pip)] }));
+    expect(one('ask')).toContain('class="obb-wave"');
+    expect(one('run')).not.toContain('obb-wave');
+  });
+  it('물결 크기는 고리 바깥 28px → 40px — 예전 0→12px 퍼짐과 같다, 흰 원은 얼굴 칸이 맡아 물결이 얼굴 뒤로 간다', () => {
+    const inset = Number(css.match(/^\.obb-wave \{[^}]*inset: -(\d+)px/m)![1]);
+    const scale = Number(css.match(/@keyframes obb-wave[^\n]*scale\(1\.(\d+)\)/)![1]) / 1e4 + 1;
+    expect(Math.round((26 + inset) * (scale - 1))).toBe(12);
+    expect(css).toMatch(/\.obb-badge > \.obb-clip \{ background: var\(--surface\); \}/);
+  });
+  it('바탕 배지 물결은 창 포커스로 안 멈추고 자리 비움으로만 멈춘다 — 다른 앱 쓰는 중에도 물어봄을 알려야 한다', () => {
+    expect(css).toMatch(/html\.obd-root:not\(\.obd-away\):not\(\.oa-calm\) \.obb-wave \{ animation-play-state: running !important; \}/);
+    expect(css).toMatch(/html\.obd-root\.obd-away \.obb-wave \{ animation-play-state: paused !important; \}/);
+  });
   it('묻는 참모 테두리 물결은 멈춤 목록에, 바탕 배지가 그린다', () => {
-    expect(paused).toContain('.obb-ring.r-ask');
+    expect(paused).toContain('.obb-wave');
     expect(src('./DeskBubble.tsx')).toContain('<BadgeCore face={me} node={avatar(who, 44)} orchs={fanOrchs} />');
   });
 });
 
 describe('열린 동안 배지를 끌면 대화창째 옮긴다(10-31 사용자 "대화창 떠 있을 때 배지가 손 모양인데 안 끌림")', () => {
   const desk = src('./DeskBubble.tsx');
-  const openBadge = desk.slice(desk.indexOf('{lay.badge && ('), desk.indexOf('<div className={`obd-pop'));
-  it('열린 배지도 닫힌 배지와 같은 누르기 길 — 5px 넘게 움직이면 창 끌기, 짧게 누르면 접기', () => {
-    expect(openBadge).toContain('onPointerDown={grab}');
-    expect(openBadge).toContain('onPointerMove={drag}');
-    expect(openBadge).toMatch(/onClick=\{\(\) => \{ if \(!pressed\(\)\) void openPop\(false\); \}\}/);
+  const badge = desk.slice(desk.indexOf('obb-badge obd-badge${dragging'), desk.indexOf('<BadgeCore face={me}'));
+  it('열린 배지도 닫힌 배지와 같은 누르기 길(같은 요소) — 5px 넘게 움직이면 창 끌기, 짧게 누르면 열기·접기', () => {
+    expect(badge).toContain('onPointerDown={grab}');
+    expect(badge).toContain('onPointerMove={drag}');
+    expect(badge).toMatch(/onClick=\{\(\) => \{ if \(!pressed\(\)\) void openPop\(!open\); \}\}/);
     expect(desk).toMatch(/const drag = \(e: React\.PointerEvent\) => \{[\s\S]{0,200}isDrag\(e\.screenX - p\.x, e\.screenY - p\.y\)[\s\S]{0,300}void invoke\('bubble_drag'\)/);
   });
-  it('닫힌 배지도 같은 손잡이 함수를 쓴다(두 길이 어긋나지 않게)', () => {
-    const closed = desk.slice(desk.indexOf('obb-badge obd-badge${back'), desk.indexOf('{fanShown && <span'));
-    expect(closed).toContain('onPointerDown={grab}');
-    expect(closed).toContain('onPointerMove={drag}');
-    expect(closed).toMatch(/onClick=\{\(\) => \{ if \(!pressed\(\)\) void openPop\(true\); \}\}/);
-  });
   it('놓으면 열린 창이 배지 화면 밖으로 나간 만큼 통째로 당기고(openKeep), 당긴 자리로 배지 자리를 기억', () => {
-    expect(desk).toContain('const to = openRef.current ? openKeep(s.win, layRef.current.box, s.screens, DESK) : null;');
-    expect(desk).toContain('if (to) await place({ ...s.win, ...to }, true, layRef.current.badge ? 0 : 14);');
+    expect(desk).toContain('const to = openRef.current ? openKeep(s.win, frameRef.current.box, s.screens, DESK) : null;');
+    expect(desk).toContain('if (to) await place({ ...s.win, ...to }, true, 0);');
     expect(desk).toContain('const w0 = to ? { ...s.win, ...to } : s.win;');
   });
   it('커서 — 끌 수 있는 배지는 손(grab), 끄는 중엔 잡은 손(grabbing)', () => {
     expect(css).toMatch(/\.obb-badge \{[^}]*cursor: grab;/);
     expect(css).toContain('.obb-badge.obb-drag { cursor: grabbing; }');
     expect(desk).toContain("${dragging ? ' obb-drag' : ''}");
-    expect(openBadge).toContain("${dragging ? ' obb-drag' : ''}");
   });
   it('윈도우 — 열린 동안 받는 자리(hot)에 배지 원이 들어 있어 원 위 누름이 창에 온다(밖은 바탕으로)', () => {
-    expect(desk).toContain('const badgeAt: [number, number, number, number] = open ? [lay.box.x + BX, lay.box.y + BY, 52, 52]');
-    expect(desk).toContain('{ hot: [[lay.pop.x, lay.pop.y, lay.pop.w, lay.pop.h], ...(lay.badge ? [badgeAt] : [])], hover: [] }');
-    expect(openBadge).toContain('style={{ left: lay.box.x, top: lay.box.y, width: DESK, height: DESK }}');
-    expect(openBadge).toContain('style={{ left: BX, top: BY,');
+    expect(desk).toContain('const badgeAt: [number, number, number, number] = [P + off.x, P + off.y, 52, 52];');
+    expect(desk).toContain('{ hot: [...(pop ? [[pop.x, pop.y, pop.w, pop.h]] : []), ...(frame.badge ? [badgeAt] : [])], hover: [] }');
+    expect(badge).toContain('style={{ left: off.x, top: off.y,');
   });
 });

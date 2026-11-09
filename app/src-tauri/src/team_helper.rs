@@ -236,7 +236,7 @@ fn clock(at: u64, off: i64) -> String {
 }
 
 /// 1970-01-01 부터 날 수 → (년, 월, 일) — Howard Hinnant civil_from_days
-fn civil(z: i64) -> (i64, u32, u32) {
+pub(crate) fn civil(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z.rem_euclid(146_097);
@@ -528,6 +528,18 @@ fn answer(dir: &std::path::Path, room: &str, seq: u64, ask: &str, caller: &str, 
     let (lines, cut) = fit(pick_lines(&inbox, room, seq, &range_of(ask, now, midnight(now))));
     let nonce = crate::team_relay_keys::new_nonce().map(|n| n.chars().filter(char::is_ascii_alphanumeric).take(12).collect::<String>()).unwrap_or_else(|_| format!("{now:x}"));
     let mut prompt = user_prompt(&lines, cut, ask, caller, &nonce);
+    // 공식 설치 파일에선 팀이 쌓아 둔 기억도 자료로 — 켠 팀만, 부른 사람 기기에서
+    #[cfg(pro)]
+    {
+        let team_of_room = crate::team_relay::load_state(dir).rooms.iter().find(|r| r.id == room).map(|r| r.team.clone()).unwrap_or_default();
+        if !team_of_room.is_empty() {
+            let block = crate::pro::helper_block(dir, &crate::team_relay_keys::store(), &crate::team_relay::Curl, &team_of_room, &nonce);
+            if !block.is_empty() {
+                prompt.push_str("\n\n");
+                prompt.push_str(&block);
+            }
+        }
+    }
     let (model, tools, system) = match agent {
         None => (model_of(std::fs::read_to_string(dir.join(SETTINGS_FILE)).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v["model"].as_str().map(String::from)).as_deref().unwrap_or("")).to_string(), "", system_prompt()),
         Some((a, team, re)) => {
@@ -641,6 +653,11 @@ impl Drop for SystemFile {
 
 /// claude -p 한 번 — 빈 작업 폴더에서, 프롬프트는 표준 입력으로(ps·기록에 안 남게), 90초 넘으면 그룹째 끊는다. (결과, 쓴 토큰)
 pub(crate) fn run(dir: &std::path::Path, model: &str, tools: &str, system: &str, prompt: &str) -> (Outcome, u64) {
+    run_effort(dir, model, tools, "", system, prompt)
+}
+
+/// run + 생각 정도(--effort low|medium|high, 빈 글 = CLI 기본)
+pub(crate) fn run_effort(dir: &std::path::Path, model: &str, tools: &str, effort: &str, system: &str, prompt: &str) -> (Outcome, u64) {
     let work = dir.join("team-helper").join("run");
     if std::fs::create_dir_all(&work).is_err() {
         return (Outcome::Fail, 0);
@@ -654,6 +671,9 @@ pub(crate) fn run(dir: &std::path::Path, model: &str, tools: &str, system: &str,
     };
     let mut cmd = crate::platform::command(crate::claude::claude_bin());
     cmd.args(run_args_with(model, tools, &sys.path().to_string_lossy())).current_dir(&work);
+    if matches!(effort, "low" | "medium" | "high") {
+        cmd.args(["--effort", effort]);
+    }
     match crate::platform::run_capped_input(&mut cmd, prompt.as_bytes(), RUN_LIMIT) {
         Ok(o) => {
             let out = String::from_utf8_lossy(&o.stdout);

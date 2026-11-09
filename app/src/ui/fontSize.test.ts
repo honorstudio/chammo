@@ -2,13 +2,15 @@ import { describe, expect, it } from 'vitest';
 
 // 2026-10-11 UI 재조사: PC 글자 10~10.5px(배지 숫자·작업 패널 개수·시간·리플레이 눈금)가 너무 작았다 — 읽는 글은 11px 이상.
 // 그림 속 장식 글(프사 머리글자·썸네일 미리보기 글·픽셀 사무실)만 예외. 폰(mobile.css)은 폰 세션 몫.
-const sheets = import.meta.glob(['/src/ui/**/*.css', '!/src/ui/mobile/**'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+const sheets = import.meta.glob(['/src/ui/**/*.css', '!/src/ui/mobile/**', '../../../pro/web/**/*.css'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
 const DECOR = new Set([
   '.cv-avatar', // 프사 머리글자
   '.dc-done .dc-av, .dc-mini .dc-av', // 작은 프사 머리글자
   '.cv-fchip-th .cv-thumb-kind', // 썸네일 확장자 표
   '.cv-grid .cv-thumb-text', // 썸네일 속 글 미리보기
   '.office-title', // 픽셀 사무실 간판
+  '.tml-bub', // 팀 소개 판 그림 속 말풍선(chammo-relay ADR 0015 — 실제 화면을 줄인 모양, 아래에 읽을 글이 따로)
+  '.tml-fl', // 팀 소개 판 그림 속 파일 이름
   '.cv-holders i', // 13px 프사 칸 머리글자
 ]);
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BADGE, DESK_PAD, POP_MS, anchorOf, openKeep, badgeCounts, bubbleFace, deskPop, deskStage, stageBox, FAN_LEAVE_MS, FAN_OUT_MS, fanKeep, fanPlan, fanPoints, fanRings, fanSide, isDrag, padRect, farEdges, fitPopSize, placeOf, popLayout, resizedPop,  popOrigin, popPlace, popSteps, readAnchor, readSpot, screenPlace, screenSave, type Screen } from './orchBubble';
+import { BADGE, DESK_PAD, POP_MS, anchorOf, openKeep, badgeCounts, bubbleFace, deskFrame, deskPop, deskStage, stageBox, FAN_LEAVE_MS, FAN_OUT_MS, fanKeep, fanPlan, fanPoints, fanRings, fanSide, isDrag, padRect, farEdges, fitPopSize, placeOf, popLayout, resizedPop,  popOrigin, popPlace, popSteps, readAnchor, readSpot, screenPlace, screenSave, type Rect, type Screen } from './orchBubble';
 
 const box = { x: 0, y: 0, w: 1200, h: 800 };
 
@@ -178,6 +178,55 @@ describe('바탕 배지 창(72px — 배지 + 고리 자리)', () => {
   });
   it('모니터를 모르면 없음', () => {
     expect(deskPop({ x: 0, y: 0, w: 72, h: 72 }, [], { w: 360, h: 470 })).toBeNull();
+  });
+});
+
+describe('바탕 배지 한 판 — 열기·접기에도 창을 안 바꾼다(11-05 사용자 "펼쳐지기 시작할 때·닫힐 때 깜빡")', () => {
+  const mac: Screen = { id: 'mac', x: 0, y: 0, w: 1512, h: 982 };
+  const ext: Screen = { id: 'ext', x: 1512, y: -200, w: 2560, h: 1440 };
+  const EXT = { w: 236, h: 150 };
+  const POP = { w: 360, h: 470 };
+  const badgeOf = (b: { x: number; y: number }) => ({ x: b.x + 18, y: b.y + 10, w: 52, h: 52 });
+  const spots = [{ x: 30, y: 40 }, { x: 1400, y: 40 }, { x: 30, y: 870 }, { x: 1400, y: 870 }, { x: 700, y: 450 }, { x: 3000, y: 900 }, { x: 1512 + 40, y: -150 }];
+  const inside = (a: Rect, b: Rect) => a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w && a.y + a.h <= b.y + b.h;
+  it('창 하나가 무대(배지·부채·배너 자리)와 그 자리에서 열릴 대화창을 다 품는다', () => {
+    for (const b of spots) {
+      const box = { ...b, w: 88, h: 88 };
+      const f = deskFrame(box, badgeOf(b), [mac, ext], EXT, POP);
+      expect(inside(deskStage(box, [mac, ext], EXT).win, f.win)).toBe(true);
+      const pop = deskPop(box, [mac, ext], POP)!;
+      expect({ x: f.win.x + f.pop!.x, y: f.win.y + f.pop!.y, w: f.pop!.w, h: f.pop!.h }).toEqual(pop);
+    }
+  });
+  it('배지의 화면 자리 = 창 자리 + 상자 자리, 대화창 열린 모양(popLayout)과 같은 자라는 점·배지 보임', () => {
+    for (const b of spots) {
+      const box = { ...b, w: 88, h: 88 };
+      const f = deskFrame(box, badgeOf(b), [mac, ext], EXT, POP);
+      expect({ x: f.win.x + f.box.x, y: f.win.y + f.box.y }).toEqual(b);
+      const l = popLayout(box, badgeOf(b), deskPop(box, [mac, ext], POP)!);
+      expect(f.origin).toEqual(l.origin);
+      expect(f.badge).toBe(l.badge);
+      expect(f.side).toEqual(deskStage(box, [mac, ext], EXT).side);
+    }
+  });
+  it('창은 배지가 있는 화면 안 — 옆 모니터로 안 넘어간다', () => {
+    for (const b of [{ x: 0, y: 0 }, { x: 1512 - 88, y: 0 }, { x: 0, y: 982 - 88 }, { x: 1512 - 88, y: 982 - 88 }]) {
+      const f = deskFrame({ ...b, w: 88, h: 88 }, badgeOf(b), [mac, ext], EXT, POP, false, 0);
+      expect(inside(f.win, mac)).toBe(true);
+    }
+  });
+  it('키우기(big)면 큰 대화창까지 품는다 — 배지를 덮으면 배지는 안 그린다', () => {
+    const box = { x: 1400, y: 870, w: 88, h: 88 };
+    const f = deskFrame(box, badgeOf(box), [mac, ext], EXT, POP, true);
+    const pop = deskPop(box, [mac, ext], POP, true)!;
+    expect({ x: f.win.x + f.pop!.x, y: f.win.y + f.pop!.y, w: f.pop!.w, h: f.pop!.h }).toEqual(pop);
+    expect(f.badge).toBe(false);
+    expect({ x: f.win.x + f.box.x, y: f.win.y + f.box.y }).toEqual({ x: 1400, y: 870 });
+  });
+  it('모니터를 모르면 대화창 없이 무대만 — 죽지 않는다', () => {
+    const f = deskFrame({ x: 0, y: 0, w: 88, h: 88 }, badgeOf({ x: 0, y: 0 }), [], EXT, POP);
+    expect(f.pop).toBeNull();
+    expect(f.win).toEqual(deskStage({ x: 0, y: 0, w: 88, h: 88 }, [], EXT).win);
   });
 });
 

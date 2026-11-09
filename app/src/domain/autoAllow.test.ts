@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLang } from '../i18n';
-import { leftWindow, pickAllow, retryAfter, skipPlan } from './autoAllow';
+import { leftWindow, permStuckText, permStuckTo, pickAllow, promptTail, retryAfter, skipPlan } from './autoAllow';
+import type { Session } from './session';
+import type { TaskEvent } from './tasks';
 
 // 실제 화면 (2026-09-27, computer-use request_access — attach + pyte 로 뜬 것)
 const COMPUTER_USE = [
@@ -238,5 +240,162 @@ describe('붙는 중 화면·커서 못 찾음은 헛알림 내지 않기(2026-1
   });
   it('사람 몫 창(민감함·허용 줄 없음)은 처음부터 알린다', () => {
     expect(skipPlan({ skip: 'x', hold: true }, 0)).toEqual({ outcome: 'held', tell: true });
+  });
+});
+
+// 2026-11-05 ci-runner(bbbb2222): 커서 아래에 세션 이름이 든 구분선('──── ci-runner ─')이 하나 더 있어
+// 마지막 구분선 아래(빈 줄)만 보다가 '선택지 커서를 못 찾았어'로 1분마다 건너뛰었다 — auto-allow.jsonl 839줄 중 135줄이 같은 사유
+describe('커서 줄(❯ N.)부터 찾고 그 위 마지막 구분선까지만 본다 — 커서 아래 구분선(세션 이름·상태줄·작업 목록) 때문에 못 찾던 것', () => {
+  const NAME_RULE = '─'.repeat(99) + ' allow-cursor-repro ─';
+  // 실제 화면 (2026-11-05, attach + 가짜 터미널 120×40, 기본 권한 모드 세션의 Bash 창 — 경로만 바꿈)
+  const REAL_NAMED = [
+    "❯ Bash 도구로 다음 명령을 그대로 한 번만 실행해. 다른 말 없이: cat >> note.md <<'EOF'",
+    '  메모 다섯',
+    '',
+    '  - 계정 메모 줄',
+    '    EOF',
+    '',
+    '  Reading 1 file…',
+    "  ⎿  $ cat >> note.md <<'EOF'",
+    '     ## 메모 다섯',
+    '     - 계정 메모 줄',
+    '     EOF',
+    '',
+    '─'.repeat(120),
+    ' Bash command',
+    ' Tip: auto mode handles these prompts for you — choose "switch to auto mode" below',
+    ' 노트 파일에 메모 추가',
+    '╌'.repeat(104),
+    " │ cat >> note.md <<'EOF'",
+    ' │ ## 메모 다섯',
+    ' │ - 계정 메모 줄',
+    ' │ EOF',
+    '╌'.repeat(104),
+    ' │ Claude requested permissions to edit /Users/me/dev/repro/note.md which is a sensitive',
+    ' │ file.',
+    '',
+    ' Do you want to proceed?',
+    ' ❯ 1. Yes',
+    '   2. Yes, and always allow access to /Users/me/dev/repro from this project',
+    '   3. Yes, and switch to auto mode · auto mode handles these prompts for you',
+    '   4. No',
+    '',
+    ' Esc to cancel · Tab to amend',
+    '',
+    NAME_RULE,
+  ].join('\n');
+
+  // 남의 기기 화면 모양 — 개인정보 훅 확인 창(CLAUDE.local.md 에 쓰는 긴 heredoc), 커서 아래 세션 이름 구분선
+  const PRIVACY_HOOK = [
+    '❯ 메모를 CLAUDE.local.md 에 적어 줘',
+    '⏺ 적을게',
+    '─'.repeat(120),
+    ' Bash command',
+    '╌'.repeat(104),
+    " │ cat >> CLAUDE.local.md <<'EOF'",
+    ' │ <!-- notes:begin -->',
+    ' │ ## 이번 달 메모',
+    ' │ > 월 지출 한도 $50 · 결제 카드는 콘솔에서',
+    ' │ EOF',
+    '╌'.repeat(104),
+    ' │ Hook PreToolUse:Bash requires confirmation for this command:',
+    " │ This call's input holds your account email address (privacy-hook).",
+    '',
+    ' Do you want to proceed?',
+    ' ❯ 1. Yes',
+    '   2. No',
+    '',
+    ' Esc to cancel · Tab to amend',
+    '',
+    '─'.repeat(103) + ' ci-runner ─',
+  ].join('\n');
+
+  it('실제 화면(2026-11-05): 커서 아래 세션 이름 구분선이 있어도 "1. Yes" 를 고른다', () => {
+    expect(pickAllow(REAL_NAMED)).toEqual({ keys: '\r', option: '1. Yes' });
+  });
+
+  it('ci-runner 개인정보 훅 창: 허용 대상 — 명령 본문(heredoc)의 결제·과금 낱말은 안 본다', () => {
+    expect(pickAllow(PRIVACY_HOOK)).toEqual({ keys: '\r', option: '1. Yes' });
+  });
+
+  it('개인정보 훅 창이라도 창이 묻는 말에 민감한 낱말이 있으면 그대로 사람 몫', () => {
+    expect(pickAllow(PRIVACY_HOOK.replace('Do you want to proceed?', 'Do you want to proceed? (password)'))).toEqual({ skip: '민감한 창(비밀번호·인증·결제) — 직접 골라줘', hold: true });
+  });
+
+  // auto-allow.jsonl 의 다른 '커서를 못 찾음' 사례 — 기록된 꼬리(마지막 구분선 아래)가 상태줄·작업 목록이었다
+  it.each([
+    ['상태줄(10-01·10-06·10-20 honor-orchestrator 등)', ['  main · Opus 5.5 · high ·  15%', '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 4 agents']],
+    ['상태줄 + PR(10-05 project-x-app)', ['  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 7 agents · PR #189']],
+    ['작업 목록(11-05 memo-panel)', ['  4 tasks (1 done, 1 in progress, 2 open)', '  ✔ 기존 메모 판단·문구 받기', '  ◼ 시안 v1.html 생성', '  ◻ 결제 카드 문구 확인']],
+  ])('구분선 아래 %s 가 붙어도 커서를 찾는다', (_, tail) => {
+    const s = [...BASH.split('\n'), '', ' Esc to cancel · Tab to amend', '─'.repeat(40) + ' some-session ─', ...tail].join('\n');
+    expect(pickAllow(s)).toEqual({ keys: '\r', option: '1. Yes' });
+  });
+
+  it('번호 없는 창(computer-use)도 아래 세션 이름 구분선을 넘어 찾는다 — 위 대화 기록의 "❯ 내 말" 과 안 섞인다', () => {
+    expect(pickAllow(`${COMPUTER_USE}\n\n${NAME_RULE}`)).toEqual({ keys: DOWN + '\r', option: 'Allow for this session (1 app)' });
+  });
+
+  it('창이 아직 안 그려진 화면 — 대화 기록에 인용된 "  ❯ 1. Yes" 를 커서로 잡지 않는다(아래 입력칸 ❯ 가 있으면 기록이다)', () => {
+    const s = [
+      '❯ 권한 창이 이렇게 생겼어?',
+      '⏺ 응, 이렇게 떠:',
+      '   Do you want to proceed?',
+      '   ❯ 1. Yes',
+      '     2. No',
+      '',
+      NAME_RULE,
+      '❯ ',
+      '─'.repeat(120),
+      '  main · Opus 5.5 · medium',
+    ].join('\n');
+    expect(pickAllow(s)).toEqual({ skip: '선택지 커서를 못 찾았어' });
+  });
+
+  it('창이 덜 그려진 화면(윗 구분선·명령만) — 그 위 대화 기록의 "  ❯ 1. Yes" 를 커서로 잡지 않는다', () => {
+    const s = ['⏺ 이렇게 떠:', '   ❯ 1. Yes', '     2. No', '─'.repeat(120), ' Bash command', '   rm -rf dist'].join('\n');
+    expect(pickAllow(s)).toEqual({ skip: '선택지 커서를 못 찾았어' });
+  });
+
+  it('이름 없는 구분선 아래 상태줄·작업 목록뿐이면 그 위 커서는 창 것이다', () => {
+    const s = [...BASH.split('\n'), '─'.repeat(40), '  main · Opus 5.5 · high ·  15%', '  ⏵⏵ bypass permissions on (shift+tab to cycle)', '', '  2 tasks (1 done, 1 open)', '  ✔ 하나', '  ◻ 둘'].join('\n');
+    expect(pickAllow(s)).toEqual({ keys: '\r', option: '1. Yes' });
+  });
+
+  it('입력칸에 사람이 친 "❯ yes" 도 선택지로 안 본다', () => {
+    const s = ['⏺ 끝났어', NAME_RULE, '❯ yes 해줘', '─'.repeat(120), '  main · Opus 5.5'].join('\n');
+    expect(pickAllow(s)).toEqual({ skip: '선택지 커서를 못 찾았어' });
+  });
+
+  it('건너뛴 창 기록(promptTail)은 커서 위 구분선부터 — 빈 꼬리("")로 1분마다 다시 찍히던 것', () => {
+    const t = promptTail(PRIVACY_HOOK);
+    expect(t.startsWith('Bash command')).toBe(true);
+    expect(t).toContain('│');
+    expect(promptTail(REAL_NAMED)).toBe(promptTail(REAL_NAMED + '\n'));
+    expect(promptTail('─────\n 아무 선택지도 없는 창\n')).toBe('아무 선택지도 없는 창');
+  });
+});
+
+describe('권한 창에서 멈춘 세션 — 맡긴 참모 입력칸에 한 줄(선택지 창 30초 줄과 같은 길)', () => {
+  const sess = (id: string, name: string, extra: Partial<Session> = {}): Session => ({ id, name, project: name, kind: 'background', state: 'blocked', cwd: `/dev/${name}`, startedAt: 0, ...extra }) as Session;
+  const sub = sess('bbbb2222', 'ci-runner');
+  const trader = sess('aa11bb22', '참모-7', { state: 'idle' });
+  const other = sess('cc33dd44', '참모', { state: 'idle' });
+  const events = [{ type: 'send', task: 't1', target: 'ci-runner', from: 'aa11bb22', fromName: '참모-7' }] as TaskEvent[];
+  const all = [sub, trader, other];
+
+  it('일 기록으로 맡긴 참모에게 보낸다', () => {
+    expect(permStuckTo(sub, events, [trader, other], all)?.id).toBe('aa11bb22');
+  });
+  it('맡긴 참모가 없으면 아무에게도 안 보낸다(지금처럼 사용자 알림만)', () => {
+    expect(permStuckTo(sub, [], [trader, other], all)).toBeUndefined();
+  });
+  it('맡긴 참모가 확인창에 걸려 있으면 그 입력칸에 넣지 않는다', () => {
+    const t = { ...trader, state: 'blocked' } as Session;
+    expect(permStuckTo(sub, events, [t, other], [sub, t, other])).toBeUndefined();
+  });
+  it('한 줄 문구: [앱] <세션>(<id>)이 권한 창에서 멈췄어 — <사유>', () => {
+    expect(permStuckText(sub, '선택지 커서를 못 찾았어')).toBe('[앱] ci-runner 세션(bbbb2222)이 권한 창에서 멈췄어 — 선택지 커서를 못 찾았어');
+    expect(permStuckText(sub, 'a\nb')).not.toContain('\n');
   });
 });

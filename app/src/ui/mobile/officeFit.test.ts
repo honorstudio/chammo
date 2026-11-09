@@ -66,7 +66,11 @@ describe('사무실 한 화면(B)', () => {
     expect(src).toMatch(/keepOpen = /);
   });
   it('방에서 프로젝트 캐릭터를 누르면 세션 시트가 열려 그 줄이 맨 위에 보인다(닫혀 있으면 고리만 생겼다)', () => {
-    expect(src).toMatch(/const tap = \(id: string\) => \{[^\n]*setOpen\('sessions'\)/);
+    expect(src).toMatch(/const tap = \(id: string\) => \{[\s\S]{0,500}?else \{ setPicked\(id\); setOpen\('sessions'\); \}/);
+  });
+  it('방에서 참모를 누르면 그 참모 캐릭터 칸(11-09 — 말 상대 바꾸기는 아래 참모 줄)', () => {
+    expect(src).toMatch(/tapKind\(id, orchIds\) === 'orch'[\s\S]{0,300}?setCharFor\(splitOrchName\(o\.name\)\.base\); setOpen\('chars'\)/);
+    expect(src).toMatch(/onClick=\{\(\) => \{ setPicked\(null\); onTalk\(d\.id\); \}\}/);
   });
   it('참모 줄은 얼굴만, 지금 말하는 참모만 이름(이름은 aria-label·title 에)', () => {
     expect(src).toMatch(/\{d\.id === current && <span>\{d\.label\}<\/span>\}/);

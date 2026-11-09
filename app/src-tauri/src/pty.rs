@@ -69,6 +69,8 @@ struct Visible {
     st: u8, // 0 글자, 1 ESC 뒤, 2 CSI 안, 3 OSC 등 문자열 안, 4 문자열 안 ESC 뒤
     /// 마지막 글자들(KICKED 길이까지) — 쫓겨남 문구가 색 코드·조각 경계에 걸쳐도 알아보게
     tail: Vec<u8>,
+    /// 화면 해석기에 흐린 글을 기울임으로 넣는다 — 추천 말을 입력칸 글로 안 읽게(claude::DimAsItalic)
+    dim: crate::claude::DimAsItalic,
 }
 
 impl Visible {
@@ -149,7 +151,7 @@ fn dead(v: &OpenView) -> bool {
 fn feed_view(v: &OpenView, counter: &mut Visible, b: &[u8]) {
     note_chunk(counter, &v.visible, &v.gone, &v.kick, b);
     if let Some(p) = &v.screen {
-        p.lock().unwrap_or_else(|e| e.into_inner()).process(b);
+        counter.dim.feed(&mut p.lock().unwrap_or_else(|e| e.into_inner()), b);
     }
 }
 
@@ -428,42 +430,60 @@ pub async fn pty_type(state: State<'_, Ptys>, id: u32, keys: Vec<String>, enter_
     log_write(id, &format!("{}{}", keys.concat(), if enter_ms.is_some() { "\r" } else { "" }));
     tauri::async_runtime::spawn_blocking(move || {
         settle_pty(id); // 자물쇠(type_keys_seen) 잡기 전에 — 기다리는 동안 다른 칸 치기를 막지 않게
-        type_keys_seen(&writer, &keys, enter_ms, screen.as_ref())
+        let chars: usize = keys.iter().map(|k| k.chars().count()).sum();
+        let note = type_keys_seen(&writer, &keys, enter_ms, screen.as_ref())?;
+        // 이 길엔 로그가 없어 '전달 안 됨'을 못 가렸다(2026-11-05 개발 담당 18:13) — 글 없이 치기 결과만. seen=false 면 친 글이 입력칸에 한 번도 안 보인 것
+        if let Some(n) = note {
+            let who = OPEN.lock().unwrap().iter().find(|v| v.pty == id).map(|v| v.session.clone()).unwrap_or_default();
+            crate::claude::log_out("chat-type", &format!("{who} chars={chars} seen={} left={} enters={} ms={}", n.seen, n.left, n.enters, n.ms));
+        }
+        Ok(())
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
 pub(crate) fn type_keys(w: &SharedWriter, keys: &[String], enter_ms: Option<u64>) -> Result<(), String> {
-    type_keys_seen(w, keys, enter_ms, None)
+    type_keys_seen(w, keys, enter_ms, None).map(|_| ())
 }
 
-/// 친 글 끝이 그 칸 입력칸에 보일 때까지(최대 ms) — 화면이 없거나 윈도우면 ms 그대로
-fn wait_echo(keys: &[String], ms: u64, screen: Option<&Arc<Mutex<vt100::Parser>>>) {
-    use std::time::Duration;
-    let tail = crate::claude::typed_echo(&keys.iter().map(|k| k.as_bytes().to_vec()).collect::<Vec<_>>());
-    match screen.filter(|_| !cfg!(windows) && !tail.is_empty()) {
-        Some(p) => _ = crate::claude::poll_until(Duration::from_millis(ms), || crate::claude::input_shows(p.lock().unwrap_or_else(|e| e.into_inner()).screen(), &tail)),
-        None => std::thread::sleep(Duration::from_millis(ms)),
-    }
-}
+/// 화면을 보며 보낸 치기의 결과 — 폰·스페이스 보내기와 같은 블랙박스(claude::SendNote: seen·left·enters·ms·paste…)
+pub(crate) type TypeNote = crate::claude::SendNote;
 
-/// type_keys + 그 칸 화면 — 맥은 친 글 끝이 입력칸에 보이면 enter_ms 를 다 안 기다리고 바로 Enter(실측: 보이기까지 0~14ms, 고정 0.4초였다).
-/// 안 보이면(붙여넣은 글로 접힘·화면 없음) 예전처럼 enter_ms. 윈도우는 가짜 콘솔이 글을 늦게 넘겨 예전 그대로
-pub(crate) fn type_keys_seen(w: &SharedWriter, keys: &[String], enter_ms: Option<u64>, screen: Option<&Arc<Mutex<vt100::Parser>>>) -> Result<(), String> {
+/// type_keys + 그 칸 화면 — 보내기 확인은 폰·스페이스와 같은 claude::send_watched(그림 읽는 중이면 끝난 뒤 치고, 친 글이 보이면 바로 Enter,
+/// 그 말이 입력칸에서 빠질 때까지 본다 — / 명령은 Enter 가 창에서 골라 버려서 한 번). 안 보이면(붙여넣은 글로 접힘·화면 없음) enter_ms.
+/// 윈도우는 가짜 콘솔이 글을 늦게 넘겨 예전 그대로(화면 안 봄).
+/// 끝내 안 빠져도 실패로 돌려주지 않는다 — 채팅이 말을 입력칸 칸으로 되살리면 나중에 들어간 말을 또 보낸다. 남은 말은 채팅이 '입력칸에 걸려 있어요'로
+pub(crate) fn type_keys_seen(w: &SharedWriter, keys: &[String], enter_ms: Option<u64>, screen: Option<&Arc<Mutex<vt100::Parser>>>) -> Result<Option<TypeNote>, String> {
     use std::time::Duration;
+    let started = std::time::Instant::now();
     let _turn = crate::claude::typing_turn();
-    for k in keys {
-        w.lock().unwrap().write_all(k.as_bytes()).map_err(|e| e.to_string())?;
-        std::thread::sleep(Duration::from_millis(6));
-    }
-    if let Some(ms) = enter_ms {
-        wait_echo(keys, ms, screen);
-        w.lock().unwrap().write_all(b"\r").map_err(|e| e.to_string())?;
-        // Enter 를 받기 전에 다음 글이 붙지 않게 잠깐 더 쥔다(JS 로 칠 때 앞 Enter 와 다음 글 사이 0.15초 그대로)
-        std::thread::sleep(Duration::from_millis(150));
-    }
-    Ok(())
+    let tail = crate::claude::typed_echo(&keys.iter().map(|k| k.as_bytes().to_vec()).collect::<Vec<_>>());
+    let look = screen.filter(|_| !cfg!(windows) && !tail.is_empty());
+    let t = tail.as_str();
+    let peek = look.map(|p| move || crate::claude::peek_typed(p.lock().unwrap_or_else(|e| e.into_inner()).screen(), t));
+    let peek = peek.as_ref().map(|f| f as &dyn Fn() -> (bool, bool, bool));
+    let mut type_all = || -> std::io::Result<()> {
+        for k in keys {
+            w.lock().unwrap().write_all(k.as_bytes())?;
+            std::thread::sleep(Duration::from_millis(6));
+        }
+        Ok(())
+    };
+    let Some(ms) = enter_ms else {
+        // Enter 없이 치기만 — 그림을 읽는 중이면 끝난 뒤에(그 사이 친 글은 칩 앞에 낀다)
+        if let Some(p) = peek {
+            crate::claude::poll_until(crate::claude::PASTE_MAX, || !p().2);
+        }
+        type_all().map_err(|e| e.to_string())?;
+        return Ok(None);
+    };
+    let mut note = TypeNote::default();
+    crate::claude::send_watched(&mut type_all, &mut || w.lock().unwrap().write_all(b"\r"), peek, Duration::from_millis(ms), !crate::claude::slash_command(&keys.concat()), &mut note).map_err(|e| e.to_string())?;
+    // Enter 를 받기 전에 다음 글이 붙지 않게 잠깐 더 쥔다(JS 로 칠 때 앞 Enter 와 다음 글 사이 0.15초 그대로)
+    std::thread::sleep(Duration::from_millis(150));
+    note.ms = started.elapsed().as_millis();
+    Ok(peek.map(|_| note))
 }
 
 /// dev 검증용 — HONOR_ORCH_PTY_LOG=<파일> 이면 pty 로 보낸 글자를 한 줄씩(ms 시각·이스케이프) 남긴다. 디버그 빌드에만 있다
@@ -549,6 +569,7 @@ pub(crate) fn reap(mut child: Box<dyn Child + Send + Sync>) {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn 붙는_중인_보기는_다_붙을_때까지_기다려_그_보기를_쓴다() {
@@ -873,21 +894,26 @@ mod tests {
             p
         };
         let keys = vec!["안녕 반가워".to_string(), "\x1b\r".to_string(), "둘째 줄도 있어".to_string()];
+        let tail = crate::claude::typed_echo(&keys.iter().map(|k| k.as_bytes().to_vec()).collect::<Vec<_>>());
+        let wait_echo = |_: &[String], ms: u64, scr: Option<&std::sync::Arc<std::sync::Mutex<vt100::Parser>>>| {
+            let peek = scr.map(|p| || crate::claude::peek_typed(p.lock().unwrap().screen(), &tail));
+            crate::claude::wait_shown(peek.as_ref().map(|f| f as &dyn Fn() -> (bool, bool, bool)), Duration::from_millis(ms))
+        };
         // 기다리기만 따로 잰다 — 치기 자물쇠(TYPE_LOCK)는 다른 시험이 쥐고 있을 수 있어 type_keys 로 재면 흔들린다
         let shown = painted("안녕 반가워\r\n  둘째 줄도 있어");
         let t = Instant::now();
-        super::wait_echo(&keys, 400, Some(&shown));
+        wait_echo(&keys, 400, Some(&shown));
         assert!(t.elapsed() < Duration::from_millis(100), "보이면 0.4초를 안 기다린다: {:?}", t.elapsed());
         // 아직 안 보이면(접힌 붙여넣기·칸이 늦음) 예전처럼 enter_ms 까지
         let t = Instant::now();
-        super::wait_echo(&keys, 400, Some(&painted("[Pasted text #1 +1 lines]")));
+        wait_echo(&keys, 400, Some(&painted("[Pasted text #1 +1 lines]")));
         assert!(t.elapsed() >= Duration::from_millis(400), "{:?}", t.elapsed());
         // 화면 없는 칸은 예전 그대로
         let t = Instant::now();
-        super::wait_echo(&keys, 200, None);
+        wait_echo(&keys, 200, None);
         assert!(t.elapsed() >= Duration::from_millis(200));
         // 치기는 글 다음 Enter
-        super::type_keys_seen(&w, &keys, Some(400), Some(&shown)).unwrap();
+        super::type_keys_seen(&w, &keys, Some(1), None).unwrap();
         assert!(got.lock().unwrap().ends_with("둘째 줄도 있어\r".as_bytes()));
     }
 
@@ -1090,5 +1116,85 @@ mod tests {
         assert_eq!(attach_line("/h/.local/bin/claude", "ab12", false), "exec '/h/.local/bin/claude' attach ab12");
         assert_eq!(attach_line("/it's/claude", "ab12", false), "exec '/it'\\''s/claude' attach ab12");
         assert_eq!(attach_line(r"C:\Users\me\claude.exe", "ab12", true), r#""C:\Users\me\claude.exe" attach ab12"#);
+    }
+
+    // 2026-11-05 send-stuck(2.1.318 실측): 그림 경로를 붙여넣으면 Claude 가 읽는 동안 화면이 0.8초 멈췄다가 `Pasting…` 을 띄우고,
+    // 그 사이 친 글은 칩 앞에 끼며 Enter 는 버린다(일회용 세션 4번 중 2번) — 말이 입력칸에 남아 '입력칸에 걸려 있어요'
+    fn send_to(f: &crate::fake_claude::Fake, text: &str) {
+        let w = f.writer();
+        super::type_keys_seen(&w, &[text.to_string()], Some(400), Some(&f.screen)).unwrap();
+    }
+
+    #[test]
+    fn 그림을_읽는_중_버려진_enter_는_끝난_뒤_다시_넣는다() {
+        use std::time::Duration;
+        let f = crate::fake_claude::Fake::new(Some((Duration::from_millis(300), Duration::from_millis(1200))), false);
+        send_to(&f, "#img1 #img2 아카이빙 카페 심볼");
+        let (sent, _) = f.sent();
+        assert_eq!(sent, vec!["#img1 #img2 아카이빙 카페 심볼[Image #1] [Image #2]".to_string()], "한 번, 그림과 같이");
+    }
+
+    #[test]
+    fn 그림을_읽은_뒤_스스로_보낸_말엔_enter_를_더_안_넣는다() {
+        use std::time::Duration;
+        // 실측 나머지 2/4 — Pasting 중 Enter 를 미뤘다 끝날 때 보냈다. 빈 칸에 Enter 를 또 넣으면 안 된다(두 번 가는 길을 막는 기준)
+        let f = crate::fake_claude::Fake::new(Some((Duration::from_millis(300), Duration::from_millis(1200))), true);
+        send_to(&f, "심볼 넣어줘");
+        let (sent, enters) = f.sent();
+        assert_eq!(sent.len(), 1, "한 번만: {sent:?}");
+        assert_eq!(enters, 1, "그 말이 입력칸에서 빠졌으면 Enter 는 더 안 넣는다");
+    }
+
+    #[test]
+    fn 붙여넣기_없는_보통_말은_enter_한_번() {
+        let f = crate::fake_claude::Fake::new(None, false);
+        send_to(&f, "ㄱㄱ");
+        let (sent, enters) = f.sent();
+        assert_eq!((sent, enters), (vec!["ㄱㄱ".to_string()], 1));
+    }
+
+    #[test]
+    fn 친_글이_입력칸에_안_보이면_실패로_안_돌려주고_기록에_남긴다() {
+        // 2026-11-05 개발 담당 18:13: 쉬는 세션에 친 말이 입력칸·기록 어디에도 없이 '전달 안 됨' — 키가 어디서 사라졌는지 로그가 없었다.
+        // 실패로 돌려주면 채팅이 입력칸에 되살려 다시 보내게 되는데, 화면 사본이 엉킨 때면 이미 간 말이라 두 번 간다
+        let parser = Arc::new(Mutex::new(vt100::Parser::new(10, 40, 0)));
+        parser.lock().unwrap().process(format!("{}\r\n❯ \r\n{}\r\n", "─".repeat(40), "─".repeat(40)).as_bytes());
+        let w: super::SharedWriter = Arc::new(Mutex::new(Box::new(std::io::sink())));
+        let n = super::type_keys_seen(&w, &["사라지는 말".to_string()], Some(50), Some(&parser)).unwrap().unwrap();
+        assert_eq!((n.seen, n.left, n.enters), (false, false, 1), "Enter 는 한 번, 못 봤다고 남긴다");
+    }
+
+    /// 실측(일회용 세션 필요, 2026-11-05 send-stuck): 그림 경로를 붙여넣고 GAP ms 뒤 앱 길(type_keys_seen)로 말 — 표식(PT…)을 찍으니
+    /// 기록에서 표식마다 user 줄 수를 센다. PASTETEST_ID=<짧은 id> PASTETEST_IMGS='/a.jpeg /b.jpeg' PASTETEST_N=6 PASTETEST_GAP=200
+    /// cargo test --bin honor-orchestrator pty::tests::실측_그림_붙이고_바로_보내기 -- --ignored --exact --nocapture
+    #[test]
+    #[ignore]
+    fn 실측_그림_붙이고_바로_보내기() {
+        use std::io::Write;
+        use std::time::{Duration, Instant};
+        let env = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.into());
+        let id = std::env::var("PASTETEST_ID").expect("PASTETEST_ID");
+        let (imgs, n, gap) = (env("PASTETEST_IMGS", ""), env("PASTETEST_N", "4").parse::<u32>().unwrap(), env("PASTETEST_GAP", "200").parse::<u64>().unwrap());
+        let parser = Arc::new(Mutex::new(vt100::Parser::new(40, 60, 0)));
+        let p2 = parser.clone();
+        let mut dim = crate::claude::DimAsItalic::default();
+        let (_m, writer, mut child) = super::spawn_pty(&super::attach_line(&crate::claude::claude_bin(), &id, false), None, 60, 40, move |b| {
+            dim.feed(&mut p2.lock().unwrap(), b);
+            true
+        })
+        .unwrap();
+        let w: super::SharedWriter = Arc::new(Mutex::new(writer));
+        std::thread::sleep(Duration::from_secs(6));
+        for i in 0..n {
+            let mk = format!("PT{}{i}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() % 100000);
+            w.lock().unwrap().write_all(format!("\x1b[200~{imgs} \x1b[201~").as_bytes()).unwrap();
+            std::thread::sleep(Duration::from_millis(gap));
+            let t = Instant::now();
+            super::type_keys_seen(&w, &[format!("#img1 #img2 아카이빙 카페 심볼 {mk} — 그림 색만 한 단어로")], Some(400), Some(&parser)).unwrap();
+            let left = crate::claude::input_holds(parser.lock().unwrap().screen(), &mk);
+            eprintln!("MARK {mk} 치기 {:?} 남음 {left}", t.elapsed());
+            std::thread::sleep(Duration::from_secs(20));
+        }
+        let _ = child.kill();
     }
 }

@@ -18,8 +18,8 @@ export function AgentsSection({ team, onEdit, load = teamAgents }: { team: strin
   return (
     <>
       <div className="tmp-sec">
-        <span className="tmx-fl">{tr('팀 참모', 'Team agents')}</span>
-        {list && <IconButton size="s" label={tr('팀 참모 추가', 'Add a team agent')} onClick={() => onEdit(null, list)}><IconPlus /></IconButton>}
+        <span className="tmx-fl">{tr('팀 참모 기술', 'Team assistant skills')}</span>
+        {list && <IconButton size="s" label={tr('팀 참모 기술 추가', 'Add a team assistant skill')} onClick={() => onEdit(null, list)}><IconPlus /></IconButton>}
       </div>
       <ul className="tma-list">
         <li className="tma-row tma-base"><HelperFace size={28} /><span className="tma-who"><b>{tr('팀참모', 'TeamHelper')}<span className="tmx-tag">{tr('기본', 'built-in')}</span></b><span>{tr('방 글을 읽고 요약·정리', 'Reads the room, summarizes')}</span></span></li>
@@ -27,7 +27,7 @@ export function AgentsSection({ team, onEdit, load = teamAgents }: { team: strin
           const changed = !!list.seen[a.id] && needsConfirm(a, list.seen);
           return (
             <li key={a.id}>
-              <button className="tma-row" onClick={() => onEdit(a, list)} aria-label={tr(`${a.def.name} 팀 참모 열기`, `Open team agent ${a.def.name}`)}>
+              <button className="tma-row" onClick={() => onEdit(a, list)} aria-label={tr(`${a.def.name} 기술 열기`, `Open skill ${a.def.name}`)}>
                 <AgentFace def={a.def} />
                 <span className="tma-who">
                   <b>{a.def.name}{changed && <i className="tma-dot" title={tr('지침이 바뀜', 'Instructions changed')} />}{a.clash && <span className="tmx-tag">{tr('이름 겹침', 'name clash')}</span>}</b>
@@ -38,7 +38,7 @@ export function AgentsSection({ team, onEdit, load = teamAgents }: { team: strin
           );
         })}
       </ul>
-      <span className="tmx-hint">{err ? tr(`팀 참모 목록을 못 받았어요 — ${err}`, `Couldn't load team agents — ${err}`) : tr('부를 땐 부른 사람 Claude 로 돌아요', "Runs on the caller's own Claude")}</span>
+      <span className="tmx-hint">{err ? tr(`기술 목록을 못 받았어요 — ${err}`, `Couldn't load skills — ${err}`) : tr('팀챗에서 @이름으로 부르면 한 번 답해요', 'Mention @name in team chat for a one-time reply')}</span>
     </>
   );
 }

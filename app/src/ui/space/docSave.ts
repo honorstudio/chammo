@@ -9,6 +9,8 @@ import { setCurrent } from './pending';
  * base 는 편집기(열 때마다)마다 따로 — 문서를 떠났다 바로 돌아오면 옛 편집기의 늦은 저장이 새 편집기의 기준을 바꿔치기했다
  */
 export const lastSaved = new Map<string, string>();
+/** 편집기가 마지막으로 낸 글(아직 0.7초 저장 전일 수 있다) — 내 메모 보내기 아이콘이 방금 친 글까지 넣으려고 읽는다 */
+export const latestMd = new Map<string, string>();
 
 export type DocSession = {
   path: string;
@@ -16,6 +18,8 @@ export type DocSession = {
   base: { text: string; stamp: string | null; ver: number };
   /** 같은 곳을 둘 다 고쳐 저장을 멈춤 — 사람이 고를 때까지 안 쓴다 */
   blocked: boolean;
+  /** 내 메모(참모에게 저절로 안 읽힌다) — 파일에만 쓴다. 보낼 것·space-log 에 안 넣는다 */
+  personal: boolean;
   /** 쓰는 중 — 감시가 내 쓰기를 바깥 변경으로 읽지 않게 */
   writing: boolean;
   /** 편집기가 열려 있는 동안만 — 밖에서 바뀌어 거절됨 / 파일이 없어짐 / 파일은 있는데 못 씀(다른 앱이 쥠·읽기 전용) */
@@ -26,7 +30,7 @@ export type DocSession = {
   onSaved?: () => void;
 };
 
-export const newSession = (path: string, text: string): DocSession => ({ path, base: { text, stamp: null, ver: 1 }, blocked: false, writing: false });
+export const newSession = (path: string, text: string, personal = false): DocSession => ({ path, base: { text, stamp: null, ver: 1 }, blocked: false, personal, writing: false });
 export function setBase(s: DocSession, text: string, stamp: string | null) {
   s.base = { text, stamp, ver: s.base.ver + 1 };
 }
@@ -39,13 +43,14 @@ export const readOutside = (path: string): Promise<{ text: string } | { unreadab
 const saveTimers = new Map<DocSession, ReturnType<typeof setTimeout>>();
 
 export function saveSoon(s: DocSession, md: string) {
+  latestMd.set(s.path, md);
   // 편집기가 문서를 처음 읽어 들일 때도 바뀜 알림이 온다 — 지난번 저장과 같으면 파일에 안 쓴다(열기만 해도 "- [ ]"→"* [ ]" 로 바뀌었다, 2026-09-30)
   // 쳤다가 0.7초 안에 지워 저장한 판으로 돌아왔으면 기다리던 저장(친 글)도 취소 — 안 그러면 지운 글자가 파일에 남았다
   if (lastSaved.get(s.path) === md) {
     clearTimeout(saveTimers.get(s));
     return;
   }
-  setCurrent(s.path, md);
+  if (!s.personal) setCurrent(s.path, md);
   clearTimeout(saveTimers.get(s));
   saveTimers.set(s, setTimeout(() => void flush(s, md), 700));
 }
@@ -66,6 +71,7 @@ async function flush(s: DocSession, md: string) {
     setBase(s, md, stamp);
     lastSaved.set(s.path, md);
     s.onSaved?.();
+    if (s.personal) return;
     const diff = mdDiff(before, md);
     if (diff.added.length || diff.removed.length) void invoke('space_log_append', { line: JSON.stringify({ ts: new Date().toISOString(), who: 'user', kind: 'edit', path: s.path, ...diff }) }).catch(() => {});
   } catch (e) {

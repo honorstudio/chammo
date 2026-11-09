@@ -137,8 +137,8 @@ impl Links {
         self.first_kind_replacing(k, hello, hub_key, dev, mt, peer, now).map(|(cm, _)| cm)
     }
 
-    /// peer = 허브가 찍은 plat 이 컴퓨터(mac|win) — 상자 속 글로 고르지 않는다
-    pub fn first_kind_replacing(&self, k: &str, hello: &Value, hub_key: &str, dev: &str, mt: &[u8], peer: bool, now: Instant) -> Result<([u8; 32], Option<String>), String> {
+    /// 인사 확인 — 허브가 확인한 열쇠(hub_key)·기기 id(dev) 와 상자 속 인사(sign·dev)를 대조한다. 숫자 확인·메일 코드가 같이 쓴다(commit 은 숫자 확인만)
+    pub fn hello_of(k: &str, hello: &Value, hub_key: &str, dev: &str, peer: bool) -> Result<Hello, String> {
         let s = |f: &str| hello[f].as_str().unwrap_or_default();
         if !id_ok(k) || !id_ok(dev) {
             return Err("bad id".into());
@@ -151,6 +151,15 @@ impl Links {
             return Err("dev".into());
         }
         let x = tun::pubkey(s("x")).map_err(|_| "bad x")?;
+        // 컴퓨터 이름은 브라우저 UA 가 아니라 그 앱이 보낸 이름(제어 글자 빼고) — 카드엔 서버 기기 목록 이름을 다시 쓴다(phone_relay)
+        let name = if peer { s("ua").chars().filter(|c| !c.is_control()).take(40).collect() } else { crate::mobile_pair::device_name(s("ua")) };
+        Ok(Hello { sign: s("sign").to_string(), x, name, dev: dev.to_string(), peer, commit: [0; 32] })
+    }
+
+    /// peer = 허브가 찍은 plat 이 컴퓨터(mac|win) — 상자 속 글로 고르지 않는다
+    pub fn first_kind_replacing(&self, k: &str, hello: &Value, hub_key: &str, dev: &str, mt: &[u8], peer: bool, now: Instant) -> Result<([u8; 32], Option<String>), String> {
+        let s = |f: &str| hello[f].as_str().unwrap_or_default();
+        let mut parsed = Self::hello_of(k, hello, hub_key, dev, peer)?;
         let commit: [u8; 32] = tun::unb64(s("commit")).ok().and_then(|b| b.try_into().ok()).ok_or("bad commit")?;
         let mut g = self.0.lock().unwrap_or_else(|e| e.into_inner());
         Self::sweep(&mut g, now);
@@ -167,10 +176,8 @@ impl Links {
         let mut nm = [0u8; 16];
         getrandom::fill(&mut nm).map_err(|e| e.to_string())?;
         g.issued.push(now);
-        // 컴퓨터 이름은 브라우저 UA 가 아니라 그 앱이 보낸 이름(제어 글자 빼고) — 카드엔 서버 기기 목록 이름을 다시 쓴다(phone_relay)
-        let name = if peer { s("ua").chars().filter(|c| !c.is_control()).take(40).collect() } else { crate::mobile_pair::device_name(s("ua")) };
-        let hello = Hello { sign: s("sign").to_string(), x, name, dev: dev.to_string(), peer, commit };
-        g.links.insert(k.to_string(), Link { hello, nm, sas: None, card: None, started: now, dead: false });
+        parsed.commit = commit;
+        g.links.insert(k.to_string(), Link { hello: parsed, nm, sas: None, card: None, started: now, dead: false });
         Ok((commit_m_for(peer, mt, &nm), closed))
     }
 

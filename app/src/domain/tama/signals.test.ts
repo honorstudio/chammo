@@ -1,6 +1,6 @@
 // 참모가 이미 적고 있는 기록 → '끝낸 일' 먹이 사건
 import { describe, expect, it } from 'vitest';
-import { keeperOf, routineFeed, showFeed, spaceFeed, talkFeed, todayFed } from './signals';
+import { keeperOf, rememberTalks, routineFeed, showFeed, spaceFeed, talkEvents, todayFed } from './signals';
 import { taskEvents } from './sources';
 import type { Routine } from '../routine';
 
@@ -10,8 +10,30 @@ describe('기록 → 먹이', () => {
     expect(showFeed(raw)).toEqual([{ t: Date.parse('2026-10-02T15:02:06+00:00'), type: 'show', label: '보고서.pdf', by: 'f00d0007' }]);
   });
 
-  it('대화 — 세션\\t시각 줄, 깨진 줄은 건너뛴다', () => {
-    expect(talkFeed('s1\t2026-10-02T10:00:00.000Z\nbad\ns2\tnope\n')).toEqual([{ t: Date.parse('2026-10-02T10:00:00.000Z'), type: 'talk', by: 's1' }]);
+  it('대화 — 앱이 읽는 꼬리의 마지막 말만 모은다(같은 말은 한 번, 깨진 시각은 버림, 이틀 지나면 잊음)', () => {
+    const now = Date.parse('2026-10-03T10:00:00.000Z');
+    const seen = new Map<string, number>();
+    rememberTalks(seen, [{ id: 's1', ts: '2026-10-03T09:00:00.000Z' }, { id: 's2', ts: 'nope' }, { id: 's3' }], now);
+    rememberTalks(seen, [{ id: 's1', ts: '2026-10-03T09:00:00.000Z' }, { id: 's1', ts: '2026-10-03T09:30:00.000Z' }], now);
+    expect(talkEvents(seen)).toEqual([
+      { t: Date.parse('2026-10-03T09:00:00.000Z'), type: 'talk', by: 's1' },
+      { t: Date.parse('2026-10-03T09:30:00.000Z'), type: 'talk', by: 's1' },
+    ]);
+    rememberTalks(seen, [], now + 2 * 86_400_000);
+    expect(talkEvents(seen)).toEqual([]);
+  });
+
+  it('대화 기록 전체를 훑지 않는다 — 1.2GB 를 메모리로 읽던 간식 셈은 없앴다', async () => {
+    const feed = (await import('../../ui/gacha/useWorkFeed.ts?raw')).default;
+    const tauri = (await import('../../data/tauri.ts?raw')).default;
+    expect(feed).not.toMatch(/humanTurns/);
+    expect(tauri).not.toMatch(/human_turns/);
+  });
+
+  it('일한 시간은 세션 값이 그대로여도 3초마다 모은다 — 앱이 다시 안 그려도 코인이 안 멈춘다', async () => {
+    const feed = (await import('../../ui/gacha/useWorkFeed.ts?raw')).default;
+    expect(feed).toMatch(/setInterval\(\(\) => collect\.current\(busyAt\.current\), 3000\)/);
+    expect(feed).not.toMatch(/\[sessions, busy\]/);
   });
 
   it('예약 — 끝난 실행만, 성공·실패 = 배틀 승패, 이름 = 예약 이름', () => {

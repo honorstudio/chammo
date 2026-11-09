@@ -203,7 +203,7 @@ impl Backend for Stub {
     fn asset(&self, _: &str) -> Option<(Vec<u8>, String)> { None }
     fn show_log(&self) -> String { String::new() }
     fn data_dir(&self) -> PathBuf { PathBuf::from("/nonexistent") }
-    fn ctx_files(&self) -> Vec<String> { vec![] }
+    fn ctx_files(&self, _ids: &[String]) -> Vec<String> { vec![] }
     fn attach(&self, _: &str, _: &[u8]) -> Result<String, String> { Err("no".into()) }
     fn jpeg(&self, _: &Path, _: Option<u32>) -> Option<Vec<u8>> { None }
     fn ql_thumb(&self, _: &Path, _: u32) -> Option<Vec<u8>> { None }
@@ -307,7 +307,7 @@ impl Backend for Panicky {
     fn asset(&self, _: &str) -> Option<(Vec<u8>, String)> { None }
     fn show_log(&self) -> String { String::new() }
     fn data_dir(&self) -> PathBuf { PathBuf::from("/nonexistent") }
-    fn ctx_files(&self) -> Vec<String> { vec![] }
+    fn ctx_files(&self, _ids: &[String]) -> Vec<String> { vec![] }
     fn attach(&self, _: &str, _: &[u8]) -> Result<String, String> { Err("no".into()) }
     fn jpeg(&self, _: &Path, _: Option<u32>) -> Option<Vec<u8>> { None }
     fn ql_thumb(&self, _: &Path, _: u32) -> Option<Vec<u8>> { None }

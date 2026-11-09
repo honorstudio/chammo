@@ -23,7 +23,6 @@ export function useDirectCards(everyone: Session[], acts: { session: Session; ac
   notify: (c: DirectCard, name: string, owner?: Session) => void, onRespawn?: (c: DirectCard) => Promise<void>) {
   const [log, setLog] = useState<string | null>(null); // null = 아직 한 번도 못 읽음
   const [open, setOpen] = useState<string | null>(null);
-  const [inboxOpen, setInboxOpen] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
     const tick = () => void invoke<string>('direct_log').then((t) => { if (alive) setLog((p) => (p === t ? p : t)); }, () => {});
@@ -86,15 +85,10 @@ export function useDirectCards(everyone: Session[], acts: { session: Session; ac
       : { ts: c.ts, key: `direct:${c.id}`, node: <div className="chat-row dc-row"><DirectLine c={c} name={nameOf(c)} onDismiss={() => tidy.hide(c)} /></div> }));
   };
 
-  /** 결정 대기함(상단 종) — 봐야 하는 카드 전부. 한 줄씩, 누른 것만 펼친다 */
+  /** 결정 대기함(상단 종) — 봐야 하는 카드 전부. 대기함이 한 장씩 cardNode 로 그린다 */
   const inboxCards = cards.filter((c) => needsLook(c) && tidy.show(c) === 'full');
-  const inboxNode = inboxCards.length ? (
-    <div className="inbox-direct" role="group" aria-label={tr('직접 답', 'Direct answers')}>
-      {inboxCards.map((c) => <div key={c.id} className="dc-row">{card(c, 'inbox', c.id !== inboxOpen, () => setInboxOpen(c.id))}</div>)}
-    </div>
-  ) : null;
   /** 카드 한 장 펼친 채로 — 홈 결정 펼침(그 자리에서 답, 결제도 이 카드 그대로 사람이 누른다) */
   const cardNode = (c: DirectCard, place: string) => <div className="dc-row">{card(c, place, false, () => {})}</div>;
   /** ready = 기록을 한 번이라도 읽었나 — 그 전 빈 목록으로 '처음 본 카드'를 굳히지 않게 */
-  return { cards, placed, ready: log !== null, nameOf, extraOf, inboxCards, inboxNode, cardNode };
+  return { cards, placed, ready: log !== null, nameOf, extraOf, inboxCards, cardNode };
 }

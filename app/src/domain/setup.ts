@@ -1,5 +1,4 @@
 import { tr } from '../i18n';
-import { wizardAccess, type Access } from './access';
 import { IS_WIN } from './reader';
 // 환경 점검 판단 — Claude Code 버전이 확인된 범위인가, 설정을 끝내도 되나
 // Chammo 는 Claude Code 의 백그라운드 세션 기능(--bg·agents --json·attach)에 기댄다. 확인한 범위는 2.1.280 이상의 2.1.x
@@ -65,13 +64,8 @@ export function versionWarning(text: string, dismissed: string | null): VersionF
   return dismissed === text.trim() ? null : fit;
 }
 
-/** 설정을 끝낼 수 있나 — Claude Code 설치·로그인·확인된 버전 이상, 명령줄 도구(맥은 /usr/bin/python3 가 여기 들어 있어 git 을 안 써도 꼭)·파이썬 3(윈도우)은 꼭. gh 는 선택.
- *  git 이름·메일은 '코드 프로젝트에 git 쓰기'(gitOn)를 켰을 때만 */
-/** 사람이 '나중에 하기'로 넘길 수 있는 것 — git·파이썬(관리자 권한·winget 없는 회사 PC 가 설정을 못 끝냈다, win-env H3), git 이름·메일(gitId, 0.4.7 2차 검증) */
+/** 사람이 '나중에 하기'로 넘길 수 있는 것 — 윈도우 git·파이썬(관리자 권한·winget 없는 회사 PC, win-env H3), git 이름·메일 */
 export type SkipKey = SetupTask | 'gitId';
-export const setupReady = (c: EnvCheck | null, skipped: SkipKey[] = [], gitOn = true): boolean =>
-  !!c && !!c.claudePath && c.loggedIn && (c.clt || skipped.includes('clt')) && (c.python !== false || skipped.includes('python')) && versionFit(c.claudeVersion) !== 'old'
-  && (gitIdentityRow(c, gitOn) !== 'need' || skipped.includes('gitId'));
 
 /** Claude 로그인 줄 — 확인이 시간 안에 안 끝났으면 '로그인 필요'가 아니라 '다시 확인'(win-env M2) */
 export const loginRow = (c: Pick<EnvCheck, 'loggedIn' | 'loginUnknown'>): 'ok' | 'need' | 'unknown' => (c.loggedIn ? 'ok' : c.loginUnknown ? 'unknown' : 'need');
@@ -100,14 +94,14 @@ export const setupFailed = (screen: string, fail: string = setupFailLine()) => !
 /** 셸 작은따옴표로 감싸기 — 경로·안내 문장을 명령에 그대로 넣으려고 */
 export const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
-export type SetupTask = 'install' | 'update' | 'login' | 'clt' | 'python' | 'ghLogin' | 'trust';
+export type SetupTask = 'install' | 'update' | 'login' | 'clt' | 'python' | 'ghLogin';
 
 /**
  * 설정 화면의 터미널에서 돌릴 한 번짜리 명령. 끝나면 무엇을 하면 되는지 한 줄 찍는다(done).
  * claude·gh 는 찾은 절대 경로로(앱의 PATH 에 없을 수 있어서)
  */
-export function setupCommand(task: SetupTask, bins: { claude?: string | null; gh?: string | null }, done: string, dir?: string, win = IS_WIN, notes: WinNotes = WIN_NOTES, fail: string = setupFailLine()): string {
-  if (win) return winSetupCommand(task, bins, done, dir, notes, fail);
+export function setupCommand(task: SetupTask, bins: { claude?: string | null; gh?: string | null; getter?: string | null }, done: string, _dir?: string, win = IS_WIN, notes: WinNotes = WIN_NOTES, fail: string = setupFailLine()): string {
+  if (win) return winSetupCommand(task, bins, done, notes, fail);
   const tail = `; r=$?; echo; if [ $r -eq 0 ]; then echo ${shq(done)}; else echo ${shq(fail)}; fi`;
   switch (task) {
     case 'install':
@@ -120,14 +114,13 @@ export function setupCommand(task: SetupTask, bins: { claude?: string | null; gh
     }
     case 'login':
       return `${shq(bins.claude || 'claude')} auth login${tail}`;
+    // 맥 — 명령줄 도구 대신 앱이 받는다(base_tools, ADR 0027)
     case 'clt':
-    case 'python': // 맥 python3 는 명령줄 도구에 들어 있다(줄은 윈도우만 보인다)
-      return `xcode-select --install${tail}`;
+      return `${shq(bins.getter || 'chammo-get-tool')} git${tail}`;
+    case 'python':
+      return `${shq(bins.getter || 'chammo-get-tool')} python${tail}`;
     case 'ghLogin':
       return `${shq(bins.gh || 'gh')} auth login${tail}`;
-    case 'trust':
-      // 폴더 믿기 — 그 폴더에서 claude 를 대화형으로 켠다. 뜨는 질문에 Enter(예) → 기록되면 앱이 창을 닫는다(claude 도 같이 꺼진다)
-      return `cd ${shq(dir ?? '.')} && exec ${shq(bins.claude || 'claude')}`;
   }
 }
 
@@ -195,7 +188,7 @@ function psEncode(script: string): string {
 }
 
 /** 윈도우 설정 명령 — cmd /C 가 읽는다(작은따옴표·exec·; 가 안 먹어서 폴더 믿기가 "구문이 잘못됨"으로 끝났다, 윈도우판) */
-function winSetupCommand(task: SetupTask, bins: { claude?: string | null; gh?: string | null }, done: string, dir: string | undefined, notes: WinNotes, fail: string): string {
+function winSetupCommand(task: SetupTask, bins: { claude?: string | null; gh?: string | null }, done: string, notes: WinNotes, fail: string): string {
   // && / || 는 & 보다 먼저 묶인다 — 'echo 받는 중 & 명령 && (성공) || (실패)' 는 명령의 종료 코드로 갈린다(winget 의 음수 코드도 실패)
   const tail = done ? ` && (echo.& echo ${cmdEcho(done)}) || (echo.& echo ${cmdEcho(fail)})` : '';
   const claude = dq(bins.claude || 'claude');
@@ -221,8 +214,6 @@ function winSetupCommand(task: SetupTask, bins: { claude?: string | null; gh?: s
       return `winget install -e --id Python.Python.3.12 --scope user --custom "InstallLauncherAllUsers=0" --accept-source-agreements --accept-package-agreements${tail}`;
     case 'ghLogin':
       return `${dq(bins.gh || 'gh')} auth login${tail}`;
-    case 'trust':
-      return `cd /d ${dq((dir ?? '.').replace(/\//g, '\\'))} && ${claude}`;
   }
 }
 
@@ -265,43 +256,8 @@ export function installState(o: { win: boolean; tried: boolean; running: boolean
   return o.failed ? 'failed' : 'notFound';
 }
 
-/** 첫 실행 마법사 — 한 화면에 한 단계(사용자 2026-09-28 "설정 마법사같은 거"). 설정 메뉴로 열면 한 페이지 그대로 */
-export type WizardStep = 'welcome' | 'check' | 'basics' | 'features' | 'ready';
-export const WIZARD: WizardStep[] = ['welcome', 'check', 'basics', 'features', 'ready'];
 /** 폴더 믿음 — 프로젝트 폴더·HQ (Claude Code 가 새 폴더에선 믿기 전에 세션을 안 띄운다) */
 export type Trust = { dev: boolean; hq: boolean };
-/** 다음으로 넘어갈 수 있나 — 점검 단계는 Claude Code 설치·로그인·명령줄 도구가, 기본 설정 단계는 두 폴더 믿기가 다 돼야.
- *  마지막 단계는 '시작하기'라 다음이 없다 */
-export function canNext(step: WizardStep, check: EnvCheck | null, trust?: Trust, access?: Access | null, skipped: SkipKey[] = [], gitOn = true): boolean {
-  if (step === 'check') return setupReady(check, skipped, gitOn);
-  // 고른 프로젝트 폴더를 맥이 막고 있으면 세션이 'Unexpected' 로만 실패한다(이슈 #1) — 여기서 멈춰 세운다
-  if (step === 'basics') return !!trust?.dev && !!trust?.hq && !wizardAccess(access ?? null).block;
-  return step !== 'ready';
-}
-
-/** 다음 단추가 꺼진 까닭 — 단추 바로 위에 한 줄(null = 갈 수 있음). 믿기 줄이 창 아래에 있어 왜 꺼졌는지 몰랐다(2026-10-22 QA 17) */
-export function nextWhy(step: WizardStep, check: EnvCheck | null, trust: Trust | undefined, access: Access | null, win: boolean, skipped: SkipKey[] = [], gitOn = true): string | null {
-  if (canNext(step, check, trust, access, skipped, gitOn) || step === 'ready' || step === 'welcome' || step === 'features') return null;
-  // 이름·메일 말은 그 줄이 보일 때만(깃 스위치를 켠 사람) — 문구 소넷(2026-11-02)
-  const id = check && gitIdentityRow(check, gitOn) === 'need';
-  if (step === 'check') return win
-    ? tr('Claude Code, git, 파이썬 3 설치와 로그인을 마치면 다음으로 갈 수 있어요.', 'Finish installing Claude Code, git, and Python 3, and signing in, to continue.') + (id ? tr(' git 이름·메일은 저장하거나 나중에 하기로 넘겨도 돼요.', ' You can save your git name and email, or skip it for now.') : '')
-    : tr('위의 Claude Code 설치·로그인과 명령줄 도구를 마치면 다음으로 갈 수 있어요.', 'Finish installing and signing in to Claude Code and the command line tools above to continue.') + (id ? tr(' git 이름·메일은 저장하거나 나중에 하기로 넘겨도 돼요.', ' You can save your git name and email, or skip it for now.') : '');
-  if (wizardAccess(access).block) return tr('프로젝트 폴더를 열 수 없어요 — 위 프로젝트 폴더 칸의 안내부터 해 주세요.', 'The projects folder cannot be opened — follow the note under Projects folder first.');
-  return tr('위 두 폴더를 「믿기」로 믿으면 다음으로 갈 수 있어요.', 'Trust the two folders above to continue.');
-}
-
-/** 믿기 터미널이 믿지 않고 끝났을 때 한 줄 — screen = 끝날 때 터미널 글. 질문 전에 끝났는데(로그인 안 됨·실행 실패)
- *  'Yes 를 골라'라고 해 사람이 같은 걸 되풀이했다(2026-10-22 첫 사용자 QA 7). 터미널은 닫히니 마지막 줄을 같이 보인다 */
-export function trustExitNote(screen: string): string {
-  if (/trust this folder|Quick safety check|Do you trust/i.test(screen))
-    return tr('폴더를 믿지 않고 끝났어요. 믿기를 다시 눌러 ↓로 "Yes, I trust this folder"를 고르고 Enter를 눌러 주세요.', 'It ended without trusting. Press Trust again, pick "Yes, I trust this folder" with ↓, then Enter.');
-  const last = screen.split('\n').map((l) => l.trim()).filter(Boolean).pop()?.slice(0, 120) ?? '';
-  if (/log ?in|not logged|api key|auth/i.test(screen))
-    return tr(`Claude 가 질문 전에 끝났어요 — 로그인이 필요해요. 위 점검에서 로그인을 마친 뒤 믿기를 다시 눌러 주세요.${last ? ` (${last})` : ''}`, `Claude ended before asking — it needs a sign-in. Finish signing in above, then press Trust again.${last ? ` (${last})` : ''}`);
-  return tr(`Claude 가 질문 전에 끝났어요 — 위 점검(설치·로그인)을 다시 확인하고 믿기를 눌러 주세요.${last ? ` 마지막 줄: ${last}` : ''}`, `Claude ended before asking — check the install and sign-in above, then press Trust again.${last ? ` Last line: ${last}` : ''}`);
-}
-
 /** 폴더 고르기 창이 준 절대 경로를 입력칸 모양으로 — 홈 안이면 ~/… (설정 파일에도 이렇게 저장된다) */
 export function tildify(path: string, home: string): string {
   const p = path.length > 1 ? path.replace(/\/+$/, '') : path;
@@ -345,12 +301,12 @@ export type BrowserStep = 'node' | 'chrome' | 'parts' | 'check';
 /** note = 끝났는데 남은 것 한 줄(맥 권한 창 답 대기 등) — 완료는 막지 않는다 */
 export type BrowserSetupState = { running: boolean; step: BrowserStep | null; pct: number | null; text: string; error: string | null; done: boolean; note?: string | null };
 
-/** 브라우저 자동화 줄 — 막지 않는 선택 기능. 하나라도 없으면 '설치' 하나(Node·크롬 베타까지 앱이 받는다), 실패하면 '다시 시도' */
-export function browserRow(s: BrowserStatus | null, run: BrowserSetupState | null): { state: 'ok' | 'opt'; action: 'install' | 'retry' | null; busy: boolean } {
-  if (run?.running) return { state: 'opt', action: null, busy: true };
-  if (!s) return { state: 'opt', action: null, busy: false };
+/** 참모 브라우저 줄 — 필수(사용자 11-05, 첫 설치가 깔고, 안 깔린 옛 사용자는 여기서). 하나라도 없으면 '설치' 하나(Node·크롬 베타까지 앱이 받는다), 실패하면 '다시 시도' */
+export function browserRow(s: BrowserStatus | null, run: BrowserSetupState | null): { state: 'ok' | 'need'; action: 'install' | 'retry' | null; busy: boolean } {
+  if (run?.running) return { state: 'need', action: null, busy: true };
+  if (!s) return { state: 'need', action: null, busy: false };
   if (s.ready) return { state: 'ok', action: null, busy: false };
-  return { state: 'opt', action: run?.error ? 'retry' : 'install', busy: false };
+  return { state: 'need', action: run?.error ? 'retry' : 'install', busy: false };
 }
 
 /** 확인 목록 네 칸 — ok 있음 · now 지금 하는 중 · fail 여기서 멈춤 · todo 받을 것 */
@@ -375,16 +331,10 @@ export function addExtraProject(list: string[], picked: string, devRoot: string,
   return { list: [...list, p] };
 }
 
-/** 점검의 Claude 로그인 줄 — 'Chammo 가 이 로그인을 그대로 쓴다'고 해 놓고 다음 화면에서 Chammo 계정 로그인을 또 받았다(2026-11-01 ux-start H1) */
+/** 점검의 Claude 로그인 줄 */
 export const claudeSignedInText = (): string => tr(
-  'Claude Code 로그인이 확인됐어요. 세션들이 이 로그인을 그대로 써요. Chammo 계정은 별개라서 다음 화면에서 따로 로그인해요.',
-  "Claude Code sign-in confirmed. Your sessions use this sign-in as is. Your Chammo account is separate, and you'll sign in to it on the next screen.",
-);
-
-/** 준비 끝 — 다음 화면이 계정 로그인이라는 예고(같은 QA H1) */
-export const readyAccountNote = (): string => tr(
-  '시작하기를 누르면 다음 화면에서 Chammo 계정에 구글로 로그인해요. 이 계정으로 폰, 다른 컴퓨터, 메신저가 연결돼요. 한 번만 하면 돼요.',
-  "When you select Get started, you'll sign in to your Chammo account with Google on the next screen. Your phone, other computers, and messaging connect through this account. You only need to do this once.",
+  'Claude Code 로그인이 확인됐어요. 세션들이 이 로그인을 그대로 써요.',
+  'Claude Code sign-in confirmed. Your sessions use this sign-in as is.',
 );
 
 /** 첫 설정을 마칠 때 적을 참모 이름 — 영어 기본 이름이 앱 이름(Chammo)과 같아 "Create a new Chammo"가 됐다(2026-11-01 ux-start M2).

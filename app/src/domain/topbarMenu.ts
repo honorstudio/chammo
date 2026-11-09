@@ -2,15 +2,14 @@
 // 순서 고정: [그 뷰에서만 쓰는 것] [토글] [두 뷰 공통 … 종]. 뷰에서만 쓰는 건 토글 왼쪽에 둬서, 뷰를 바꿔도
 // 오른쪽 끝에 붙은 토글·공통 아이콘 자리가 안 튄다(방금 누른 토글이 커서 밑에서 움직이면 두 번 눌린다).
 
-export type BarItem = 'reader' | 'tama' | 'office' | 'replay' | 'voice' | 'tools' | 'harnitor' | 'review' | 'inbox';
+export type BarItem = 'reader' | 'office' | 'replay' | 'voice' | 'tools' | 'harnitor' | 'review' | 'notes' | 'inbox';
 export type View = 'chat' | 'terminal';
 
 /** 표 = 순서. feature = 설정에서 끌 수 있는 기능(꺼 두면 어느 뷰에서도 숨김) */
 // rail = 채팅 뷰에선 위 막대 대신 왼쪽 참모 패널(접힌 패널 둘째 세로줄·펼친 패널 맨 아래 줄)에 — 터미널 뷰에선 토글 왼쪽(2026-10-11 사용자 180.png).
-// 토글 오른쪽은 두 뷰가 같아야 해서(다마고치·종) 터미널 뷰에서도 토글 왼쪽으로 뺀다
-export const BAR_ITEMS: { id: BarItem; views: View[]; feature?: 'tama' | 'office' | 'voice' | 'review'; rail?: true }[] = [
+// 토글 오른쪽은 두 뷰가 같아야 해서(메모·종) 터미널 뷰에서도 토글 왼쪽으로 뺀다
+export const BAR_ITEMS: { id: BarItem; views: View[]; feature?: 'office' | 'voice' | 'review'; rail?: true }[] = [
   { id: 'reader', views: ['terminal'] },
-  { id: 'tama', views: ['chat', 'terminal'], feature: 'tama' },
   // 채팅 뷰 사무실은 스페이스 오른쪽 위 세 칸(대시보드·펫·사무실)에 있어서 위 막대엔 터미널 뷰만(2026-10-03 사용자)
   { id: 'office', views: ['terminal'], feature: 'office' },
   { id: 'replay', views: ['chat', 'terminal'], rail: true },
@@ -21,10 +20,12 @@ export const BAR_ITEMS: { id: BarItem; views: View[]; feature?: 'tama' | 'office
   { id: 'harnitor', views: ['chat', 'terminal'], rail: true },
   // 리뷰(PR·머지 전에 볼 것) — 사이드바 줄에서 옮김(2026-10-06 사용자 "이 패널은 이제 전체가 다 세션"). 결정 대기 종 옆
   { id: 'review', views: ['chat', 'terminal'], feature: 'review', rail: true },
+  // 내 메모 — 어느 참모에도 안 속해서 뷰와 상관없이 같은 자리(시안 memo-panel C, 11-05)
+  { id: 'notes', views: ['chat', 'terminal'] },
   { id: 'inbox', views: ['chat', 'terminal'] },
 ];
 
-type Feats = { tama: boolean; office: boolean; voice: boolean; review: boolean };
+type Feats = { office: boolean; voice: boolean; review: boolean };
 
 export function barItems(view: View, f: Feats): { before: BarItem[]; after: BarItem[] } {
   const shown = BAR_ITEMS.filter((x) => x.views.includes(view) && (!x.feature || f[x.feature]) && !(view === 'chat' && x.rail));

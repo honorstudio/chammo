@@ -750,12 +750,25 @@ fn route_and_peers() -> Result<(Route, Vec<TsPeer>), String> {
 }
 
 pub fn call_now(id: &str, method: &str, path: &str, body: Option<&str>) -> Result<CallOut, String> {
+    call_now_wait(id, method, path, body, CALL_WAIT)
+}
+
+/// call_now 인데 요청 마감을 wait 아래로(늘리지는 않는다) — 카드 모으기는 대신 보내기 10초보다 짧게 끊는다
+pub fn call_now_wait(id: &str, method: &str, path: &str, body: Option<&str>, wait: Duration) -> Result<CallOut, String> {
     if let Some(x) = relay_x_of(id) {
-        return call(&keychain(), &data_dir(), id, Some(Ipv4Addr::UNSPECIFIED), method, path, body, &relay_send(id, x));
+        let s = relay_send(id, x);
+        return call(&keychain(), &data_dir(), id, Some(Ipv4Addr::UNSPECIFIED), method, path, body, &cap_wait(&s, wait));
     }
     let (route, peers) = route_and_peers()?;
     let here = peers.iter().find(|p| p.id == id).map(|p| p.ip);
-    call(&keychain(), &data_dir(), id, here, method, path, body, &real_send(route))
+    let s = real_send(route);
+    let capped = cap_wait(&s, wait);
+    call(&keychain(), &data_dir(), id, here, method, path, body, &capped)
+}
+
+/// 요청 마감을 wait 아래로 묶는다
+pub fn cap_wait<'a>(send: &'a SendFn<'a>, wait: Duration) -> impl Fn(&Target, &Request, Duration, usize) -> Result<Response, NetErr> + 'a {
+    move |t, r, w, m| send(t, r, w.min(wait), m)
 }
 
 /// 중계로 짝지은 컴퓨터면 그 터널 열쇠 — 테일넷을 안 본다(테일스케일 없이가 기본, 11-01)
@@ -822,40 +835,43 @@ pub fn card_answer_now(id: &str, card: &str, pick: &crate::direct::Pick) -> Resu
     human_now(id, "/api/peer-direct-answer", serde_json::json!({ "id": card, "pick": pick })).map(|_| ())
 }
 
-/// 짝지은 기기마다 카드 기록 + 세션 목록 — 폰·데스크톱이 4초마다 묻으니 4초 묵힌다. 안 닿는 기기는 뺀다.
-/// 망을 부르는 동안 자물쇠를 쥐지 않는다 — 다른 요청은 기다리지 않고 지난 값을 받는다(멈춘 기기 10초에 줄줄이 묶이지 않게)
+/// 짝지은 기기마다 카드 기록 + 세션 목록(폰·데스크톱 결정 대기함, 4초마다) — 망을 기다리지 않고 마지막 값을 바로 준다.
+/// 3초 넘게 묵었으면 뒤에서 한 바퀴(기기들을 병렬로, 안 닿는 기기는 짧게 쉬며) — peer_cards.rs
 pub fn cards_now() -> serde_json::Value {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    static KEEP: std::sync::Mutex<Option<(std::time::Instant, serde_json::Value)>> = std::sync::Mutex::new(None);
-    static FETCHING: AtomicBool = AtomicBool::new(false);
-    let cached = || KEEP.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|(at, v)| (at.elapsed(), v.clone()));
-    if let Some((age, v)) = cached() {
-        if age < Duration::from_secs(4) {
-            return v;
+    static CARDS: crate::peer_cards::Hub = crate::peer_cards::Hub::new();
+    let paired: Vec<(String, String)> = load(&data_dir()).into_iter().map(|d| (d.id, d.name)).collect();
+    let (v, go) = CARDS.look(&paired, std::time::Instant::now());
+    if go {
+        let p = paired.clone();
+        let run = move || CARDS.refresh(&p, &card_fetch, &std::time::Instant::now);
+        // 스레드를 못 만들면(드문 일) 여기서 — 안 돌리면 바퀴 표시가 안 풀려 다시는 안 묻는다
+        if std::thread::Builder::new().name("peer-cards".into()).spawn(run).is_err() {
+            CARDS.refresh(&paired, &card_fetch, &std::time::Instant::now);
         }
     }
-    if FETCHING.swap(true, Ordering::AcqRel) {
-        return cached().map(|(_, v)| v).unwrap_or_else(|| serde_json::json!([]));
-    }
-    // 중간에 패닉해도 다음 요청이 다시 받게 — 표시는 끝날 때 늘 내린다
-    struct Done;
-    impl Drop for Done {
-        fn drop(&mut self) {
-            FETCHING.store(false, Ordering::Release);
-        }
-    }
-    let _done = Done;
-    let list: Vec<serde_json::Value> = load(&data_dir())
-        .into_iter()
-        .filter_map(|d| {
-            let text = |p: &str| call_now(&d.id, "GET", p, None).ok().filter(|r| r.status == 200).and_then(|r| r.text);
-            let log = text("/api/direct")?;
-            Some(serde_json::json!({ "dev": d.id, "name": d.name, "log": log, "sessions": text("/api/sessions").unwrap_or_else(|| "[]".into()) }))
-        })
-        .collect();
-    let v = serde_json::Value::Array(list);
-    *KEEP.lock().unwrap_or_else(|e| e.into_inner()) = Some((std::time::Instant::now(), v.clone()));
     v
+}
+
+/// 테일넷이 꺼졌다고 말하는 기기인가 — 그런 기기는 망을 안 부르고 바로 실패(userspace SOCKS 는 꺼진 기기에 5초를 붙잡는다, 11-08 실측).
+/// 목록에 없는 기기는 여기서 거르지 않는다(call 이 이유를 낸다)
+pub fn tailnet_off(peers: &[TsPeer], id: &str) -> bool {
+    peers.iter().any(|p| p.id == id && !p.online)
+}
+
+/// 카드 모으기의 기기 하나 — 요청마다 마감 peer_cards::WAIT. 세션 목록만 실패하면 None(전 목록을 쓴다)
+fn card_fetch(id: &str) -> Result<crate::peer_cards::Got, String> {
+    if !id.starts_with("relay:") {
+        let (_, peers) = route_and_peers()?;
+        if tailnet_off(&peers, id) {
+            return Err("테일넷에서 꺼져 있어요".into());
+        }
+    }
+    let text = |p: &str| match call_now_wait(id, "GET", p, None, crate::peer_cards::WAIT)? {
+        r if r.status == 200 => r.text.ok_or_else(|| "글 응답이 아니에요".to_string()),
+        r => Err(format!("HTTP {}", r.status)),
+    };
+    let log = text("/api/direct")?;
+    Ok(crate::peer_cards::Got { log, sessions: text("/api/sessions").ok() })
 }
 
 /// 짝지은 기기들의 카드 기록(결정 대기함용) — 메인 창만

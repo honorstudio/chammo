@@ -11,6 +11,7 @@ import type { SafetyPerson } from '../domain/e2eSafety';
 import type { Reads } from '../domain/teamReads';
 import { docUrl } from '../domain/reader';
 import { allFolders, thumbKind, type LockerView } from '../domain/teamLocker';
+import type { TeamPlan } from '../domain/teamLock';
 
 export type TeamView = {
   joined: boolean;
@@ -26,8 +27,10 @@ export type TeamView = {
   /** 단톡방(group)은 with = 방 이름, members 도(Rust team_cmd::view). team = 그 방 팀(내 기기끼리 방은 빈 값) — 모든 팀 방이 한 목록에 온다.
    *  me = 그 방 팀에서의 내 멤버 id(읽음 맞추기) */
   rooms: { id: string; kind: string; peer: string; with: string; team?: string; name?: string; members?: string[]; me?: string }[];
-  /** 내 팀들(Rust view teams) — 같은 이름 팀 가리기 등 */
-  teams?: { id: string; name: string; role?: string; current?: boolean }[];
+  /** 내 팀들(Rust view teams) — 같은 이름 팀 가리기 등. closed = 팀 권한이 끝나 읽기만(chammo-relay ADR 0015) */
+  teams?: { id: string; name: string; role?: string; current?: boolean; closed?: boolean }[];
+  /** 팀 권한(chammo-relay ADR 0015, /v0/me plan) — 옛 중계는 null(화면은 예전처럼) */
+  plan?: TeamPlan | null;
   /** 구글로 로그인한 기기면 그 계정(서버 ADR 0004) */
   account: TeamAccount | null;
   /** 내 계정 기기(ADR 0014 — 종류·허용 대기·마지막) */
@@ -40,7 +43,9 @@ export type TeamView = {
 export const teamStatus = () => invoke<TeamView>('team_status');
 
 // 설정 > Chammo 계정 — 다 메인 창 전용 Rust 명령. 로그인은 사람 브라우저에서 마칠 때까지(최대 10분) 기다린다
-export const teamLogin = (server: string, device = '') => invoke<TeamView>('team_login', { server, device });
+/** 앱 안에서 로그인을 마쳤다 — 로그인 문(LoginGate)이 다음 단계를 바로 본다 */
+export const TEAM_LOGGED_IN = 'chammo-team-logged-in';
+export const teamLogin = (server: string, device = '') => invoke<TeamView>('team_login', { server, device }).then((v) => { if (typeof window !== 'undefined') window.dispatchEvent(new Event(TEAM_LOGGED_IN)); return v; });
 export const teamAccountRefresh = () => invoke<TeamView>('team_account_refresh');
 export const teamDeviceRename = (id: string, name: string) => invoke<TeamView>('team_device_rename', { id, name });
 export const teamDeviceRevoke = (id: string) => invoke<TeamView>('team_device_revoke', { id });
@@ -65,8 +70,10 @@ export type SayExtra = { react?: { seq: number; mark: string; on: boolean }; fil
 
 // 채팅 붙이기 — 팀 보관함(team-locker 세션의 team_locker_cmd): 방 사람 기기마다 봉투로 올리고 FileRef 를 돌려준다
 export const teamFileAttach = (team: string, room: string, paths: string[]) => invoke<TeamFile[]>('team_file_attach', { team, room, paths });
+/** 올리는 중 줄(대화 첨부 칩의 몇 %) — 판 알림은 안 건드린다(seen 을 가장 큰 판으로 줘 TeamLocker 의 바뀜 알림을 안 먹는다) */
+export const teamUploadProgress = (team: string) => invoke<{ uploads: import('../domain/teamLocker').LockerUpload[] }>('team_locker_poll', { team, seen: Number.MAX_SAFE_INTEGER }).then((p) => p.uploads);
 /** 받아서 데이터 폴더 자리(team-locker-peek)에 풀기 — 푼 경로. external 이면 맥 기본 앱으로도 연다(스페이스가 못 그리는 형식·'다른 앱으로 열기') */
-export const teamFileOpen = (team: string, id: string, external = false) => invoke<string>('team_file_open', { team, id, external });
+export const teamFileOpen = (team: string, id: string, external = false, runOk = false) => invoke<string>('team_file_open', { team, id, external, runOk });
 /** 내 폴더에 저장 — 이 기기 팀 폴더(~/Documents/Chammo/<팀>/대화 파일)에 받은 경로. 진행·폴더에서 보기는 말풍선(TeamDownBits)이 그린다 */
 export const teamFileSave = (team: string, id: string) => invoke<string>('team_file_save', { team, id });
 /** 썸네일 주소 — 말풍선·대화 파일 보기·팀 보관함 카드. 그림은 풀어 둔 그림 그대로, PDF 는 첫 장(QuickLook). 그 밖·너무 큰 건 null.

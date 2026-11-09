@@ -5,18 +5,27 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod access;
+mod agents_cache;
 mod appctl;
 mod away;
+mod boot_watch;
+mod web_watch;
+mod folder_prompt;
+mod git_cache;
+mod frame_nav;
 mod offmain;
 mod org_policy;
 mod perm_card;
 mod perm_card_cmd;
 mod orch_bubble;
+mod phone_black;
 #[cfg(test)]
 mod offmain_scan;
 mod audio_out;
 mod avatar;
 mod claude;
+#[cfg(test)]
+mod fake_claude;
 mod deep_link;
 mod claude_src;
 mod accounts;
@@ -64,9 +73,12 @@ mod keyrepeat;
 mod lessons;
 mod lid;
 mod load;
+mod no_nap;
 mod login;
 mod login_keep;
 mod memo;
+mod notes;
+mod notes_window;
 mod messenger;
 mod messenger_text;
 mod messenger_tg;
@@ -76,6 +88,7 @@ mod mobile;
 mod locker;
 mod locker_fs;
 mod locker_link;
+mod locker_links;
 mod locker_trash;
 mod mobile_files;
 mod mobile_http;
@@ -92,8 +105,10 @@ mod chammo_here;
 mod team_cmd;
 mod team_locker;
 mod team_locker_app;
+mod team_locker_sent;
 mod team_locker_cmd;
 mod team_down;
+mod team_media;
 mod team_down_file;
 mod team_revise;
 mod team_profile;
@@ -140,6 +155,7 @@ mod e2e_safety;
 mod e2e_cards;
 mod e2e_handover;
 mod e2e_retry;
+mod phone_mail_link;
 mod phone_relay_core;
 mod phone_relay;
 mod device_link;
@@ -153,9 +169,14 @@ mod team_ui;
 mod shown_share;
 mod team_alert;
 mod team_window;
+// 비공개 팀 코드 — pro/ 가 있을 때만(build.rs). 공개본엔 이 폴더가 없다
+#[cfg(pro)]
+#[path = "../../../pro/rust/mod.rs"]
+mod pro;
 #[cfg(test)]
 mod test_ports;
 mod phone_voice;
+mod peer_cards;
 mod remote;
 mod remote_net;
 mod drafts;
@@ -176,6 +197,7 @@ mod takeover;
 mod takeover_note;
 mod direct;
 mod vdisplay;
+mod video_prep;
 // 다른 기기 참모 짝 열쇠 — 윈도우 자격 증명 관리자(맥은 키체인)
 #[cfg_attr(not(windows), allow(dead_code))]
 mod wincred;
@@ -191,6 +213,7 @@ mod browser_get;
 mod browser_node;
 mod browser_parts;
 mod browser_setup;
+mod base_tools;
 mod routines;
 mod pty;
 mod quit;
@@ -239,6 +262,11 @@ pub fn route_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>, id: &str) {
             let _ = w.eval(format!("window.__readerKey && window.__readerKey({})", serde_json::to_string(id).unwrap_or_default()));
             return;
         }
+    }
+    // ⌘⇧M 을 내 메모 따로 창에서 눌렀으면 그 창을 닫는다 — 메인 창을 끌어오지 않게
+    if id == "notes" && notes_window::focused(app) {
+        notes_window::close_all(app);
+        return;
     }
     // ⌘A 는 보고 있는 창 안의 일 — 다른 창(메신저 따로 창·모드 창)에서 눌렀으면 그 창에서 고르고 메인 창을 끌어오지 않는다
     if id == "select_all" {
@@ -349,9 +377,6 @@ fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Men
     if f.office {
         view = view.item(&item("goto_office", tr("사무실", "Office"), Some(&*platform::accel("Alt+CmdOrCtrl+4")))?);
     }
-    if f.tama {
-        view = view.item(&item("goto_tama", tr("다마고치 · 도감", "Tamagotchi · Collection"), None)?);
-    }
     let view = view
         .separator()
         .item(&item("sidebar", tr("사이드바 보이기·숨기기", "Show/Hide Sidebar"), Some(&*platform::accel("CmdOrCtrl+B")))?)
@@ -386,6 +411,7 @@ fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Men
         .item(&item("pane_max", tr("보고 있는 창 크게 / 되돌리기", "Maximize / Restore Focused Pane"), Some(&*platform::accel("CmdOrCtrl+Shift+`")))?)
         .separator()
         .item(&item("memo", tr("메모 (보고 있는 창의 프로젝트)", "Notes (focused project)"), Some(&*platform::accel("CmdOrCtrl+M")))?)
+        .item(&item("notes", tr("내 메모", "My notes"), Some(&*platform::accel("CmdOrCtrl+Shift+M")))?)
         .build()?;
     // 리더 — 탭 닫기는 ⌘W(스페이스 탭 닫기와 같은 키, 리더를 보고 있으면 리더 탭을 닫는다). 떼어 낸 리더 창에서도 같은 키
     let reader_menu = SubmenuBuilder::new(app, tr("리더", "Reader"))
@@ -403,13 +429,6 @@ fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Men
     let window = window.item(&PredefinedMenuItem::fullscreen(app, None)?); // 전체 화면 항목은 macOS 에만 있다
     let window = window.build()?;
     let menu = Menu::with_items(app, &[&app_menu, &edit, &view, &session, &reader_menu])?;
-    if f.tama {
-        let tama_menu = SubmenuBuilder::new(app, tr("다마고치", "Tamagotchi"))
-            .item(&item("widget_toggle", tr("위젯 보이기·숨기기", "Show/Hide Widget"), None)?)
-            .item(&item("open_dex", tr("도감 · 보관함 열기", "Open Collection"), None)?)
-            .build()?;
-        menu.append(&tama_menu)?;
-    }
     // 모드 — 리더(·다마고치) 뒤, 윈도우 앞(참모 모드, docs/research/2026-10-05-chammo-mod.md)
     if let Some(m) = modes_host::menu(app)? {
         menu.append(&m)?;
@@ -427,6 +446,30 @@ pub fn refresh_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         }
         wizard_menu(&h);
     });
+}
+
+/// 첫 설치 창 — 메인 창을 640×440 고정으로(따로 창을 하나 더 띄우면 포커스·메인 창 숨기기가 따라온다). 마치면 원래 크기로.
+/// 맥은 제목줄을 겹쳐 끝 장면의 파란 채움이 신호등 뒤까지 가게, 윈도우는 시스템 제목줄 그대로
+fn set_first_run_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>, on: bool) {
+    let Some(w) = app.get_webview_window("main") else { return };
+    #[cfg(target_os = "macos")]
+    {
+        let _ = w.set_title_bar_style(if on { tauri::TitleBarStyle::Overlay } else { tauri::TitleBarStyle::Visible });
+        let _ = w.set_title(if on { "" } else { "Chammo" });
+    }
+    let _ = w.set_resizable(!on);
+    let _ = w.set_maximizable(!on);
+    let _ = w.set_min_size(if on { None } else { Some(tauri::LogicalSize::new(1024.0, 640.0)) });
+    let _ = if on { w.set_size(tauri::LogicalSize::new(640.0, 440.0)) } else { w.set_size(tauri::LogicalSize::new(1440.0, 900.0)) };
+    // 시험 창은 가짜 화면에 둔 그대로 — 사용자 화면으로 끌어오지 않는다
+    if !(cfg!(debug_assertions) && std::env::var_os("CHAMMO_DEV_WINDOW").is_some()) {
+        let _ = w.center();
+    }
+}
+
+#[tauri::command]
+fn first_run_window(app: tauri::AppHandle, on: bool) {
+    set_first_run_window(&app, on);
 }
 
 /// 윈도우는 메뉴줄이 창 안에 있어 첫 설정 마법사 중에도 세션·다마고치·모드 메뉴가 보이고 눌렸다(2026-10-22 윈도우 QA 31) —
@@ -462,7 +505,7 @@ fn to_background<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 fn app_focus_changed<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     let wins = app.webview_windows();
     let any = wins.values().any(|w| w.is_focused().unwrap_or(false));
-    for label in ["main", "tama"] {
+    for label in ["main"] {
         if let Some(w) = wins.get(label) {
             let _ = w.eval(format!("window.__appFocus && window.__appFocus({any})"));
         }
@@ -534,6 +577,17 @@ fn rebuild_menu(app: tauri::AppHandle) -> Result<(), String> {
 
 /// 주소 미리보기 웹뷰(바깥 페이지)는 앱 명령을 하나도 못 부른다 — Tauri ACL 이 원격 출처를 막지만 개발판 주소(localhost:1420)는
 /// '로컬'로 쳐서 뚫린다. 웹뷰 이름으로 한 번 더(webpage.rs)
+/// 비공개 명령은 pro 쪽 표로 — 공개 빌드는 그대로
+#[cfg(pro)]
+fn with_pro(base: impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static) -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
+    let extra = pro::handler();
+    move |invoke| if pro::COMMANDS.contains(&invoke.message.command()) { extra(invoke) } else { base(invoke) }
+}
+#[cfg(not(pro))]
+fn with_pro(base: impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static) -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
+    base
+}
+
 fn no_web_preview(handler: impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static) -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
     move |invoke| {
         if webpage::blocked(invoke.message.webview_ref().label()) {
@@ -558,22 +612,32 @@ fn main() {
     if std::env::args().nth(1).as_deref() == Some(routines::TICK_FLAG) {
         std::process::exit(routines::tick_main());
     }
+    #[cfg(pro)]
+    if let Some(code) = pro::run_flag() {
+        std::process::exit(code);
+    }
     // 익명 사용 통계 — 앱이 죽은(panic) 횟수만 센다. 문구·위치는 안 담고, 원래 처리(기록·종료)는 그대로
     let before = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         crate::usage_counts::record_crash("panic");
         before(info);
     }));
+    // 시작이 멈추면 어디서 멈췄나 남긴다 — 뒤의 어떤 단계가 멈춰도 돌게 맨 앞에(boot_watch.rs)
+    boot_watch::start();
     // 창이 키를 받기 전에 — 길게 누르기가 악센트 창이 아니라 반복이 되게(Claude 음성 입력 스페이스 누르기)
     #[cfg(target_os = "macos")]
     keyrepeat::disable_press_and_hold();
     // 스레드가 생기기 전에 — 세션(→ MCP)이 터미널과 같은 PATH 를 물려받게
+    boot_watch::mark("path");
     claude::adopt_user_path();
+    // 명령줄 도구 없는 맥 — 앱이 받는 파이썬·git 자리를 PATH 맨 앞에(세션·데몬이 물려받는다, ADR 0027)
+    base_tools::adopt();
     // 띄운 쪽 Claude 세션 표시를 안 물려받게 — 사람이 연 Craft 의 주인이 그 세션으로 잡혔다(2026-10-20)
     craft_window::drop_session_env();
+    boot_watch::mark("build");
     let ctx = tauri::generate_context!();
     // 자동 업데이트 — 공개판만(개인 앱은 엔드포인트를 비워 둠, updater.rs)
-    let builder = tauri::Builder::default();
+    let builder = web_watch::attach(tauri::Builder::default());
     // 윈도우: chammo:// 를 누르거나 앱을 또 켜면 새 프로세스가 뜬다 — 떠 있는 앱으로 넘기고 끈다(맨 먼저 등록, ADR 0015)
     #[cfg(windows)]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
@@ -585,6 +649,8 @@ fn main() {
     }));
     updater::attach(builder, &ctx)
         .plugin(tauri_plugin_deep_link::init())
+        // 앱 창 칸(iframe)이 바깥 사이트로 넘어가지 않게 — 막고 주소를 화면에 넘긴다(frame_nav, 2026-11-05)
+        .plugin(frame_nav::plugin())
         .menu(|app| build_menu(app))
         // 앱 기능 메뉴를 누르면 메인 창 웹뷰의 window.__menu('<id>') 로 넘긴다 (권한 파일 없이 되는 eval)
         .on_menu_event(|app, e| {
@@ -605,7 +671,7 @@ fn main() {
                 return;
             }
             // 기본 항목(가리기·종료 등)은 macOS 가 알아서 한다 — 우리 항목만 넘긴다(안 그러면 '가리기' 뒤에 창이 다시 뜬다)
-            const OURS: &[&str] = &["licenses", "goto_orch", "goto_all", "goto_review", "goto_office", "reader_toggle", "reader_full", "reader_next", "reader_prev", "reader_close", "goto_tama", "open_dex", "sidebar", "tasks", "search", "font_up", "font_down", "font_reset", "new_session", "close_pane", "close_tab", "new_doc", "go_home", "go_locker", "pane_max", "home_toggle", "widget_toggle", "memo", "settings", "harnitor", "tour", "app_quit_all", "select_all"];
+            const OURS: &[&str] = &["licenses", "goto_orch", "goto_all", "goto_review", "goto_office", "reader_toggle", "reader_full", "reader_next", "reader_prev", "reader_close", "sidebar", "tasks", "search", "font_up", "font_down", "font_reset", "new_session", "close_pane", "close_tab", "new_doc", "go_home", "go_locker", "pane_max", "home_toggle", "memo", "notes", "settings", "harnitor", "tour", "app_quit_all", "select_all"];
             if !OURS.contains(&id.as_str()) {
                 return;
             }
@@ -615,10 +681,16 @@ fn main() {
         .on_page_load(|wv, p| {
             if matches!(p.event(), tauri::webview::PageLoadEvent::Finished) {
                 lid::on_page_load(wv);
+                orch_bubble::on_page_load(wv);
             }
         })
         .setup(|app| {
+            boot_watch::mark("setup");
+            no_nap::start();
             wizard_menu(app.handle());
+            if !config::current().setup_done {
+                set_first_run_window(app.handle(), true);
+            }
             // 윈도우 알림 영역 아이콘 — 메인 창 X 는 여기로 숨는다
             #[cfg(windows)]
             if let Err(e) = tray::setup(app.handle()) {
@@ -670,7 +742,7 @@ fn main() {
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.set_title(&app.package_info().name);
             }
-            tama::place(app);
+            std::thread::spawn(tama::drop_old_files); // 파일 일은 메인 스레드 밖(offmain_scan)
             debug::place_dev_window(app.handle()); // 개발판은 작업 화면 말고 옆 화면에
             notify_mac::init(app.handle()); // 윈도우는 notify_other(토스트)
             team_alert::init(app.handle());
@@ -680,6 +752,7 @@ fn main() {
             let _ = hq::export_statusline(config::data_dir());
             // 기존 프로젝트에도 그 상태줄을(사용자 것은 안 덮음, 진짜 데이터 폴더만) — 프로젝트마다 git 을 부르니 뒤에서
             std::thread::spawn(|| {
+                config::harden_data(config::data_dir());
                 let n = hq::attach_statusline_all(config::data_dir());
                 if n > 0 {
                     claude::log_out("statusline", &format!("attached to {n} project(s)"));
@@ -700,6 +773,7 @@ fn main() {
                 }
             });
             // 세션은 claude 데몬 env 를 물려받는다 — 시험이 띄운 데몬이어도 진짜 세션이 앱 폴더를 쓰게 사용자 설정에 고정, 래퍼·scripts 용 산 앱 표식
+            base_tools::kick_git(config::current().features.git == Some(true));
             daemon_env::write_mark(config::data_dir());
             std::thread::spawn(daemon_env::pin_user_settings);
             // 루틴 스크립트 — launchd 와 앱 버튼이 부른다
@@ -707,6 +781,8 @@ fn main() {
             // 예약 깨우기를 이 앱 실행 파일 하나로(옛 예약별 python 항목은 내린다) — launchctl 이 느릴 수 있어 뒤에서
             #[cfg(target_os = "macos")]
             std::thread::spawn(routines::install);
+            #[cfg(pro)]
+            pro::on_start();
             // 모바일(폰 → 테일스케일) — 켜 둔 상태면 연다. 기본 꺼짐
             mobile::boot(app.handle());
             // 테일스케일 없는 폰 — 중계 허브에 붙어 있기(ADR 0013)
@@ -721,10 +797,12 @@ fn main() {
             craft_basics::start();
             // 익명 사용 신호 — 공개판·진짜 데이터 폴더·설정 켬일 때만 하루 한 번(usage_ping.rs)
             usage_ping::start(app.config().identifier.clone(), app.package_info().name.clone(), app.package_info().version.to_string());
-            hq::refresh_app_hq();
+            // HQ 는 devRoot(데스크톱·문서일 수 있다)에 있다 — 맥 폴더 권한 창이 답을 기다리면 그 stat 이 멈추니 메인 스레드에서 하지 않는다
+            std::thread::spawn(hq::refresh_app_hq);
             #[cfg(debug_assertions)]
             drop::fake_from_env(app.handle());
             debug::eval_from_env(app.handle());
+            web_watch::start(app.handle());
             theme::apply_saved(app.handle());
             #[cfg(target_os = "macos")]
             keys_mac::install(app.handle());
@@ -743,16 +821,28 @@ fn main() {
                 let c = config::current();
                 keys_mac::apply_talk(&c.talk_key, c.talk_anywhere);
             }
+            boot_watch::done();
             Ok(())
         })
         // 홈 폴더 파일을 내주는 프로토콜은 모든 웹뷰에 붙는다 — 주소 미리보기(바깥 페이지) 웹뷰에선 거절(webpage.rs)
-        .register_uri_scheme_protocol("hodoc", |ctx, req| if webpage::blocked(ctx.webview_label()) { forbidden() } else { reader::serve(ctx, req) })
+        // 파일 읽기는 메인 스레드 밖에서 — 프로토콜 처리기는 메인 스레드에서 불린다. 데스크톱 파일 하나가 폴더 권한 창에 걸리면 앱째 멈춘다
+        .register_asynchronous_uri_scheme_protocol("hodoc", |ctx, req, res| {
+            if webpage::blocked(ctx.webview_label()) {
+                return res.respond(forbidden());
+            }
+            tauri::async_runtime::spawn_blocking(move || res.respond(reader::serve(req)));
+        })
         // 하니터 화면(다리 끼운 것) — iframe 이 연다
         .register_uri_scheme_protocol("harnitor", |ctx, req| if webpage::blocked(ctx.webview_label()) { forbidden() } else { harnitor::serve(ctx, req) })
         // 참모 모드 Client 방(모드 화면 모듈만 도는 빈 페이지) — 별도 출처 + CSP sandbox(modes.rs FRAME_CSP)
         .register_uri_scheme_protocol("modeframe", |ctx, req| if webpage::blocked(ctx.webview_label()) { forbidden() } else { modes::frame_response(req.uri().path()) })
         .manage(pty::Ptys::default())
-        .invoke_handler(no_web_preview(offmain::dispatch(tauri::generate_handler![
+        .invoke_handler(no_web_preview(offmain::dispatch(with_pro(tauri::generate_handler![
+            base_tools::base_tools,
+            trust::trust_consent,
+            trust::trust_consented,
+            trust::trust_folders,
+            first_run_window,
             remote::remote_devices,
             remote::remote_pair,
             remote::remote_unpair,
@@ -897,6 +987,7 @@ fn main() {
             hq_browser::hq_browser_open,
             hq_browser::hq_browser_profile,
             agent_browser::agent_close_tab,
+            agent_browser::agent_open_tab,
             agent_browser::agent_input,
             agent_browser::agent_takeover,
             agent_browser::agent_handback,
@@ -943,6 +1034,8 @@ fn main() {
             updater::app_update_leftover,
             debug::pick_log,
             debug::space_trace,
+            debug::ui_crash,
+            web_watch::web_beat,
             slash::slash_commands,
             slash::spawn_lines,
             slash::subagent_tails,
@@ -1029,6 +1122,8 @@ fn main() {
             claude::remove_session,
             claude::app_stopped_recently,
             claude::daemon_stopped_recently,
+            claude::daemon_stopped_ever,
+            folder_prompt::claude_folder_prompt,
             claude::read_tasks_since,
             claude::read_transcript_tails,
             claude::read_transcript,
@@ -1047,6 +1142,7 @@ fn main() {
             reader::list_md_deep,
             reader::save_attach,
             reader::save_curation,
+            video_prep::video_review_prep,
             reader::save_curation_state,
             drafts::drafts_read,
             drafts::drafts_write,
@@ -1065,6 +1161,9 @@ fn main() {
             locker::locker_peek,
             locker_fs::locker_migrate,
             locker_fs::locker_tree,
+            locker_links::locker_links,
+            locker_links::locker_link_add,
+            locker_links::locker_link_hide,
             locker_fs::locker_put,
             locker_fs::locker_alias,
             locker_fs::locker_new_doc,
@@ -1090,6 +1189,7 @@ fn main() {
             locker_link::locker_connect_choose,
             locker_link::locker_disconnect,
             locker_link::locker_reconnect_choose,
+            locker_fs::locker_today_files,
             locker_link::locker_recent_shots,
             reader::space_log_append,
             reader::save_asset,
@@ -1115,6 +1215,7 @@ fn main() {
             claude::write_voice_mode,
             claude::read_usage,
             claude::commit_log,
+            claude::repos_tag,
             claude::ci_runs,
             lessons::read_lessons,
             lessons::write_lessons,
@@ -1125,17 +1226,26 @@ fn main() {
             memo::read_memos,
             memo::append_memo,
             memo::write_memo,
+            notes::notes_list,
+            notes::notes_new,
+            notes::notes_meta,
+            notes::notes_trash,
+            notes::notes_reveal,
+            notes_window::notes_window_open,
+            notes_window::notes_window_close,
+            notes_window::notes_window_pin,
+            notes_window::notes_window_drag,
+            notes_window::notes_window_double,
+            notes_window::notes_share,
+            notes_window::notes_paste,
+            notes_window::notes_share_done,
             tama::read_tama,
             tama::read_gacha,
             tama::write_gacha,
             tama::write_office,
             phone_gacha::gacha_phone_reply,
             tama::write_tama,
-            tama::tama_drag,
-            tama::human_turns,
             tama::read_space_log,
-            tama::tama_widget,
-            tama::tama_request,
             tama::set_badge,
             claude::open_target,
             claude::read_ctx,
@@ -1160,6 +1270,7 @@ fn main() {
             claude::read_auto_allow,
             claude::ime_debug_mode,
             claude::ime_log,
+            claude::chat_send_log,
             tts::supertonic_status,
             tts::supertonic_install,
             tts::native_voices,
@@ -1228,7 +1339,7 @@ fn main() {
             craft_dock::craft_launch,
             craft_dock::craft_install,
             craft_dock::craft_remove,
-        ])))
+        ]))))
         // ⌘W(창 닫기)로 앱이 통째로 꺼지지 않게 — 창만 숨기고, Dock 아이콘을 누르면 다시 보인다. 완전히 끄는 건 ⌘Q
         .on_window_event(|window, event| match event {
             // 떼어 낸 리더 창은 진짜로 닫는다(탭도 같이 — 크롬처럼)
@@ -1241,10 +1352,15 @@ fn main() {
             tauri::WindowEvent::CloseRequested { .. } if window.label() == webpage::LABEL => webpage::forget(),
             // 메신저 따로 창은 진짜로 닫는다 = 메인 창에 붙이기(마지막 자리는 기억)
             tauri::WindowEvent::CloseRequested { .. } if team_window::is_team_window(window.label()) => team_window::closed(window),
+            // 내 메모 창의 빨간 신호등 = 그 메모를 내린다(메모는 그대로)
+            tauri::WindowEvent::CloseRequested { .. } if notes_window::is_notes(window.label()) => notes_window::closed(window),
             // 미리보기 창이 붙은 창이 움직이면 따라간다(맥은 자식 창이 저절로 따라오지만 윈도우는 아니다)
             tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
                 if team_window::is_team_window(window.label()) {
                     team_window::moved(window);
+                }
+                if notes_window::is_notes(window.label()) {
+                    notes_window::moved(window);
                 }
                 // 세션 브라우저 칸(윈도우는 앱 창이 소유한 떠 있는 창)도 따라간다
                 #[cfg(windows)]
@@ -1258,7 +1374,11 @@ fn main() {
             }
             // 앱 창 중 하나라도 앞인지 → 메인·다마고치 웹뷰의 window.__appFocus(ui/attention) — 안 보면 참모 프사를 멈춘다(2026-10-04 mac-perf).
             // 메인 웹뷰 blur 만 보면 앱 안 리더 창으로 옮겨도 '맨 앞 아님'이 된다
-            tauri::WindowEvent::Focused(_) => app_focus_changed(window.app_handle()),
+            tauri::WindowEvent::Focused(on) => {
+                app_focus_changed(window.app_handle());
+                web_watch::on_focus(window, *on);
+            }
+            tauri::WindowEvent::Destroyed => web_watch::forget(window.label()),
             // 맥은 창만 숨긴다(독에서 다시 연다). 윈도우는 아래 — 트레이로 숨긴다
             tauri::WindowEvent::CloseRequested { api, .. } if cfg!(target_os = "macos") => {
                 api.prevent_close();

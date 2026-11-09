@@ -328,6 +328,56 @@ pub fn open_path(target: &str) -> std::io::Result<()> {
     spawn_reaped(&mut c).map(|_| ())
 }
 
+/// 기본 앱으로 열면 프로그램이 돌 수 있는 형식(보안 점검 H-1, 2026-11-07) — 윈도우·맥·셸·디스크 이미지(그 안 파일은 인터넷 표시를 잃는다)·링크(눌린 곳을 연다).
+/// 남이 보낸 파일을 바로 열지 않고 글자 확인을 받는다. 문서·압축은 뺀다 — 안의 위험은 격리 표시(mark_from_outside)가 맡는다
+const RUNNABLE_EXTS: &[&str] = &[
+    // 윈도우 실행·설치·스크립트
+    "exe", "com", "scr", "pif", "cpl", "msi", "msp", "mst", "appx", "appxbundle", "msix", "msixbundle", "application", "appref-ms", "gadget",
+    "bat", "cmd", "ps1", "ps1xml", "psm1", "psd1", "vb", "vbs", "vbe", "js", "jse", "ws", "wsf", "wsh", "wsc", "hta", "reg", "inf", "ins", "isp", "msc", "scf", "sct", "shb", "shs", "chm", "hlp", "diagcab", "xbap", "xll", "ade", "adp", "mde",
+    // 윈도우 링크·디스크 이미지
+    "lnk", "url", "settingcontent-ms", "library-ms", "search-ms", "iso", "img", "vhd", "vhdx",
+    // 맥 앱·설치·링크·자동화
+    "app", "command", "tool", "terminal", "pkg", "mpkg", "dmg", "workflow", "action", "fileloc", "webloc", "inetloc", "prefpane", "osax", "kext", "scpt", "scptd", "applescript", "mobileconfig", "saver", "plugin", "bundle", "dylib",
+    // 어디서나 — 자바·셸·스크립트
+    "jar", "sh", "bash", "zsh", "csh", "ksh", "py", "pyw", "pl", "rb", "php",
+];
+
+/// 기본 앱으로 열면 프로그램이 돌 수 있는 형식인가. 끝 점·공백은 윈도우가 말없이 떼니 떼고 본다
+pub fn runnable_name(name: &str) -> bool {
+    name.trim_end_matches(['.', ' ']).rsplit_once('.').is_some_and(|(_, ext)| RUNNABLE_EXTS.contains(&ext.to_ascii_lowercase().as_str()))
+}
+
+/// 밖에서 받은 파일 표시 — 맥 격리 표시(com.apple.quarantine)·윈도우 인터넷 표시(Zone.Identifier). 앱이 쓴 파일엔 OS 가 안 붙여서 Gatekeeper·SmartScreen 이 묻지 않고 열었다(H-1).
+/// 맥은 이미 있으면 안 덮는다 — 사람이 허락한 표시까지 지워 다시 묻지 않게
+pub fn mark_from_outside(p: &std::path::Path) {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let Ok(path) = std::ffi::CString::new(p.as_os_str().as_bytes()) else { return };
+        let name = c"com.apple.quarantine";
+        // SAFETY: 끝이 NUL 인 두 글을 넘긴다. 값 버퍼 없이(null, 0) 있는지만 묻는다
+        if unsafe { libc::getxattr(path.as_ptr(), name.as_ptr(), std::ptr::null_mut(), 0, 0, 0) } >= 0 {
+            return;
+        }
+        let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let v = format!("0081;{secs:x};Chammo;");
+        // SAFETY: v 는 이 호출 동안 살아 있고 길이를 같이 넘긴다
+        unsafe { libc::setxattr(path.as_ptr(), name.as_ptr(), v.as_ptr().cast(), v.len(), 0, 0) };
+    }
+    #[cfg(windows)]
+    let _ = std::fs::write(zone_stream_path(p), ZONE_TEXT);
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let _ = p;
+}
+
+/// 윈도우 인터넷 표시를 적을 자리(대체 데이터 스트림) — 3 = 인터넷
+#[cfg_attr(not(windows), allow(dead_code))]
+fn zone_stream_path(p: &std::path::Path) -> String {
+    format!("{}:Zone.Identifier", p.display())
+}
+#[cfg_attr(not(windows), allow(dead_code))]
+const ZONE_TEXT: &str = "[ZoneTransfer]\r\nZoneId=3\r\n";
+
 /// 파일 관리자에서 그 파일을 골라 보이기(보관함 '파인더에서 보기'·팀 파일 받기 뒤). 맥 open -R · 윈도우 탐색기 /select · 그 밖은 부모 폴더
 pub fn reveal(p: &std::path::Path) -> std::io::Result<()> {
     #[cfg(target_os = "macos")]
@@ -571,7 +621,18 @@ fn run_capped_in(cmd: &mut Command, input: Option<Vec<u8>>, limit: std::time::Du
     Ok(std::process::Output { status, stdout: take(&out), stderr: take(&err) })
 }
 
-/// 파이썬 도구(루틴 등)를 돌릴 명령 — 맥 /usr/bin/python3, 윈도우는 py -3 → python 중 도는 것
+/// 1분 부하 평균 — 프로세스 없이 읽는다. 윈도우엔 없다(None)
+pub fn load1() -> Option<f64> {
+    #[cfg(unix)]
+    {
+        let mut v = [0f64; 1];
+        (unsafe { libc::getloadavg(v.as_mut_ptr(), 1) } == 1).then_some(v[0])
+    }
+    #[cfg(not(unix))]
+    None
+}
+
+/// 파이썬 도구(루틴 등)를 돌릴 명령 — 맥 /usr/bin/python3(명령줄 도구가 없으면 앱이 받은 것), 윈도우는 py -3 → python 중 도는 것
 /// (윈도우 python3·WindowsApps\python 은 스토어 대리 실행기라 종료 49·9009 로 죽는다). 윈도우는 UTF-8 로(cp949 면 한글이 깨진다)·창 없이.
 /// 못 찾으면 'python' 으로 — 부르는 쪽이 실패를 본다(서랍·참모 앱 열기는 그 전에 python_ready 로 가른다)
 pub fn python() -> Command {
@@ -583,10 +644,10 @@ pub fn python() -> Command {
         c
     }
     #[cfg(not(windows))]
-    command("/usr/bin/python3")
+    command(crate::base_tools::python_path(crate::config::data_dir()))
 }
 
-/// 이 기기에 파이썬 3 이 있나 — 윈도우만 물어본다(맥은 /usr/bin/python3 가 명령줄 도구에 들어 있고 그건 git 줄이 본다).
+/// 이 기기에 파이썬 3 이 있나 — 맥은 명령줄 도구가 있거나 앱이 받았거나(base_tools), 윈도우는 찾아 본다.
 /// force = 5초 제한 없이 깊이 찾기(설정 점검 — 설치 창을 닫자마자 다시 확인해도 서랍이 방금 쓴 차례에 걸리지 않게)
 pub fn python_ready(force: bool) -> bool {
     #[cfg(windows)]
@@ -594,7 +655,7 @@ pub fn python_ready(force: bool) -> bool {
     #[cfg(not(windows))]
     {
         let _ = force;
-        true
+        crate::base_tools::python_ok(crate::config::data_dir())
     }
 }
 
@@ -624,11 +685,36 @@ fn python_argv(force: bool) -> Option<Vec<String>> {
     got
 }
 
+/// 슬래시 없는 이름을 PATH 에서 미리 찾는다. libc posix_spawnp 는 PATH 칸마다 프로세스를 만들었다 부수며 찾아서
+/// 26칸인 맥에서 git 하나가 pid 를 16개 태웠다(11-07 실측, 한 번에 0.75→1.04ms) — stat 은 프로세스가 안 생긴다. 못 찾으면 None(예전 길이 실패를 낸다)
+#[cfg(unix)]
+fn on_path(name: &std::ffi::OsStr, path: &std::ffi::OsStr) -> Option<std::path::PathBuf> {
+    use std::os::unix::{ffi::OsStrExt, fs::PermissionsExt};
+    if name.is_empty() || name.as_bytes().contains(&b'/') {
+        return None;
+    }
+    std::env::split_paths(path)
+        .filter(|d| d.is_absolute())
+        .map(|d| d.join(name))
+        .find(|p| std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0))
+}
+
 /// 외부 프로그램 — 윈도우는 콘솔 창 없이(CREATE_NO_WINDOW). 릴리스판(창 없는 앱)에서 claude agents 를 부를 때마다
 /// 검은 콘솔 창이 1~2초마다 번쩍였다(디버그판은 앱 자체 콘솔을 같이 써서 안 보였다). 앱의 모든 외부 호출은 이걸로
 pub fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let name = program.as_ref();
+    #[cfg(unix)]
+    let found = std::env::var_os("PATH").and_then(|p| on_path(name, &p));
+    #[cfg(not(unix))]
+    let found: Option<std::path::PathBuf> = None;
+    let program = found.as_deref().map_or(name, |p| p.as_os_str());
     #[allow(unused_mut)]
     let mut c = Command::new(program);
+    #[cfg(unix)]
+    if found.is_some() {
+        use std::os::unix::process::CommandExt;
+        c.arg0(name); // 자식이 보는 이름은 그대로
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -659,10 +745,10 @@ pub fn batch_script(command: &str) -> String {
     format!("@echo off\r\nchcp 65001 >nul\r\n{body}\r\n(goto) 2>nul & del \"%~f0\"\r\n")
 }
 
-/// git 이 준비됐나 — 맥은 Xcode 명령줄 도구(git 이 거기 들어 있다), 윈도우는 git --version 이 되나(윈도우 설정 2단계에서 막혔다)
+/// git 이 준비됐나 — 맥은 Xcode 명령줄 도구나 앱이 받은 git(그 전엔 PATH 의 git 이 대리라 저장소마다 부르지 않는다), 윈도우는 git --version 이 되나(윈도우 설정 2단계에서 막혔다)
 #[cfg(target_os = "macos")]
 pub fn git_ready() -> bool {
-    command("/usr/bin/xcode-select").arg("-p").output().is_ok_and(|o| o.status.success())
+    crate::base_tools::clt_present() || crate::base_tools::own_git(crate::config::data_dir()).is_file()
 }
 #[cfg(not(target_os = "macos"))]
 pub fn git_ready() -> bool {
@@ -724,6 +810,39 @@ pub fn quiet_hard_errors() {}
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn 이름만_준_명령은_path_에서_미리_찾고_자식이_보는_이름은_그대로다() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = std::env::temp_dir().join(format!("chammo-onpath-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let (a, b, c) = (d.join("a"), d.join("b"), d.join("c"));
+        for x in [&a, &b, &c] {
+            std::fs::create_dir_all(x).unwrap();
+        }
+        let tool = |dir: &std::path::Path, mode: u32| {
+            let p = dir.join("도구");
+            std::fs::write(&p, "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        tool(&b, 0o644); // 실행 권한 없는 건 지나간다
+        std::fs::create_dir_all(a.join("도구")).unwrap(); // 폴더도 지나간다
+        tool(&c, 0o755);
+        let path = std::env::join_paths(["".as_ref(), a.as_path(), b.as_path(), c.as_path()]).unwrap();
+        let find = |n: &str| super::on_path(n.as_ref(), &path);
+        assert_eq!(find("도구"), Some(c.join("도구")));
+        assert_eq!(find("없는것"), None);
+        assert_eq!(find("./도구"), None, "슬래시가 있으면 찾지 않는다");
+        assert_eq!(find(""), None);
+        let _ = std::fs::remove_dir_all(&d);
+
+        let mut sh = super::command("sh");
+        assert!(std::path::Path::new(sh.get_program()).is_absolute(), "이름으로 안 띄운다");
+        let out = sh.args(["-c", "echo $0"]).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "sh", "자식의 argv[0] 은 그대로");
+        assert!(super::command("이런-명령은-없다").output().is_err(), "없으면 전처럼 실패");
+    }
+
     // 11-01 윈도우 시험 PC 실측: Rust 가 인자 전체를 "…" 로 감싸면("/select,C:\a b\c") 탐색기가 못 알아듣고 문서 폴더를 연다 —
     // 경로만 따옴표로 감싼 날 인자(raw_arg)여야 그 폴더에서 그 파일이 골라진 채 열린다
     #[test]
@@ -859,8 +978,9 @@ mod tests {
         // 윈도우 릴리스판에서 claude agents 를 부를 때마다 검은 콘솔 창이 1~2초마다 번쩍였다 — 창 없이 띄우는 command() 로만 부른다
         // platform.rs 도 — 여기만 빼 뒀더니 pid_alive 의 tasklist 가 창을 띄운 채 남아, 세션 브라우저 지킴이(0.3초)가 부를 때마다
         // 콘솔 창이 번쩍였다(2026-10-15 윈도우 60초 135개). Command::new 는 command() 안의 한 줄뿐
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        for e in std::fs::read_dir(dir).unwrap().flatten() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        // 비공개 팀 코드(pro/rust)도 같은 규칙 — 공개본엔 폴더가 없다
+        for e in std::fs::read_dir(root.join("src")).unwrap().flatten().chain(std::fs::read_dir(root.join("../../pro/rust")).into_iter().flatten().flatten()) {
             let name = e.file_name().to_string_lossy().into_owned();
             if !name.ends_with(".rs") {
                 continue;
@@ -1017,5 +1137,51 @@ mod tests {
         assert_eq!(home_from(Some(r"H:\".into()), None, true), r"H:\", "USERPROFILE 이 없을 때만 HOME");
         assert_eq!(home_from(Some(r"H:\".into()), Some(" ".into()), true), r"H:\");
         assert_eq!(home_from(None, None, true), "");
+    }
+}
+
+#[cfg(test)]
+mod run_guard_tests {
+    use super::*;
+
+    // 보안 점검 H-1(2026-11-07) — 팀 파일을 누르면 묻지 않고 기본 앱으로 열어 윈도우는 .exe·.bat 이 바로 돌았다
+    #[test]
+    fn 실행될_수_있는_형식은_표에_있다() {
+        for n in ["a.exe", "A.EXE", "b.bat", "c.cmd", "d.msi", "e.app", "f.command", "g.sh", "h.pkg", "i.vbs", "j.hta", "k.lnk", "l.terminal", "m.fileloc", "n.jar", "o.scr", "p.ps1", "q.dmg", "r.iso", "s.webloc", "t.url", "회의록.pdf.exe", "u.exe.", "v.exe ", "w.pif", "x.reg", "y.workflow", "z.vhdx", "aa.mobileconfig", "ab.pyw", "ac.sct"] {
+            assert!(runnable_name(n), "{n}");
+        }
+    }
+
+    #[test]
+    fn 문서는_그대로_연다() {
+        for n in ["a.pdf", "b.png", "c.docx", "d.xlsx", "e.ai", "f.zip", "g.txt", "h.md", "i.mp4", "Makefile", "exe", "app", "j.exe.pdf", "k.html", "", ".", "..", "l.psd", "m.dwg"] {
+            assert!(!runnable_name(n), "{n}");
+        }
+    }
+
+    #[test]
+    fn 윈도우_인터넷_표시_자리와_내용() {
+        assert_eq!(zone_stream_path(std::path::Path::new("C:\\d\\a.exe")), "C:\\d\\a.exe:Zone.Identifier");
+        assert!(ZONE_TEXT.starts_with("[ZoneTransfer]") && ZONE_TEXT.contains("ZoneId=3"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn 맥_격리_표시를_붙이고_이미_있으면_안_덮는다() {
+        let d = std::env::temp_dir().join(format!("chammo-mark-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let read = |p: &std::path::Path| String::from_utf8_lossy(&crate::platform::command("xattr").arg("-p").arg("com.apple.quarantine").arg(p).output().unwrap().stdout).trim().to_string();
+        let a = d.join("a.exe");
+        std::fs::write(&a, b"x").unwrap();
+        mark_from_outside(&a);
+        let v = read(&a);
+        assert!(v.starts_with("0081;") && v.contains(";Chammo;"), "{v:?}");
+        let b = d.join("b.pkg");
+        std::fs::write(&b, b"x").unwrap();
+        assert!(crate::platform::command("xattr").args(["-w", "com.apple.quarantine", "0041;aa;Other;"]).arg(&b).status().unwrap().success());
+        mark_from_outside(&b);
+        assert_eq!(read(&b), "0041;aa;Other;", "사람이 이미 허락한 표시를 지우지 않는다");
+        mark_from_outside(&d.join("없는 파일")); // 없어도 조용히
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

@@ -275,3 +275,28 @@ describe('검토 지적 2차 — 편집기가 못 읽는 꼬리는 늘 맨 끝',
     expect(r.chunks[r.chunks.length - 1]!.tail).toBe(true);
   });
 });
+
+// 손잡이로 블록을 끌어 옮기면 옮긴 원문 조각이 원래 자리의 앞뒤 빈 줄을 들고 가서 목록이 둘로 갈렸다(`첫 문단\n- 셋\n\n- 하나`, 2026-11-09 조사)
+describe('joinChunks — 옮긴 원문 조각은 새 자리 이웃에 맞춘 사이 글', () => {
+  const md = '첫 문단\n\n- 하나\n- 둘\n- 셋\n\n끝';
+  const chunks = ch(md, [['첫 문단'], ['* 하나'], ['* 둘'], ['* 셋'], ['끝']]);
+  const order = (...js: number[]) => joinChunks(md, chunks, js.map((j, i) => ({ keep: j, from: i, to: i + 1 })), () => '', true).text;
+  it('목록 끝 항목을 맨 앞으로', () => expect(order(0, 3, 1, 2, 4)).toBe('첫 문단\n\n- 셋\n- 하나\n- 둘\n\n끝'));
+  it('목록 첫 항목을 맨 뒤로', () => expect(order(0, 2, 3, 1, 4)).toBe('첫 문단\n\n- 둘\n- 셋\n- 하나\n\n끝'));
+  it('문단을 목록 아래로', () => expect(order(1, 2, 3, 0, 4)).toBe('- 하나\n- 둘\n- 셋\n\n첫 문단\n\n끝'));
+  it('느슨한 목록(항목 사이 빈 줄)은 그 모양대로', () => {
+    const m2 = '- 하나\n\n- 둘\n\n- 셋';
+    const c2 = ch(m2, [['* 하나'], ['* 둘'], ['* 셋']]);
+    expect(joinChunks(m2, c2, [2, 0, 1].map((j, i) => ({ keep: j, from: i, to: i + 1 })), () => '', true).text).toBe('- 셋\n\n- 하나\n\n- 둘');
+  });
+});
+
+// 목록 앞쪽 항목을 지우면 남은 항목이 앞 문단에 줄바꿈 하나로 붙었다(`첫 문단\n- 셋`, 2026-11-09 E2E) — 종류가 다른 이웃이면 둘 중 넉넉한 사이 글
+describe('joinChunks — 지운 자리 양쪽이 다른 종류면 빈 줄', () => {
+  const md = '첫 문단\n\n- 하나\n- 둘\n- 셋\n\n끝';
+  const chunks = ch(md, [['첫 문단'], ['* 하나'], ['* 둘'], ['* 셋'], ['끝']]);
+  const order = (...js: number[]) => joinChunks(md, chunks, js.map((j, i) => ({ keep: j, from: i, to: i + 1 })), () => '', true).text;
+  it('목록 앞 두 항목을 지움', () => expect(order(0, 3, 4)).toBe('첫 문단\n\n- 셋\n\n끝'));
+  it('목록 가운데 항목을 지움 — 목록은 촘촘하게 그대로', () => expect(order(0, 1, 3, 4)).toBe('첫 문단\n\n- 하나\n- 셋\n\n끝'));
+  it('목록을 다 지움', () => expect(order(0, 4)).toBe('첫 문단\n\n끝'));
+});

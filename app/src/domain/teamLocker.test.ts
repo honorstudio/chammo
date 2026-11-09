@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { keyWaitNote, lockedFiles, allFolders, canPurge, othersOf, folderFiles, crumbsOf, dirId, dropPlan, lockerUps, kidFolders, moveTargets, renamedPath, fmtBytes, inPlace, inRoom, thumbKind, phoneView, isTeamCache, opensInSpace, readSort, sortItems, SORTS, usageText, whenText, type LockerItem, type LockerUpload } from './teamLocker';
+import roomBitsSrc from '../ui/team/RoomBits.tsx?raw';
+import { keyWaitNote, lockedFiles, allFolders, canPurge, othersOf, folderFiles, crumbsOf, dirId, dropPlan, lockerUps, upNote, kidFolders, moveTargets, renamedPath, fmtBytes, inPlace, inRoom, thumbKind, phoneView, isTeamCache, opensInSpace, runAskName, readSort, sortItems, SORTS, usageText, whenText, type LockerItem, type LockerUpload } from './teamLocker';
 
 const it0 = (o: Partial<LockerItem>): LockerItem => ({ id: 'x', name: 'a.pdf', size: 1, cipher: 17, at: 0, state: 'live', kind: 'file', room: '', folder: '', by: '사용자', byMember: 'm1', mine: false, why: '', deletedAt: null, ...o });
 
@@ -37,10 +38,52 @@ describe('팀 보관함 화면 계산', () => {
     expect(moveTargets(items, { from: 'a', dirs: ['a/b'] })).toEqual(['', 'c']);
   });
   it('대화 파일 보기 — 그 방 파일만(새것 먼저), 휴지통은 그 방 것만. 다른 방·팀 파일·빈 방 id 는 안 섞인다', () => {
-    const items = [it0({ id: 'a', room: 'r1', at: 1 }), it0({ id: 'b', room: 'r1', at: 5 }), it0({ id: 'c', room: 'r2', at: 3 }), it0({ id: 'd', at: 9 }), it0({ id: 'e', room: 'r1', state: 'trash', at: 2 }), it0({ id: 'f', room: 'r1', kind: 'avatar' })];
+    const items = [it0({ id: 'a', room: 'r1', at: 1 }), it0({ id: 'b', room: 'r1', name: 'b.pdf', at: 5 }), it0({ id: 'c', room: 'r2', at: 3 }), it0({ id: 'd', at: 9 }), it0({ id: 'e', room: 'r1', state: 'trash', at: 2 }), it0({ id: 'f', room: 'r1', kind: 'avatar' })];
     expect(inRoom(items, 'r1').map((i) => i.id)).toEqual(['b', 'a']);
     expect(inRoom(items, 'r1', true).map((i) => i.id)).toEqual(['e']);
     expect(inRoom(items, '')).toEqual([]);
+  });
+  // 11-08 사용자 "DM 에서 파일 중복으로 오는거" — 팀 DM 보관함에 같은 사진·md 가 2~3벌(내용 해시 같음, 말에 붙은 건 한 벌).
+  // 옛 판(0.4.8 이하)이 못 보낸 첨부 칩을 결과 전에 비워, 다시 넣을 때마다 새로 올린 사본이다
+  it('대화 파일 보기 — 같은 사람이 하루 안에 올린 같은 이름·같은 크기 사본(옛 판 다시 올리기)은 최신 하나로 접고 숨은 것을 twins 로', () => {
+    const H = 3600 * 1000;
+    const items = [
+      it0({ id: 'p1', room: 'r1', name: '떡 정면.png', size: 1100, at: 1 * H }),
+      it0({ id: 'p2', room: 'r1', name: '떡 정면.png', size: 1100, at: 1 * H + 300_000 }),
+      it0({ id: 'p3', room: 'r1', name: '떡 정면.png', size: 1100, at: 1 * H + 420_000 }),
+      it0({ id: 'm1', room: 'r1', name: '후보.md', size: 269, at: 2 * H }),
+      it0({ id: 'm2', room: 'r1', name: '후보.md', size: 269, at: 2 * H + 60_000 }),
+    ];
+    const shown = inRoom(items, 'r1');
+    expect(shown.map((i) => i.id)).toEqual(['m2', 'p3']);
+    expect(shown.find((i) => i.id === 'p3')?.twins?.sort()).toEqual(['p1', 'p2']);
+    expect(shown.find((i) => i.id === 'm2')?.twins).toEqual(['m1']);
+  });
+  it('대화 파일 보기 — 다른 사람·다른 크기·다른 이름·하루 넘게 떨어진 것·다른 방·다른 상태는 안 접는다', () => {
+    const D = 24 * 3600 * 1000;
+    const base = { room: 'r1', name: 'a.jpg', size: 10 };
+    const items = [
+      it0({ ...base, id: 'k', at: 3 * D }),
+      it0({ ...base, id: 'other-person', byMember: 'm2', by: '다른 사람', at: 3 * D - 1 }),
+      it0({ ...base, id: 'other-size', size: 11, at: 3 * D - 2 }),
+      it0({ ...base, id: 'other-name', name: 'b.jpg', at: 3 * D - 3 }),
+      it0({ ...base, id: 'day-later', at: 3 * D - D - 1 }),
+      it0({ ...base, id: 'other-room', room: 'r2', at: 3 * D - 4 }),
+      it0({ ...base, id: 'in-trash', state: 'trash', at: 3 * D - 5 }),
+    ];
+    expect(inRoom(items, 'r1').map((i) => i.id)).toEqual(['k', 'other-person', 'other-size', 'other-name', 'day-later']);
+    expect(inRoom(items, 'r1').every((i) => !i.twins?.length)).toBe(true);
+    expect(inRoom(items, 'r1', true).map((i) => i.id)).toEqual(['in-trash']);
+  });
+  it('대화 파일 보기 — 남길 하나는 열 수 있는 것(잠긴 줄 why 는 뒤로), 휴지통 안 쌍둥이도 접는다', () => {
+    const items = [
+      it0({ id: 'locked-new', room: 'r1', why: '열쇠 기다림', at: 9 }),
+      it0({ id: 'open-old', room: 'r1', at: 5 }),
+      it0({ id: 't1', room: 'r1', state: 'trash', at: 3 }),
+      it0({ id: 't2', room: 'r1', state: 'trash', at: 4 }),
+    ];
+    expect(inRoom(items, 'r1').map((i) => [i.id, i.twins])).toEqual([['open-old', ['locked-new']]]);
+    expect(inRoom(items, 'r1', true).map((i) => [i.id, i.twins])).toEqual([['t2', ['t1']]]);
   });
   it('시각 글 — 오늘은 시:분, 어제, 그 전은 월/일', () => {
     const now = new Date(2026, 9, 26, 9, 0).getTime();
@@ -55,13 +98,31 @@ describe('팀 파일 열기 — 스페이스 아니면 기본 앱(10-26 사용�
     for (const n of ['회의록.txt', 'a.png', 'b.PDF', 'c.md', 'd.mp4', 'e.mp3', 'f.docx', 'g.xlsx', 'h.pptx', 'i.key', 'Makefile', 'j.html']) expect([n, opensInSpace(n)]).toEqual([n, true]);
   });
   it('못 그리는 형식은 기본 앱', () => {
-    for (const n of ['간판.ai', 'a.zip', 'b.sketch', 'c.psd', 'd.exe', 'http://x.com/a']) expect([n, opensInSpace(n)]).toEqual([n, false]);
+    for (const n of ['간판.ai', 'a.zip', 'b.sketch', 'c.psd', 'http://x.com/a']) expect([n, opensInSpace(n)]).toEqual([n, false]);
+  });
+  // d.exe 를 '기본 앱'으로 못 박아 두던 자리(보안 점검 H-1) — 스페이스 밖이어도 바로 안 간다, Rust 가 needs-run-ok 로 막고 글자 확인 뒤에만(openTeamFile.test)
+  it('실행될 수 있는 형식은 Rust 관문의 답에서 진짜 이름을 읽어 묻는다', () => {
+    expect(runAskName('needs-run-ok:계약서.exe')).toBe('계약서.exe');
+    expect(runAskName('Error: needs-run-ok:a.pkg')).toBe('a.pkg');
+    expect(runAskName(new Error('needs-run-ok:a.pkg'))).toBe('a.pkg');
+    expect(runAskName('못 받았어')).toBeNull();
+    expect(runAskName(undefined)).toBeNull();
+  });
+  it('이름의 보이지 않는 글자를 빼고 보여 준다 — 오른쪽→왼쪽 표시로 .exe 를 .pdf 처럼 꾸미지 못하게', () => {
+    expect(runAskName(`needs-run-ok:계약서${String.fromCharCode(0x202e)}fdp.exe`)).toBe('계약서fdp.exe');
   });
   it('풀어 둔 자리(데이터 폴더 team-locker-peek) 파일만 팀 파일 — 내려받기 단추가 붙는다', () => {
     expect(isTeamCache('/h/.chammo/team-locker-peek/t1/회의록.txt')).toBe(true);
     expect(isTeamCache('C:\\Users\\a\\.chammo\\team-locker-peek\\t1\\a.png')).toBe(true);
     expect(isTeamCache('/h/Documents/team-locker-peek.txt')).toBe(false);
     expect(isTeamCache('/h/Documents/Chammo/팀/a.txt')).toBe(false);
+  });
+});
+
+describe('파일 풍선 이름 — 보이지 않는 글자(H-1)', () => {
+  it('화면 이름은 plainText 를 지난다 — 대화 파일 이름은 보낸 사람이 봉한 글 그대로라서', () => {
+    expect(roomBitsSrc).toMatch(/const name = plainText\(f\.name\)/);
+    expect(roomBitsSrc).not.toMatch(/\{f\.name\}|\$\{f\.name\}/);
   });
 });
 
@@ -151,6 +212,20 @@ describe('보이는 건 사람이 올린 파일만 — 앱 안쪽 줄(프로필�
     expect(lockerUps(ups, { trash: true })).toEqual([]);
     expect(lockerUps(ups, { room: 'r1' })).toEqual([]);
   });
+  it('기다리는 까닭 글 — 평소엔 빈 글', () => {
+    expect(upNote({})).toBe('');
+    expect(upNote({ note: '' })).toBe('');
+    expect(upNote({ note: 'net' })).not.toBe('');
+    expect(upNote({ note: 'busy' })).not.toBe(upNote({ note: 'net' }));
+  });
+  it('올리는 중 줄은 그 파일이 들어갈 폴더에서만 — 11-04 사용자: 올리는 중 카드가 폴더 안·맨 위 모든 화면에', () => {
+    const up = (local: string, folder?: string): LockerUpload => ({ local, team: 't', room: '', name: 'a', done: 0, total: 1, error: '', kind: 'file', folder });
+    const ups = [up('top', ''), up('old'), up('in', '영상'), up('deep', '영상/원본')];
+    expect(lockerUps(ups, { folder: '' }).map((u) => u.local)).toEqual(['top', 'old']);
+    expect(lockerUps(ups, { folder: '영상' }).map((u) => u.local)).toEqual(['in']);
+    expect(lockerUps(ups, { folder: '영상/원본' }).map((u) => u.local)).toEqual(['deep']);
+    expect(lockerUps(ups, {}).map((u) => u.local)).toEqual(['top', 'old', 'in', 'deep']);
+  });
 });
 
 describe('폰 팀 보관함 — 중계 목록 그대로, 대화 파일은 안 보인다(10-28 사용자 "디엠은 그 사용자랑만")', () => {
@@ -214,12 +289,24 @@ describe('남의 파일(11-01 QA M3)', () => {
 
 describe('폰에서 누르면 보는 팀 파일(11-01 사용자 "팀 홈 최근 파일을 눌러도 안 열린다")', () => {
   const MB = 1024 ** 2;
-  it('맥이 풀어 주는 그림(/api/team-file-image 가 받는 것) = image, PDF = pdf(첫 장)', () => {
+  it('맥이 풀어 주는 그림(/api/team-file-image 가 받는 것) = image', () => {
     for (const n of ['a.png', 'b.JPG', 'c.jpeg', 'd.gif', 'e.webp', 'IMG_1.HEIC', 'f.heif']) expect(phoneView({ name: n, size: MB }), n).toBe('image');
-    expect(phoneView({ name: '견적서.pdf', size: 2 * MB })).toBe('pdf');
   });
-  it('맥이 그림으로 안 주는 것(svg·tiff)·문서·엑셀·영상·글은 볼 길이 없다 — null', () => {
-    for (const n of ['a.svg', 'b.tiff', '계약서.docx', '정산.xlsx', '발표.pptx', '영상.mp4', '메모.txt', '이름없음']) expect(phoneView({ name: n, size: MB }), n).toBeNull();
+  it('문서·글·엑셀·PPT 는 doc — 폰 파일 보기로 연다(11-06 사용자 "디엠 온 거 파일 볼 수가 없음")', () => {
+    for (const n of ['오늘청소_커리큘럼.md', '메모.txt', '표.csv', '계약서.docx', '정산.xlsx', '주간회의.pptx', 'a.JSON']) expect(phoneView({ name: n, size: MB }), n).toBe('doc');
+  });
+  it('PDF 는 폰 보기가 받는 크기(10MB)까지 doc(모든 쪽), 넘으면 pdf(첫 장)', () => {
+    expect(phoneView({ name: '견적서.pdf', size: 10 * MB })).toBe('doc');
+    expect(phoneView({ name: '견적서.pdf', size: 10 * MB + 1 })).toBe('pdf');
+  });
+  it('볼 길이 없는 것 — null: 맥이 그림으로 안 주는 것(svg·tiff)·폰이 못 트는 영상·남이 올린 html(스크립트)·폰 서버가 이름으로 막는 키노트', () => {
+    for (const n of ['a.svg', 'b.tiff', '이름없음', 'a.webm', 'b.mkv', 'c.avi', '시안.html', 'b.HTM', '발표.key', '묶음.zip']) expect(phoneView({ name: n, size: MB }), n).toBeNull();
+  });
+  it('영상(mp4·mov·m4v)은 크기 상관없이 video — 맥이 받아 풀고 영상 검토 길로(11-04 사용자 920MB mp4)', () => {
+    for (const n of ['영상.mp4', 'b.MOV', 'c.m4v']) expect(phoneView({ name: n, size: MB }), n).toBe('video');
+    expect(phoneView({ name: '현장 영상.mp4', size: 920 * MB })).toBe('video');
+    expect(phoneView({ name: 'huge.mov', size: 30 * 1024 * MB })).toBe('video');
+    expect(phoneView(it0({ name: 'a.mp4', size: 920 * MB, why: '열쇠 없음' }))).toBeNull();
   });
   it('50MB 넘으면 맥이 안 푼다(peek) — null', () => {
     expect(phoneView({ name: 'big.png', size: 50 * MB })).toBe('image');

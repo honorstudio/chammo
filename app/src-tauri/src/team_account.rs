@@ -336,7 +336,7 @@ fn run(http: &dyn Http, opener: &dyn Opener, server: &str, k: &DeviceKeys, devic
     }
 }
 
-/// 요청이 안 나갔거나 답이 안 옴 — 화면은 '일단 쓰기'를 보여 준다(domain/loginGate gateErr)
+/// 요청이 안 나갔거나 답이 안 옴 — 화면이 망 문제로 가른다(domain/loginGate gateErr)
 fn offline(e: String) -> String {
     format!("{} {e}", relay::TAG_OFFLINE)
 }
@@ -384,6 +384,9 @@ pub fn refresh_me(dir: &Path, kc: &dyn Store, http: &dyn Http) -> Result<TeamSta
         }
         // 계정 되찾기 기다림 — 옛 중계는 칸이 없어 None
         s.recover = relay::recover_of(&me);
+        // 팀 권한(relay ADR 0015) — 옛 중계는 칸이 없어 None·빈 목록(화면은 예전처럼)
+        s.team_plan = relay::plan_of(&me);
+        s.closed_teams = relay::closed_of(&me);
         // 서버가 아는 내 팀 전부 — 멤버 목록·표시 이름은 이미 받은 것을 남기고, 서버에 없는 팀(나감·빠짐·지워짐)과 그 방은 지운다
         if let Some(list) = me["teams"].as_array() {
             let ids: Vec<String> = list.iter().filter_map(|t| t["teamId"].as_str().map(String::from)).collect();

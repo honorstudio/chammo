@@ -12,15 +12,18 @@ const MAX_TRIES = 5;
 export function useAskWake(lives: Live[], sessions: Session[]) {
   const sent = useRef<string[]>([]); // 보냈거나 보내는 중인 부름
   const tries = useRef(new Map<string, number>());
-  useEffect(() => {
+  const step = useRef<() => void>(() => {});
+  step.current = () => {
     for (const w of askWakes(lives, sessions, sent.current)) {
       sent.current = [...sent.current, w.key].slice(-100);
       void sendToSession(w.id, w.line).catch(() => {
         // 막 켠 세션은 화면이 아직 안 떠 실패하기 쉽다 — 간격을 두고 몇 번만 다시
         const n = (tries.current.get(w.key) ?? 0) + 1;
         tries.current.set(w.key, n);
-        if (n < MAX_TRIES) window.setTimeout(() => { sent.current = sent.current.filter((k) => k !== w.key); }, RETRY_MS * n);
+        // 값이 그대로면 앱이 다시 안 그리니 시간이 되면 스스로 다시 본다(11-07)
+        if (n < MAX_TRIES) window.setTimeout(() => { sent.current = sent.current.filter((k) => k !== w.key); step.current(); }, RETRY_MS * n);
       });
     }
-  }, [lives, sessions]);
+  };
+  useEffect(() => step.current(), [lives, sessions]);
 }

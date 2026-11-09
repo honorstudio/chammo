@@ -399,10 +399,13 @@ pub struct ModeRow {
 }
 
 pub fn rows() -> Vec<ModeRow> {
+    rows_of(list_all())
+}
+
+fn rows_of(list: Vec<ModeInfo>) -> Vec<ModeRow> {
     let s = saved();
     let hidden = modes::hidden_at(crate::config::data_dir());
-    list_all()
-        .into_iter()
+    list.into_iter()
         .map(|info| {
             let sv = s.get(&info.name);
             let place = modes::pick_where(None, sv, &info.where_default).to_string();
@@ -1149,8 +1152,6 @@ pub fn boot<R: Runtime>(app: &tauri::AppHandle<R>) {
     modes::purge_removed(crate::config::data_dir()); // 지난번에 제거하고 안 되돌린 실행 데이터
     // 그만둔 예시(카운터) — 사본·실행 데이터를 치우고, 그 이름의 모드가 이제 없으면 자리 기억도 뺀다
     let gone = modes::retire_examples(crate::config::data_dir());
-    let live = list_all();
-    edit_saved("boot (retired example)", |s| s.retain(|n, _| !modes::RETIRED.contains(&n.as_str()) || live.iter().any(|m| &m.name == n)));
     if !gone.is_empty() {
         crate::claude::log_out("modes", &format!("retired examples: {}", gone.join(", ")));
     }
@@ -1163,8 +1164,10 @@ pub fn boot<R: Runtime>(app: &tauri::AppHandle<R>) {
         sweep(&app2);
     });
     std::thread::spawn(move || {
-        check_version(&app);
+        // 더한 모드 폴더를 stat 한다 — setup(메인 스레드)에서 하지 않는다
         let all = list_all();
+        edit_saved("boot (retired example)", |s| s.retain(|n, _| !modes::RETIRED.contains(&n.as_str()) || all.iter().any(|m| &m.name == n)));
+        check_version(&app);
         for (n, s) in saved() {
             if s.on && !boot_sleep(&n, &s, &all) {
                 let _ = open(&app, &n, None, None, "boot");
@@ -1385,6 +1388,55 @@ pub fn menu_groups(rows: Vec<ModeRow>) -> (Vec<ModeRow>, Vec<ModeRow>) {
     rows.into_iter().filter(|r| !r.hidden).partition(|r| r.info.source != "example")
 }
 
+/// 메뉴에 쓸 목록 — 메뉴는 메인 스레드에서 만든다(켤 때 build_menu·refresh_menu). 더한 폴더는 ~/Desktop 에 있기도 해서 거기 stat 하면
+/// 맥 폴더 권한 창이 답을 기다리는 동안 앱째 멈춘다(2026-11-04 113분 — 켤 때 창도 폰 연결도 안 떴다). 그래서 데이터 폴더·앱 예시만 바로 읽고
+/// 전체 목록은 scan_for_menu 가 뒤에서 읽어 둔 것을 쓴다
+fn menu_list(scanned: Option<Vec<ModeInfo>>, data: &Path) -> Vec<ModeInfo> {
+    scanned.unwrap_or_else(|| modes::discover_with(data, &Value::Null, &[]))
+}
+
+#[derive(Default)]
+struct MenuScan {
+    list: Option<Vec<ModeInfo>>,
+    running: bool,
+    again: bool,
+}
+
+fn menu_scan() -> &'static Mutex<MenuScan> {
+    static S: OnceLock<Mutex<MenuScan>> = OnceLock::new();
+    S.get_or_init(Default::default)
+}
+
+/// 뒤에서 전체 목록을 읽고, 메뉴에 쓴 것과 다르면 메뉴를 다시 만든다. 도는 중이면 한 번 더 — 멈춘 폴더 하나에 스레드가 쌓이지 않게 하나만 돈다
+fn scan_for_menu<R: Runtime>(app: &tauri::AppHandle<R>) {
+    {
+        let mut g = menu_scan().lock().unwrap();
+        if g.running {
+            g.again = true;
+            return;
+        }
+        g.running = true;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || loop {
+        let full = list_all();
+        let first = menu_list(None, crate::config::data_dir()); // 아직 읽은 게 없을 때 메뉴에 쓴 것
+        let mut g = menu_scan().lock().unwrap();
+        let changed = g.list.as_ref().unwrap_or(&first) != &full;
+        g.list = Some(full);
+        let again = std::mem::take(&mut g.again);
+        g.running = again;
+        drop(g);
+        if changed {
+            crate::claude::log_out("modes", "menu list refreshed");
+            crate::refresh_menu(&app);
+        }
+        if !again {
+            return;
+        }
+    });
+}
+
 /// 메뉴바 '모드' — 판이 모드를 못 그리면 None(메뉴를 뺀다)
 pub fn menu<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Option<tauri::menu::Submenu<R>>> {
     if too_old().is_some() {
@@ -1406,7 +1458,9 @@ pub fn menu<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Option<tauri
             .build()
     };
     // 내가 만든 모드가 위, 앱이 주는 모드(예시)는 '참모 모드' 묶음 하나로 — 섞이지 않게 구분선(10/12 사용자)
-    let (own, ours) = menu_groups(rows());
+    let scanned = menu_scan().lock().unwrap().list.clone();
+    let (own, ours) = menu_groups(rows_of(menu_list(scanned, crate::config::data_dir())));
+    scan_for_menu(app);
     for r in &own {
         m = m.item(&item(r)?);
     }
@@ -2014,6 +2068,37 @@ export const register: Register = on => {
         std::thread::sleep(Duration::from_millis(300));
         assert!(pushes.lock().unwrap().iter().any(|v| v["subtype"] == "ui_toast" && v["text"] == r#"got {"n":6}"#));
         stop_host(&h, "test");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod menu_list_tests {
+    use super::*;
+
+    fn data(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("chammo-menu-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn 재현_뒤에서_읽기_전엔_더한_폴더를_안_본다() {
+        // 더한 폴더 stat 이 폴더 권한 창에 걸리면 메인 스레드가 멈췄다(2026-11-04) — 메뉴 목록은 데이터 폴더·앱 예시만
+        let d = data("quick");
+        let names: Vec<_> = menu_list(None, &d).into_iter().map(|m| m.name).collect();
+        assert!(names.iter().any(|n| n == "home-calendar"), "앱 예시는 있다: {names:?}");
+        assert!(menu_list(None, &d).iter().all(|m| m.source == "example"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 뒤에서_읽은_목록이_있으면_그걸_쓴다() {
+        let d = data("scan");
+        let mine = ModeInfo { name: "mine".into(), title: "내 모드".into(), source: "added", dir: "/Users/a/Desktop/mine".into(), where_default: "window".into(), keep_alive: false, light: false };
+        let got = menu_list(Some(vec![mine.clone()]), &d);
+        assert_eq!(got, vec![mine], "디스크를 안 읽고 그대로");
         let _ = std::fs::remove_dir_all(&d);
     }
 }

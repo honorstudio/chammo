@@ -114,8 +114,10 @@ export function BrowserView({ live }: { live: Live }) {
         <span className="m-br-title">{live.title || host(live.url)}</span>
         <span className="m-br-host">{host(live.url)}</span>
       </div>
-      {status ? <div className={`m-br-status m-br-inline ${live.ask ? 'm-br-ask' : ''}`}>{status}</div> : live.tool && <div className="m-muted m-sm m-br-tool">{live.tool}</div>}
-      <div className="m-br-acts">{action}</div>
+      <div className="m-br-foot">
+        {status ? <div className={`m-br-status m-br-inline ${live.ask ? 'm-br-ask' : ''}`}>{status}</div> : live.tool && <div className="m-muted m-sm m-br-tool">{live.tool}</div>}
+        <div className="m-br-acts">{action}</div>
+      </div>
     </div>
   );
 }

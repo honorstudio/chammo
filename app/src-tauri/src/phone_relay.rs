@@ -1,6 +1,6 @@
 //! 폰 중계 — 이 컴퓨터가 중계 허브에 주인으로 붙어 있는 소켓 하나(ADR 0013·서버 ADR 0005). 테일스케일 없는 폰이 이 길로 온다.
 //! - 켜지는 때: 폰 연결을 켜 뒀고(mobile.json) 이 기기가 중계에 등록돼 있고(team.json) 폰 입구 주소(phoneWeb)가 있을 때
-//! - 받은 틀은 phone_relay_core(세션·같은 문)로, 처리는 일꾼 스레드(최대 8)에서 하고 봉하기·보내기는 이 스레드만(번호 차례)
+//! - 받은 틀은 phone_relay_core(세션·같은 문)로, 처리는 일꾼 스레드(가벼운 길 8·무거운 길 5, 넘으면 차례 — phone_black)에서 하고 봉하기·보내기는 이 스레드만(번호 차례)
 //! - 끊기면 1초(잘 돌던 연결)·4·8…초(최대 5분) 뒤 다시. 서버가 이 기기를 끊으면(4001) 다시 안 붙는다
 use crate::mobile_http::{Backend, Gate};
 use crate::phone_relay_core::{self as core, Ev, Lines, Tunnels};
@@ -18,7 +18,6 @@ use tungstenite::Message;
 const PING_EVERY: Duration = Duration::from_secs(45);
 const DEAD_AFTER: Duration = Duration::from_secs(120);
 const CHECK_EVERY: Duration = Duration::from_secs(10);
-const MAX_WORKERS: usize = 8;
 /// 이만큼 붙어 있다 끊기면 '잘 돌던 연결' — 다시 붙기 기다림을 처음(4초)부터
 const HEALTHY: Duration = Duration::from_secs(60);
 
@@ -180,7 +179,7 @@ fn run(dir: &Path, st: &TeamState, web: &str, keys: DeviceKeys, gate: Arc<Gate>,
     let lines = Arc::new(RealLines { devices: gate.devices.clone(), keys });
     let mut t = Tunnels::default();
     let (tx, rx): (Sender<Out>, Receiver<Out>) = channel();
-    let busy = Arc::new(AtomicUsize::new(0));
+    let lanes = Arc::new(crate::phone_black::Lanes::default());
     let (mut last_rx, mut last_ping, mut last_check) = (Instant::now(), Instant::now(), Instant::now());
     *LINK_OUT.lock().unwrap_or_else(|e| e.into_inner()) = Some(LinkOut { gen: LINK_GEN.fetch_add(1, Ordering::SeqCst) + 1, tx: tx.clone(), mac: mac.clone(), devices: gate.devices.clone() });
     register_tunnel(st, &lines.keys);
@@ -217,7 +216,7 @@ fn run(dir: &Path, st: &TeamState, web: &str, keys: DeviceKeys, gate: Arc<Gate>,
                                 Ev::Drop(why) => log(&format!("연결 버림 {} — {why}", &c)),
                                 Ev::Run(req) => {
                                     let line = t.line(&c).unwrap_or_default().to_string();
-                                    work(req, line, c.clone(), &gate, &be, &busy, &tx);
+                                    work(req, line, c.clone(), &gate, &be, &lanes, &tx);
                                 }
                             }
                         }
@@ -274,6 +273,7 @@ fn run(dir: &Path, st: &TeamState, web: &str, keys: DeviceKeys, gate: Arc<Gate>,
         if last_check.elapsed() > CHECK_EVERY {
             last_check = Instant::now();
             drain(dir);
+            crate::phone_black::with(|_| {}); // 요청이 뜸해도 모아 둔 줄을 남긴다
             // 대기로 붙었다가 허용됐으면 그때 터널 열쇠를 올린다(리뷰: 다시 붙을 때까지 안 올라가던 것)
             if st.pending && !tunnel_sent {
                 let now_st = team_relay::load_state(dir);
@@ -298,6 +298,46 @@ static LINK_REFRESHED: Mutex<Option<Instant>> = Mutex::new(None);
 
 /// 숫자 확인 두드리기 상태(이 컴퓨터 하나) — 카드 답(link_answer)이 다른 스레드에서 꺼낸다
 static LINKS: std::sync::LazyLock<crate::device_link::Links> = std::sync::LazyLock::new(Default::default);
+/// 메일 코드 요청(이 컴퓨터 하나) — 설정을 켠 맥만 쓴다
+static MAIL_CODES: std::sync::LazyLock<crate::phone_mail_link::MailCodes> = std::sync::LazyLock::new(Default::default);
+
+/// 중계에 '이 폰 코드를 그 계정 메일로' — 받는 주소는 중계 D1 값뿐. 나갔으면 true
+fn mail_code(st: &TeamState, keys: &DeviceKeys, dev: &str, code: &str) -> bool {
+    let r = team_relay::as_human(|| team_relay::call(&team_relay::Curl, &st.server, keys, Some(&st.device_id), "POST", &format!("/v0/me/devices/{dev}/mail-code"), Some(&json!({ "code": code }))));
+    match r {
+        Ok((200, _)) => true,
+        Ok((c, v)) => {
+            log(&format!("메일 코드 못 보냄 {c} {}", v["error"].as_str().unwrap_or("")));
+            false
+        }
+        Err(e) => {
+            log(&format!("메일 코드 못 보냄 {e}"));
+            false
+        }
+    }
+}
+
+/// 메일 코드 넣기(다시 잇기의 끝단) — 코드가 맞으면 숫자 카드 없이 허용 끝단으로, 같은 계정 다른 기기에 알린다
+fn mail_submit(body: &Value, h: &crate::device_link::Hello, dir: &std::path::Path, reply: &dyn Fn(Value) -> Result<(), String>) {
+    let code = body["code"].as_str().unwrap_or_default();
+    if let Err(v) = crate::phone_mail_link::submit(&MAIL_CODES, crate::phone_mail_link::enabled(dir), h, code, Instant::now()) {
+        let _ = reply(v);
+        return;
+    }
+    let out = LINK_OUT.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|o| (o.gen, o.mac.clone(), o.devices.clone()));
+    let Some((gen, mac, devices)) = out else {
+        let _ = reply(json!({ "step": "link5", "ok": false, "error": "relay" }));
+        return;
+    };
+    let st = team_relay::load_state(dir);
+    match grant_phone(h, &st, gen, &devices, mac, reply) {
+        Ok(()) => {
+            log("메일 코드로 폰 허용");
+            crate::claude::notify(crate::i18n::tr("새 폰이 메일 코드로 연결됐어요", "A new phone connected with an email code").into(), crate::i18n::tr(&format!("{} — 내가 한 일이 아니면 설정 > 기기 관리에서 끊어 주세요", h.name), &format!("{} — if this wasn't you, remove it in Settings > Devices", h.name)).into(), None);
+        }
+        Err(e) => log(&format!("메일 코드 허용 실패 {e}")),
+    }
+}
 
 struct LinkOut {
     /// 허브 연결 세대 — 붙을 때마다 하나씩(카드 답 사이에 다시 붙었는지 가린다)
@@ -382,6 +422,23 @@ fn link_step(m: &Value, me_pub: &[u8], lines: &Arc<RealLines>, tx: &Sender<Out>)
                     return close(if peer { "내 계정의 허용된 컴퓨터가 아님" } else { "내 계정 폰이 아님" });
                 }
             }
+            // 메일 코드를 켠 맥 — 폰은 숫자 대신 코드를 받는다. 메일이 안 나가면 None 이라 아래 숫자 확인으로 내려간다
+            if !peer && crate::phone_mail_link::enabled(dir) {
+                match crate::device_link::Links::hello_of(&k, &body, &s("key"), &dev, peer) {
+                    Ok(h) => {
+                        if let Some(v) = crate::phone_mail_link::request(&MAIL_CODES, true, &h, |code| mail_code(&st, &lines.keys, &dev, code), now) {
+                            let x = h.x.clone();
+                            if let Ok(b) = tun::seal(&x, v.to_string().as_bytes()) {
+                                let _ = tx.send(Out::KnockLink(k.clone(), tun::b64(&b), true));
+                            } else {
+                                close("봉하기");
+                            }
+                            return;
+                        }
+                    }
+                    Err(e) => return close(&e),
+                }
+            }
             match LINKS.first_kind_replacing(&k, &body, &s("key"), &dev, me_pub, peer, now) {
                 Ok((cm, old)) => {
                     // 같은 폰의 옛 두드리기 카드는 닫는다(기기마다 하나)
@@ -430,6 +487,30 @@ fn link_step(m: &Value, me_pub: &[u8], lines: &Arc<RealLines>, tx: &Sender<Out>)
                 Err(e) => close(&e),
             }
         }
+        // 메일 코드 넣기 — 두드리기 하나로 끝난다(폰이 앱을 오가도 끊길 소켓이 없다). 컴퓨터끼리 갈래엔 없다
+        "mail-code" => {
+            let dev = s("dev");
+            if matches!(m["plat"].as_str(), Some("mac" | "win")) || !crate::phone_mail_link::enabled(dir) {
+                return close("메일 코드가 꺼진 맥");
+            }
+            if !link_dev_ok(&st, &dev, false) {
+                if let Ok(fresh) = crate::team_account::refresh_me(dir, &crate::team_relay_keys::store(), &team_relay::Curl) {
+                    st = fresh;
+                }
+                if !link_dev_ok(&st, &dev, false) {
+                    return close("내 계정 폰이 아님");
+                }
+            }
+            let h = match crate::device_link::Links::hello_of(&k, &body, &s("key"), &dev, false) {
+                Ok(h) => h,
+                Err(e) => return close(&e),
+            };
+            let x = h.x.clone();
+            mail_submit(&body, &h, dir, &|v: Value| {
+                let b = tun::seal(&x, v.to_string().as_bytes()).map_err(|_| "seal".to_string())?;
+                tx.send(Out::KnockLink(k.clone(), tun::b64(&b), true)).map_err(|_| "허브 연결이 끊겼어요".to_string())
+            });
+        }
         _ => close("모르는 단계"),
     }
 }
@@ -456,6 +537,12 @@ pub fn link_answer(card: &str, yes: bool) -> Result<(), String> {
     if h.peer {
         return peer_link_answer(&h, &st, gen, &devices, mac, reply);
     }
+    grant_phone(&h, &st, gen, &devices, mac, &reply)
+}
+
+/// 폰 허용 끝단 — (폰이 계정 대기면 계정 허용도) → 기기 줄 묶기 → 토큰을 폰 터널 열쇠로 봉해 link5(end). 숫자 카드 허용·메일 코드가 같이 쓴다
+fn grant_phone(h: &crate::device_link::Hello, st: &TeamState, gen: u64, devices: &crate::mobile_pair::Devices, mac: Value, reply: &dyn Fn(Value) -> Result<(), String>) -> Result<(), String> {
+    let dir = crate::config::data_dir();
     let line = st.my_devices.iter().find(|d| d.id == h.dev).cloned();
     if line.as_ref().is_some_and(|d| d.pending()) {
         if let Err(e) = crate::team_account::decide_device(dir, &crate::team_relay_keys::store(), &team_relay::Curl, &h.dev, true) {
@@ -516,24 +603,35 @@ fn peer_name(st: &TeamState, h: &crate::device_link::Hello) -> String {
     st.my_devices.iter().find(|d| d.id == h.dev).map(|d| d.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| h.name.clone())
 }
 
-/// 요청 하나를 일꾼에게 — 다 차 있으면 바로 503
-fn work(req: core::TReq, line: String, c: String, gate: &Arc<Gate>, be: &Arc<dyn Backend>, busy: &Arc<AtomicUsize>, tx: &Sender<Out>) {
-    let head = req.method == "HEAD";
-    if busy.fetch_add(1, Ordering::SeqCst) >= MAX_WORKERS {
-        busy.fetch_sub(1, Ordering::SeqCst);
-        let r = crate::mobile_http::Resp { status: 503, headers: vec![("Content-Type", "text/plain; charset=utf-8".into())], body: b"busy".to_vec() };
-        let _ = tx.send(Out::Reply(c, core::resp_chunks(req.id, &r, head)));
-        return;
+/// 503 busy — 줄이 넘쳤거나 차례가 너무 늦었다
+fn refuse(req: &core::TReq, c: String, lanes: &crate::phone_black::Lanes, tx: &Sender<Out>) {
+    use crate::phone_black as black;
+    black::with(|b| { b.refused(black::route(&req.path)); b.saw(lanes.counts()); });
+    let r = crate::mobile_http::Resp { status: 503, headers: vec![("Content-Type", "text/plain; charset=utf-8".into())], body: b"busy".to_vec() };
+    let _ = tx.send(Out::Reply(c, core::resp_chunks(req.id, &r, req.method == "HEAD")));
+}
+
+/// 요청 하나를 일꾼에게 — 길마다 정한 수만 돌고 나머지는 차례를 기다린다(phone_black). 503 은 줄이 넘치거나 15초를 넘길 때만.
+/// 실패·503·느림은 블랙박스에 — 폰이 못 받아도 맥 기록엔 흔적이 없었다(11-07 사용자)
+fn work(req: core::TReq, line: String, c: String, gate: &Arc<Gate>, be: &Arc<dyn Backend>, lanes: &Arc<crate::phone_black::Lanes>, tx: &Sender<Out>) {
+    use crate::phone_black as black;
+    if !lanes.of(&req.path).join() {
+        return refuse(&req, c, lanes, tx);
     }
-    let (gate, be, busy, tx) = (gate.clone(), be.clone(), busy.clone(), tx.clone());
+    let (gate, be, lanes, tx) = (gate.clone(), be.clone(), lanes.clone(), tx.clone());
     std::thread::spawn(move || {
-        let t0 = Instant::now();
+        let t0 = Instant::now(); // 차례 기다림까지 — 폰이 겪는 시간
+        let Some(turn) = lanes.of(&req.path).wait_turn(black::WAIT_MAX) else { return refuse(&req, c, &lanes, &tx) };
+        black::with(|b| b.saw(lanes.counts()));
+        let serve_t0 = Instant::now();
         let r = core::serve(&req, &line, &gate, &*be);
         // 컴퓨터끼리 요청만 — 주인 쪽 처리 시간(C-6 ③: 손님 call − 이것 ≈ 중계·망)
         if gate.devices.is_peer(&line) {
-            crate::peer_conn::note("serve-peer", t0.elapsed().as_millis().min(u32::MAX as u128) as u32);
+            crate::peer_conn::note("serve-peer", serve_t0.elapsed().as_millis().min(u32::MAX as u128) as u32);
         }
-        busy.fetch_sub(1, Ordering::SeqCst);
+        drop(turn);
+        let ms = t0.elapsed().as_millis().min(u64::MAX as u128) as u64;
+        black::with(|b| b.done(black::route(&req.path), r.status, ms));
         let _ = tx.send(Out::Reply(c, core::reply_chunks(&req, &r)));
     });
 }
@@ -596,6 +694,8 @@ fn drain(dir: &Path) {
 
 /// 컴퓨터 일(참모 답·카드)이 생겼을 때 — 중계로 짝지은 폰마다 푸시를 부탁한다(서버가 10초에 한 번으로 묶는다)
 /// asks = push::relay_notify_body 가 만든 부탁({to} 또는 {to, body, sub}) — 배경 몫(BG_CAP)은 team_relay::call 이 센다
+static GONE_LOGGED: std::sync::Mutex<std::collections::BTreeSet<String>> = std::sync::Mutex::new(std::collections::BTreeSet::new());
+
 pub fn notify_phones(dir: &PathBuf, asks: Vec<Value>) {
     if asks.is_empty() {
         return;
@@ -605,8 +705,15 @@ pub fn notify_phones(dir: &PathBuf, asks: Vec<Value>) {
         let Some((st, _)) = wanted(&dir) else { return };
         let Ok(keys) = team_relay::device_keys(&crate::team_relay_keys::store(), &st) else { return };
         for ask in asks {
-            if let Err(e) = team_relay::call(&team_relay::Curl, &st.server, &keys, Some(&st.device_id), "POST", "/v0/push/notify", Some(&ask)) {
-                log(&format!("푸시 부탁 실패 — {e}"));
+            match team_relay::call(&team_relay::Curl, &st.server, &keys, Some(&st.device_id), "POST", "/v0/push/notify", Some(&ask)) {
+                Ok((code, v)) => {
+                    // 끊긴 기기(404)는 알림마다 같은 줄이 쌓이지 않게 앱이 켜진 동안 기기마다 한 번만
+                    let first = code != 404 || GONE_LOGGED.lock().unwrap_or_else(|e| e.into_inner()).insert(ask["to"].as_str().unwrap_or("").to_string());
+                    if let Some(line) = crate::push::notify_note(&ask, code, &v).filter(|_| first) {
+                        log(&line);
+                    }
+                }
+                Err(e) => log(&format!("푸시 부탁 실패 — {e}")),
             }
         }
     });

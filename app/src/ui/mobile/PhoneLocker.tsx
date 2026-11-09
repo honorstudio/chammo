@@ -4,7 +4,8 @@
 // 폰이 쓰는 건 그 참모 보관함 안에만(서버가 다시 거른다). 옮기기·이름 바꾸기·지우기는 데스크톱
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { tr } from '../../i18n';
-import { lockerAlias, lockerUnalias } from '../../data/web';
+import { lockerAlias, lockerLinks, lockerUnalias } from '../../data/web';
+import { EMPTY_LINKS, mergeLinks, type LinksStore } from '../../domain/lockerLinks';
 import type { LockerView } from '../../domain/locker';
 import { defaultView, logDays, lockerLog, type LockerViewMode, type LogItem } from '../../domain/lockerLog';
 import { kidsOf, readOnlyAt, userFolders, type LkEntry } from '../../domain/lockerTree';
@@ -12,9 +13,10 @@ import { dotClass, openPathOf, phoneTree, shownBy, type PhoneChip } from '../../
 import { IconBack, IconDashboard, IconFolderPlus, IconList, IconPlus } from '../Icons';
 import { BottomSheet, IconBtn } from './kit';
 import { AddSheet, FolderPick, Item, ItemMenu, MdEditor, NameSheet, type Held } from './PhoneLockerParts';
+import { PhoneLinks } from './PhoneLinks';
 
 type Shown = { path: string; ts: string; by: string };
-type Place = { kind: 'root'; project?: string } | { kind: 'dir'; rel: string };
+type Place = { kind: 'root'; project?: string } | { kind: 'dir'; rel: string } | { kind: 'links' };
 
 const VIEW_KEY = 'm.lkViews';
 const loadViews = (): Record<string, string> => { try { return JSON.parse(localStorage.getItem(VIEW_KEY) ?? '{}') as Record<string, string>; } catch { return {}; } };
@@ -49,8 +51,13 @@ export function PhoneLocker({ owner, view: lv, shown, projects, chips, whoOf, on
   const toastT = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(toastT.current), []);
   const say = (text: string, undo?: () => void) => { window.clearTimeout(toastT.current); setToast({ text, undo }); toastT.current = window.setTimeout(() => setToast(null), 5000); };
+  // 링크 칸(시안 locker-links v1 B2) — 맥이 그 참모 대화 기록을 이어 읽은 목록 + 보여 준 주소. 보관함 탭을 보는 동안 10초마다
+  const [store, setStore] = useState<LinksStore>(EMPTY_LINKS);
+  const pull = () => void lockerLinks(owner).then(setStore, () => {});
+  useEffect(() => { pull(); const t = window.setInterval(pull, 10000); return () => window.clearInterval(t); }, [owner]); // eslint-disable-line react-hooks/exhaustive-deps
+  const links = mergeLinks(store, shown);
 
-  const vkey = place.kind === 'dir' ? `d:${place.rel}` : place.project ? `p:${place.project}` : 'root';
+  const vkey = place.kind === 'dir' ? `d:${place.rel}` : place.kind === 'root' && place.project ? `p:${place.project}` : 'root';
   const mode = defaultView(views[vkey] ?? null, place.kind === 'dir' ? 'dir' : 'log');
   const setMode = (v: LockerViewMode) => setViews((x) => { const n = { ...x, [vkey]: v }; try { localStorage.setItem(VIEW_KEY, JSON.stringify(n)); } catch { /* 이번 실행만 */ } return n; });
   const folderRel = place.kind === 'dir' ? place.rel : '';
@@ -74,6 +81,13 @@ export function PhoneLocker({ owner, view: lv, shown, projects, chips, whoOf, on
     <span className="m-lk-seg" role="tablist" aria-label={tr('보기', 'View')}>
       <button type="button" role="tab" aria-selected={mode === 'card'} className={mode === 'card' ? 'm-on' : ''} onClick={() => setMode('card')} aria-label={tr('카드로 보기', 'Card view')} title={tr('카드로 보기', 'Card view')}><IconDashboard /></button>
       <button type="button" role="tab" aria-selected={mode === 'list'} className={mode === 'list' ? 'm-on' : ''} onClick={() => setMode('list')} aria-label={tr('목록으로 보기', 'List view')} title={tr('목록으로 보기', 'List view')}><IconList /></button>
+    </span>
+  );
+  // 맨 위 머리 — 파일 | 링크 두 칸(시안 locker-links v1 B2)
+  const sw = (on: 'files' | 'links') => (
+    <span className="m-lkl-switch" role="tablist" aria-label={tr('파일·링크', 'Files and links')}>
+      <button type="button" role="tab" aria-selected={on === 'files'} className={on === 'files' ? 'm-on' : ''} onClick={() => setPlace({ kind: 'root' })}>{tr('파일', 'Files')}</button>
+      <button type="button" role="tab" aria-selected={on === 'links'} className={on === 'links' ? 'm-on' : ''} onClick={() => setPlace({ kind: 'links' })}>{tr('링크', 'Links')} <span className="m-lkl-n">{links.length}</span></button>
     </span>
   );
   // 연결 폴더(맥 폴더의 바로가기)는 폰에선 읽기만 — 새로 만들기·올리기 없음
@@ -101,7 +115,9 @@ export function PhoneLocker({ owner, view: lv, shown, projects, chips, whoOf, on
   };
 
   let body: ReactNode;
-  if (place.kind === 'dir') {
+  if (place.kind === 'links') {
+    body = <><div className="m-lk-tools">{sw('links')}</div><PhoneLinks owner={owner} links={links} whoOf={whoOf} onChanged={pull} onSay={say} /></>;
+  } else if (place.kind === 'dir') {
     const kids = kidsOf(tree.entries, place.rel);
     const up = place.rel.includes('/') ? place.rel.slice(0, place.rel.lastIndexOf('/')) : null;
     const files = kids.filter((e) => !e.dir);
@@ -121,18 +137,19 @@ export function PhoneLocker({ owner, view: lv, shown, projects, chips, whoOf, on
       </>
     );
   } else {
-    const cur = place.project ? chips.all.find((c) => c.root === place.project) : undefined;
+    const project = place.project;
+    const cur = project ? chips.all.find((c) => c.root === project) : undefined;
     const items = cur ? log.filter((it) => it.project === cur.name) : log;
     const tops = kidsOf(tree.entries, '').filter((e) => e.dir);
     const chip = (c: PhoneChip) => (
-      <button key={c.root} type="button" className={place.project === c.root ? 'm-chip m-on' : 'm-chip'} onClick={() => setPlace(place.project === c.root ? { kind: 'root' } : { kind: 'root', project: c.root })}>
+      <button key={c.root} type="button" className={project === c.root ? 'm-chip m-on' : 'm-chip'} onClick={() => setPlace(project === c.root ? { kind: 'root' } : { kind: 'root', project: c.root })}>
         <span className={`st-dot ${dotClass(c.dot)}`} aria-hidden="true" />{c.name}
       </button>
     );
     const onChips = cur && !chips.active.some((c) => c.root === cur.root) ? [...chips.active, cur] : chips.active;
     body = (
       <>
-        {tools(<span className="m-lk-sp" />)}
+        {tools(<>{sw('files')}<span className="m-lk-sp" /></>)}
         <div className="m-chips m-lk-chips">{onChips.map(chip)}<button type="button" className="m-chip m-lk-more" onClick={() => setAllOpen(true)}>{tr('모든 프로젝트', 'All projects')}</button></div>
         {cur && <div className="m-lk-phead"><span className={`st-dot ${dotClass(cur.dot)}`} aria-hidden="true" /><b>{cur.name}</b></div>}
         {!cur && (

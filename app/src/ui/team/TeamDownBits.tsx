@@ -2,10 +2,12 @@
  *  대화 파일 말풍선과 팀 보관함 줄·카드가 같이 쓴다. 상태는 Rust team_down 기록(받는 동안 0.5초마다 읽는다) */
 import { invoke } from '@tauri-apps/api/core';
 import { useCallback, useEffect, useState } from 'react';
+import { withRunAsk } from '../../domain/teamLocker';
 import { downOf, downRatio, downStatus, type TeamDown } from '../../domain/teamDown';
 import { tr } from '../../i18n';
 import { IconDownload, IconOpen, IconRefresh, IconReveal, IconStop } from '../Icons';
 import { IconButton } from '../kit/IconButton';
+import { confirmRunnable } from './confirmRunnable';
 
 // 받기 줄은 앱에 하나 — 대화 말풍선에서 시작한 받기가 옆 팀 보관함 줄에도 같이 보이게, 읽기도 한 줄기(받는 중·막 누른 받기가 있을 때만 0.5초마다)
 let shared: TeamDown[] = [];
@@ -39,7 +41,7 @@ export function useTeamDowns(on = true) {
   }, []);
   const stop = useCallback((d: TeamDown) => void invoke('team_down_stop', { team: d.team, id: d.id }).then(pollNow, () => {}), []);
   /** 다 받은 파일 열기·폴더에서 보기 — 그새 지워졌으면 그 줄을 치워 받기 아이콘으로 돌아간다(누르면 다시 받는다) */
-  const show = useCallback((d: TeamDown, how: 'open' | 'reveal') => invoke('team_down_show', { team: d.team, id: d.id, how }).catch((e: unknown) => {
+  const show = useCallback((d: TeamDown, how: 'open' | 'reveal') => withRunAsk((runOk) => invoke('team_down_show', { team: d.team, id: d.id, how, runOk }), confirmRunnable).catch((e: unknown) => {
     void invoke('team_down_dismiss', { team: d.team, id: d.id }).then(pollNow, () => {});
     throw e;
   }), []);

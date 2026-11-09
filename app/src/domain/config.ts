@@ -4,11 +4,11 @@ import type { Shortcut } from './shortcuts';
 
 /** 애니메이션 — auto 는 OS '동작 줄이기'·맥 부하가 높을 때 저절로 줄인다(domain/animCalm), reduce 는 늘 줄이기, off 는 전환까지 0 */
 export type Animation = 'auto' | 'reduce' | 'off';
-export type Features = { office: boolean; tama: boolean; gacha: boolean; review: boolean; voice: boolean; autoRevive: boolean; autoTidy: boolean; agentView: boolean; computerUse: boolean; usagePing: boolean; craftBasics: boolean; bubble: boolean; bubbleDesk: boolean; git: boolean; animation: Animation };
+export type Features = { office: boolean; gacha: boolean; review: boolean; voice: boolean; autoRevive: boolean; autoTidy: boolean; agentView: boolean; computerUse: boolean; usagePing: boolean; craftBasics: boolean; bubble: boolean; bubbleDesk: boolean; git: boolean; animation: Animation };
 /** 켬·끔 칸만(애니메이션은 세 갈래라 빠진다) — 설정 화면 체크 줄·scripts/app feature 가 다루는 것 */
 export type FeatureSwitch = Exclude<keyof Features, 'animation'>;
 /** 입구 기능은 다 켬. autoRevive(재시작 뒤 스스로 되살리기)는 무인 기계에서만 켜는 것이라 기본 꺼짐. autoTidy(끝난 세션 자동 정리)는 켬. agentView(세션 브라우저 앱에서 보기)는 켬. computerUse(화면 조종 모든 프로젝트)는 사용자 화면을 움직여서 끔. usagePing(익명 사용 통계)은 켬 — 설정 > 기능에서 끈다. craftBasics(기본 참모 앱 다섯 미리 받기, Rust craft_basics)는 끔 — 1.5GB 를 첫 사용자가 모르고 받았다(2026-11-01 ux-start M3, 10-26 은 켬). bubble(떠 있는 참모 배지, 시안 orch-bubble A)·bubbleDesk(앱을 내려도 바탕 위 배지)는 켬. git(코드 프로젝트에 git 쓰기, ADR 0024)은 못 읽은 동안 끔 — 실제 값은 Rust 가 채운다(값 없으면 전역 git 메일로 짐작) */
-export const ALL_ON: Features = { office: true, tama: true, gacha: true, review: true, voice: true, autoRevive: false, autoTidy: true, agentView: true, computerUse: false, usagePing: true, craftBasics: false, bubble: true, bubbleDesk: true, git: false, animation: "auto" };
+export const ALL_ON: Features = { office: true, gacha: true, review: true, voice: true, autoRevive: false, autoTidy: true, agentView: true, computerUse: false, usagePing: true, craftBasics: false, bubble: true, bubbleDesk: true, git: false, animation: "auto" };
 const ANIMATIONS: readonly Animation[] = ['auto', 'reduce', 'off'];
 
 /** 설정을 아직 못 읽었으면 입구는 다 켠 것으로 — 옛 설치가 잠깐이라도 입구를 잃지 않게 */
@@ -52,9 +52,7 @@ export function mirrorPlan(c: { language: string; assistantName: string }, store
 export function allowed(sc: Shortcut, f: Features): boolean {
   if (sc.type === 'goto') {
     if (sc.to === 'office') return f.office;
-    if (sc.to === 'tama') return f.tama;
     if (sc.to === 'review') return f.review;
   }
-  if (sc.type === 'widget') return f.tama;
   return true;
 }

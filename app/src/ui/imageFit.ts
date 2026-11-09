@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { dragScroll, fitPercent } from '../domain/imageFit';
+import { attachOnce, type Attached } from '../domain/attachOnce';
 
 // 그림 칸 공통(스페이스 탭·크게 보기·리더) — 맞춤 배율을 칸 크기로 재고, 두 번 누르기·끌어서 이동을 붙인다(2026-10-28 사용자 "이미지 확대가 안 된다잉")
 type Pt = { x: number; y: number };
@@ -44,7 +45,8 @@ function useDpr(): number {
 
 /**
  * 두 번 누르기(누른 곳 = 기준점)와 마우스로 끌어서 이동 — 칸이 넘칠 때만 끌린다(맞춤은 넘치지 않는다). 터치는 브라우저 스크롤 그대로.
- * 칸이 나중에 생겨도(종류가 바뀜) 매 렌더 다시 붙인다. 끌 수 있으면 칸에 can-pan, 끄는 중엔 panning.
+ * 칸이 나중에 생겨도(종류가 바뀜) 붙도록 렌더마다 칸을 보되, 같은 칸이면 그대로 둔다 — 렌더마다 떼고 붙이면 끄는 동안 앱이 한 번만 다시 그려도
+ * '끄는 중'이 사라져 아주 짧게 움직이다 끊겼다(11-05 사용자, attachOnce). 끌 수 있으면 칸에 can-pan, 끄는 중엔 panning.
  * skip = 그 자리에서 시작한 끌기는 건드리지 않는다(PDF 글 층 — 글 고르기), onToggle 이 없으면 두 번 누르기는 그냥 둔다(PDF 는 낱말 고르기)
  */
 export function useImagePan(box: () => HTMLElement | null | undefined, onToggle?: (at: Pt) => void, skip?: (target: Element) => boolean) {
@@ -52,9 +54,8 @@ export function useImagePan(box: () => HTMLElement | null | undefined, onToggle?
   cb.current = onToggle;
   const sk = useRef(skip);
   sk.current = skip;
-  useEffect(() => {
-    const el = box();
-    if (!el) return;
+  const at = useRef<Attached<HTMLElement>>({ el: null, off: null });
+  useEffect(() => attachOnce(at.current, box() ?? null, (el) => {
     let from: { x: number; y: number; left: number; top: number } | null = null;
     const over = () => el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1;
     const down = (e: PointerEvent) => {
@@ -94,5 +95,6 @@ export function useImagePan(box: () => HTMLElement | null | undefined, onToggle?
       el.removeEventListener('dblclick', dbl);
       el.classList.remove('panning', 'can-pan');
     };
-  });
+  }));
+  useEffect(() => () => { const h = at.current; h.off?.(); h.off = null; h.el = null; }, []);
 }

@@ -3,7 +3,7 @@
 참모 안에서 하니터 화면(하네스 — 스킬·훅·MCP·플러그인·CLAUDE.md — 보기·끄고 켜기·되돌리기)을 띄우려고 가져온 사본이다.
 
 - 출처: `honorstudio/harnitor` (로컬 `~/Desktop/dev/Harnitor`), 가지 `chore/license-agpl`, 커밋 `a24b2f4d7e3ffad0caa3e9037122877e1847637b` → 진단 v2 `ecfd06bcb8bfac27fe09a2f99bf55ae13a6555e2`(가지 `feat/diagnostics-v2`, fix/undo-slot 위 — 되돌리기 고침 포함, 엔진·화면 통째)
-- 라이선스: AGPL-3.0-only (`harnitor-core/LICENSE`) — 참모와 같다
+- 라이선스: 우리 저작물 — 원본 저장소는 AGPL-3.0-only, 설치 파일엔 Chammo 조건으로 함께 싣는다(ADR 0028)
 - `harnitor-core/` = `crates/harnitor-core` 그대로(엔진: 스캔·진단·쓰기 계획·백업·되돌리기)
 - `harnitor-ui/index.html` = `crates/harnitor-cli/templates/report.html` 그대로(화면). 하니터 앱은 이걸 `ui/index.html` 로 만들어 쓰고,
   참모는 `harnitor://` 로 내보내며 `/*__HARNITOR_DATA__*/` 자리에 다리 스크립트(`window.__TAURI__` 흉내 → postMessage)를 끼운다

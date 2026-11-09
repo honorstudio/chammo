@@ -181,6 +181,7 @@ describe('검증 강도·되돌림 — 예외가 숨은 일은 꼼꼼히, 세 �
   it('보통(medium)은 태그를 안 단다 — 꼼꼼히·빠르게만, 되돌림은 두 번부터, 세 번이면 급함', () => {
     const base = { id: 'k', target: 'a', title: 't', status: 'working' as const, sentAt: '', updatedAt: '', retries: 0 };
     expect(taskTags({ ...base, effort: 'medium' })).toEqual([]);
+    expect(taskTags({ ...base, effort: 'design' })).toEqual([]);
     expect(taskTags({ ...base, effort: 'high' })).toEqual([{ text: '꼼꼼히', hot: false }]);
     expect(taskTags({ ...base, effort: 'low', retries: 1 })).toEqual([{ text: '빠르게', hot: false }]);
     expect(taskTags({ ...base, retries: 2 })).toEqual([{ text: '되돌림 2', hot: false }]);

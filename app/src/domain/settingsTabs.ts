@@ -20,7 +20,6 @@ export function tabOf(name: string | undefined): SettingsTab | undefined {
 /** 켬·끔 기능이 사는 탭 */
 export const FEATURE_TAB: Record<FeatureSwitch, SettingsTab> = {
   office: 'features',
-  tama: 'features',
   gacha: 'features',
   review: 'features',
   git: 'features',

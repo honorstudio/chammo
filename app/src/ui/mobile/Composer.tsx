@@ -14,9 +14,11 @@ import { labelCounts, readDraft, writeDraft } from '../../domain/mobileOutbox';
 import { withRefs, type ChatRef } from '../../domain/chat';
 import { nextRefLabel } from '../../domain/refChips';
 import { useRefInbox } from '../refBus';
+import { withPlain } from '../../domain/notes';
 import { storage } from './outbox';
 import { shrinkImage } from './shrink';
 import { useBlobUrl } from './useBlobUrl';
+import { fitBox } from './fitBox';
 import { AvatarRing } from './kit';
 import { useSpeakLevel } from './usePhoneSpeaker';
 import { tr } from '../../i18n';
@@ -66,6 +68,8 @@ export function Composer({ avatar, orchName, waiting, placeholder, draftKey, max
   const [refs, setRefs] = useState<ChatRef[]>(saved.refs ?? []);
   const refsNow = useRef(refs);
   refsNow.current = refs;
+  const filesNow = useRef(files);
+  filesNow.current = files;
   const paths = files.map((f) => f.path);
   const [uploading, setUploading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -77,6 +81,19 @@ export function Composer({ avatar, orchName, waiting, placeholder, draftKey, max
   useEffect(() => writeDraft(storage(), draftKey, { text: draft, files: files.map(({ path, name, image, label }) => ({ path, name, image, label })), refs }), [draftKey, draft, files, refs]);
   // 이 참모 입력칸으로 온 참조 — 칩 줄에 넣고 글 끝에 이름표, 시트를 올려 바로 쓰게
   useRefInbox(draftKey, (r) => {
+    if (r.plain) { setDraft((d) => withPlain(d, r.text)); onFocus(); requestAnimationFrame(() => box.current?.focus()); return; }
+    if (r.file) {
+      const f = r.file;
+      if (!filesNow.current.some((x) => x.path === f.path)) {
+        const a: Att = { path: f.path, name: f.name, image: false, label: `#file${++count.current.file}` };
+        filesNow.current = [...filesNow.current, a];
+        setFiles(filesNow.current);
+        setDraft((d) => `${d}${d && !/\s$/.test(d) ? ' ' : ''}${a.label} `);
+      }
+      onFocus();
+      requestAnimationFrame(() => box.current?.focus());
+      return;
+    }
     const label = nextRefLabel(refsNow.current, r.kind);
     refsNow.current = [...refsNow.current, { label, who: r.who, text: r.text }];
     setRefs(refsNow.current);
@@ -96,14 +113,11 @@ export function Composer({ avatar, orchName, waiting, placeholder, draftKey, max
   };
   useEffect(() => () => urls.current.forEach((u) => URL.revokeObjectURL(u)), []);
 
-  // 글 길이만큼 늘고, maxInputH 를 넘으면 안에서 스크롤
+  // 글 길이만큼 늘고, maxInputH 를 넘으면 안에서 스크롤 — 재는 동안 카드(form)를 붙들어 위 대화 목록 스크롤이 안 깎이게(fitBox)
   useLayoutEffect(() => {
     const el = box.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    const cap = textMaxH(maxInputH);
-    el.style.height = `${Math.min(el.scrollHeight, cap)}px`;
-    el.style.overflowY = el.scrollHeight > cap ? 'auto' : 'hidden';
+    const card = el?.parentElement;
+    if (el && card) fitBox(el, card, textMaxH(maxInputH));
   }, [draft, maxInputH]);
 
   const pick = async (list: FileList | null) => {

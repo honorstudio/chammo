@@ -55,7 +55,13 @@ pub fn decode(bytes: &[u8]) -> Result<Doc, String> {
 
 /// 못 연(why) 살아 있는 글 기록 수 — 고친 판·고정 기록도 하나씩 센다(열어 봐야 같은 글인지 안다)
 pub(crate) fn locked_posts(items: &[Item]) -> usize {
-    items.iter().filter(|i| i.kind == "post" && !i.why.is_empty() && i.deleted_at.is_none() && i.state != "trash" && i.state != "uploading").count()
+    items.iter().filter(|i| post_doc(i) && !i.why.is_empty() && i.deleted_at.is_none() && i.state != "trash" && i.state != "uploading").count()
+}
+
+/// 팀 홈 글판이 다룰 post 봉투 — 예약한 이름(mem*.json, 공식 설치 파일의 팀 판)은 글이 아니라 빼고 받지도 않는다.
+/// 공개 소스 빌드도 그런 판이 있는 팀에 들어갈 수 있어 공개 코드에 둔다
+fn post_doc(i: &Item) -> bool {
+    i.kind == "post" && !(i.name.starts_with("mem") && i.name.ends_with(".json"))
 }
 
 fn usable(i: &Item) -> bool {
@@ -157,7 +163,7 @@ fn read_first(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, first: bo
     let owners = team_owners::holders(dir, kc, http, &t.id, "posts");
     let (v, job) = locker::list_split(dir, kc, http, &t.id)?;
     let (docs, loading) = {
-        let posts: Vec<&Item> = v.items.iter().filter(|i| i.kind == "post" && usable(i)).collect();
+        let posts: Vec<&Item> = v.items.iter().filter(|i| post_doc(i) && usable(i)).collect();
         let (have, need): (Vec<&Item>, Vec<&Item>) = posts.iter().partition(|i| team_profile::cached(dir, &i.id));
         let later = first && first_paint(have.len(), need.len()) && http.fork().is_some();
         let take = if later { have } else { posts };

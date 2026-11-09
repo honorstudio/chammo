@@ -111,6 +111,14 @@ export function attachToChat(sessionId: string, paths: string[]): boolean {
   return true;
 }
 
+/** 글을 그 세션 터미널 입력칸에 붙여넣기로(채팅 입력칸이 없는 터미널 뷰 — 내 메모 보내기 아이콘). 보내기(Enter)는 사람이 */
+export function textToTerminal(sessionId: string, text: string): boolean {
+  const el = document.querySelector<HTMLElement>(`.cell[data-session="${CSS.escape(sessionId)}"] .pane[data-drop]`);
+  if (!el || !text) return false;
+  el.dispatchEvent(new CustomEvent(DROP_EVENT, { detail: text }));
+  return true;
+}
+
 /** 칸에 경로들을 넣는다 — 채팅 판이 받으면(preventDefault) 그쪽이 이름표를 매겨 칩 글(#file1 "…")로 붙여넣고, 없으면 iTerm 처럼 셸 이스케이프로 */
 function pastePaths(el: HTMLElement, paths: string[]) {
   const took = !el.dispatchEvent(new CustomEvent(DROP_PATHS_EVENT, { detail: paths, cancelable: true }));

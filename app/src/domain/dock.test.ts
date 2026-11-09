@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLang } from '../i18n';
-import { ago, dockLine, noteOf, pushTick } from './dock';
+import { ago, dockFit, dockLine, noteOf, pushTick } from './dock';
 
 describe('dockLine — 사무실 아래 현황판 한 줄', () => {
   it('작업 중이면 행동 이름 + 대상', () => {
@@ -67,5 +67,20 @@ describe('사람 필요 — 브라우저가 사람을 부르면 무슨 상태든
   });
   it('이유가 비면 빈 줄', () => {
     expect(dockLine('idle', undefined, undefined, '')).toEqual({ verb: '사람 필요', text: '' });
+  });
+});
+
+describe('dockFit — 현황판은 한 줄만, 넘치면 +N(11-09 사용자 "아래 세션 카드 줄도 방 바닥을 가려")', () => {
+  it('다 들어가면 다', () => {
+    expect(dockFit(4, 1200)).toEqual({ show: 4, more: 0 });
+  });
+  it('넘치면 +N 단추 자리를 빼고 한 줄에 들어가는 만큼', () => {
+    // 카드 224 + 사이 8, +N 단추 56 — 1176 폭엔 카드 5장이 꽉, 13장이면 4장 + 9
+    expect(dockFit(13, 1176)).toEqual({ show: 4, more: 9 });
+    expect(dockFit(5, 1176)).toEqual({ show: 5, more: 0 });
+  });
+  it('좁아도 한 장은 보인다', () => {
+    expect(dockFit(3, 100)).toEqual({ show: 1, more: 2 });
+    expect(dockFit(0, 100)).toEqual({ show: 0, more: 0 });
   });
 });

@@ -59,9 +59,22 @@ scripts/show <작업 폴더>/a-edit.png
 - **보기는 저절로 따라간다** — 필름은 시간이 있는 명령(자르기·놓기·자막) 앞에 재생 위치가 그 시간으로, 표는 `cell`·`range` 가 화면 밖이면 그 칸까지 스크롤, 포토는 그릴 자리(`select.rect`·`shape.create`·`type.create`)가 안 보이면 캔버스가 그쪽으로. 보기 옮기기를 따로 보내지 않는다(같은 자리 연속이면 안 움직임, 끄기 `CHAMMO_CRAFT_VIEW=0`)
 - **사람이 개입하면**(칸의 개입 단추) 쓰기 명령(`run`·`do`)은 바로 실패한다(종료 코드 4, "사람이 개입함 — 스크립트 멈춤") — 스크립트는 거기서 멈춘다. 보기(`shot`·`ui.inspect`)는 된다. 돌려받으면 `[앱] … 돌려받음 — 사람이 바꾼 것 · 지금 문서 …(레이어 수·화면 png)` 한 줄이 온다 — **남은 스크립트를 스스로 다시 돌리지 말고** 그 상태를 보고 사람에게 다음을 묻는다. 이어서 하라면 남은 단계를 사람이 바꾼 걸 반영해 다시 짠다
 - 창을 숨기지 않는다(숨기면 그림이 멈추고 찍기가 옛 그림). 앱 창을 사용자 화면으로 옮기지 않는다 — 사용자가 직접 만지길 원하면 `close` 후 `--here` 로 다시
-- **닫기 = 묻지 않고 저장 후 닫기**: `close`(창의 닫기 단추도) 는 바뀐 게 있으면 저장한다 — 사람 파일로 열었으면 그 자리에 같은 형식 + 옆에 레이어 살린 PSD, 새 문서면 네 보관함 `Craft` 폴더에 PSD. 사용자가 "아까 그 사진 다시"면 `scripts/craft recent` 에서 찾아 `open photocraft --native <파일>`
+- **닫기 = 묻지 않고 저장 후 닫기**: `close`(창의 닫기 단추도) 는 바뀐 게 있으면 저장한다 — 사람 파일로 열었으면 그 자리에 같은 형식 + 옆에 레이어 살린 PSD, 새 문서면 네 보관함 `Craft` 폴더에 PSD. 앱이 저장 명령에 파일을 안 쓰면(옵션 창만 띄움·거절) 원본은 그대로 두고 고친 판을 옆에 `<이름> (고친 판).<앱 형식>` 으로 건진다 — 그것도 못 쓰면 앱을 끄지 않고 남겨 둔다(종료 코드 1): `document.export` 로 빼 둔 뒤 `close <앱> --no-save`. 사용자가 "아까 그 사진 다시"면 `scripts/craft recent` 에서 찾아 `open photocraft --native <파일>`
 - **공간**: 필요한 것만 깔아 쓴다. `scripts/craft list` 에 앱마다 크기·마지막으로 쓴 날이 나온다 — 30일 넘게 안 쓴 게 있으면(기본 다섯 — 목록의 `[basic / 기본]` — 은 빼고) 다른 일 보고 끝에 "○○ 30일 안 썼는데 지울까?(n MB)" 한 줄만. **사용자가 좋다고 한 것만** `scripts/craft remove <앱>`(받은 것·우리가 깐 맥 앱·설정·작업 폴더 → 휴지통, 사용자가 직접 깐 앱은 안 지움). 혼자 지우지 않는다
 - 맥 앱이 없거나 사용자가 웹에서 보길 원하면 `scripts/craft open <앱>`(웹판, 스페이스) — 웹판은 자동 저장이 없고 한글 글꼴이 없다
+
+## 안내문에서 옮긴 것 — 영상 검토·엑셀·Craft 열기
+
+`scripts/show <영상>` 은 영상을 검토 화면으로 띄운다. 사용자가 PC·폰에서 재생하다 시각마다 말을 남기고 보내면, 시각순 '시각 + 글' 목록이 채팅으로 오고 기록은 `<데이터 폴더>/curation/` 에 남는다(사용자가 '봤어'라고만 해도 거기서 읽는다). 시각은 영상 파일 기준이니 그 시각대로 고치고, 새로 뽑으면 다시 `scripts/show` 한다. 참고용으로 재생만 할 땐 `scripts/show <영상> --plain`. 재생 플레이어 쓰는 법은 사용자에게 안내하지 않는다.
+영상 검토 말을 참모 필름으로 고칠 땐 영상 파일만 열지 말고 먼저 그 편집의 프로젝트 파일을 연다: `scripts/craft open filmcraft --native <프로젝트.fcproj>` (영상만 열면 데모 프로젝트에 가져오기만 된다). `scripts/video-review film <영상>` 이 남긴 말을 타임라인 마커로 넣고, 편집해도 마커가 따라오게 잔물결을 켠다. 새로 뽑은 뒤엔 `scripts/video-review pull <옛 영상> --to <새 영상>` 으로 말을 새 판의 마커 자리로 옮기고(잘려 나간 말은 옛 판에 '잘림'으로 남는다) `scripts/show <새 영상>` 으로 띄운다.
+엑셀은 일로 가른다. **보기·몇 칸**(보여 줘·묻는 값 읽기·오타·값 몇 개)은 `scripts/show <파일>`(엑셀 페이지)·`scripts/sheet get <파일> [시트!A1:C9]`·`scripts/sheet set <파일> <시트!B3> <값|=수식> …`
+— 그 칸만 바꿔 차트·서식이 남고, 페이지가 열려 있으면 사용자가 네 프사가 칸마다 치는 걸 본다. **표를 손보는 일**(합계·계산식 넣기·정렬·중복 지우기·서식·차트·새 엑셀)은
+칸이 적어 보여도 **참모 표**로 — `scripts/craft open gridcraft --native <파일>` 뒤 `run`(`hq-craft` 스킬). 사용자가 칸에서 과정을 보고, 닫으면 그 파일에 저장된다.
+이 일을 `sheet set` 여러 번이나 파이썬(openpyxl)으로 대신하지 않는다 — 사용자에게 아무것도 안 보인다.
+사진·영상·벡터·PDF·문서·표 같은 편집 일은 **Craft 앱**(ArtCraft 오픈소스로 빌드한 참모 앱, 맥·윈도우 — 윈도우는 라이트만 준비 중) — `hq-craft` 스킬부터. 기본은 앱을 조작 채널로 띄워(`scripts/craft open <앱> --native`)
+네가 명령으로 다루고(`run`·`do`·`shot`, 끝나면 `close`) 결과만 `scripts/show` 로. 사용자가 칸에서 만드는 걸 따라 본다 — 창 없는 엔진(`cli`)은 사람이 볼 필요 없는 일괄 처리만. 웹판(`scripts/craft open <앱>`)은 자동 저장이 없다.
+사용자 결과물은 **늘 Craft 앱으로** 만든다 — 사용자 컴퓨터에 일러스트레이터·포토샵 같은 다른 앱이 있어도 작업엔 쓰지 않는다.
+파일을 열거나 고칠 땐 그 형식의 참모 앱으로 — .ai·.eps·.svg 는 참모 벡터, .psd 는 참모 포토, .dwg·.dxf 는 참모 캐드(표는 `hq-craft`). `show` 는 이런 파일을 그림 한 장으로만 보여 준다. 설정 > 기능 '기본 참모 앱 미리 받기'를 켰으면 기본 다섯(참모 표·PDF·슬라이드·문서·벡터)은 앱이 미리 깔아 둔다(기본은 꺼짐) — 안 깔린 앱(포토·필름·캐드 등)이 필요하면 묻지 말고 "참모 포토 설치하고 할게(306MB)"처럼 크기와 함께 한 줄 말하고 진행한다.
 
 # English
 
@@ -93,7 +106,7 @@ The windowless engine (`scripts/craft cli …`) is **only for work nobody needs 
 format conversion (`convert`), reading info (`info`). Don't build a result (a PSD, a laid-out document) with cli `serve`/`run` — nothing is visible
 until it ends (scripts/craft says so on stderr).
 
-Disk space: install only what's used. `scripts/craft list` shows each app's size and last use — if one hasn't been used for 30+ days (except the basic five — `[basic / 기본]` in the list), add one line
+Disk space: install only what's used. `scripts/craft list` shows each app's size and last use — if one hasn't been used for 30+ days (except the basic five — marked `basic` in the list), add one line
 at the end of another report ("X unused for 30 days — remove it? (n MB)"). Only after the user agrees: `scripts/craft remove <app>` (downloads,
 the macOS app if Chammo installed it, settings and work folder → Trash; apps the user installed stay). Never remove on your own.
 
@@ -110,5 +123,21 @@ Then `close` (a person's file is saved back in place) and `scripts/show <file>`.
 Same table as above (app · what it does · auth · common commands). A failing command returns the app's own error — fix and retry; after
 three failures look at `ui.inspect` (an open dialog?) first. A dialog in the way → `scripts/craft dialog <app>` (kind, text) then `dialog <app> close` (whatever the app calls it). Each session gets **its own copy** of an app (up to 3 per app; the 2nd and 3rd are `<app>-2`/`<app>-3`, `status` shows the owner). `open` picks yours and commands go to yours by themselves. With all 3 taken, `open` prints "waiting (#N)" and opens by itself when one frees up (up to 30 min, `--wait <sec>`) — let it wait. Never write to someone else's copy ("in use by …"; `<app>-2 --force` only when you must). **The view follows by itself** — FilmCraft moves the playhead to a command's time (cut, place, caption), GridCraft scrolls to an off-screen `cell`/`range`, PhotoCraft pans the canvas to where `select.rect`/`shape.create`/`type.create` draws; don't send view moves yourself (`CHAMMO_CRAFT_VIEW=0` turns it off). **When the person takes over** (the pane's Take over button), write commands (`run`, `do`) fail at once (exit code 4, "a person took over — script stopped") — your script stops there; reading (`shot`, `ui.inspect`) still works. On hand-back you get one line `[앱] … 돌려받음 — what the person changed · the document now (layer count, a screen png)` — **don't rerun the rest of the script on your own**: read that state and ask the person what next; if they say continue, re-plan the remaining steps around what they changed. Don't hide the window (it stops drawing). `close` (and the window's close
 button) saves without asking when something changed — back to the person's file, or a .psd in your locker's `Craft` folder for a new
-document; `scripts/craft recent` lists them to pick up again. No macOS app,
+document; `scripts/craft recent` lists them to pick up again. If the app doesn't actually write the file (it only opens an options dialog, or refuses), the original is left alone and the edits go to `<name> (고친 판).<app format>` beside it — if even that fails the app stays open (exit 1): `document.export` them, then `close <app> --no-save`. No macOS app,
 or the user wants it in the browser view → `scripts/craft open <app>` (web build in the space; no autosave, no CJK fonts).
+
+## Moved from the guide — video review, Excel, opening Craft apps
+
+`scripts/show <video>` opens the video in a review view. The user plays it on PC or phone, leaves a note at any timestamp, and sends them. You then get a time-ordered list of "time + text" in chat, and the record is saved in `<data folder>/curation/` (if the user only says "I saw it", read it from there). Timestamps refer to the video file, so fix each spot at its time, and run `scripts/show` again after you render a new cut. To just play a video for reference, use `scripts/show <video> --plain`. Do not explain the player to the user.
+To act on video review notes in Chammo Film, open the edit's project file first: `scripts/craft open filmcraft --native <project.fcproj>` (opening only the video file just imports it into the demo project). `scripts/video-review film <video>` puts the notes on the timeline as markers and turns on ripple so the markers follow your edits. After exporting a new cut, run `scripts/video-review pull <old video> --to <new video>` to move the notes to the new cut's marker positions (notes that were trimmed away stay on the old cut as "cut"), then `scripts/show <new video>`.
+Excel work splits by job. **Looking and a few cells** (show it, read a value they ask about, a typo, a couple of values) → `scripts/show <file>` (the sheet page),
+`scripts/sheet get <file> [Sheet!A1:C9]` and `scripts/sheet set <file> <Sheet!B3> <value|=formula> …` — only those cells change (charts and formatting stay), and with the page open
+the user watches your avatar type in each cell. **Reworking the table** (adding totals or formulas, sorting, removing duplicates, formatting, charts, a new workbook) goes to
+**Chammo Grid** even when it looks like few cells — `scripts/craft open gridcraft --native <file>`, then `run` (`hq-craft` skill); the user watches it in the pane and closing saves back
+to that file. Don't do this with many `sheet set` calls or Python (openpyxl) — the user sees nothing.
+Editing work (photo, video, vector, PDF, documents, spreadsheets…) goes to a **Craft app** (ArtCraft open source — Chammo builds; macOS and Windows, Windows without Light for now) —
+open the `hq-craft` skill first. By default open the app with its control channel (`scripts/craft open <app> --native`), drive it with commands
+yourself (`run`, `do`, `shot`, then `close`) and show only the result with `scripts/show`. The user watches it being made in the space —
+the windowless engine (`cli`) is only for batches nobody needs to watch. The web build (`scripts/craft open <app>`) has no autosave.
+Always make the user's work in a Craft app — even if Illustrator, Photoshop or similar apps are installed, don't use them for the work.
+To open or edit a file, use the Chammo app for its format — .ai/.eps/.svg in Chammo Vector, .psd in Chammo Photo, .dwg/.dxf in Chammo CAD (table in `hq-craft`). `show` gives these only a single preview picture. If Settings > Features "Install the basic Chammo apps ahead" is on, the app installs the basic five (Chammo Grid, PDF, Deck, Word, Vector) ahead (it is off by default) — when you need one that isn't installed (Photo, Film, CAD …), don't ask: say "installing Chammo Photo for this (306 MB)" in one line, size included, and go ahead.

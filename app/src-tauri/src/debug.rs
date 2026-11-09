@@ -99,6 +99,19 @@ pub fn space_trace(line: String) -> Result<(), String> {
     append_capped(&crate::config::data_file("space-trace.log"), line.trim(), 100 * 1024).map_err(|e| e.to_string())
 }
 
+/// 화면이 ErrorBoundary 로 멈춘 한 줄 — notify.log 'ui-crash' 칸에 '<창> <오류 글>'. 설치 스크립트가 새 판 메인 창의 이 줄을 보면
+/// 방금 만든 백업으로 되돌린다(2026-11-05 결정 대기함 TDZ — 메인 창이 켤 때마다 멈춰 대화로 못 돌아왔다). 창 이름은 웹이 아니라 Rust 가 붙인다
+#[tauri::command]
+pub fn ui_crash(window: tauri::WebviewWindow, message: String) {
+    crate::claude::log_out("ui-crash", &ui_crash_line(window.label(), &message));
+}
+
+/// '<창> <오류 글>' — 줄바꿈·연속 빈칸은 한 칸으로(설치 스크립트가 줄 단위로 읽는다), 오류 글은 200자까지
+pub(crate) fn ui_crash_line(window: &str, message: &str) -> String {
+    let msg: String = message.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(200).collect();
+    format!("{window} {msg}")
+}
+
 pub fn append_capped(path: &std::path::Path, text: &str, cap: usize) -> std::io::Result<()> {
     let mut cur = std::fs::read_to_string(path).unwrap_or_default();
     cur.push_str(text);
@@ -174,6 +187,28 @@ pub fn place_dev_window<R: Runtime>(app: &tauri::AppHandle<R>) {
                 let _ = w.set_size(tauri::LogicalSize::new(fw, fh));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod ui_crash_tests {
+    use super::ui_crash_line;
+    #[test]
+    fn 창_이름_뒤에_오류_글_한_줄() {
+        assert_eq!(ui_crash_line("main", "Cannot access 'ko' before initialization."), "main Cannot access 'ko' before initialization.");
+    }
+    #[test]
+    fn 줄바꿈_탭은_빈칸_하나로_줄이_안_갈린다() {
+        assert_eq!(ui_crash_line("reader", "a\n\tb\r\n  c"), "reader a b c");
+    }
+    #[test]
+    fn 오류_글은_200자까지_글자_경계로() {
+        let l = ui_crash_line("main", &"가".repeat(500));
+        assert_eq!(l.chars().count(), "main ".len() + 200);
+    }
+    #[test]
+    fn 빈_글이어도_창_이름은_남는다() {
+        assert_eq!(ui_crash_line("main", ""), "main ");
     }
 }
 

@@ -81,6 +81,18 @@ export const IconCopy = () => (
 export const IconTrash = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M2.5 4.2h11M6.2 4.2V2.8h3.6v1.4M4 4.2l.7 9h6.6l.7-9M6.7 6.8v4M9.3 6.8v4" /></svg>
 );
+/** 색: 물방울(문서 블록 손잡이 메뉴 — 글자·바탕 색) */
+export const IconDrop = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M8 2.2c2.4 3 3.9 5.2 3.9 7.2a3.9 3.9 0 0 1-7.8 0c0-2 1.5-4.2 3.9-7.2Z" /></svg>
+);
+/** 머리 행: 표 + 굵은 첫 줄(문서 표 손잡이 메뉴) */
+export const IconHeadRow = () => (
+  <svg viewBox="0 0 16 16" {...P}><rect x="2.5" y="2.5" width="11" height="11" rx="1.5" /><path d="M2.5 6.5h11M8 6.5v7" /><path d="M3.5 4.5h9" strokeWidth={2.4} /></svg>
+);
+/** 머리 열: 표 + 굵은 첫 칸(IconHeadRow 를 돌린 것) */
+export const IconHeadCol = () => (
+  <svg viewBox="0 0 16 16" {...P}><rect x="2.5" y="2.5" width="11" height="11" rx="1.5" /><path d="M6.5 2.5v11M6.5 8h7" /><path d="M4.5 3.5v9" strokeWidth={2.4} /></svg>
+);
 /** 닫기: X */
 export const IconClose = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M4 4l8 8M12 4l-8 8" /></svg>
@@ -458,11 +470,19 @@ const NEEDLE = { ok: 'M8 11.5 4.6 9.3', warn: 'M8 11.5V7.4', high: 'M8 11.5 11.4
 export const IconGauge = ({ lv }: { lv: keyof typeof NEEDLE }) => (
   <svg viewBox="0 0 16 16" {...P}><path d="M2.5 11.5a5.5 5.5 0 0 1 11 0" /><path d={NEEDLE[lv]} /><circle cx="8" cy="11.5" r=".9" fill="currentColor" /></svg>
 );
+/** 오늘 한 일: 진행 고리 + 체크 — 위 띠 부하 게이지 옆(시안 inbox-today I3, 2026-11-05) */
+export const IconToday = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M13.6 8a5.6 5.6 0 1 1-2.2-4.45M5.6 8l1.8 1.8 4.6-5" /></svg>
+);
 /** CPU: 칩 + 다리 */
 export const IconCpu = () => (
   <svg viewBox="0 0 16 16" {...P}><rect x="4.5" y="4.5" width="7" height="7" rx="1.2" /><path d="M6.5 2.3v2.2M9.5 2.3v2.2M6.5 11.5v2.2M9.5 11.5v2.2M2.3 6.5h2.2M2.3 9.5h2.2M11.5 6.5h2.2M11.5 9.5h2.2" /></svg>
 );
 /** 메모리: 램 막대 */
+/** 공책 */
+export const IconNotebook = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M4 2.5h8a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4ZM4 2.5v11M6.6 5.6h4M6.6 8.2h4" /></svg>
+);
 export const IconMemory = () => (
   <svg viewBox="0 0 16 16" {...P}><rect x="2" y="4.5" width="12" height="6" rx="1" /><path d="M5 7v1.5M8 7v1.5M11 7v1.5M4 10.5v2M6.7 10.5v2M9.3 10.5v2M12 10.5v2" /></svg>
 );

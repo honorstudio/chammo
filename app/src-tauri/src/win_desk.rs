@@ -48,6 +48,18 @@ pub fn signed_auto(live_dir: &Path, profile: &str, pid: i32) -> bool {
         .is_some_and(|v| v["pid"].as_i64() == Some(pid as i64) && v["auto"] == true)
 }
 
+/// 사람이 부름에 답하거나(다 했어) 돌려줄 때 구글 크롬을 되돌릴까 — 사람이 고른 것만. 래퍼가 패스키 때문에 스스로 바꾼 것(auto)은
+/// 래퍼가 끝을 안다(성공 뒤 주소 바뀜·사람 '돌아오기'·10분, passkey-auto.js) — 11-09 거래소: 바꾼 지 42초 만에 부름 답으로 되돌려 패스키 창이 뜰 틈이 없었다
+pub fn revert_on_human_end(live_dir: &Path, profile: &str, pid: i32) -> bool {
+    signed_on(live_dir, profile, pid) && !signed_auto(live_dir, profile, pid)
+}
+
+/// 칸이 '구글 크롬으로 열었어'라고 해도 되나 — 표가 있고, 지금 크롬(exe)이 재서명 사본(Chammo Browser.app)이 아닐 때.
+/// 바꾼 크롬이 죽어 플레이라이트가 사본으로 다시 띄우면 표만 남는다. 크롬을 못 찾으면(바꾸는 중) 표대로
+pub fn signed_really(mark: bool, exe: Option<&str>) -> bool {
+    mark && !exe.is_some_and(|e| e.contains("/Chammo Browser.app/"))
+}
+
 pub fn ask_signed(live_dir: &Path, profile: &str, pid: i32, on: bool, done: Option<&str>) -> Result<(), String> {
     ask_to(live_dir, profile, "signed", pid, on, done)
 }
@@ -146,6 +158,31 @@ mod tests {
         assert!(signed_auto(&d, "shop", 42));
         assert!(!signed_auto(&d, "shop", 7), "다른 래퍼");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    // 11-09 거래소 — 세션 부름 중 래퍼가 패스키로 바꾼 지 42초 만에 사람이 부름에 답하자(다 했어) 앱이 곧바로 되돌려 패스키 창이 뜰 틈이 없었다.
+    // 사람이 고른 구글 크롬은 다 했어·돌려주기로 되돌리고, 래퍼가 스스로 바꾼 것은 래퍼 판단(성공 뒤 주소 바뀜·사람 '돌아오기'·10분)에 맡긴다
+    #[test]
+    fn 다_했어로_되돌리는_건_사람이_고른_구글_크롬만() {
+        let d = std::env::temp_dir().join(format!("chammo-signed-end-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        assert!(!revert_on_human_end(&d, "shop", 42), "바꿔 둔 게 없다");
+        std::fs::write(d.join("shop.signed-on"), r#"{"pid":42,"at":1}"#).unwrap();
+        assert!(revert_on_human_end(&d, "shop", 42), "사람이 고른 것");
+        std::fs::write(d.join("shop.signed-on"), r#"{"pid":42,"at":1,"auto":true}"#).unwrap();
+        assert!(!revert_on_human_end(&d, "shop", 42), "패스키 때문에 스스로 — 래퍼가 끝을 안다");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    // 표와 실제 크롬이 어긋나면(바꾼 크롬이 죽어 플레이라이트가 사본을 다시 띄움 등) 칸이 '크롬 창에서 열었어'라고 거짓말하지 않게 — 실행 파일로 확인
+    #[test]
+    fn 사본_크롬이면_구글_크롬_표를_안_믿는다() {
+        let copy = "/Users/u/.chammo/browser/app/com.google.Chrome.beta-158.0.8127.18/Chammo Browser.app/Contents/MacOS/Google Chrome Beta";
+        let google = "/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta";
+        assert!(!signed_really(true, Some(copy)));
+        assert!(signed_really(true, Some(google)));
+        assert!(signed_really(true, None), "크롬을 못 찾으면(바꾸는 중) 표대로");
+        assert!(!signed_really(false, Some(google)), "표가 없으면 사람이 연 구글 크롬이어도 아니다");
     }
 
     #[test]

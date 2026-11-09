@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { itemOf, ownedOf, rarityLabel, skinOfFile, type GachaFile, type ItemKind } from '../../domain/gacha';
-import { catWalk, planRoom, withLounge, type Room } from '../../domain/office';
+import { itemOf, officesOf, ownedOf, rarityLabel, skinOfRoom, type GachaFile, type ItemKind } from '../../domain/gacha';
+import { catWalk, planOffice, type Room } from '../../domain/office';
+import { newRoom, type OfficeRoom } from '../../domain/officeRoom';
 import { tr } from '../../i18n';
 import { drawRoom, roomSize } from '../office/draw';
 import { SubHead } from '../office/OfficeMenu';
@@ -9,34 +10,38 @@ import { ItemIcon } from './GachaPage';
 import { Stars } from './Stars';
 
 // 미리보기용 작은 방 — 반장 + 세 명(폰 스킨 줄의 작은 방도)
-export const SAMPLE: Room = planRoom(
-  [{ id: 'b', label: '', project: 'b', status: 'working', startedAt: 0 }],
-  ['todo-api', 'acme-shop', 'pixel-blog'].map((p, i) => ({ id: p, label: '', project: p, status: i === 1 ? 'done' : 'working', startedAt: i })),
-  'bear',
-);
+export const sampleRoom = (room: OfficeRoom = newRoom()): Room => planOffice({
+  room, index: 0,
+  orchs: [{ id: 'b', name: 'b', label: '', project: 'b', status: 'working', startedAt: 0, spr: 'bear' }],
+  workers: ['todo-api', 'acme-shop', 'pixel-blog'].map((p, i) => ({ id: p, label: '', project: p, status: i === 1 ? 'done' : 'working', startedAt: i })),
+});
+export const SAMPLE: Room = sampleRoom();
 
 /** 꾸미기 자리 — 순서 = 왼쪽 목록 순서. 가구는 방에 놓기(트레이), 펫 친구는 가지면 늘 나온다(보기만) */
 export const DECO_SLOTS: [ItemKind, string][] = [
   ['skin', tr('방 스킨', 'Room skin')], ['window', tr('창밖', 'Window view')], ['light', tr('조명', 'Lighting')], ['hat', tr('모자', 'Hat')],
   ['title', tr('칭호', 'Title')], ['desk', tr('책상 소품', 'Desk item')], ['action', tr('반장 액션', 'Boss move')], ['fx', tr('펑 효과', 'Pop effect')],
-  ['furn', tr('가구', 'Furniture')], ['friend', tr('펫 친구', 'Pet pals')],
+  ['chr', tr('캐릭터', 'Characters')], ['furn', tr('가구', 'Furniture')], ['floor', tr('바닥 장식', 'Floor')], ['wall', tr('벽 장식', 'Wall')], ['friend', tr('펫 친구', 'Pet pals')],
 ];
+/** 끼우는 게 아니라 방에 놓는 것 */
+const PLACED: ItemKind[] = ['furn', 'floor', 'wall'];
 const short = (id: string) => itemOf(id)?.name.replace(/^.* — /, '') ?? '';
 
 /** 지금 낀 것으로 그린 작은 방 — 끼울 때마다 바뀐다(사무실로 안 나가도 모습이 보인다) */
-function Preview({ file }: { file: GachaFile | null }) {
+function Preview({ file, office }: { file: GachaFile | null; office: number }) {
   const cv = useRef<HTMLCanvasElement>(null);
   const eq = file?.equip ?? {};
-  const furn = file ? ownedOf(file, 'furn') : [];
+  const shape = file ? officesOf(file)[office] : undefined;
   const pals = file ? ownedOf(file, 'friend') : [];
-  const key = JSON.stringify([eq, furn, pals, file ? skinOfFile(file) : 'wood']);
+  const skinNow = file ? skinOfRoom(file, office) : 'wood';
+  const key = JSON.stringify([eq, shape, pals, skinNow]);
   useEffect(() => {
     const c = cv.current, ctx = c?.getContext('2d');
     if (!c || !ctx) return;
-    const room = withLounge(SAMPLE, furn, file?.placed);
+    const room = sampleRoom(shape);
     const { W, H } = roomSize(room);
     c.width = W; c.height = H;
-    const sk = skinOf(file ? skinOfFile(file) : 'wood');
+    const sk = skinOf(skinNow);
     let t = 0;
     const frame = () => {
       const now = Date.now();
@@ -57,24 +62,25 @@ function Preview({ file }: { file: GachaFile | null }) {
  * 누르면 끼우고 또 누르면 뺀다. 스킨은 '나무' 칸 = 해제(기본). 가구는 '방에 놓기'로 사무실 트레이, 펫 친구는 보기만.
  * focus = 도감에서 눌러 들어왔을 때 그 아이템(그 종류를 열고 표시)
  */
-export function DecoView({ file, focus, onEquip, onSkin, onPlace, onClose, nav }: {
-  file: GachaFile | null; focus?: string | null; onEquip: (id: string) => void; onSkin: (name: string) => void;
-  /** 가구 놓기(사무실 트레이) — 없으면(펫 탭) 버튼 대신 안내 */ onPlace?: () => void; onClose: () => void; nav?: ReactNode;
+export function DecoView({ file, focus, office = 0, onEquip, onSkin, onChars, onPlace, onClose, nav }: {
+  file: GachaFile | null; focus?: string | null; /** 지금 사무실 — 스킨은 사무실마다 */ office?: number; onEquip: (id: string) => void; onSkin: (name: string) => void;
+  /** 참모 캐릭터 고르기 창 */ onChars?: () => void;
+  /** 사무실 편집(그 층으로) — 없으면 버튼 대신 안내 */ onPlace?: (kind: 'furn' | 'floor' | 'wall') => void; onClose: () => void; nav?: ReactNode;
 }) {
   const [kind, setKind] = useState<ItemKind>(() => itemOf(focus ?? '')?.kind ?? 'skin');
   useEffect(() => { const k = itemOf(focus ?? '')?.kind; if (k) setKind(k); }, [focus]);
   const eq = (file?.equip ?? {}) as Record<string, string | undefined>;
   const owned = file?.owned ?? {};
   const fresh = new Set(file?.fresh ?? []);
-  const skinNow = file ? skinOfFile(file) : 'wood';
+  const skinNow = file ? skinOfRoom(file, office) : 'wood';
   const current = (k: ItemKind) => {
     if (k === 'skin') return skinNow === 'wood' ? tr('나무', 'Wood') : short(`skin.${skinNow}`);
-    if (k === 'furn' || k === 'friend') { const n = file ? ownedOf(file, k).length : 0; return n ? tr(`${n}개`, `${n}`) : tr('없음', 'None'); }
+    if (k === 'furn' || k === 'friend' || k === 'chr' || k === 'floor' || k === 'wall') { const n = file ? ownedOf(file, k).length : 0; return n ? tr(`${n}개`, `${n}`) : tr('없음', 'None'); }
     return eq[k] ? short(eq[k]!) : tr('없음', 'None');
   };
   const on = (id: string) => (kind === 'skin' ? `skin.${skinNow}` === id : eq[kind] === id);
   const press = (id: string) => (kind === 'skin' ? onSkin(on(id) ? 'wood' : id.slice(5)) : onEquip(id));
-  const wearable = kind !== 'furn' && kind !== 'friend';
+  const wearable = kind !== 'friend' && kind !== 'chr' && !PLACED.includes(kind);
   // 끼는 중인 것 → NEW → 나머지(도감 순서) — 쓰는 스킨이 80칸 사이에 묻히지 않게
   const ids = (file ? ownedOf(file, kind) : []).sort((a, b) => Number(on(b)) - Number(on(a)) || Number(fresh.has(b)) - Number(fresh.has(a)));
   return (
@@ -89,11 +95,12 @@ export function DecoView({ file, focus, onEquip, onSkin, onPlace, onClose, nav }
           ))}
         </nav>
         <div className="deco-main">
-          <div className="deco-stage"><Preview file={file} /></div>
+          <div className="deco-stage"><Preview file={file} office={office} /></div>
           <div className="deco-grid">
-            {kind === 'furn' && (onPlace
-              ? <button className="deco-place" onClick={onPlace}>{tr('방에 놓기', 'Place in room')}</button>
-              : <span className="dim deco-note">{tr('가구는 사무실에서 놓아', 'Place furniture from the office')}</span>)}
+            {PLACED.includes(kind) && (onPlace
+              ? <button className="deco-place" onClick={() => onPlace(kind as 'furn' | 'floor' | 'wall')}>{tr('방에 놓기', 'Place in room')}</button>
+              : <span className="dim deco-note">{tr('사무실에서 놓아', 'Place it from the office')}</span>)}
+            {kind === 'chr' && onChars && <button className="deco-place" onClick={onChars}>{tr('참모 캐릭터 정하기', 'Pick characters')}</button>}
             {kind === 'friend' && <span className="dim deco-note">{tr('가진 펫 친구는 사무실 통로를 걷는다', 'Pet pals you own walk around the office')}</span>}
             {kind === 'skin' && (
               <button className={`dex-cell ${skinNow === 'wood' ? 'on' : ''}`} onClick={() => onSkin('wood')} title={tr('기본 방 — 끼운 스킨 해제', 'Default room — removes the skin')}>

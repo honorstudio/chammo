@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { cardTag, ctxFromAgents, heldIds, orchAsk, orchTasks, releaseSnap, routineOrch, rubberTop, sheetTop, closeOnRelease, dropLabel, keyboardOpen, frameAt, driftBias, ghostKeyboard, readViewport, diagLine, isTyping, liveWork, phoneBubble, usageText, waitingList, withAttachments, phoneName, offOrchRows, wokeOrch, waitAnswer, waitKey, shownWaiting, pruneWaitSent, dupAnswer, answerFail, sessionBoard, nearBottom, stickBottom, keepTop, farFromBottom, jumpDot, shrinkPlan, withEarlier, wantEarlier, nextAfterStop, lineSlot, orchMenu, pendingName, prunePendingNicks, subTag, subStatus } from './mobile';
+import { cardTag, ctxFromAgents, heldIds, orchAsk, orchTasks, releaseSnap, routineOrch, rubberTop, sheetTop, closeOnRelease, dropLabel, keyboardOpen, frameAt, driftBias, ghostKeyboard, readViewport, diagLine, isTyping, liveWork, phoneBubble, usageText, waitingList, withAttachments, phoneName, offOrchRows, wokeOrch, waitAnswer, waitKey, shownWaiting, pruneWaitSent, dupAnswer, answerFail, sessionBoard, nearBottom, nearAfterScroll, stickBottom, keepTop, farFromBottom, jumpDot, shrinkPlan, withEarlier, wantEarlier, nextAfterStop, lineSlot, orchMenu, pendingName, prunePendingNicks, subTag, subStatus } from './mobile';
 import type { Session } from './session';
 import { dashList } from './dashList';
-import type { ChatItem } from './chat';
+import { parseChat, type ChatItem } from './chat';
 import type { TaskEvent } from './tasks';
 import { statusWord, type ActivityStatus } from './status';
 
@@ -356,6 +356,23 @@ describe('isTyping — 키보드를 부르는 칸에 포커스가 있나', () =>
   });
 });
 
+describe('다른 세션 말로 깬 턴 — 폰 채팅 ③·도구 수(2026-11-04 사용자 폰, 지어낸 기록)', () => {
+  const end = (uuid: string, ts: string, t: string, tools = false) => JSON.stringify({ type: 'assistant', uuid, timestamp: ts, message: { role: 'assistant', stop_reason: tools ? 'tool_use' : 'end_turn', content: tools ? [{ type: 'tool_use', name: t, input: {} }] : [{ type: 'text', text: t }] } });
+  const peer = (uuid: string, ts: string) => JSON.stringify({ type: 'user', isMeta: true, origin: { kind: 'peer' }, uuid, timestamp: ts, message: { role: 'user', content: 'Another Claude session sent a message:\n<cross-session-message from="uds:/tmp/x.sock" from-name="참모-2 · 참모 업데이트" from-mode="bypass">\n내가 바로 말할게\n</cross-session-message>' } });
+  const items = parseChat([
+    end('a1', '2026-11-03T18:39:44Z', '사진 정리가 끝났어.\n\n앨범으로 묶을까?'),
+    peer('p1', '2026-11-04T04:16:53Z'),
+    end('a2', '2026-11-04T04:16:57Z', '이제 앨범은 홍보 담당이 너한테 바로 말한대. 묶는 것도 거기서 하니까 아까 내가 물은 건 답 안 해도 돼.\n\n나는 빠질게. 여행 얘기 하고 싶을 때 불러 줘.'),
+  ].join('\n'));
+  it('재현: 뒤 턴이 앞 물음을 거뒀으면 답을 기다림 카드가 안 남는다(옛 시각 03:39 카드가 남았다)', () => {
+    expect(orchAsk(items, 'idle')).toBeNull();
+  });
+  it('재현: 이번 턴 도구 수는 다른 세션 말부터 센다 — 사람 말까지 거슬러 세서 도구 3번으로 보였다', () => {
+    const turn = parseChat([end('t0', '2026-11-03T18:37:50Z', 'SendMessage', true), end('t1', '2026-11-03T18:38:04Z', 'Edit', true), peer('p1', '2026-11-03T18:39:35Z'), end('t2', '2026-11-03T18:39:38Z', 'Bash', true)].join('\n'));
+    expect(liveWork({ state: 'working', items: turn, pending: 0, stateAt: Date.parse('2026-11-03T18:39:39Z'), now: Date.parse('2026-11-03T18:39:40Z') }).tools).toBe(1);
+  });
+});
+
 describe('liveWork — 폰 일하는 중 표시(데스크톱 chatBusy + 기록 꼬리)', () => {
   const T0 = Date.parse('2026-10-02T14:00:00Z');
   const at = (s: number) => new Date(T0 + s * 1000).toISOString();
@@ -488,6 +505,19 @@ describe('stickBottom — 대화 목록 바닥 붙이기(키보드·새 말풍�
     expect(stickBottom({ wasNear: true, sentMine: false })).toBe(true);
     expect(stickBottom({ wasNear: false, sentMine: false })).toBe(false);
     expect(stickBottom({ wasNear: false, sentMine: true })).toBe(true);
+  });
+});
+
+describe('nearAfterScroll — 바닥에서 벗어났다는 판단은 사람이 움직였을 때만(11-08 사용자 폰 입력칸 가림)', () => {
+  it('바닥 근처로 오면 늘 붙음', () => {
+    expect(nearAfterScroll({ was: false, nearNow: true, handMs: 99_999 })).toBe(true);
+  });
+  it('사람이 막(1초 안) 움직여 바닥을 벗어났으면 떨어짐 — 위로 읽는 중이면 안 끌어내린다', () => {
+    expect(nearAfterScroll({ was: true, nearNow: false, handMs: 200 })).toBe(false);
+  });
+  it('사람 손 없이 배치가 바꾼 스크롤(입력칸이 커져 목록이 깎임)은 붙음을 그대로 — 끄면 다음 크기 변화에 바닥으로 안 돌아왔다', () => {
+    expect(nearAfterScroll({ was: true, nearNow: false, handMs: 5_000 })).toBe(true);
+    expect(nearAfterScroll({ was: false, nearNow: false, handMs: 5_000 })).toBe(false);
   });
 });
 

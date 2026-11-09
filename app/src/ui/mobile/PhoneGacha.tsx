@@ -2,8 +2,7 @@
 // 폰은 요청만 보내고 굴리기·장착은 맥 앱 한 줄(domain/phoneGacha, 폰 서버 /api/gacha). 기계 그림은 데스크톱 MachineCanvas·machine.ts 그대로
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { CATALOG, itemOf, PITY, PRICE, PRICE_TEN, rarityLabel, type EquipKind, type PullResult, type Rarity } from '../../domain/gacha';
-import { withLounge } from '../../domain/office';
-import { makeGachaSender, parseView, PHONE_SLOTS, shortName, slotList, type PhoneGachaView, type PhoneReply, type Preview, type SendBody, type SlotFilter } from '../../domain/phoneGacha';
+import { makeGachaSender, parseView, PHONE_SLOTS, shortName, slotList, type PhoneGachaView, type PhoneReply, type OfficeOp, type Preview, type SendBody, type SlotFilter } from '../../domain/phoneGacha';
 import { gachaRequest, readGachaView } from '../../data/web';
 import { machine, tr } from '../../i18n';
 import { IconCheck, IconReplay, IconSkip } from '../Icons';
@@ -15,7 +14,7 @@ import { Stars } from '../gacha/Stars';
 import { drawRoom, roomSize } from '../office/draw';
 import { skinOf } from '../office/skins';
 
-const why = (w: string) => ({ short: tr('코인이 모자라', 'Not enough coins'), 'not-owned': tr('아직 안 가진 거야', "You don't own that yet"), unknown: tr('모르는 아이템이야', 'Unknown item'), off: tr(`${machine()}에서 뽑기가 꺼져 있어`, `Gacha is turned off on the ${machine()}`) } as Record<string, string>)[w] ?? w;
+const why = (w: string) => ({ spot: tr('자리가 겹쳐', 'That spot is taken'), short: tr('코인이 모자라', 'Not enough coins'), 'not-owned': tr('아직 안 가진 거야', "You don't own that yet"), unknown: tr('모르는 아이템이야', 'Unknown item'), off: tr(`${machine()}에서 뽑기가 꺼져 있어`, `Gacha is turned off on the ${machine()}`) } as Record<string, string>)[w] ?? w;
 const noAnswer = () => tr(`${machine()}이 답이 없어 — 잠깐 뒤에 다시`, `The ${machine()} isn't answering — try again in a moment`);
 const makeRid = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`.padEnd(8, '0');
 
@@ -49,7 +48,9 @@ export function usePhoneGacha() {
   }, []);
   const pull = useCallback((n: 1 | 10) => send(`pull${n}`, { op: 'pull', n }), [send]);
   const equip = useCallback((slot: EquipKind, id: string | null) => send(`equip:${slot}:${id}`, { op: 'equip', slot, id }), [send]);
-  return { view, err, stalled: stalled || busy, pull, equip };
+  /** 사무실 고치기(넓히기·열기·캐릭터·자리) — 값이 드는 건 같은 요청 id 로 두 번 안 빠진다 */
+  const office = useCallback((op: OfficeOp) => send(JSON.stringify(op), op), [send]);
+  return { view, err, stalled: stalled || busy, pull, equip, office };
 }
 export type PhoneGachaState = ReturnType<typeof usePhoneGacha>;
 
@@ -93,16 +94,16 @@ function ResultCard({ res, g }: { res: Result; g: PhoneGachaState }) {
   const order = [...res.rs].sort((a, b) => RANK[b.rarity] - RANK[a.rarity]);
   return (
     <div className="m-gacha-ten">
-      <div className="m-gacha-sum">{tr(`새것 ${fresh} · 별 ${up} · 코인 +${back}`, `New ${fresh} · Stars ${up} · Coins +${back}`)}</div>
-      <ul className="m-gacha-tenl">
+      <div className="pf-sum">{tr(`새것 ${fresh} · 별 ${up} · 코인 +${back}`, `New ${fresh} · Stars ${up} · Coins +${back}`)}</div>
+      <div className="pf-grid5">
         {order.map((r, i) => (
-          <li key={i} className={`r-${r.rarity}`}>
+          <div key={i} className="pf-cell" data-r={r.rarity}>
             <ItemIcon id={r.id} />
-            <span>{shortName(r.id)}</span>
-            {r.dup ? <Stars count={owned(r.id)} up={r.up} /> : <b className="m-gacha-new">NEW</b>}
-          </li>
+            <span className="nm">{shortName(r.id)}</span>
+            {r.dup ? <><Stars count={owned(r.id)} up={r.up} />{r.refund > 0 && <em>+{r.refund}</em>}</> : <b className="m-gacha-new">NEW</b>}
+          </div>
         ))}
-      </ul>
+      </div>
     </div>
   );
 }
@@ -145,14 +146,15 @@ const SLOT_NAME = new Map(DECO_SLOTS.filter(([k]) => PHONE_SLOTS.includes(k as E
 const baseOf = (slot: EquipKind) => (slot === 'skin' ? 'skin.wood' : null);
 
 /** 입혀 보기 상태 — 방 화살표·밀기·아래 줄이 같이 쓴다 */
-export function useSkinPick(view: PhoneGachaView | null) {
+export function useSkinPick(view: PhoneGachaView | null, office = 0) {
   const [slot, setSlotRaw] = useState<EquipKind>('skin');
   const [filter, setFilter] = useState<SlotFilter>('all');
   const [q, setQ] = useState('');
   const [preview, setPreview] = useState<Preview | null>(null);
   const list = useMemo(() => (view ? slotList(view, slot, filter, q) : []), [view, slot, filter, q]);
   const entries: (string | null)[] = filter === 'all' && !q.trim() ? [baseOf(slot), ...list] : list;
-  const current = view?.equip[slot] ?? baseOf(slot);
+  // 스킨은 사무실마다 — 첫 사무실 말고는 그 사무실 칸에 적혀 있다
+  const current = slot === 'skin' && office > 0 ? `skin.${view?.offices?.[office]?.skin ?? 'wood'}` : view?.equip[slot] ?? baseOf(slot);
   const shown = preview && preview.slot === slot ? preview.id : current;
   const step = (d: 1 | -1) => {
     if (!entries.length) return;
@@ -162,7 +164,7 @@ export function useSkinPick(view: PhoneGachaView | null) {
   };
   const setSlot = (k: EquipKind) => { setSlotRaw(k); setFilter('all'); setQ(''); setPreview(null); };
   const pick = (id: string | null) => setPreview(id === current ? null : { slot, id });
-  return { slot, setSlot, filter, setFilter, q, setQ, preview, setPreview, entries, current, shown, step, pick };
+  return { slot, office, setSlot, filter, setFilter, q, setQ, preview, setPreview, entries, current, shown, step, pick };
 }
 export type SkinPick = ReturnType<typeof useSkinPick>;
 
@@ -175,7 +177,7 @@ function MiniRoom({ name }: { name: string }) {
     const draw = () => {
       const ctx = c.getContext('2d');
       if (!ctx) return;
-      const room = withLounge(SAMPLE, [], {});
+      const room = SAMPLE;
       const { W, H } = roomSize(room);
       c.width = W; c.height = H;
       drawRoom(ctx, room, skinOf(name), 0, {});
@@ -203,9 +205,14 @@ export function SkinTab({ g, p, dark, onEquipped }: { g: PhoneGachaState; p: Ski
   const id = p.shown;
   const it = id && id !== 'skin.wood' ? itemOf(id) : undefined;
   const fresh = new Set(v.fresh);
-  const worn = v.equip[p.slot] ?? baseOf(p.slot);
+  const worn = p.current;
   const changed = !!p.preview && p.preview.slot === p.slot;
-  const apply = async () => { if (!p.preview) return; const r = await g.equip(p.preview.slot, p.preview.id); if (r?.ok) { p.setPreview(null); onEquipped?.(); } };
+  const apply = async () => {
+    if (!p.preview) return;
+    const { slot, id: next } = p.preview;
+    const r = slot === 'skin' && p.office > 0 ? await g.office({ op: 'skin', office: p.office, name: (next ?? 'skin.wood').slice(5) }) : await g.equip(slot, next);
+    if (r?.ok) { p.setPreview(null); onEquipped?.(); }
+  };
   const label = (e: string | null) => (e === 'skin.wood' ? tr('나무', 'Wood') : e ? shortName(e) || e : tr('없음', 'None'));
   return (
     <div className="m-g1">

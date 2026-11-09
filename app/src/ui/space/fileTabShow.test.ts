@@ -18,6 +18,7 @@ describe('보관함 탭 — show 짚기·다시 띄우기', () => {
   });
   it('도장이 바뀌면 글은 다시 읽고 그림·영상·html·pdf 는 다시 그린다', () => {
     expect(tab).toMatch(/\}, \[path, kind, stamp\]\);/);
-    expect(tab).toMatch(/<div className="ft-body" key=\{stamp\}>/);
+    // 다시 불러오기 아이콘(11-05)도 같은 열쇠에 — 도장·누른 수 둘 중 하나가 바뀌면 다시 그린다
+    expect(tab).toMatch(/<div className="ft-body" key=\{`\$\{stamp \?\? ''\}:\$\{reload\}`\}>/);
   });
 });

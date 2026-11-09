@@ -3,7 +3,7 @@ import { winToMac } from './keys';
 import { IS_WIN } from './reader';
 
 export type Shortcut =
-  | { type: 'goto'; to: 'orchestrator' | 'all' | 'tama' | 'review' | 'office' }
+  | { type: 'goto'; to: 'orchestrator' | 'all' | 'review' | 'office' }
   /** ⌘1~9 — 스페이스면 채팅 탭 N번, 아니면 gotoOfNum(예전 화면 이동) */
   | { type: 'num'; n: number }
   | { type: 'font'; delta: 1 | -1 }
@@ -22,8 +22,8 @@ export type Shortcut =
   /** ⌘⇧H·⌘⇧L — 고른 참모의 홈·보관함 고정 탭으로 */
   | { type: 'goHome' }
   | { type: 'goLocker' }
-  | { type: 'widget' }
   | { type: 'memo' }
+  | { type: 'notes' }
   | { type: 'toggleReader' }
   | { type: 'readerFull' }
   | { type: 'readerTab'; dir: 1 | -1 }
@@ -124,6 +124,8 @@ export function shortcutFor(input: KeyLike, win = IS_WIN): Shortcut | null {
       return { type: 'farPick' }; // ⌘⇧D — 다른 기기 목록(⇧ 없는 ⌘D 는 앱이 안 쓴다)
     case 'm':
       return { type: 'memo' }; // 보고 있는 창 위에 그 프로젝트 메모
+    case 'M':
+      return { type: 'notes' }; // ⌘⇧M — 내 메모(어느 참모·프로젝트에도 안 속한다)
     case 'e':
       return { type: 'toggleReader' }; // 작업 패널 왼쪽 리더 패널
     case 'E':
@@ -146,8 +148,6 @@ const MENU: Record<string, Shortcut> = {
   goto_all: { type: 'goto', to: 'all' },
   goto_review: { type: 'goto', to: 'review' },
   goto_office: { type: 'goto', to: 'office' },
-  goto_tama: { type: 'goto', to: 'tama' },
-  open_dex: { type: 'goto', to: 'tama' },
   sidebar: { type: 'toggleSidebar' },
   tasks: { type: 'toggleTasks' },
   search: { type: 'search' },
@@ -160,8 +160,8 @@ const MENU: Record<string, Shortcut> = {
   new_doc: { type: 'newDoc' },
   go_home: { type: 'goHome' },
   go_locker: { type: 'goLocker' },
-  widget_toggle: { type: 'widget' },
   memo: { type: 'memo' },
+  notes: { type: 'notes' },
   reader_toggle: { type: 'toggleReader' },
   reader_full: { type: 'readerFull' },
   reader_next: { type: 'readerTab', dir: 1 },

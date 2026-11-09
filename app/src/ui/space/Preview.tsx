@@ -6,7 +6,6 @@ import { parseBox, resizeBox, type Box, type Edge } from '../../domain/previewBo
 import { docUrl, inTime, kindOf, pageDoc, PAGE_DOC_WAIT_MS } from '../../domain/reader';
 import { FIT, IMAGE_STEPS, stepZoom, withZoom, zoomable, zoomLabel, zoomOf, type ZoomMap } from '../../domain/readerZoom';
 import { assistant, tr } from '../../i18n';
-import { sendPreview } from '../../domain/sendPreview';
 import { IconCheck, IconClose, IconMaximize, IconRefresh, IconRestore, IconReveal, IconSend, IconZoomIn, IconZoomOut } from '../Icons';
 import { dragOut } from './dragPath';
 import { lockerApi } from './useLocker';
@@ -15,7 +14,7 @@ import { Confirm } from '../OrchDialogs';
 import { ExtraDoc, frameStyle, HtmlFrame, loadZoom, MdDoc, ZOOM_KEY } from '../reader/Reader';
 import { flashWhenReady } from '../flash';
 import { useImageBox } from './imageBox';
-import { fromFrame, isCurationHtml } from '../../domain/curation';
+import { curationOutgoing, fromFrame, isCurationHtml } from '../../domain/curation';
 import { webTitle } from '../../domain/webUrl';
 import { WebPage } from '../WebPage';
 import { SendToOrch, type OrchTo } from './SendToOrch';
@@ -68,24 +67,24 @@ export function Preview({ f, onClose, onAttach, attachTo, onSendText, onCuration
     window.addEventListener('message', on);
     return () => window.removeEventListener('message', on);
   }, [f.path]);
-  const sendCur = async () => {
+  // 머리 보내기도 시안 안 보내기와 같은 확인 창으로(C-1) — 이 칸의 글은 칸 스크립트가 쓴 것이라 보고 눌러야 간다
+  const sendCur = () => {
     if (!cur || !onSendText) return;
-    setCurSent('sending');
-    try { await onSendText(cur.text); setCurSent('sent'); } catch { setCurSent('fail'); }
+    setAskSend({ text: curationOutgoing(cur.text), mine: true, reply: (ok, error) => setCurSent(ok ? 'sent' : error ? 'fail' : 'idle') });
   };
 
   // 큐레이션 시안의 "참모에게 보내기" — 프레임이 {hodoc:'curation', text} 를 보낸다(2026-09-30 사용자). 바로 안 보내고 미리보기로 묻는다 —
   // 시안 안 글은 웹에서 긁어 온 것일 수 있고, iframe 안 클릭이 사람 동작인지 부모는 못 본다(프롬프트 주입 막기, 2026-10-03)
   const sendText = useRef(onSendText);
   sendText.current = onSendText;
-  const [askSend, setAskSend] = useState<{ text: string; reply: (ok: boolean, error?: string) => void } | null>(null);
+  const [askSend, setAskSend] = useState<{ text: string; mine?: boolean; reply: (ok: boolean, error?: string) => void } | null>(null);
   useEffect(() => {
     const on = (e: MessageEvent) => {
       const d = e.data as { hodoc?: string; text?: string } | null;
       if (d?.hodoc !== 'curation' || typeof d.text !== 'string' || !fromFrame(e, curFrame())) return;
       const reply = (ok: boolean, error?: string) => (e.source as Window | null)?.postMessage({ hodoc: 'curation-sent', ok, error }, '*');
       if (!sendText.current) { reply(false, tr('여기선 못 보내 — 결과 복사로', "Can't send from here — copy instead")); return; }
-      setAskSend({ text: d.text, reply });
+      setAskSend({ text: curationOutgoing(d.text), reply });
     };
     window.addEventListener('message', on);
     return () => window.removeEventListener('message', on);
@@ -210,10 +209,10 @@ export function Preview({ f, onClose, onAttach, attachTo, onSendText, onCuration
           <button className="pv-ic" onClick={onClose} title={tr('닫기 (Esc)', 'Close (Esc)')} aria-label={tr('닫기', 'Close')}><IconClose /></button>
         </div>
         {askSend && (() => {
-          const p = sendPreview(askSend.text);
-          return <Confirm title={tr(`${assistant()}에게 보낼까? (${p.chars}자)`, `Send to ${assistant()}? (${p.chars} chars)`)} body={`${p.lines.join('\n')}${p.more ? '\n…' : ''}`} ok={tr('보내기', 'Send')}
-            onCancel={() => { askSend.reply(false, tr('취소했어', 'Cancelled')); setAskSend(null); }}
-            onOk={() => { const a = askSend; setAskSend(null); sendText.current?.(a.text).then(() => a.reply(true), (err) => a.reply(false, String(err))); }} />;
+          const n = [...askSend.text].length;
+          return <Confirm title={tr(`${assistant()}에게 보낼까? (${n}자)`, `Send to ${assistant()}? (${n} chars)`)} body={askSend.text} ok={tr('보내기', 'Send')} focusCancel={!askSend.mine}
+            onCancel={() => { askSend.reply(false, askSend.mine ? undefined : tr('취소했어', 'Cancelled')); setAskSend(null); }}
+            onOk={() => { const a = askSend; setAskSend(null); if (a.mine) setCurSent('sending'); sendText.current?.(a.text).then(() => a.reply(true), (err) => a.reply(false, String(err))); }} />;
         })()}
         {askReset && <Confirm title={tr('처음부터 할까?', 'Start over?')} body={tr('이 시안에 표시한 것과 메모를 모두 지워.', 'Clears every mark and note on this draft.')} ok={tr('지우기', 'Clear')} danger
           onCancel={() => setAskReset(false)} onOk={() => { setAskReset(false); curFrame()?.postMessage({ hodoc: 'cur-cmd', cmd: 'reset' }, '*'); }} />}
@@ -226,7 +225,7 @@ export function Preview({ f, onClose, onAttach, attachTo, onSendText, onCuration
             <span className="sp" />
             <span className="pv-cur-hint">{tr('블록에 올리고 1·2·3', 'Hover a block, press 1·2·3')}</span>
             <button className="pv-cur-reset" onClick={() => setAskReset(true)}>{tr('처음부터', 'Reset')}</button>
-            {onSendText && <button className={`pv-cur-send ${curSent}`} disabled={curSent === 'sending'} onClick={() => void sendCur()} aria-label={(curSent === 'sending' ? tr('보내는 중', 'Sending') : curSent === 'sent' ? tr('보냈어 — 다시 보내기', 'Sent — send again') : curSent === 'fail' ? tr('못 보냄 — 다시', 'Failed — retry') : tr(`${assistant()}에게 보내기`, 'Send to assistant'))} title={(curSent === 'sending' ? tr('보내는 중', 'Sending') : curSent === 'sent' ? tr('보냈어 — 다시 보내기', 'Sent — send again') : curSent === 'fail' ? tr('못 보냄 — 다시', 'Failed — retry') : tr(`${assistant()}에게 보내기`, 'Send to assistant'))}>
+            {onSendText && <button className={`pv-cur-send ${curSent}`} disabled={curSent === 'sending'} onClick={sendCur} aria-label={(curSent === 'sending' ? tr('보내는 중', 'Sending') : curSent === 'sent' ? tr('보냈어 — 다시 보내기', 'Sent — send again') : curSent === 'fail' ? tr('못 보냄 — 다시', 'Failed — retry') : tr(`${assistant()}에게 보내기`, 'Send to assistant'))} title={(curSent === 'sending' ? tr('보내는 중', 'Sending') : curSent === 'sent' ? tr('보냈어 — 다시 보내기', 'Sent — send again') : curSent === 'fail' ? tr('못 보냄 — 다시', 'Failed — retry') : tr(`${assistant()}에게 보내기`, 'Send to assistant'))}>
               {curSent === 'sent' ? <IconCheck /> : curSent === 'fail' ? <IconRefresh /> : <IconSend />}</button>}
           </div>
         )}

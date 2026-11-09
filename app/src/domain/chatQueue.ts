@@ -103,7 +103,8 @@ export const ABSORB_GRACE = 5000;
 
 /** 다시 보낸 말 — 보낸 시각은 새로, 맞출 기록은 처음 보낸 때(10초 여유) 뒤부터. 처음 말의 기록이 훅 때문에 늦게(옛 시각으로) 붙어도 지워진다.
  *  입력칸에 되돌아온 말(since)은 since 그대로 */
-export const resent = (p: PendingMsg & { since?: number }, now: number) => ({ text: p.text, at: now, since: p.since ?? p.at - 10_000 });
+/** 붙인 그림(imgs) 같은 딸린 칸은 그대로 — 다시 보낸 대기 말풍선에서 썸네일이 빠지지 않게 */
+export const resent = <P extends PendingMsg & { since?: number }>(p: P, now: number): P & { since: number } => ({ ...p, at: now, since: p.since ?? p.at - 10_000 });
 
 /** 새로 보낸 말 — 맞출 기록은 보낸 때(10초 여유) 뒤, 그 사이 이미 들어온 같은 글 뒤부터. 방금 간 같은 말을 몇 초 뒤 또 보내면
  *  앞 말 기록에 짝지어져 이번 말이 안 가도 '보내는 중'도 '안 갔어요'도 없이 사라졌다(2026-10-11 bug-hunt 하네스).
@@ -117,14 +118,15 @@ export function newPending(text: string, items: ChatItem[], now: number): Pendin
 
 /** link = 그 세션 터미널 보기(domain/attachExit) — 끊긴 동안엔 화면 글(termText)이 죽은 화면이라 입력칸은 안 본다.
  *  다시 붙는 중이면 wait(단추 없음 — 붙으면 앱이 친다), 끊김이 굳었으면(gone) 30초를 안 기다리고 바로 lost. 대기열에 이미 들어간 말은 그대로 queued */
-export function pendingState(p: PendingMsg & { since?: number }, c: { queue: QueueState; termText: string; now: number; enterWait: number; link?: LinkState }): PendingState {
+export function pendingState(p: PendingMsg & { since?: number }, c: { queue: QueueState; termText: string; now: number; enterWait: number; link?: LinkState; pasting?: boolean }): PendingState {
   // 참모가 이미 받았다 — 기록 줄이 따라올 때까지 보내는 중(단추 없음)
   if (absorbedAt(c.queue, p) !== null) return 'sending';
   if (c.link && c.link !== 'live') return after(c.queue.waiting, p) ? 'queued' : c.link === 'gone' ? 'lost' : 'wait';
   const typed = p.at + c.enterWait;
   if (c.now < typed + SETTLE) return 'sending';
   const n = sq(p.text);
-  if (n && sq(c.termText).includes(n)) return 'input';
+  // 그림을 읽는 중이면 입력칸에 있어도 보내는 중 — Claude 가 그동안 Enter 를 버려서 앱이 끝난 뒤 다시 넣는다(isPasting)
+  if (n && sq(c.termText).includes(n)) return c.pasting ? 'sending' : 'input';
   if (after(c.queue.waiting, p)) return 'queued';
   // 입력칸에 이 말의 토막만 보인다 — 긴 말을 치는 중이거나 입력칸 높이를 넘었다. 30초 넘게 그대로면 Enter 가 안 먹은 것: '안 갔어요 + 다시 보내기'면 입력칸에 두 벌로 붙는다
   if (typingOf(c.termText, [p.text])) return c.now < typed + LOST_AFTER ? 'sending' : 'input';
@@ -159,9 +161,9 @@ export const pendAct = (st: PendingState): 'again' | 'now' | null => (st === 'se
 
 /** Enter 를 다시 넣을 말(tries 는 보낸 시각별 누른 횟수 — 같은 말을 나중에 또 보내도 새로 센다) — 입력칸이 그 말 하나뿐이고, 사람이 ↑로 되돌린 게 아니고, / 명령이 아니고, 덜 눌렀고, 친 지 2초 넘었을 때.
  *  일하는 중이어도 고른다 — 일하는 중 Enter 는 줄 서기라 안전하다(예전엔 쉴 때 한 번만 눌러서 일하는 중 걸린 말이 남았다) */
-export function autoEnterTarget(pending: PendingMsg[], c: { queue: QueueState; termText: string; now: number; enterWait: number; tries: Record<number, number> }): string | null {
+export function autoEnterTarget(pending: PendingMsg[], c: { queue: QueueState; termText: string; now: number; enterWait: number; tries: Record<number, number>; pasting?: boolean }): string | null {
   const t = sq(c.termText);
-  if (!t) return null;
+  if (!t || c.pasting) return null;
   const hit = pending.find((p) => !p.text.trimStart().startsWith('/') && sq(p.text) === t);
   if (!hit || c.now < hit.at + c.enterWait + 2000) return null;
   if ((c.tries[hit.at] ?? 0) >= AUTO_ENTER_MAX || after(c.queue.popped, hit)) return null;

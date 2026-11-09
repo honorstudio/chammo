@@ -46,7 +46,7 @@ description: 사용자가 정리해 줘·용량 없어·디스크 꽉 찼어·�
 | ask-owner | 다른 참모가 맡은 프로젝트 것 | 그 참모에게 먼저 묻는다 |
 | keep | 비밀처럼 보이는 파일(키·ssh·`.env`·pem 등) | 지우지도 옮기지도 않는다. 그 프로젝트 `CLAUDE.local.md` 나 키체인으로 옮기라고 사용자에게 한 줄 |
 
-**절대 안 건드린다** — git 이 추적하는 파일, 커밋 안 한 변경이 있는 워크트리, 돌고 있는 세션의 폴더, 설정·계정·키·쿠키/로그인 상태, Claude 대화 기록(Claude Code 가 30일로 알아서 지운다), tasks·앱 기록, 설치한 참모 앱·음성 모델, 스킬·플러그인(하니터 몫).
+**절대 안 건드린다** — git 이 추적하는 파일, 커밋 안 한 변경이 있는 워크트리, 돌고 있는 세션의 폴더, 설정·계정·키·쿠키/로그인 상태, Claude 대화 기록(Claude Code 가 30일로 알아서 지운다), tasks·앱 기록, 설치한 참모 앱·음성 모델, 사용자 개인 메모(`<데이터 폴더>/notes/` — 휴지통 30일은 앱이 정리), 스킬·플러그인(하니터 몫).
 
 **어느 프로젝트 것인지 가르는 순서** — 이미 프로젝트 폴더 안 > 일 기록(그 경로를 증거로 적은 일이 모두 한 프로젝트 세션) > 이름·별명이 프로젝트 하나 > 안쪽 파일 이름(이건 애매로만 본다). 흔한 이름은 `generic` 으로 뺀다.
 
@@ -102,7 +102,7 @@ It also runs as a weekly job — on its first run the cleaner helper calls `scri
 | ask-owner | Belongs to a project another assistant handles | Ask that assistant first |
 | keep | Looks like a secret (keys, ssh, `.env`, pem …) | Neither deleted nor moved; tell the user in one line to move it to that project's `CLAUDE.local.md` or the keychain |
 
-**Never touched** — files git tracks, worktrees with uncommitted changes, folders of running sessions, settings, accounts, keys, cookies and login state, Claude conversation history (Claude Code clears it itself after 30 days), tasks and app records, installed Chammo apps and voice models, skills and plugins (Harnitor's job).
+**Never touched** — files git tracks, worktrees with uncommitted changes, folders of running sessions, settings, accounts, keys, cookies and login state, Claude conversation history (Claude Code clears it itself after 30 days), tasks and app records, installed Chammo apps and voice models, the user's personal notes (`<data folder>/notes/` — the app empties its 30-day trash), skills and plugins (Harnitor's job).
 
 **Deciding which project something belongs to, in order** — already inside a project folder > the task log (every task that names that path as evidence is one project's session) > a name or alias matching exactly one project > file names inside (only ever as "unclear"). Pull common names out with `generic`.
 

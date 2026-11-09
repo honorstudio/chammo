@@ -13,7 +13,7 @@ const rule = (sel: string) => [...css.matchAll(new RegExp(`(?:^|\\n|\\})\\s*${es
 
 describe('뽑기·스킨 시트가 열린 동안 채팅창 숨김', () => {
   it('사무실은 뽑기·스킨이 열리면 넓게 쓰겠다고 알리고, 닫히거나 떠나면 거둔다', () => {
-    expect(office).toMatch(/onWide\(open === 'gacha' \|\| open === 'skin'\)/);
+    expect(office).toMatch(/onWide\(open === 'gacha' \|\| open === 'skin'/);
     expect(office).toMatch(/return \(\) => onWide\(false\)/);
   });
   it('세션 시트는 채팅이 이어져야 해서 그대로(넓게 아님)', () => expect(office).not.toMatch(/onWide\([^)]*'sessions'/));
@@ -25,7 +25,7 @@ describe('뽑기·스킨 시트가 열린 동안 채팅창 숨김', () => {
     expect(rule('.m-sheet.m-hide')).toMatch(/pointer-events:\s*none/);
   });
   it('뒤로 나가면 열린 시트를 닫는다 — 다시 들어올 때 채팅창이 숨은 채 시작하지 않게(참모 바꿔 다시 그려질 땐 그대로)', () => {
-    expect(office).toMatch(/onClick=\{\(\) => \{ keepOpen = null; onBack\(\); \}\}/);
+    expect(office).toMatch(/onClick=\{\(\) => \{ keepOpen = null; asked = false; onBack\(\); \}\}/);
   });
   it('숨길 때 입력칸에 포커스가 있으면 놓는다(숨은 입력칸에 키보드가 남지 않게)', () => {
     expect(sheet).toMatch(/if \(hidden && sheet\?\.contains\(document\.activeElement\)\) \(document\.activeElement as HTMLElement\)\.blur\(\)/);

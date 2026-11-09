@@ -1,7 +1,7 @@
 // 짚어 보여 주기 — scripts/show --line/--find/--page/--box 로 파일의 한 곳을 가리키면 앱이 그리로 스크롤하고 반짝인다
 // (2026-09-30 사용자 "그 부분을 잠깐 반짝이게, 스크롤도, PDF·PPT 면 페이지도")
 
-export type ShowAt = { line?: number; lineEnd?: number; find?: string; page?: number; box?: [number, number, number, number] };
+export type ShowAt = { line?: number; lineEnd?: number; find?: string; page?: number; box?: [number, number, number, number]; /** 영상을 검토 화면 말고 그냥 재생(scripts/show --plain) */ plain?: boolean };
 
 const posInt = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : undefined);
 
@@ -15,6 +15,7 @@ export function parseAt(raw: unknown): ShowAt | undefined {
   if (typeof r.find === 'string' && r.find.trim()) at.find = r.find.trim();
   if (posInt(r.page)) at.page = r.page as number;
   if (Array.isArray(r.box) && r.box.length === 4 && r.box.every((x) => typeof x === 'number' && x >= 0 && x <= 1)) at.box = r.box as ShowAt['box'];
+  if (r.plain === true) at.plain = true;
   return Object.keys(at).length ? at : undefined;
 }
 

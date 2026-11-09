@@ -64,20 +64,22 @@ export function parseDayCommits(raw: string): ParsedCommit[] {
   return out;
 }
 
-export type RepoToday = { name: string; commits: number; added: number; deleted: number };
+export type CodeToday = { commits: number; merges: number; added: number; deleted: number; repos: number };
+export const NO_CODE: CodeToday = { commits: 0, merges: 0, added: 0, deleted: 0, repos: 0 };
 
-/** 위 막대 '오늘 커밋' — 저장소별 커밋 수(머지 커밋 빼고)·코드 줄 수, 커밋 많은 저장소 먼저 */
-export function repoToday(commits: ParsedCommit[]): RepoToday[] {
-  const by = new Map<string, RepoToday>();
+/** 위 띠 '오늘 한 일' 개발자 칸 — 커밋 수·코드 줄 수는 머지 커밋 빼고, 머지는 따로 */
+export function codeToday(commits: ParsedCommit[]): CodeToday {
+  const out = { ...NO_CODE };
+  const repos = new Set<string>();
   for (const c of commits) {
-    if (c.merge) continue;
-    const r = by.get(c.repo) ?? { name: c.repo, commits: 0, added: 0, deleted: 0 };
-    r.commits += 1;
-    r.added += c.added;
-    r.deleted += c.deleted;
-    by.set(c.repo, r);
+    repos.add(c.repo);
+    if (c.merge) { out.merges += 1; continue; }
+    out.commits += 1;
+    out.added += c.added;
+    out.deleted += c.deleted;
   }
-  return [...by.values()].sort((a, b) => b.commits - a.commits);
+  out.repos = repos.size;
+  return out;
 }
 
 export type ReplayKind = 'commit' | 'big' | 'merge' | 'send' | 'done' | 'ask' | 'allow';

@@ -25,6 +25,11 @@ export function parseCtx(files: string[]): Record<string, Ctx> {
   return out;
 }
 
+/** 읽을 ctx 파일 — 살아 있는 세션 + 꺼진 참모(홈 줄에 % 가 보인다). 겹침·빈 번호는 뺀다 */
+export function ctxIds(live: { sessionId?: string }[], off: { sessionId?: string }[]): string[] {
+  return [...new Set([...live, ...off].map((s) => s.sessionId).filter((x): x is string => !!x))];
+}
+
 export const ctxLevel = (used: number) => (used >= CTX_ALERT ? 'high' : used >= 60 ? 'mid' : 'ok');
 
 /** 사이드바 프사 고리(SVG stroke-dasharray) — 반지름 r 원 둘레에서 대화 % 만큼. 색 단계는 숫자 칸(ctxLevel)과 같다(2026-10-10 B안) */

@@ -27,6 +27,8 @@ pub const TEMPLATE: &[TemplateFile] = &[
     TemplateFile { path: "scripts/direct_nopy.sh", body: include_str!("../../hq-template/scripts/direct_nopy.sh"), exec: true },
     TemplateFile { path: "scripts/app", body: include_str!("../../hq-template/scripts/app"), exec: true },
     TemplateFile { path: "scripts/voice-hint", body: include_str!("../../hq-template/scripts/voice-hint"), exec: true },
+    // 영상 검토 말 ↔ 참모 필름 마커(film·pull --to) — 안내문 '문서 보여 주기'가 부른다
+    TemplateFile { path: "scripts/video-review", body: include_str!("../../hq-template/scripts/video-review"), exec: true },
     TemplateFile { path: "scripts/orch-roster", body: include_str!("../../hq-template/scripts/orch-roster"), exec: true },
     TemplateFile { path: "scripts/new-project", body: include_str!("../../hq-template/scripts/new-project"), exec: true },
     TemplateFile { path: "scripts/statusline", body: include_str!("../../hq-template/scripts/statusline"), exec: true },
@@ -56,6 +58,8 @@ pub const TEMPLATE: &[TemplateFile] = &[
     TemplateFile { path: ".claude/skills/hq-craft/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-craft/SKILL.md"), exec: false },
     TemplateFile { path: ".claude/skills/hq-login/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-login/SKILL.md"), exec: false },
     TemplateFile { path: ".claude/skills/hq-recall/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-recall/SKILL.md"), exec: false },
+    // 다른 기기·팀 메신저 명령·쓰는 법 — 늘 실리는 안내문에서 뺐다(2026-11-05 하네스 다이어트). 이름표·승인 규칙은 안내문에 남김
+    TemplateFile { path: ".claude/skills/hq-team/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-team/SKILL.md"), exec: false },
     TemplateFile { path: ".claude/skills/hq-cleaner/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-cleaner/SKILL.md"), exec: false },
     TemplateFile { path: ".claude/skills/hq-mode-kit/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-mode-kit/SKILL.md"), exec: false },
     TemplateFile { path: ".claude/skills/hq-mode-kit/kit.tsx", body: include_str!("../../hq-template/.claude/skills/hq-mode-kit/kit.tsx"), exec: false },
@@ -102,6 +106,11 @@ pub fn install_in(dir: &Path, overwrite: bool, lang: &str) -> std::io::Result<Hq
 
 /// 깔 글 — 설정 언어로 고르고(localize), 윈도우면 안내문(CHAMMO.md)의 맥 단축키 표기(⌘J)를 윈도우 키로. 참모가 그대로 읽고 말한다
 fn body_for(f: &TemplateFile, lang: &str) -> String {
+    #[cfg(pro)]
+    let full = crate::pro::guide(f.path, f.body);
+    #[cfg(pro)]
+    let body = localize(f.path, &full, lang);
+    #[cfg(not(pro))]
     let body = localize(f.path, f.body, lang);
     if cfg!(windows) && (f.path.starts_with("CHAMMO") || f.path.starts_with(".claude/skills/hq-")) { crate::platform::win_keys(&body) } else { body }
 }
@@ -679,7 +688,7 @@ mod tests {
         assert!(r.kept.is_empty());
         for f in TEMPLATE {
             let p = d.join("hq").join(f.path);
-            assert_eq!(std::fs::read_to_string(&p).unwrap(), f.body, "{}", f.path);
+            assert_eq!(std::fs::read_to_string(&p).unwrap(), body_for(f, "ko"), "{}", f.path);
             let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
             if f.exec {
                 assert_eq!(mode, 0o755, "{}", f.path);

@@ -1,4 +1,4 @@
-// 폰 팀 탭(시안 v2 C) — 맨 아래 탭바 참모 | 팀 중 팀. 위 팀 이름(꺾쇠) → 시트(팀 바꾸기·만들기·초대 링크), 그 아래 대화 | 팀 홈 | 보관함.
+// 폰 팀 탭(시안 v2 C) — 맨 아래 탭바 참모 | 팀 중 팀. 위 팀 이름(꺾쇠) → 시트(팀 참모·팀 추가·초대 링크), 그 아래 대화 | 팀 홈 | 보관함.
 // 별명·사진·상태는 데스크톱과 같은 프로필판(ProfilesCtx·lookOf) — 폰은 본 판 번호를 들고 4초마다 묻는다(그대로면 맥이 중계를 안 부른다).
 // 팀 홈은 데스크톱 TeamHome 그대로, 글 길만 폰 것(새 글·팀장 고정만 — 고치기·고정 바꾸기·지우기는 데스크톱)
 // 대화를 누르면 화면 전체가 그 대화(데스크톱과 같은 대화 칸 — 풍선 = 사람, 얼굴 + 맨 글 = 참모). 보내기는 사람 말(이 칸의 진짜 누름 뒤 1.5초)
@@ -15,9 +15,13 @@ import { convos as buildConvos, roomConvos, markRead, teamUnread, unreadTotal, t
 import { teamStack } from '../../domain/teamAdd';
 import { PhoneTeamStrip, TeamAddSheet } from './PhoneTeamAdd';
 import { ImageViewer } from './ImageViewer';
+import TeamVideoSheet from './TeamVideoSheet';
+import TeamDocSheet from './TeamDocSheet';
+import { PhoneRoomFiles } from './PhoneRoomFiles';
 import { mergedRead, pushRead } from '../../domain/teamReads';
 import { IconCheck, IconChevronDown, IconCopy, IconShare } from '../Icons';
 import { TeamConvo } from '../team/TeamConvo';
+import { closedLine } from '../../domain/teamLock';
 import { draftStore } from '../../domain/chatDraft';
 import { TeamMarkIcon } from '../team/TeamFaces';
 import { TeamHome, type HomeDialog } from '../team/TeamHome';
@@ -29,6 +33,7 @@ import { BottomSheet, SheetHostProvider } from './BottomSheet';
 import { IconBtn } from './kit';
 import { BetaTag } from '../kit/BetaTag';
 import { PhoneTeamLocker } from './PhoneTeamLocker';
+import { pro } from '@pro/index';
 import { machine, tr } from '../../i18n';
 import '../team/team.css';
 import { seenName } from '../../domain/session';
@@ -107,9 +112,12 @@ const HomeSheet: HomeDialog = ({ label, onClose, children }) => <BottomSheet lab
 
 /** open = 팀 메시지 알림을 눌러 왔다 — 그 방 대화를 연다(대화 목록이 아직 없으면 받은 뒤에) */
 /** kb = 키보드가 떠 있나(시트 자리가 키보드 위에 시트를 놓는다) */
+const { MemoryTab } = pro; // 공식 설치 파일에만 — 공개 빌드는 null
+
 export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: ReturnType<typeof usePhoneTeam>; orch: { id: string; name: string }; open?: { n: number; room: string } | null; kb: boolean }) {
   const view = t.feed?.view ?? null;
   const teamId = view?.joined ? view.teamId : '';
+  const closed = !!closedLine(view); // 읽기만 팀 — 메모리 탭을 안 그린다(11-06)
   const profiles = usePhoneProfiles(api, teamId);
   // 사람 대화 이름은 프로필 별명(데스크톱 목록·팀 설정과 같게)
   const cs = useMemo(() => namedConvos(t.cs, profiles.board), [t.cs, profiles.board]);
@@ -123,14 +131,20 @@ export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: Re
     edit: false,
   }), [api]);
   // 팀 파일 크게 보기 — 대화 그림 칸(11-01)·팀 홈 최근 파일·보관함 줄(11-01 사용자 "팀 홈 최근 파일을 눌러도 아무 일이 없다").
-  // 그림은 맥이 풀어 준 것, PDF 는 첫 장. 문서·엑셀 등은 폰에서 볼 길이 아직 없어 누를 수 있게 그리지 않는다(phoneView)
-  const [zoom, setZoom] = useState<{ team: string; id: string; name: string; kind: 'image' | 'pdf' } | null>(null);
+  // 그림은 맥이 풀어 준 것, 10MB 넘는 PDF 는 첫 장, 영상은 맥이 받아 푼 뒤 영상 검토 화면(11-04), 문서·엑셀·PPT 는 폰 파일 보기(11-06). 볼 길이 없는 것(zip 등)은 누를 수 있게 그리지 않는다(phoneView)
+  const [zoom, setZoom] = useState<{ team: string; id: string; name: string; kind: 'image' | 'pdf' | 'video' | 'doc' } | null>(null);
+  // DM 보관함(11-06) — 대화 머리 폴더 아이콘, 데스크톱 '이 대화 파일'과 같은 목록
+  const [roomFiles, setRoomFiles] = useState<string | null>(null);
   const openPic = useCallback((team: string, f: { id: string; name: string; size: number; why?: string }) => {
     const kind = phoneView(f);
     if (kind) setZoom({ team, id: f.id, name: f.name, kind });
   }, []);
-  const viewer = zoom && <ImageViewer key={zoom.id} title={zoom.kind === 'pdf' ? tr(`${zoom.name} · 첫 장`, `${zoom.name} · page 1`) : zoom.name} onClose={() => setZoom(null)} load={teamFileView(zoom.team, zoom.id, zoom.kind)} />;
-  // 팀 홈 판(ADR 0018) — 같은 판을 맥이 읽고 쓴다. 커버는 데스크톱만. 최근 파일은 그림·PDF 만 눌러 본다
+  const viewer = zoom && (zoom.kind === 'video'
+    ? <TeamVideoSheet key={zoom.id} team={zoom.team} id={zoom.id} name={zoom.name} orch={orch.id} onClose={() => setZoom(null)} />
+    : zoom.kind === 'doc'
+    ? <TeamDocSheet key={zoom.id} team={zoom.team} id={zoom.id} name={zoom.name} onClose={() => setZoom(null)} />
+    : <ImageViewer key={zoom.id} title={zoom.kind === 'pdf' ? tr(`${zoom.name} · 첫 장`, `${zoom.name} · page 1`) : zoom.name} onClose={() => setZoom(null)} load={teamFileView(zoom.team, zoom.id, zoom.kind)} />);
+  // 팀 홈 판(ADR 0018) — 같은 판을 맥이 읽고 쓴다. 커버는 데스크톱만. 최근 파일은 그림·PDF·영상만 눌러 본다
   const homeApi: HomeApi = useMemo(() => ({
     board: (team, seen) => api.home(team, seen ?? 0),
     save: (team, home) => api.homeSave(team, home),
@@ -145,7 +159,7 @@ export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: Re
     thumb: (team, i) => (thumbKind(i.name, i.size) && !i.why ? teamThumbBlob(team, i.id, i.at) : Promise.resolve(null)),
     openUrl: (url) => { window.open(url, '_blank', 'noopener'); },
   }), [api, openPic]);
-  const [seg, setSeg] = useState<'chat' | 'home' | 'cal' | 'locker'>('chat');
+  const [seg, setSeg] = useState<'chat' | 'home' | 'cal' | 'memory' | 'locker'>('chat');
   const [sel, setSel] = useState<string | null>(null);
   // 폰 화면이 보일 때만 읽음(잠금·다른 앱으로 간 동안 온 말은 돌아와 보일 때 읽음)
   const [shown, setShown] = useState(() => document.visibilityState === 'visible');
@@ -155,7 +169,7 @@ export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: Re
     return () => document.removeEventListener('visibilitychange', f);
   }, []);
   const [sheet, setSheet] = useState(false);
-  // 팀 추가 시트(머리 줄 끝 +) — 새 팀 만들기·초대 링크로 들어가기
+  // 팀 추가 시트(팀 시트 '팀 추가' 줄) — 새 팀 만들기·초대 링크로 들어가기
   const [adding, setAdding] = useState(false);
   // 내 팀 줄(데스크톱 레일과 같은 순서) — 다른 팀 안 읽은 수는 그 팀 방들. 바꾸면 고른 대화는 앞 팀 것이라 비운다
   // (프로필판·보관함·홈·캘린더는 teamId 로 다시 읽는다 — 보관함 늦은 응답은 PhoneTeamLocker 가 버린다)
@@ -186,7 +200,8 @@ export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: Re
     lastCid.current = { key, cid, at: Date.now() };
     return cid;
   };
-  const say = (to: string, text: string, at: number, extra?: { re?: number }) => (sendAllowed(at, Date.now()) && text.trim() ? api.say(to, text, cidFor(to, text), extra?.re) : null);
+  // 파일만 실은 말도 보낸다(대화 첨부, 11-06) — cid 는 글 + 파일 id 로(다시 보내면 같은 말)
+  const say = (to: string, text: string, at: number, extra?: { re?: number; files?: TeamFile[] }) => (sendAllowed(at, Date.now()) && (text.trim() || extra?.files?.length) ? api.say(to, text, cidFor(to, text + (extra?.files ?? []).map((f) => f.id).join(',')), extra?.re, extra?.files) : null);
   // 팀 참모(ADR 0017) — 맥 폰 서버 길. 마지막 목록 캐시는 맥에만 있어서 둘 다 새로 받는다
   const agentsApi = useMemo(() => ({ cached: () => Promise.reject(new Error('no cache on phone')), fresh: (team: string) => api.agents(team), confirm: (team: string, id: string) => api.agentConfirm(team, id).then(() => {}), usage: (room: string) => api.agentUsage(room) }), [api]);
   const agentEdit: AgentEditApi = useMemo(() => ({ save: (team, def, origin) => api.agentSave(team, def, origin), remove: (team, id) => api.agentRemove(team, id), tryRun: (team, room, def, ask, prev) => api.agentTry(team, room, def, ask, prev), refs: (team) => api.agentRefs(team) }), [api]);
@@ -214,8 +229,11 @@ export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: Re
       <div className="m-team m-team-convo">
         <TeamConvo convo={cur} items={t.feed.items} team={view.team} myName={view.me} handed={handed} drafts={phoneDrafts} agentsApi={agentsApi} focused={shown} onRead={t.markRoom} reads={t.feed.reads} onSent={t.refresh} safety={t.feed.safety} held={t.feed.held} phone members={view.members}
           onHanded={(it: TeamItem, to: string) => setHanded((h) => { const n = { ...h, [`${it.room}:${it.seq}`]: to }; keep(HANDED_KEY, n); return n; })}
-          handoff={{ name: seenName(orch.name), send: (text) => api.handoff(orch.id, text).then(() => {}) }} say={say} viewing={() => {}} back={() => { setZoom(null); setSel(null); }}
-          teamId={view.teamId} thumb={(team: string, id: string) => teamThumbBlob(team, id)} viewImage={(f: TeamFile) => openPic(f.team || view.teamId, f)} />
+          handoff={{ name: seenName(orch.name), send: (text) => api.handoff(orch.id, text).then(() => {}) }} say={say} viewing={() => {}} back={() => { setZoom(null); setRoomFiles(null); setSel(null); }}
+          onFiles={cur.room ? () => setRoomFiles(cur.room) : undefined}
+          teamId={view.teamId} thumb={(team: string, id: string) => teamThumbBlob(team, id)} viewImage={(f: TeamFile) => openPic(f.team || view.teamId, f)}
+          phoneAttach={(team: string, room: string, file: File, sent: (n: number) => void) => api.fileAttach(team, room, file, sent)} />
+        {roomFiles && <PhoneRoomFiles api={api} team={view.teamId} room={roomFiles} onOpen={(i) => openPic(view.teamId, i)} onClose={() => setRoomFiles(null)} />}
         {viewer}
       </div>
       </SheetHostProvider>
@@ -228,11 +246,9 @@ export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: Re
     <SheetHostProvider kb={kb}>
     <div className="m-team">
       <header className="m-team-head m-team-head2">
-        <PhoneTeamStrip stack={stack} icon={profiles.board?.teamIcon || undefined} unreadOf={unreadOf} onPick={pickTeam} onCurrent={() => setSheet(true)} onAdd={() => setAdding(true)} />
+        <PhoneTeamStrip stack={stack} icon={profiles.board?.teamIcon || undefined} unreadOf={unreadOf} onPick={pickTeam} onCurrent={() => setSheet(true)} />
         <div className="m-team-name">
-          {view?.joined
-            ? <button className="m-team-switch" onClick={() => setSheet(true)} aria-label={tr(`${view.team} — 팀 참모·초대 링크`, `${view.team} — team agents and invite link`)}><b>{view.team}</b><IconChevronDown /></button>
-            : <b className="m-team-none">{tr('팀', 'Team')}</b>}
+          <button className="m-team-switch" onClick={() => setSheet(true)} aria-label={view?.joined ? tr(`${view.team} — 팀 참모·초대 링크·팀 추가`, `${view.team} — team agents, invite link, add a team`) : tr('팀 추가', 'Add a team')}><b>{view?.joined ? view.team : tr('팀', 'Team')}</b><IconChevronDown /></button>
           <BetaTag className="m-team-beta" />
         </div>
       </header>
@@ -241,19 +257,21 @@ export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: Re
           <button role="tab" aria-selected={seg === 'chat'} className={seg === 'chat' ? 'on' : ''} onClick={() => setSeg('chat')}>{tr('대화', 'Chats')}</button>
           <button role="tab" aria-selected={seg === 'home'} className={seg === 'home' ? 'on' : ''} onClick={() => setSeg('home')}>{tr('팀 홈', 'Team home')}</button>
           <button role="tab" aria-selected={seg === 'cal'} className={seg === 'cal' ? 'on' : ''} onClick={() => setSeg('cal')}>{tr('캘린더', 'Calendar')}</button>
+          {MemoryTab && !closed && <button role="tab" aria-selected={seg === 'memory'} className={seg === 'memory' ? 'on' : ''} onClick={() => setSeg('memory')}>{tr('메모리', 'Memory')}</button>}
           <button role="tab" aria-selected={seg === 'locker'} className={seg === 'locker' ? 'on' : ''} onClick={() => setSeg('locker')}>{tr('보관함', 'Locker')}</button>
         </div>
       )}
       <div className="m-team-body">
-        {!view?.joined ? <div className="tmx-none">{tr(`아직 팀이 없어요 — 위 + 를 눌러 만들거나 초대 링크로 들어가요. 처음이면 ${machine()} 설정 > 계정에서 Chammo 계정에 로그인해요`, `No team yet — tap + above to create one or join with an invite link. First time? Sign in to your Chammo account in ${machine()} Settings > Account`)}</div>
+        {!view?.joined ? <div className="tmx-none">{tr(`아직 팀이 없어요 — 위 '팀' 을 눌러 만들거나 초대 링크로 들어가요. 처음이면 ${machine()} 설정 > 계정에서 Chammo 계정에 로그인해요`, `No team yet — tap Team above to create one or join with an invite link. First time? Sign in to your Chammo account in ${machine()} Settings > Account`)}</div>
           : seg === 'chat' ? <div className="tmx-list"><TeamList convos={cs} rooms={t.rs} sel={null} onPick={(c: Convo) => setSel(c.key)} /></div>
           : seg === 'home' ? <div className="m-team-home"><TeamHome key={view.teamId} teamId={view.teamId} team={view.team} members={view.members} icon={profiles.board?.teamIcon || undefined} api={posts} Dialog={HomeSheet} homeApi={homeApi} sources={homeSources} phone
               calBlock={(_b, editing) => <CalBlock teamId={view.teamId} wide={false} editing={editing} api={api.cal} onOpen={() => setSeg('cal')} />} /></div>
           : seg === 'cal' ? <div className="m-team-cal"><TeamCal key={view.teamId} teamId={view.teamId} members={view.members} api={api.cal} Dialog={HomeSheet} phone /></div>
+          : seg === 'memory' && MemoryTab && !closed ? <div className="m-team-cal"><MemoryTab key={view.teamId} teamId={view.teamId} members={view.members} roomName={(r) => cs.find((c) => c.room === r)?.name ?? tr('팀챗', 'Team chat')} api={api.memory} homeApi={homeApi} Dialog={HomeSheet} phone /></div>
           : <PhoneTeamLocker key={view.teamId} api={api} teamId={view.teamId} onOpen={(i) => openPic(view.teamId, i)} />}
       </div>
       {viewer}
-      {sheet && <TeamSheet api={api} t={t} onClose={() => setSheet(false)} onAgents={() => { setSheet(false); setAgentPage({ key: 0 }); }} />}
+      {sheet && <TeamSheet api={api} t={t} onClose={() => setSheet(false)} onAgents={() => { setSheet(false); setAgentPage({ key: 0 }); }} onAdd={() => { setSheet(false); setAdding(true); }} />}
       {adding && <TeamAddSheet api={api} view={view} onClose={() => setAdding(false)} onChanged={() => { setSel(null); t.refresh(); }} />}
     </div>
     </SheetHostProvider>
@@ -261,8 +279,8 @@ export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: Re
   );
 }
 
-/** 지금 팀 시트(이름 줄 꺾쇠) — 팀 참모·초대 링크(팀장만). 바꾸기는 머리 팀 줄, 만들기·들어가기는 + 시트(11-02) */
-function TeamSheet({ api, t, onClose, onAgents }: { api: TeamPhoneApi; t: ReturnType<typeof usePhoneTeam>; onClose: () => void; onAgents: () => void }) {
+/** 지금 팀 시트(이름 줄 꺾쇠) — 팀 참모·팀 추가·초대 링크(팀장만). 바꾸기는 머리 팀 줄, 팀 추가 → 만들기·들어가기 시트(11-06 머리 + 를 여기로) */
+function TeamSheet({ api, t, onClose, onAgents, onAdd }: { api: TeamPhoneApi; t: ReturnType<typeof usePhoneTeam>; onClose: () => void; onAgents: () => void; onAdd: () => void }) {
   const view = t.feed?.view ?? null;
   const [link, setLink] = useState<string | null>(null);
   /** 실패 — 화면엔 한국어 한 줄(msg), 원문은 이름표(raw) */
@@ -276,6 +294,7 @@ function TeamSheet({ api, t, onClose, onAgents }: { api: TeamPhoneApi; t: Return
           <div className="m-ts-row on"><TeamMarkIcon name={view.team} size={36} /><span className="tmx-tx"><b>{view.team}</b><span>{tr(`사람 ${view.members.length}`, `${view.members.length} people`)}</span></span><i className="m-ts-ck"><IconCheck /></i></div>
         )}
         {view?.joined && <button className="m-ts-act" onClick={onAgents}>{tr('팀 참모', 'Team agents')}</button>}
+        <button className="m-ts-act" onClick={onAdd}>{tr('팀 추가', 'Add a team')}</button>
         {view?.joined && <span className="m-ts-sec">{tr(`${view.team} 초대 링크`, `${view.team} invite link`)}</span>}
         {view?.joined && view.role !== 'owner' && <span className="tmx-hint">{tr('초대 링크는 팀장 기기에서 만들어요', 'Only the team owner can make invite links')}</span>}
         {link && (

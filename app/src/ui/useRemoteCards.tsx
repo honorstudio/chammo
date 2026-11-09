@@ -4,12 +4,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 import { remoteCards, type PeerCardsRow, type RemoteCard } from '../domain/remoteCards';
 import { remoteCardAnswer } from '../data/remote';
-import { tr } from '../i18n';
 import { DirectCardView, type DirectPick } from './chat/DirectCard';
 
 export function useRemoteCards() {
   const [rows, setRows] = useState<PeerCardsRow[]>([]);
-  const [open, setOpen] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
     const tick = () => void invoke<PeerCardsRow[]>('remote_cards').then((r) => { if (alive) setRows((p) => (JSON.stringify(p) === JSON.stringify(r) ? p : r)); }, () => {});
@@ -20,14 +18,7 @@ export function useRemoteCards() {
   const cards: RemoteCard[] = remoteCards(rows, Date.now());
   const key = (x: RemoteCard) => `${x.dev}:${x.card.id}`;
   const answer = (dev: string) => (id: string, pick: DirectPick) => remoteCardAnswer(dev)(id, pick);
-  const node = cards.length ? (
-    <div className="inbox-direct" role="group" aria-label={tr('다른 기기 직접 답', 'Direct answers on other devices')}>
-      {cards.map((x) => (
-        <div key={key(x)} className="dc-row">
-          <DirectCardView c={x.card} name={x.name} compact={key(x) !== (open ?? key(cards[0]!))} onOpen={() => setOpen(key(x))} onAnswer={answer(x.dev)} />
-        </div>
-      ))}
-    </div>
-  ) : null;
-  return { cards, node, keys: cards.map((x) => `${key(x)}:${x.card.state}`).join('|') };
+  /** 결정 대기함 한 장 — 펼친 채로 */
+  const cardNode = (x: RemoteCard) => <div className="dc-row"><DirectCardView c={x.card} name={x.name} onAnswer={answer(x.dev)} /></div>;
+  return { cards, cardNode, key, keys: cards.map((x) => `${key(x)}:${x.card.state}`).join('|') };
 }

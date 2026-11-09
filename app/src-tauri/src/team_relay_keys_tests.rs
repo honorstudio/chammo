@@ -144,6 +144,8 @@ impl crate::accounts_store::Store for Counting {
 
 #[test]
 fn 열쇠는_한_번_읽으면_메모리에서_다시_키체인을_안_읽는다() {
+    // 나란히 도는 로그아웃 시험의 forget_all 이 끼면 키체인을 한 번 더 읽어 깨졌다(전체 실행에서 가끔)
+    let _gate = FORGET_GATE.lock().unwrap_or_else(|e| e.into_inner());
     let kc = Counting::default();
     let (k, account) = create(&kc).unwrap();
     let n = kc.gets.get();

@@ -52,7 +52,6 @@ class Parse(unittest.TestCase):
         self.assertEqual(app.parse(['open', 'settings']), ('open', 'settings'))
         self.assertEqual(app.parse(['close', 'reader']), ('close', 'reader'))
         self.assertEqual(app.parse(['focus', 'acme-shop']), ('focus', 'acme-shop'))
-        self.assertEqual(app.parse(['pet', 'hide']), ('pet', 'hide'))
         self.assertEqual(app.parse(['status']), ('status', ''))
         self.assertEqual(app.parse(['open', 'harnitor']), ('open', 'harnitor'))
         # 무인 맥에서 '자동으로 다시 켜기' — 앱(appctl)은 받는데 스크립트가 몰라서 못 켰다(2026-10-05 아이맥)
@@ -78,7 +77,7 @@ class Status(unittest.TestCase):
             open(os.path.join(d, 'voice.json'), 'w').write('{"on":true}')
             s = app.status(d)
             self.assertEqual((s['language'], s['assistantName'], s['devRoot']), ('en', 'Max', '~/Projects'))
-            self.assertEqual(s['features'], {'office': False, 'tama': True, 'gacha': True, 'review': True, 'voice': True, 'autoRevive': False, 'autoTidy': True, 'computerUse': False, 'usagePing': True, 'craftBasics': True, 'bubble': True, 'bubbleDesk': True})
+            self.assertEqual(s['features'], {'office': False, 'gacha': True, 'review': True, 'voice': True, 'autoRevive': False, 'autoTidy': True, 'computerUse': False, 'usagePing': True, 'craftBasics': True, 'bubble': True, 'bubbleDesk': True})
             self.assertTrue(s['voiceMode'])
             self.assertFalse(s['browserAutomation'])
             pkg = os.path.join(d, 'tools/chammo-browser/node_modules/@playwright/mcp')
@@ -102,12 +101,12 @@ class Status(unittest.TestCase):
 class Send(unittest.TestCase):
     def test_한_줄씩_쌓인다(self):
         with tempfile.TemporaryDirectory() as d:
-            for args in (['voice', 'on'], ['feature', 'tama', 'off'], ['open', 'settings'], ['focus', 'acme-shop'], ['pet', 'show']):
+            for args in (['voice', 'on'], ['feature', 'gacha', 'off'], ['open', 'settings'], ['focus', 'acme-shop']):
                 r = run(d, *args)
                 self.assertEqual(r.returncode, 0, r.stderr)
                 self.assertEqual(len(r.stdout.strip().splitlines()), 1)  # 확인은 한 줄
             got = [(l['action'], l['arg']) for l in lines(d)]
-            self.assertEqual(got, [('voice', 'on'), ('feature', 'tama off'), ('open', 'settings'), ('focus', 'acme-shop'), ('pet', 'show')])
+            self.assertEqual(got, [('voice', 'on'), ('feature', 'gacha off'), ('open', 'settings'), ('focus', 'acme-shop')])
             self.assertTrue(all(l['ts'] for l in lines(d)))
 
     def test_틀리면_사용법과_2(self):
@@ -120,11 +119,10 @@ class Send(unittest.TestCase):
 
     def test_꺼둔_기능은_알려준다(self):
         with tempfile.TemporaryDirectory() as d:
-            json.dump({'features': {'office': False, 'tama': False}}, open(os.path.join(d, 'config.json'), 'w'))
+            json.dump({'features': {'office': False}}, open(os.path.join(d, 'config.json'), 'w'))
             r = run(d, 'open', 'office')
             self.assertEqual(r.returncode, 0)
             self.assertIn('feature office on', r.stderr)
-            self.assertIn('feature tama on', run(d, 'pet', 'show').stderr)
 
     def test_리더는_show_로(self):
         with tempfile.TemporaryDirectory() as d:

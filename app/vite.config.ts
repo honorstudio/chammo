@@ -1,7 +1,12 @@
 import { defineConfig } from 'vitest/config'; // vite 의 defineConfig 는 `test` 필드 타입을 모른다
 import react from '@vitejs/plugin-react';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { inlineTouchIcon } from './src/ui/mobile/touchIcon';
+
+// 비공개 팀 코드 — ../pro/web 이 있으면 @pro 가 거기로, 없으면(공개본) 자리표로. 플래그 없음
+const proWeb = resolve(__dirname, '../pro/web');
+const hasPro = existsSync(proWeb);
 
 // Tauri 개발 서버 규약: 고정 포트, 못 잡으면 실패(다른 포트로 조용히 옮기면 앱이 빈 화면을 띄운다)
 export default defineConfig({
@@ -17,15 +22,20 @@ export default defineConfig({
     },
   ],
   clearScreen: false,
-  server: { port: 1420, strictPort: true },
-  // 창 셋: 메인(index.html) + 항상 위에 떠 있는 다마고치 위젯(widget.html) + 문서 리더(reader.html)
+  resolve: {
+    alias: { '@pro': hasPro ? proWeb : resolve(__dirname, 'src/pro-stub') },
+    // pro/web 은 app/ 밖이라 패키지를 위로 찾아도 못 찾는다 — app 에서 찾게
+    dedupe: ['react', 'react-dom', '@tauri-apps/api'],
+  },
+  server: { port: 1420, strictPort: true, ...(hasPro ? { fs: { allow: ['..'] } } : {}) },
+  // 창: 메인(index.html) + 문서 리더(reader.html)
   // + 참모 모드 따로 창(mode.html) + Craft 맥 앱 따로 창(craft.html) + 폰 화면(mobile.html) — 창이 아니라 모바일 서버(src-tauri/src/mobile.rs)가 테일스케일로 내보낸다
-  build: { outDir: 'dist', target: 'safari17', rollupOptions: { input: { main: 'index.html', widget: 'widget.html', reader: 'reader.html', mobile: 'mobile.html', mode: 'mode.html', craft: 'craft.html', messenger: 'messenger.html', bubble: 'bubble.html' } } },
+  build: { outDir: 'dist', target: 'safari17', rollupOptions: { input: { main: 'index.html', reader: 'reader.html', mobile: 'mobile.html', mode: 'mode.html', craft: 'craft.html', messenger: 'messenger.html', bubble: 'bubble.html', notes: 'notes.html' } } },
   test: {
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', ...(hasPro ? ['../pro/web/**/*.test.ts'] : [])],
     environment: 'node',
     // CSS 는 기본으로 빈 글이 된다 — 폰 화면 배치(foldLayout)·프사 멈춤(avatarCss)·리뷰 칸(review.test) 규칙을 ?raw 로 읽는 테스트가 있고,
     // 안 볼 때 멈춤(paused.test)이 src 의 CSS 를 전부 읽어서 src/ui 아래는 다 그대로
-    css: { include: [/\/src\/ui\/.*\.css/] },
+    css: { include: [/\/src\/ui\/.*\.css/, /\/pro\/web\/.*\.css/] },
   },
 });

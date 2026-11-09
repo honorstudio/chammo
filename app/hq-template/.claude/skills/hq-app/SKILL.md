@@ -16,7 +16,7 @@ description: 사용자가 앱 설정·화면을 바꿔 달라·켜져 있어?(sc
 ```
 scripts/app status                                    # X 켜져 있어? — 설정·기능·음성 모드·브라우저 자동화
 scripts/app voice on|off
-scripts/app feature office|tama|gacha|review|voice|autoTidy on|off   # 설정 > 기능과 같다 — autoTidy = 세션 자동 정리(끝난 세션을 [앱] 줄로 알림)
+scripts/app feature office|gacha|review|voice|autoTidy on|off   # 설정 > 기능과 같다 — autoTidy = 세션 자동 정리(끝난 세션을 [앱] 줄로 알림)
 scripts/app feature usagePing off                     # 익명 사용 통계 끄기 — 사용자가 끄라고 할 때만(하루 한 번 무작위 설치 번호·판·OS·CPU·언어·나라, 경로·이름·대화는 안 보냄)
 scripts/app feature craftBasics off                    # 기본 참모 앱 다섯 미리 받기 끄기 — 사용자가 끄라고 할 때만(디스크가 모자라다 등)
 scripts/app feature bubble|bubbleDesk on|off          # 떠 있는 참모 배지(창 밖 동그란 얼굴) · bubbleDesk = 앱을 내려도 배지만 바탕 화면에 — "배지 꺼 줘"는 bubble off
@@ -25,7 +25,6 @@ scripts/app close settings|office|reader|tasks|inbox|harnitor|tools|review
 scripts/app harness [<프로젝트>]                       # 사용자 하네스를 글로(스킬·MCP·훅·플러그인·진단)
 scripts/app focus <세션 id|이름|프로젝트>              # 그 프로젝트 대시보드(채팅 뷰면 스페이스에)
 scripts/app focus --terminal <세션|프로젝트>         # 그 터미널(CLI) — 사용자가 터미널을 말할 때만
-scripts/app pet show|hide                             # 다마고치 창
 scripts/app project list|add <폴더>|remove <이름>      # devRoot 밖 프로젝트 폴더
 scripts/app browser status|connect <프로젝트|폴더>   # 있던(clone) 프로젝트에 전용 브라우저 붙이기 — 저장소 파일은 그대로
 scripts/app browser missing                           # 브라우저 안 붙은 프로젝트 목록
@@ -72,7 +71,7 @@ scripts/app mode remove <이름> [--trash-source] · mode restore-builtin [<이�
   그 아래 참모 프사, 쉬는(꺼진) 참모는 얼굴 겹친 한 칸(펼쳐서 깨운다), 예약·기능은 더보기 하나(볼 것 있으면 점), 맨 아래 + 하나(참모 하나 더·팀 만들기).
 - **왼쪽 사이드바**(터미널 뷰) — 너(참모), "전체 보기", 그 아래 프로젝트와 세션들. 세션 상태 표시:
   도는 호 = 작업 중, 말풍선(…) = 사용자 답 기다림, 꽉 찬 원 = 대기.
-- **설정** — 메뉴 Chammo > 설정…(⌘,): 언어·네 이름·폴더·기능·알림·브라우저 자동화. **기기 관리** 탭에 내 기기 목록·폰 추가(입구 주소 QR)·맨 아래 '테일스케일이 있는 분만' 접힘(옛 폰 QR·다른 기기 참모). 폰을 받나 스위치(폰 연결)는 내 기기 칸 위에 있다, **메신저** 탭에 메신저 알림·텔레그램, **계정** 탭 맨 위에 **Chammo 계정**(구글 로그인·기기 목록·로그아웃·계정 지우기·처리방침 링크), 그 아래 Claude 계정(맥·윈도우).
+- **설정** — 메뉴 Chammo > 설정…(⌘,): 언어·네 이름·폴더·기능·알림·참모 브라우저. **기기 관리** 탭에 내 기기 목록·폰 추가(입구 주소 QR)·맨 아래 '테일스케일이 있는 분만' 접힘(옛 폰 QR·다른 기기 참모). 폰을 받나 스위치(폰 연결)는 내 기기 칸 위에 있다, **메신저** 탭에 메신저 알림·텔레그램, **계정** 탭 맨 위에 **Chammo 계정**(구글 로그인·기기 목록·로그아웃·계정 지우기·처리방침 링크), 그 아래 Claude 계정(맥·윈도우).
 - **팀 모드**(채팅 뷰, 로그인했을 때) — 왼쪽 띠 참모 프사 아래 팀 표 하나(안 읽은 수 합). 누르면 화면 전체가 그 팀: 가운데 = 대화 목록(위 팀챗·아래 DM, 맨 아래 내 프로필)과 고른 대화, 오른쪽 = 팀 스페이스(탭 줄에 팀 홈·팀 보관함·연 파일, 끝 톱니 = 팀 설정). 목록 머리 아이콘으로 메신저 접기, 모니터가 둘 이상이면 따로 창으로 떼기. 띠의 참모 프사를 누르면 참모로 돌아간다. 사람 이름은 그 사람이 정한 프로필 이름(없으면 계정 이름) — `scripts/team` 도 같은 이름으로 찾는다.
   팀 만들기·초대는 띠 맨 아래 + — 만들면 바로 `https://chammo.app/join#…` 초대 링크와 복사. 받는 사람은 링크를 눌러 'Chammo 에서 열기'(앱이 초대 창을 채워 연다), 또는 + > '초대받았어요'에 붙여 넣기(복사해 둔 링크는 저절로 채워짐). 팀 이름 바꾸기·팀원 보기·빼기·팀장 넘기기·지난 초대 막기·나가기는 팀 설정(탭 줄 끝 톱니, 또는 팀 표 오른쪽 누르기 > 팀 설정).
 - **홈 진행 칸** — 스페이스 홈 맨 위(폰 홈도) '진행': 네가 맡긴 일을 목표(`--goal`)마다 한 줄 조각 막대로, 줄을 누르면 그 자리에서 일 목록. 보낸 일이 다 끝나고 2시간 새 일이 없으면 남은 예정 칸은 버리고 목표가 끝난다(바로 닫기 `scripts/task goal-done`), 이름표 없는 일은 하루 조용하면 접힌다. 다른 참모에게 넘긴 일(`scripts/task handover`)은 큰 일 한 칸이 받은 쪽 진행만큼 차고, 펼치면 '백엔드가 하는 중 — 2/5' 와 그쪽 일들, 받은 쪽 줄엔 '기획이 넘김'.
@@ -80,10 +79,9 @@ scripts/app mode remove <이름> [--trash-source] · mode restore-builtin [<이�
 - **가운데** — 고른 것의 터미널. 모든 세션이 진짜 Claude Code 라서 사용자가 어디든 직접 쳐도 된다.
 - **오른쪽 작업 패널**(⌘J) — 네가 맡긴 일(`scripts/task`) 목록, 최신이 위.
 - **상단 바 오른쪽**: 사무실 모드(픽셀 사무실), 리더 패널(⌘E), 하루 리플레이, **음성 모드**(스피커 버튼),
-  **결정 대기함**(종 — 네 `scripts/task ask` 질문이 여기 뜬다), 작은 **다마고치**.
+  **결정 대기함**(종 — 네 `scripts/task ask` 질문이 여기 뜬다).
 - **음성 모드** — 오른쪽 위 스피커 버튼. 켜면 네가 `scripts/say` 로 넘긴 짧은 말을 앱이 읽어 준다.
   말로 대답하기: 네 터미널에서 스페이스를 길게 누른다(Claude Code 자체 음성 입력).
-- **다마고치** — 오른쪽 위 알/펫. 누르면 떠 있는 창이 보이거나 숨고, 그 창의 "더보기"가 도감·보관함을 연다.
   사용자의 일(끝낸 일·보여 준 결과물, 깃을 쓰면 커밋·머지한 PR 도)을 먹고 자란다. 알은 일한 시간이 쌓이면 부화한다.
 - **뽑기·가구** — 사무실 모드에서 사무실 왼쪽 위 아이콘들: 뽑기(일해서 모은 코인), 도감, 스킨, 가구(방으로 끌어 놓기).
 - **리뷰** — 위 막대 아이콘(⌥⌘3). 열린 PR 과 관문(DB·돈·보안). 관문에 걸린 건 사용자 확인이 필요하다.
@@ -105,7 +103,7 @@ When the user asks to change something in the app — "turn on voice mode", "ope
 ```
 scripts/app status                                    # is X on? — settings, features, voice mode, browser automation
 scripts/app voice on|off
-scripts/app feature office|tama|gacha|review|voice|autoTidy on|off   # same as Settings > Features — autoTidy = tidy sessions automatically (an [app] line for finished sessions)
+scripts/app feature office|gacha|review|voice|autoTidy on|off   # same as Settings > Features — autoTidy = tidy sessions automatically (an [app] line for finished sessions)
 scripts/app feature usagePing off                     # turn off anonymous usage statistics — only when the user asks (once a day: a random install ID, version, OS, CPU, language, country; never paths, names or chats)
 scripts/app feature craftBasics off                    # stop installing the basic five Chammo apps ahead — only when the user asks (short on disk etc.)
 scripts/app feature bubble|bubbleDesk on|off          # floating assistant badge (round face outside the window) · bubbleDesk = keep only the badge on the desktop when the app is hidden — "hide the badge" is bubble off
@@ -114,7 +112,6 @@ scripts/app close settings|office|reader|tasks|inbox|harnitor|tools|review
 scripts/app harness [<project>]                       # the user's harness as text (skills, MCP, hooks, plugins, findings)
 scripts/app focus <session id|name|project>           # that project's dashboard (chat view: in the space)
 scripts/app focus --terminal <session|project>        # its terminal (CLI) — only when the user asks for the terminal
-scripts/app pet show|hide                             # the Tamagotchi window
 scripts/app project list|add <folder>|remove <name>   # project folders outside devRoot
 scripts/app browser status|connect <project|folder>   # this project's own browser (existing/cloned repos) — repo files untouched
 scripts/app browser missing                           # projects with no browser attached
@@ -174,10 +171,9 @@ don't guess, and don't say you can't see the app: you know how it's laid out.
 - **Middle** — the terminal of whatever is selected. Every session is a real Claude Code; the user can type in any of them.
 - **Right: task panel** (⌘J) — every job you delegated (from `scripts/task`), newest first.
 - **Top bar, right side**: office mode (pixel office), reader panel (⌘E), day replay, **voice mode** (speaker button),
-  **decision inbox** (bell — your `scripts/task ask` questions land here), and the small **Tamagotchi**.
+  **decision inbox** (bell — your `scripts/task ask` questions land here).
 - **Voice mode** — the speaker button at the top right. When on, the app reads your short summaries aloud
   (you pass them with `scripts/say`). Voice input: hold Space in your terminal (Claude Code's own dictation).
-- **Tamagotchi** — the egg/pet at the top right. Click it to show or hide its floating window; "More" in that
   window opens the dex and storage. It grows from the user's work: tasks you finish and results you show (with git, commits and merged PRs too).
   An egg hatches after enough work time.
 - **Gacha & furniture** — in office mode, the icons at the top left of the office: Gacha (spend coins earned from

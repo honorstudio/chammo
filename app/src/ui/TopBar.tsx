@@ -1,14 +1,14 @@
 import { useRef, useState } from 'react';
 import type { Limit, Usage } from '../domain/usage';
 import { fmtResetIn, usageLevel } from '../domain/usage';
-import type { RepoToday } from '../domain/replay';
-import type { TamaFile } from '../domain/tama/store';
-import { TamaMini } from './tama/TamaMini';
+import type { CodeToday } from '../domain/replay';
+import type { TaskEvent } from '../domain/tasks';
+import { TodayChip } from './TodayChip';
 import type { Features } from '../domain/config';
-import { IconBell, IconOffice, IconReader, IconSpace, IconTerminal } from './Icons';
+import { IconBell, IconNotebook, IconOffice, IconReader, IconSpace, IconTerminal } from './Icons';
 import { featureButton, type FeatureProps } from './FeatureButtons';
 import { barItems, type BarItem } from '../domain/topbarMenu';
-import { assistant, fmtNum, tr } from '../i18n';
+import { assistant, tr } from '../i18n';
 import { LoadChip } from './LoadChip';
 import { ageText, allOut, type AccountsView } from '../domain/accounts';
 import { AccountPopover } from './AccountPopover';
@@ -43,20 +43,19 @@ export function LimitMeters({ usage, age }: { usage: Usage; age?: number | null 
   );
 }
 
-/** 앱 맨 위: Claude 사용 한도 · 오늘 커밋 · (오른쪽) 다마고치 자리 */
-type TamaProps = { file: TamaFile | null; widgetShown: boolean; onToggle: () => void };
+/** 앱 맨 위: Claude 사용 한도 · 부하·오늘 한 일 아이콘 · (오른쪽) 다마고치 자리 */
 
-export function TopBar({ features, usage, usageAge, account, accounts, onSettings, today, tama, inboxCount, onInbox, harnitor, onHarnitor, tools, onTools, review, onReview, voice, onVoice, replayOn, onReplay, office, onOffice, space, onView, reader, onReader, load, claude, fontSize, fresh = false }: { /** 참모가 하나도 없음(첫 날) — 한도·커밋 숫자를 숨긴다(ux-start M6) */ fresh?: boolean; /** 계정 팝오버 '로그인해서 바꾸기' 터미널 — claude 경로·글자 크기 */ claude?: string | null; fontSize: number; load?: React.ComponentProps<typeof LoadChip>; features: Features; usage: Usage; usageAge?: number | null; account: { name: string; title: string; known: boolean } | null; accounts: AccountsView | null; onSettings: () => void; today: RepoToday[]; tama: TamaProps; inboxCount: number; onInbox: () => void; harnitor: boolean; onHarnitor: () => void; /** 도구 화면이 지금 탭에 떠 있나 */ tools: boolean; onTools: () => void; /** 리뷰 — on = 리뷰 화면이 떠 있나, confirm = 머지 전에 사람이 볼 PR 수 */ review: { on: boolean; confirm: number }; onReview: () => void; voice: boolean; onVoice: () => void; replayOn: boolean; onReplay: () => void; office: boolean; onOffice: () => void; /** 지금 뷰가 채팅 뷰인가 */ space: boolean; onView: (chat: boolean) => void; reader: boolean; onReader: () => void }) {
-  const commits = today.reduce((n, r) => n + r.commits, 0);
-  const added = today.reduce((n, r) => n + r.added, 0);
-  const deleted = today.reduce((n, r) => n + r.deleted, 0);
-  const detail = today.map((r) => tr(`${r.name} ${fmtNum(r.commits)}개 +${fmtNum(r.added)} −${fmtNum(r.deleted)}`, `${r.name} ${fmtNum(r.commits)} commits +${fmtNum(r.added)} −${fmtNum(r.deleted)}`)).join('\n');
+export function TopBar({ notesOn, onNotes, features, usage, usageAge, account, accounts, onSettings, today, tasks, onToday, inboxCount, inboxHot = true, onInbox, harnitor, onHarnitor, tools, onTools, review, onReview, voice, onVoice, replayOn, onReplay, office, onOffice, space, onView, reader, onReader, load, claude, fontSize, fresh = false }: {
+  /** 내 메모 — 패널이나 따로 창이 떠 있나 · 머리줄 아이콘·⌘⇧M */
+  notesOn: boolean;
+  onNotes: () => void;
+ /** 참모가 하나도 없음(첫 날) — 한도·커밋 숫자를 숨긴다(ux-start M6) */ fresh?: boolean; /** 계정 팝오버 '로그인해서 바꾸기' 터미널 — claude 경로·글자 크기 */ claude?: string | null; fontSize: number; load?: React.ComponentProps<typeof LoadChip>; features: Features; usage: Usage; usageAge?: number | null; account: { name: string; title: string; known: boolean } | null; accounts: AccountsView | null; onSettings: () => void; /** 오늘 코드 숫자 — git 을 끈 사람은 0 */ today: CodeToday; /** 일 기록 — 오늘 끝낸 일을 센다 */ tasks: TaskEvent[]; /** 오늘 한 일 아이콘을 누름 — 하루 기록 열기 */ onToday: () => void; inboxCount: number; /** 결제·운영 카드가 있나 — 없으면 종 숫자를 회색으로(그냥 물음만) */ inboxHot?: boolean; onInbox: () => void; harnitor: boolean; onHarnitor: () => void; /** 도구 화면이 지금 탭에 떠 있나 */ tools: boolean; onTools: () => void; /** 리뷰 — on = 리뷰 화면이 떠 있나, confirm = 머지 전에 사람이 볼 PR 수 */ review: { on: boolean; confirm: number }; onReview: () => void; voice: boolean; onVoice: () => void; replayOn: boolean; onReplay: () => void; office: boolean; onOffice: () => void; /** 지금 뷰가 채팅 뷰인가 */ space: boolean; onView: (chat: boolean) => void; reader: boolean; onReader: () => void }) {
   const chip = useRef<HTMLButtonElement>(null);
   const [pop, setPop] = useState<DOMRect | null>(null);
   const out = allOut(accounts, Date.now());
   return (
     <header className="topbar">
-      {/* 첫 날(참모 0명)엔 한도·커밋 숫자를 숨기고, 한도엔 무엇인지 이름(2026-11-01 ux-start M6) */}
+      {/* 첫 날(참모 0명)엔 한도·오늘 한 일을 숨기고, 한도엔 무엇인지 이름(2026-11-01 ux-start M6) */}
       {!fresh && <>
       <LimitMeters usage={usage} age={usageAge} />
       </>}
@@ -66,29 +65,20 @@ export function TopBar({ features, usage, usageAge, account, accounts, onSetting
         {out && <span className="dim">{tr('다 소진', 'All used')}</span>}
       </button>}
       {pop && accounts && <AccountPopover view={accounts} anchor={pop} chip={chip} claude={claude} fontSize={fontSize} onClose={() => setPop(null)} onSettings={() => { setPop(null); onSettings(); }} />}
-      {!fresh && features.git && <>
-      <span className="sep" />
-      <span className="today" title={detail || tr('오늘(새벽 5시부터) 커밋 없음', 'No commits today (since 5 AM)')}>
-        <span className="m-label">{tr('오늘 커밋', 'Commits today')}</span>
-        <b>{fmtNum(commits)}</b>
-        {commits > 0 && (
-          <span className="dim">
-            <span className="plus">+{fmtNum(added)}</span> <span className="minus">−{fmtNum(deleted)}</span> · {tr('저장소', 'repos')} {today.length}
-          </span>
-        )}
-      </span>
-      </>}
-      {load && <>
+      {(load || !fresh) && <>
         {(!fresh || account) && <span className="sep" />}
-        {/* 늘 보인다 — 올리면 카드, 누르면 자세히 보기(2026-11-01 사용자 "내 피씨가 어느 정도 상태인지 팔로우가 안 됨") */}
-        <LoadChip {...load} />
+        <span className="tdy-group">
+          {/* 늘 보인다 — 올리면 카드, 누르면 자세히 보기(2026-11-01 사용자 "내 피씨가 어느 정도 상태인지 팔로우가 안 됨") */}
+          {load && <LoadChip {...load} />}
+          {/* 고정 글자 '오늘 커밋' 대신 아이콘 — 누구에겐 불필요해서, 개발 중인 사람만 칸에 코드 숫자(2026-11-05 사용자) */}
+          {!fresh && <TodayChip events={tasks} code={today} onOpen={onToday} />}
+        </span>
       </>}
       <span className="grow" />
       {(() => {
         // 뷰마다 쓰는 아이콘만 — 순서는 domain/topbarMenu 표(그 뷰에서만 쓰는 것은 토글 왼쪽, 공통은 오른쪽)
         const fp: FeatureProps = { voice, onVoice, replayOn, onReplay, tools, onTools, harnitor, onHarnitor, review, onReview };
         const item: Record<BarItem, React.ReactNode> = {
-          tama: <TamaMini key="tama" file={tama.file} onOpen={tama.onToggle} on={tama.widgetShown} />,
           office: <button key="office" className={`voice ${office ? 'on' : ''}`} title={space
             ? (office ? tr('사무실 — 스페이스 칸이 사무실 (눌러서 스페이스로, ⌘4)', 'Office — the space shows the office (click for space, ⌘4)') : tr('사무실 — 스페이스 칸을 사무실로 (⌘4)', 'Office — show the office in the space (⌘4)'))
             : (office ? tr(`사무실 모드 켜짐 — ${assistant()} 화면이 픽셀 사무실로 (눌러서 끄기)`, `Office mode on — ${assistant()}'s screen is a pixel office (click to turn off)`) : tr(`사무실 모드 — ${assistant()} 화면을 픽셀 사무실로 (⌘4)`, `Office mode — show ${assistant()}'s screen as a pixel office (⌘4)`))}
@@ -97,8 +87,9 @@ export function TopBar({ features, usage, usageAge, account, accounts, onSetting
           // 기록·음성·도구·하니터·리뷰 — 터미널 뷰만(채팅 뷰는 왼쪽 참모 패널, domain/topbarMenu rail)
           replay: featureButton('replay', fp, 'voice'), voice: featureButton('voice', fp, 'voice'), tools: featureButton('tools', fp, 'voice'),
           harnitor: featureButton('harnitor', fp, 'voice'), review: featureButton('review', fp, 'voice'),
+          notes: <button key="notes" className={`voice ${notesOn ? 'on' : ''}`} aria-pressed={notesOn} aria-label={tr('내 메모', 'My notes')} title={tr('내 메모 (⌘⇧M)', 'My notes (⌘⇧M)')} onClick={onNotes}><IconNotebook /></button>,
           // 맨 끝: 결정 대기 드롭다운이 바로 아래(오른쪽 위)에 펼쳐진다
-          inbox: <button key="inbox" className={`bell ${inboxCount ? 'on' : ''}`} aria-label={inboxCount ? tr(`결정 대기 ${inboxCount}개`, `${inboxCount} decisions waiting`) : tr('결정 대기', 'Decisions')} title={inboxCount ? tr(`결정 대기 ${inboxCount}개 — 눌러서 보기`, `${inboxCount} decisions waiting — click to view`) : tr('결정 대기 없음', 'No decisions waiting')} onClick={onInbox}>
+          inbox: <button key="inbox" className={`bell ${inboxCount ? (inboxHot ? 'on' : 'calm') : ''}`} aria-label={inboxCount ? tr(`결정 대기 ${inboxCount}개`, `${inboxCount} decisions waiting`) : tr('결정 대기', 'Decisions')} title={inboxCount ? tr(`결정 대기 ${inboxCount}개 — 눌러서 보기`, `${inboxCount} decisions waiting — click to view`) : tr('결정 대기 없음', 'No decisions waiting')} onClick={onInbox}>
             <IconBell />
             <Badge n={inboxCount} className="bell-n" />
           </button>,

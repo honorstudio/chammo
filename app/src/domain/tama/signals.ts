@@ -22,14 +22,17 @@ export function showFeed(raw: string): TamaEvent[] {
   });
 }
 
-/** Rust `human_turns` 원문(`세션 id\t시각` 줄) = 사람이 세션에 건 말(간식) */
-export function talkFeed(raw: string): TamaEvent[] {
-  return raw.split('\n').flatMap((line) => {
-    const [by, ts] = line.split('\t');
+/** 사람이 건 말 — 앱이 이미 읽는 대화 꼬리의 마지막 말(Activity.human)만 모은다. 대화 기록 전체를 훑지 않는다(1.2GB 를 메모리로 읽었다, 11-07 참모-2).
+ *  코인은 10분에 한 번(sources TALK_GAP_MIN)이라 1분마다 마지막 말만 봐도 빠지는 게 없다. 하루 상한을 셀 만큼 이틀만 기억 */
+const TALK_KEEP = 2 * 86_400_000;
+export function rememberTalks(seen: Map<string, number>, last: { id: string; ts?: string }[], now: number): void {
+  for (const { id, ts } of last) {
     const t = Date.parse(ts ?? '');
-    return by && Number.isFinite(t) ? [{ t, type: 'talk' as const, by }] : [];
-  });
+    if (Number.isFinite(t)) seen.set(`${id}\n${t}`, t);
+  }
+  for (const [k, t] of seen) if (now - t >= TALK_KEEP) seen.delete(k);
 }
+export const talkEvents = (seen: Map<string, number>): TamaEvent[] => [...seen].map(([k, t]) => ({ t, type: 'talk' as const, by: k.slice(0, k.indexOf('\n')) }));
 
 /** 예약이 돌고 보고한 것 = 끼니 + 배틀(성공 = 승) */
 export function routineFeed(routines: Routine[]): TamaEvent[] {

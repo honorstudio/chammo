@@ -1,8 +1,11 @@
 // 뽑기 아이템 아이콘 — 정면 도트, 대략 24×20 칸 안에 (0,0) 기준으로 그린다. 시안 v2 P(뽑기 풀) 그림을 옮긴 것
 import { itemOf } from '../../domain/gacha';
+import { colorFor } from '../../domain/office';
 import { pet, type Brush } from '../office/draw';
 import { skinOf, SKINS } from '../office/skins';
+import { drawArt } from '../office/sprite';
 import { PACK } from './packs';
+import { ART_SPR } from './packs/artSprites.gen';
 
 type R = Pick<Brush, 'rect'>;
 const O = '#2a1c14';
@@ -157,13 +160,20 @@ export function lightScene(b: R, id: string, W: number, H: number, t: number, P:
   }
 }
 
+/** 컬러 도트는 28×24 아이콘 칸 가운데에(scaled 2, 3 기준) — 큰 건 아래를 맞춘다 */
+const artIcon = (b: R, key: string) => { const a = ART_SPR[key]; if (a) drawArt(b, a, 12 - (a.w >> 1), Math.max(-3, 21 - a.h - Math.max(0, (24 - a.h) >> 1))); };
+/** 다마고치 도트 캐릭터 — 사무실과 같은 자기 색 */
+const chrIcon = (b: R, spr: string) => { const sk = skinOf('wood'); if (ART_SPR[spr]) artIcon(b, spr); else pet(b, sk, spr, 4, 2, sk.pets[colorFor(spr) % sk.pets.length]!); };
+
 export function drawItem(b: R, id: string) {
   const it = itemOf(id);
   if (!it) { if (id === 'skin.wood') skinThumb(b, 'wood'); return; } // 나무 = 기본 방(뽑기 풀엔 없다) — 꾸미기의 '해제' 칸
   const name = id.slice(id.indexOf('.') + 1);
   switch (it.kind) {
+    case 'chr': return chrIcon(b, name);
+    case 'floor': case 'wall': return artIcon(b, `${it.kind}:${name}`);
     case 'skin': return skinThumb(b, name);
-    case 'furn': return (FURN[name] ?? PACK.furn[name]?.icon)?.(b);
+    case 'furn': if (ART_SPR[`furn:${name}`]) return artIcon(b, `furn:${name}`); return (FURN[name] ?? PACK.furn[name]?.icon)?.(b);
     case 'hat': return hatIcon(b, name);
     case 'window': return windowIcon(b, name);
     case 'friend': return name === 'cat' ? cat(b) : PACK.friend[name]?.icon(b);

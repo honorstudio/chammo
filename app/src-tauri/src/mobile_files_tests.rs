@@ -544,6 +544,19 @@ fn md_속_그림은_그_문서가_가리킨_것만() {
 }
 
 #[test]
+fn md_속_그림_맞추기는_윈도우_구분자를_가리지_않는다() {
+    // 윈도우 실측(공개 이슈 #15, 11-04): md_images 는 PathBuf::push 라 C:/…/work\그림.png, 폰(resolveRel)은 C:/…/work/그림.png 로 묻는다 → 403
+    assert!(md_ref_matches(Path::new("C:/Users/Me/work\\그림.png"), "C:/Users/Me/work/그림.png"));
+    assert!(md_ref_matches(Path::new("c:\\Users\\Me\\work\\그림.png"), "C:/Users/Me/work/그림.png"));
+    assert!(!md_ref_matches(Path::new("C:/Users/Me/work\\그림.png"), "C:/Users/Me/work/다른.png"));
+    assert!(!md_ref_matches(Path::new("C:/Users/Me/work\\그림.png"), "D:/Users/Me/work/그림.png"));
+    // 맥은 글자 그대로
+    assert!(md_ref_matches(Path::new("/u/docs/shots/a.png"), "/u/docs/shots/a.png"));
+    assert!(!md_ref_matches(Path::new("/u/docs/shots/a.png"), "/u/docs/shots//a.png"));
+    assert!(!md_ref_matches(Path::new("/u/docs/a\\b.png"), "/u/docs/a/b.png"));
+}
+
+#[test]
 fn range_머리_해석() {
     const C: u64 = 1024 * 1024;
     assert_eq!(parse_range(Some("bytes=0-1"), 3000, C), Some((0, 1)));
@@ -788,4 +801,52 @@ fn 한글_hwpx_는_속_첫_장_그림을_꺼내고_흰_장은_버린다() {
     let docx = d.join("a.docx");
     std::fs::copy(d.join("신청서.hwpx"), &docx).unwrap();
     assert_eq!(hwpx_preview(&docx), None);
+}
+
+#[test]
+fn 폰이_연_팀_파일만_데이터_폴더_벽을_넘는다() {
+    // 11-06 사용자 "디엠 온 거 파일 볼 수가 없음" — 풀어 둔 팀 파일은 데이터 폴더 안이라 폰 보기 길에서 막혔다.
+    // 폴더째 열지 않고 폰이 id 로 연 파일 하나만 — 같은 폴더 다른 파일(방 사람이 준 남의 파일)은 그대로 막힌다
+    let d = tmp("team-opened");
+    let dir = d.join("team-locker-peek/t-1/대화 파일");
+    std::fs::create_dir_all(&dir).unwrap();
+    let (a, b, s) = (dir.join("회의.md"), dir.join("옆 파일.md"), dir.join("api-token.md"));
+    for p in [&a, &b, &s] {
+        std::fs::write(p, "글").unwrap();
+    }
+    let r = rules(&d, "");
+    assert!(!shareable(&a, &r), "열기 전엔 막힌다");
+    team_opened_add(&a);
+    team_opened_add(&s);
+    assert!(shareable(&a, &r), "연 파일은 된다");
+    assert!(!shareable(&b, &r), "옆 파일은 그대로 막힌다");
+    assert!(!shareable(&s, &r), "비밀 이름은 열었어도 막힌다");
+    let allowed = team_opened();
+    assert!(allowed.contains(&a.to_string_lossy().into_owned()));
+    assert_eq!(pick(a.to_str().unwrap(), &allowed, &r), Pick::Ok(a.clone()));
+    assert_eq!(pick(b.to_str().unwrap(), &allowed, &r), Pick::Forbidden);
+}
+
+#[test]
+fn 폰이_연_팀_파일_기억은_상한이_있다() {
+    let first = PathBuf::from(format!("/chammo-opened-cap-{}/첫.md", std::process::id()));
+    team_opened_add(&first);
+    team_opened_add(&first);
+    assert_eq!(team_opened().iter().filter(|p| **p == first.to_string_lossy()).count(), 1, "같은 파일은 한 줄");
+    for i in 0..=TEAM_OPENED_MAX {
+        team_opened_add(Path::new(&format!("/chammo-opened-cap-{}/{i}.md", std::process::id())));
+    }
+    assert!(team_opened().len() <= TEAM_OPENED_MAX);
+    assert!(!team_opened().iter().any(|p| *p == first.to_string_lossy()), "오래된 것부터 잊는다");
+}
+
+#[test]
+fn 폰에서_여는_팀_문서_형식() {
+    for n in ["회의.md", "메모.txt", "표.csv", "견적.pdf", "계약.docx", "정산.xlsx", "발표.pptx"] {
+        assert!(team_doc(Path::new(n)), "{n}");
+    }
+    // 남이 올린 html 은 스크립트가 돈다, 영상은 전용 길, 형식 밖은 안 낸다
+    for n in ["시안.html", "b.HTM", "영상.mp4", "묶음.zip", "로고.ai", "이름없음"] {
+        assert!(!team_doc(Path::new(n)), "{n}");
+    }
 }

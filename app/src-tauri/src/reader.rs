@@ -183,7 +183,15 @@ pub fn roots_from(home: &Path, dev_root: &str, extra: &[String], home_str: &str)
 /// 지금 설정 기준 user 폴더들(roots_from)
 pub fn user_roots() -> Vec<PathBuf> {
     let c = crate::config::current();
-    roots_from(&home(), &c.dev_root, &c.extra_projects, &crate::platform::home())
+    let mut out = roots_from(&home(), &c.dev_root, &c.extra_projects, &crate::platform::home());
+    // 내 메모는 데이터 폴더가 홈 밖(CHAMMO_HOME)이어도 문서 페이지로 연다
+    if let Ok(notes) = crate::notes::dir().canonicalize() {
+        let notes = crate::platform::clean_path(notes);
+        if !out.iter().any(|r| notes.starts_with(r)) {
+            out.push(notes);
+        }
+    }
+    out
 }
 
 /// 홈·프로젝트 폴더 안의 실제 파일(safe_path 를 user_roots 마다)
@@ -245,6 +253,15 @@ pub fn respond(body: &[u8], mime: &str) -> Response<Vec<u8>> {
 // 확대 셋(Ctrl/⌘ + = - 0, 숫자패드)만 부모에게 — iframe 에 포커스가 있으면 키가 앱에 안 와서(윈도우는 메뉴 가속키도 안 돎) html 탭 확대가 안 됐다.
 // 다른 단축키는 넘기지 않는다: 남의 html 이 흉내 내도 자기 확대만 바뀐다(2026-10-22 사용자 제보, 시험 ui/hodocZoomBridge.test.ts)
 const ESC_BRIDGE: &str = "<script>addEventListener('keydown',function(e){if(parent===window)return;if(e.key==='Escape')parent.postMessage({hodoc:'esc'},'*');if((e.ctrlKey||e.metaKey)&&!e.altKey){var c={Equal:1,NumpadAdd:1,Minus:-1,NumpadSubtract:-1,Digit0:0,Numpad0:0}[e.code];if(c!==undefined){e.preventDefault();parent.postMessage({hodoc:'zoom',c:c},'*')}}},true);addEventListener('message',function(e){var z=e.data&&e.data.hodocZoom;if(typeof z==='number'&&z>0)document.documentElement.style.zoom=String(z);var q=e.data&&e.data.hodocFind;if(typeof q==='string'&&q)hodocFlash(q);var pg=e.data&&e.data.hodocPage;if(typeof pg==='number'&&pg>0&&!(q&&q.length))hodocPageGo(pg)});function hodocPageGo(n){var ps=document.querySelectorAll('div.slide, .page, section.slide, .sheet');var el=ps[Math.min(n,ps.length)-1];if(!el)return;el.scrollIntoView({block:'start',behavior:'smooth'});hodocRing(function(){return el.getBoundingClientRect()},500)}function hodocRing(c0,wait){var my=window.__hodocN=(window.__hodocN||0)+1;document.querySelectorAll('.hodoc-ring').forEach(function(x){x.remove()});setTimeout(function(){if(window.__hodocN!==my)return;var st=document.getElementById('hodoc-st');if(!st){st=document.createElement('style');st.id='hodoc-st';st.textContent='::highlight(hodoc-flash){background:#ffd24d;color:#1a1a1a}.hodoc-ring{position:absolute;z-index:2147483647;pointer-events:none;border-radius:10px;box-shadow:0 0 0 2px #f0a020;animation:hodoc-ring 1.1s ease-out 3 forwards}@keyframes hodoc-ring{0%{box-shadow:0 0 0 2px #f0a020,0 0 0 0 rgba(240,160,32,.55)}70%{box-shadow:0 0 0 2px #f0a020,0 0 0 14px rgba(240,160,32,0)}100%{box-shadow:0 0 0 2px rgba(240,160,32,.6)}}';document.head.appendChild(st)}var c=typeof c0==='function'?c0():c0,d=document.createElement('div');d.className='hodoc-ring';d.style.cssText='left:'+(c.left+scrollX-6)+'px;top:'+(c.top+scrollY-4)+'px;width:'+(c.width+12)+'px;height:'+(c.height+8)+'px';document.body.appendChild(d);setTimeout(function(){d.remove();if(window.__hodocN===my&&window.CSS&&CSS.highlights)CSS.highlights.delete('hodoc-flash')},6000)},wait)}function hodocFlash(q){var w=document.createTreeWalker(document.body,4),ns=[],s='';for(var n=w.nextNode();n;n=w.nextNode()){ns.push([n,s.length]);s+=n.nodeValue}var l=s.toLowerCase(),k=q.toLowerCase().trim(),i=l.indexOf(k);if(i<0&&k.length>20){k=k.slice(0,20);i=l.indexOf(k)}if(i<0)return;function at(p){for(var j=ns.length-1;j>=0;j--)if(ns[j][1]<=p)return[ns[j][0],p-ns[j][1]]}var a=at(i),b=at(i+k.length),r=document.createRange();r.setStart(a[0],a[1]);r.setEnd(b[0],Math.min(b[1],b[0].nodeValue.length));var el=a[0].parentElement;el.scrollIntoView({block:'center',behavior:'smooth'});if(window.Highlight&&CSS.highlights)CSS.highlights.set('hodoc-flash',new Highlight(r));hodocRing(function(){return r.getBoundingClientRect()},450)}</script>";
+/// 시안 칸 안 웹 링크 다리(2026-11-05 사용자 — 레퍼런스 카드를 눌러도 아무 데도 안 열렸다). 칸은 sandbox 라 target=_blank·window.open 이
+/// 조용히 막힌다 — a 클릭(가운데 누름 포함, target 무엇이든)·window.open 의 http(s) 주소만 부모에게 {hodoc:'link',url} 로 넘기고 그대로 둔다(쿼리 안 붙임).
+/// #앵커·같은 폴더 파일(hodoc·윈도우 hodoc.localhost·폰은 같은 서버)·javascript:·file:·data: 는 앱에 안 넘긴다. 페이지가 먼저 막은 클릭은 페이지 몫.
+/// 칸 자체는 바깥으로 안 넘어간다(바깥 사이트가 남의 칸을 막아 하얗게 됐다 — 같은 날 참모 업데이트): 폼 보내기는 여기서 막고, window.open 은 사람이 막 누른 뒤만 연다.
+/// 스크립트 location·되돌아가기는 칸 안에서 못 막는다(불투명 출처라 Navigation API navigate 가 안 뜬다 — 크롬 실측) — 맥은 frame_nav 가 웹뷰에서 막고,
+/// 뜨면 here·떠나면 leave 를 보내 그래도 샜으면 앱이 원래 문서로 되돌린다(ui/frameGuard).
+/// 맥(with_doc_shims)·폰(mobile_http inject_shim)이 같이 심는다 — 받는 쪽이 다시 거른다(domain/links frameLink, 시험 ui/hodocLinkBridge.test.ts)
+pub const LINK_BRIDGE: &str = "<script>(function(){if(parent===window)return;var me;try{me=new URL(document.baseURI)}catch(e){me=null}function own(x){return x.protocol==='hodoc:'||x.hostname==='hodoc.localhost'||(!!me&&x.protocol===me.protocol&&x.host===me.host)}function act(){var u=window.navigator&&window.navigator.userActivation;return !u||u.isActive}function go(u){var x;try{x=new URL(String(u),document.baseURI)}catch(e){return false}if((x.protocol!=='http:'&&x.protocol!=='https:')||own(x))return false;parent.postMessage({hodoc:'link',url:x.href},'*');return true}function hit(e){if(e.defaultPrevented||(e.type==='auxclick'&&e.button!==1))return;var a=e.target&&e.target.closest?e.target.closest('a[href]'):null;if(!a)return;var h=a.getAttribute('href');if(h&&go(h))e.preventDefault()}addEventListener('click',hit);addEventListener('auxclick',hit);addEventListener('submit',function(e){if(!e.defaultPrevented)e.preventDefault()});window.open=function(u){if(u!=null&&act())go(u);return null};parent.postMessage({hodoc:'here'},'*');addEventListener('pagehide',function(){parent.postMessage({hodoc:'leave'},'*')})})()</script>";
+
 pub fn with_esc_bridge(body: &[u8]) -> Vec<u8> {
     let mut out = body.to_vec();
     out.extend_from_slice(ESC_BRIDGE.as_bytes());
@@ -284,10 +301,11 @@ pub(crate) fn tag_end(low: &[u8], name: &str) -> Option<usize> {
 fn with_doc_shims(body: &[u8]) -> Vec<u8> {
     let low = body.to_ascii_lowercase();
     let at = tag_end(&low, "head").or_else(|| tag_end(&low, "html")).or_else(|| tag_end(&low, "!doctype")).unwrap_or(0);
-    let mut out = Vec::with_capacity(body.len() + MEM_STORAGE.len() + ESC_BRIDGE.len());
+    let mut out = Vec::with_capacity(body.len() + MEM_STORAGE.len() + ESC_BRIDGE.len() + LINK_BRIDGE.len());
     out.extend_from_slice(&body[..at]);
     out.extend_from_slice(MEM_STORAGE.as_bytes());
     out.extend_from_slice(&with_esc_bridge(&body[at..]));
+    out.extend_from_slice(LINK_BRIDGE.as_bytes());
     out
 }
 
@@ -299,6 +317,8 @@ pub fn doc_response(body: Vec<u8>, mime: &str) -> Response<Vec<u8>> {
 
 fn doc_headers(mut r: Response<Vec<u8>>, mime: &str) -> Response<Vec<u8>> {
     let h = r.headers_mut();
+    // 형식을 짐작해 돌리지 않는다 — .env·키 파일(text/plain)을 시안이 <script src> 로 불러 전역에 남은 값을 읽는 길(보안 점검 H-2)
+    h.insert("X-Content-Type-Options", tauri::http::HeaderValue::from_static("nosniff"));
     if mime.starts_with("text/html") {
         h.insert("Content-Security-Policy", tauri::http::HeaderValue::from_static(DOC_CSP));
     } else if mime.starts_with("font/") {
@@ -329,10 +349,30 @@ fn part_response(path: &Path, mime: &str, range: &str) -> std::io::Result<Respon
     Ok(doc_headers(base().status(206).header("Content-Range", format!("bytes {a}-{b}/{total}")).body(buf).unwrap(), mime))
 }
 
+/// 시안 칸이 스크립트로 불러도 되는 파일인가(보안 점검 H-2) — nosniff 뒤 스크립트로 돌 수 있는 건 스크립트 형식(.js·.mjs)뿐이라 그것만 폰과 같은 이름·자리 거름(place_ok)을 지난다.
+/// 문서·그림은 전처럼 — 사람이 keynote.pdf·.shots/token.png·풀어 둔 팀 파일을 여는 길이다. HQ 는 기본 자리가 데이터 폴더 안(~/.chammo/hq)이라 그 안 곁 스크립트는 이름·점 폴더만 본다
+pub(crate) fn script_allowed(path: &Path, rules: &crate::mobile_files::Rules) -> bool {
+    if !mime_of(path).starts_with("text/javascript") {
+        return true;
+    }
+    if let Some(rel) = (!rules.hq_dir.is_empty()).then(|| path.strip_prefix(&rules.hq_dir).ok()).flatten() {
+        return crate::mobile_files::name_ok(path) && rel.components().all(|c| !c.as_os_str().to_string_lossy().starts_with('.'));
+    }
+    crate::mobile_files::place_ok(path, rules)
+}
+
+fn script_rules() -> crate::mobile_files::Rules {
+    let (home_s, c) = (crate::platform::home(), crate::config::current());
+    crate::mobile_files::Rules { data_dir: crate::config::data_dir().to_path_buf(), hq_dir: crate::config::hq_dir(&home_s, &c, |k| std::env::var(k).ok()), home: PathBuf::from(home_s) }
+}
+
 /// hodoc:// 요청 처리
-pub fn serve<R: Runtime>(_ctx: tauri::UriSchemeContext<'_, R>, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
-    let not_found = || Response::builder().status(404).header("Content-Type", "text/plain; charset=utf-8").body(tr("없는 파일이거나 홈·프로젝트 폴더 밖이야.", "File not found, or outside the home and project folders.").as_bytes().to_vec()).unwrap();
+pub fn serve(req: Request<Vec<u8>>) -> Response<Vec<u8>> {
+    let not_found = || Response::builder().status(404).header("Content-Type", "text/plain; charset=utf-8").header("X-Content-Type-Options", "nosniff").body(tr("없는 파일이거나 홈·프로젝트 폴더 밖이야.", "File not found, or outside the home and project folders.").as_bytes().to_vec()).unwrap();
     let Some(path) = served_path(req.uri().path(), &user_roots(), &crate::config::data_file("avatars")) else { return not_found() };
+    if mime_of(&path).starts_with("text/javascript") && !script_allowed(&path, &script_rules()) {
+        return not_found();
+    }
     if let Some(range) = req.headers().get("range").and_then(|v| v.to_str().ok()) {
         return part_response(&path, mime_of(&path), range).unwrap_or_else(|_| not_found());
     }
@@ -598,7 +638,7 @@ pub fn doc_stamp(path: String) -> Result<String, String> {
 
 /// 알던 판(expected)이 지금 파일과 같을 때만 쓴다 — 다르면 CHANGED_OUTSIDE(밖에서 고친 줄을 덮지 않게, 2026-10-04 QA D1).
 /// 없는 파일은 다시 만들지 않는다(지워졌거나 이름이 바뀐 것). 임시 파일에 쓰고 바꿔 끼운다(쓰다 멈춰도 원본이 안 깨지게)
-fn write_checked(p: &Path, text: &str, expected: Option<&str>, keep: impl Fn(&Path)) -> Result<String, String> {
+pub(crate) fn write_checked(p: &Path, text: &str, expected: Option<&str>, keep: impl Fn(&Path)) -> Result<String, String> {
     let now = std::fs::read(p).map_err(|e| e.to_string())?;
     if expected.is_some_and(|x| x.as_bytes() != now.as_slice()) {
         return Err(CHANGED_OUTSIDE.into());
@@ -949,12 +989,37 @@ fn thumb_px(px: Option<u32>) -> u32 {
     }
 }
 
-/// 시안 검토 파일 이름 — <폴더>-<시안>.<ext>(폴더가 없으면 <시안>.<ext>)
+/// 시안 검토 파일 이름 — <폴더>-<시안>-<경로 지문 4자리>.<ext>. 지문이 없으면 팀원이 같은 폴더 이름에 같은 파일 이름으로 올린 시안이 열기만 해도 진짜 시안 기록을 덮고
+/// 표시·메모를 되돌려 받아 갔다(보안 점검 M-12). 영상도 같은 이름 — scripts/video-review 가 같은 규칙으로 찾는다
 fn curation_name(path: &str, ext: &str) -> String {
+    use sha2::Digest;
+    let h = sha2::Sha256::digest(path.as_bytes());
+    let stem = format!("{}-{:02x}{:02x}", curation_old_stem(path), h[0], h[1]);
+    format!("{stem}.{ext}")
+}
+
+/// 지문 없는 옛 이름 — <폴더>-<시안>(폴더가 없으면 <시안>)
+fn curation_old_stem(path: &str) -> String {
     let p = std::path::Path::new(path);
     let stem = p.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "curation".into());
     let parent = p.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    if parent.is_empty() { format!("{stem}.{ext}") } else { format!("{parent}-{stem}.{ext}") }
+    if parent.is_empty() { stem } else { format!("{parent}-{stem}") }
+}
+
+/// 옛 시안 기록을 새 이름으로 — md 머리(<!-- 시안: 경로 -->)가 이 시안일 때만. 같은 이름의 남의 시안이 먼저 열려 옛 기록을 가져가지 못하게. 새 기록이 있으면 안 덮는다
+fn adopt_old_curation(dir: &Path, path: &str) {
+    let new_md = dir.join(curation_name(path, "md"));
+    let old = curation_old_stem(path);
+    let old_md = dir.join(format!("{old}.md"));
+    if new_md.exists() || !old_md.is_file() {
+        return;
+    }
+    let head = std::fs::read_to_string(&old_md).unwrap_or_default();
+    if head.lines().next() != Some(format!("<!-- 시안: {path} -->").as_str()) {
+        return;
+    }
+    let _ = std::fs::rename(dir.join(format!("{old}.state.json")), dir.join(curation_name(path, "state.json")));
+    let _ = std::fs::rename(&old_md, &new_md);
 }
 
 /// 시안 검토(큐레이션) 결과 — 앱 데이터 폴더/curation/<시안 이름>.md. 사용자가 표시할 때마다 앱이 적어 두고, 참모는 보내기 전에도 여기서 읽는다
@@ -962,6 +1027,7 @@ fn curation_name(path: &str, ext: &str) -> String {
 pub fn save_curation(path: String, text: String) -> Result<String, String> {
     let dir = crate::config::data_file("curation");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    adopt_old_curation(&dir, &path);
     let out = dir.join(curation_name(&path, "md"));
     std::fs::write(&out, format!("<!-- 시안: {path} -->\n{text}\n")).map_err(|e| e.to_string())?;
     Ok(out.to_string_lossy().into_owned())
@@ -973,12 +1039,20 @@ pub fn save_curation(path: String, text: String) -> Result<String, String> {
 pub fn save_curation_state(path: String, json: String) -> Result<(), String> {
     let dir = crate::config::data_file("curation");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    adopt_old_curation(&dir, &path);
     std::fs::write(dir.join(curation_name(&path, "state.json")), json).map_err(|e| e.to_string())
+}
+
+/// 기록 파일 자리 — 영상 검토가 참모에게 보내는 글에 적는다
+pub fn curation_state_path(path: &str) -> std::path::PathBuf {
+    crate::config::data_file("curation").join(curation_name(path, "state.json"))
 }
 
 #[tauri::command]
 pub fn read_curation_state(path: String) -> String {
-    std::fs::read_to_string(crate::config::data_file("curation").join(curation_name(&path, "state.json"))).unwrap_or_default()
+    let dir = crate::config::data_file("curation");
+    adopt_old_curation(&dir, &path);
+    std::fs::read_to_string(dir.join(curation_name(&path, "state.json"))).unwrap_or_default()
 }
 
 /// 폴더 안 md 전부(하위 폴더까지, 깊이 4) — 내 페이지 나무. 경로 순
@@ -1149,6 +1223,9 @@ pub fn editable(p: &Path) -> bool {
 #[tauri::command]
 pub fn space_log_append(line: String) -> Result<(), String> {
     use std::io::Write;
+    if crate::notes::is_note_log(&line, &crate::notes::dir()) {
+        return Ok(()); // 내 메모는 기록에 안 남긴다 — 참모에게 저절로 안 읽힌다
+    }
     let mut f = std::fs::OpenOptions::new().create(true).append(true).open(crate::config::data_file("space-log.jsonl")).map_err(|e| e.to_string())?;
     writeln!(f, "{}", line.replace('\n', " ")).map_err(|e| e.to_string())
 }
@@ -1643,9 +1720,18 @@ mod tests {
 
     #[test]
     fn curation_file_names() {
-        assert_eq!(curation_name("/h/docs/design-drafts/space/v12.html", "md"), "space-v12.md");
-        assert_eq!(curation_name("/h/docs/design-drafts/space/v12.html", "state.json"), "space-v12.state.json");
-        assert_eq!(curation_name("v1.html", "md"), "v1.md");
+        // 시안도 경로 지문 — 팀원이 폴더 space 에 v12.html 을 올려도 진짜 시안 기록을 덮고 읽지 못한다(보안 점검 M-12)
+        let (real, foreign) = ("/h/docs/design-drafts/space/v12.html", "/h/.chammo/team-locker-peek/t1/space/v12.html");
+        assert!(curation_name(real, "md").starts_with("space-v12-") && curation_name(real, "md").ends_with(".md"));
+        assert_eq!(curation_name(real, "state.json").strip_suffix(".state.json"), curation_name(real, "md").strip_suffix(".md"));
+        assert_ne!(curation_name(real, "md"), curation_name(foreign, "md"));
+        assert_ne!(curation_name(real, "state.json"), curation_name(foreign, "state.json"));
+        assert!(curation_name("v1.html", "md").starts_with("v1-"));
+        // 영상은 경로 지문이 붙어 같은 이름 시안·다른 폴더와 안 겹친다
+        let v = curation_name("/h/film/v8.mp4", "state.json");
+        assert!(v.starts_with("film-v8-") && v.ends_with(".state.json"), "{v}");
+        assert_ne!(v, curation_name("/other/film/v8.mp4", "state.json"));
+        assert_ne!(curation_name("/h/film/v8.mp4", "md"), curation_name("/h/film/v8.html", "md"));
     }
 
     #[test]
@@ -1875,5 +1961,106 @@ mod tests {
         assert_eq!(super::history_name(None, t), "29850823-mine.md");
         assert_eq!(super::history_name(Some("edits"), t), "29850823-edits-07.json");
         assert_eq!(super::history_name(Some("../x"), t), "29850823-mine.md", "모르는 표시는 이름에 안 넣는다");
+    }
+}
+
+#[cfg(test)]
+mod hodoc_guard_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn rules() -> crate::mobile_files::Rules {
+        crate::mobile_files::Rules { data_dir: PathBuf::from("/h/.chammo"), hq_dir: "/h/.chammo/hq".into(), home: PathBuf::from("/h") }
+    }
+
+    // 보안 점검 H-2(2026-11-07) — 시안 스크립트가 <script src="hodoc://…"> 로 홈 파일을 불러 밖으로 보내는 길. 모든 hodoc 응답에 nosniff
+    #[test]
+    fn 모든_hodoc_응답에_nosniff() {
+        for mime in ["text/plain; charset=utf-8", "text/html; charset=utf-8", "text/javascript; charset=utf-8", "image/png", "font/woff2"] {
+            let r = doc_response(b"x".to_vec(), mime);
+            assert_eq!(r.headers().get("X-Content-Type-Options").map(|v| v.to_str().unwrap()), Some("nosniff"), "{mime}");
+        }
+        let f = std::env::temp_dir().join(format!("hodoc-nosniff-{}.txt", std::process::id()));
+        std::fs::write(&f, b"0123456789").unwrap();
+        for range in ["bytes=0-3", "bytes=99-"] {
+            let r = part_response(&f, "text/plain; charset=utf-8", range).unwrap();
+            assert_eq!(r.headers().get("X-Content-Type-Options").map(|v| v.to_str().unwrap()), Some("nosniff"), "{range}");
+        }
+        let _ = std::fs::remove_file(&f);
+    }
+
+    #[test]
+    fn 스크립트_형식은_비밀_자리에서_안_준다() {
+        for p in ["/h/.ssh/a.js", "/h/.config/app/b.mjs", "/h/.claude/c.js", "/h/.chammo/d.js", "/h/dev/p/.env.js", "/h/dev/p/secret.js", "/h/dev/p/api-token.mjs", "/h/dev/p/settings.js", "/h/dev/p/.next/e.js", "/h/.chammo/hq/.claude/f.js", "/h/.chammo/hq/secret.js"] {
+            assert!(!script_allowed(Path::new(p), &rules()), "{p}");
+        }
+    }
+
+    #[test]
+    fn 시안_곁_스크립트는_그대로_준다() {
+        for p in ["/h/dev/p/docs/app.js", "/h/dev/p/.shots/v1.js", "/h/dev/p/.claude/worktrees/a/docs/b.mjs", "/h/Documents/Chammo/참모/c.js", "/h/.chammo/hq/dash/app.js"] {
+            assert!(script_allowed(Path::new(p), &rules()), "{p}");
+        }
+    }
+
+    // 사람이 여는 문서·그림은 자리·이름과 상관없이 전처럼 — 이 거름은 스크립트 형식만(nosniff 뒤 스크립트로 돌 수 있는 건 이 형식뿐이다)
+    #[test]
+    fn 문서_그림은_자리_이름_거름을_안_받는다() {
+        for p in ["/h/dev/p/keynote.pdf", "/h/dev/p/.shots/token-화면.png", "/h/.chammo/team-locker-peek/t/계약서.pdf", "/h/.chammo/avatars/a.png", "/h/dev/p/settings.html", "/h/dev/p/.env", "/h/.ssh/config"] {
+            assert!(script_allowed(Path::new(p), &rules()), "{p}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod curation_move_tests {
+    use super::*;
+
+    fn tmp(n: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("chammo-curmove-{n}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    // 옛 기록(지문 없는 이름)은 머리에 적힌 시안 경로가 같을 때만 새 이름으로 옮긴다 — 같은 이름의 남의 시안이 먼저 열려 옛 기록을 가져가지 못하게
+    #[test]
+    fn 옛_기록은_그_시안이_열_때만_옮긴다() {
+        let d = tmp("own");
+        let real = "/h/docs/space/v12.html";
+        std::fs::write(d.join("space-v12.md"), format!("<!-- 시안: {real} -->\n결과\n")).unwrap();
+        std::fs::write(d.join("space-v12.state.json"), "{\"marks\":{\"a\":\"pick\"}}").unwrap();
+
+        adopt_old_curation(&d, "/h/.chammo/team-locker-peek/t1/space/v12.html");
+        assert!(d.join("space-v12.state.json").exists(), "남의 시안은 못 가져간다");
+        assert!(d.join("space-v12.md").exists());
+
+        adopt_old_curation(&d, real);
+        assert_eq!(std::fs::read_to_string(d.join(curation_name(real, "state.json"))).unwrap(), "{\"marks\":{\"a\":\"pick\"}}");
+        assert!(std::fs::read_to_string(d.join(curation_name(real, "md"))).unwrap().contains("결과"));
+        assert!(!d.join("space-v12.md").exists() && !d.join("space-v12.state.json").exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 새_기록이_있으면_옛_것으로_안_덮는다() {
+        let d = tmp("keep");
+        let real = "/h/docs/space/v12.html";
+        std::fs::write(d.join("space-v12.md"), format!("<!-- 시안: {real} -->\n옛\n")).unwrap();
+        std::fs::write(d.join("space-v12.state.json"), "{}").unwrap();
+        std::fs::write(d.join(curation_name(real, "md")), "새").unwrap();
+        adopt_old_curation(&d, real);
+        assert_eq!(std::fs::read_to_string(d.join(curation_name(real, "md"))).unwrap(), "새");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 머리_없는_옛_기록은_그대로() {
+        let d = tmp("nohead");
+        std::fs::write(d.join("space-v12.md"), "머리 없음").unwrap();
+        adopt_old_curation(&d, "/h/docs/space/v12.html");
+        assert!(d.join("space-v12.md").exists());
+        adopt_old_curation(&d, "/h/film/v8.mp4"); // 영상은 옛 이름이 없다
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

@@ -704,3 +704,18 @@ fn 열쇠_넘기기_바퀴는_상한까지만() {
     w.r.always("POST", "/keys", 200, "{}");
     assert_eq!(catch_up_at(&w.d, &w.kc, &w.r, &w.team, Instant::now(), 2), 2 * MAX_SHARE_POSTS);
 }
+
+#[test]
+fn 올리는_줄은_들어갈_폴더를_안다() {
+    // 11-04 사용자: 올리는 카드가 폴더 안·맨 위 모든 화면에 보였다 — 화면이 거를 수 있게 폴더를 들고 있는다
+    let w = World::new("up-folder", false);
+    w.r.answer(&format!("/v0/teams/{}/locker/files", w.team), 500, "{}");
+    let src = w.d.join("영상.mp4");
+    std::fs::write(&src, b"x").unwrap();
+    assert!(put_file_in(&w.d, &w.kc, &w.r, &w.team, "", "file", "영상/원본", &src).is_err());
+    let u = uploads(&w.team);
+    let u = u.iter().find(|u| u.name == "영상.mp4").expect("실패 줄이 남는다");
+    assert_eq!(u.folder, "영상/원본");
+    let json = serde_json::to_value(u).unwrap();
+    assert_eq!(json["folder"], "영상/원본", "화면이 읽는 이름");
+}

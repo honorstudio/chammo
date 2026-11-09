@@ -654,11 +654,22 @@ fn 배경이_처음_막힌_때_경로별_셈_한_줄만() {
         assert_eq!(tally(key, t, "GET", "/v0/teams/abc123/locker", false, true), None);
     }
     assert_eq!(tally(key, t, "POST", "/v0/teams/abc123/rooms", true, true), None, "사람 동작은 줄을 안 남긴다");
-    let line = tally(key, t, "GET", "/v0/teams/abc123/posts", false, false).expect("처음 막힘");
+    let Some(Note::Filled(line)) = tally(key, t, "GET", "/v0/teams/abc123/posts", false, false) else { panic!("처음 막힘") };
     assert!(line.contains("GET /v0/teams/*/locker 3") && line.contains("사람 POST /v0/teams/*/rooms 1") && line.contains("막힘 GET /v0/teams/*/posts 1"), "{line}");
     assert!(!line.contains("abc123"), "id 는 안 남긴다: {line}");
     assert_eq!(tally(key, t, "GET", "/v0/teams/abc123/posts", false, false), None, "칸마다 한 번");
-    assert!(tally(key, t + BUCKET_MS, "GET", "/v0/me", false, false).unwrap().contains("막힘 GET /v0/me 1"), "다음 칸은 새로 센다");
+    let Some(Note::Filled(next)) = tally(key, t + BUCKET_MS, "GET", "/v0/me", false, false) else { panic!("다음 칸") };
+    assert!(next.contains("막힘 GET /v0/me 1"), "다음 칸은 새로 센다: {next}");
+}
+
+#[test]
+fn 배경_시도가_몫을_넘은_때_다_썼다는_줄() {
+    let (key, t) = ("tally-over-key", 25 * BUCKET_MS + 5);
+    for _ in 0..BG_CAP {
+        assert_eq!(tally(key, t, "GET", "/v0/me", false, true), None);
+    }
+    let Some(Note::BgOver(line)) = tally(key, t, "GET", "/v0/me", false, false) else { panic!("몫을 넘음") };
+    assert!(line.starts_with("배경 요청이 10분 몫 200개를 다 썼어 — 경로별: GET /v0/me 200"), "{line}");
 }
 
 // ── 401 물러서기(10-31 운영 24시간: 요청의 약 절반이 401 — 서버가 모르는 기기가 허용 기다림 화면에서 2초마다 두드렸다) ──
@@ -830,6 +841,94 @@ fn 배경_몫을_처음_넘으면_알림_하나_경로별_셈과_같이() {
     assert!(a[0].get("key").is_none(), "열쇠는 밖으로 안 낸다");
 }
 
+// ── 11-04 알림 '배경이 넘쳤다'의 실제 셈: 사람 PUT parts 153 + 사람 다른 동작 12, 배경은 37 — 사람 올리기가 칸을 채운 건 배경 탓이 아니다 ──
+
+const PART_PATH: &str = "/v0/teams/abc1/locker/files/f1/parts/7";
+
+#[test]
+fn 앱이_막은_소켓_다시_붙기는_서버_429_처럼_안_읽힌다() {
+    // team_relay_ws 는 오류 글에 429 가 있으면 열쇠 전체를 60초 쉬게 한다 — 앱이 안 보낸 요청으로 쉬면 칸이 넘어간 뒤까지 번진다(11-04 18:30:17 새 칸인데 '잠시 쉬래요')
+    let (d, kc, _r) = logged_in("ws-budget");
+    let st = load_state(&d);
+    let k = device_keys(&kc, &st).unwrap();
+    let t = now_ms();
+    while spend(&k.public(), t, false) {}
+    let e = ws_url(&st, &k, "r1", t, "n1").unwrap_err();
+    assert!(!e.contains("429"), "{e}");
+    let e = hub_url_for(&st, &k, "h1", "ws", t, "n1").unwrap_err();
+    assert!(!e.contains("429"), "{e}");
+}
+
+#[test]
+fn 사람_올리기가_칸을_채워_배경이_막혀도_알림은_안_뜨고_까닭_다른_줄만() {
+    let (key, t) = ("fill-human-key", 21 * BUCKET_MS + 3);
+    for _ in 0..165 {
+        assert!(as_human(|| take_at(key, t, "PUT", PART_PATH)));
+    }
+    for _ in 0..35 {
+        assert!(take_at(key, t, "GET", "/v0/me/rooms"));
+    }
+    assert!(!take_at(key, t, "GET", "/v0/me/rooms"), "칸이 찼으니 배경은 막힌다(몫 동작은 그대로)");
+    for _ in 0..30 {
+        let _ = take_at(key, t, "GET", "/v0/me/rooms");
+    }
+    assert_eq!(take_alerts_for(key), Vec::<Value>::new(), "배경 자신은 66개 — 몫(200)을 안 넘었다");
+}
+
+#[test]
+fn 칸을_채운_사람_때문이면_로그_줄은_한_번_사람_쪽이_먼저() {
+    let (key, t) = ("fill-line-key", 22 * BUCKET_MS + 3);
+    for _ in 0..3 {
+        assert_eq!(tally(key, t, "GET", "/v0/me/rooms", false, true), None);
+    }
+    assert_eq!(tally(key, t, "PUT", PART_PATH, true, true), None);
+    let Some(Note::Filled(line)) = tally(key, t, "GET", "/v0/me/rooms", false, false) else { panic!("처음 막힘 = 사람이 채운 줄") };
+    assert!(line.contains("배경 4") && line.contains("사람 1"), "셈을 나눠 적는다: {line}");
+    assert!(line.contains("경로별: 사람 PUT /v0/teams/*/locker/files/*/parts/* 1"), "까닭(사람)이 먼저: {line}");
+    assert!(!line.contains("다 썼어"), "배경이 다 썼다고 안 한다: {line}");
+    assert_eq!(tally(key, t, "GET", "/v0/me/rooms", false, false), None, "칸마다 한 번");
+}
+
+#[test]
+fn 사람이_몇_개_섞여도_배경_자신이_몫을_넘으면_알림() {
+    // 사람 말 5개가 끼면 칸은 배경 195 에서 찬다 — 보낸 수만 세면 진짜 폭주가 영영 안 잡힌다. 막힌 시도까지 센다
+    let (key, t) = ("storm-mixed-key", 23 * BUCKET_MS + 3);
+    for _ in 0..5 {
+        assert!(as_human(|| take_at(key, t, "POST", "/v0/teams/abc1/rooms")));
+    }
+    for _ in 0..195 {
+        assert!(take_at(key, t, "GET", "/v0/teams/abc1/heads"));
+    }
+    for _ in 0..5 {
+        assert!(!take_at(key, t, "GET", "/v0/teams/abc1/heads"));
+    }
+    assert_eq!(take_alerts_for(key).len(), 0, "배경 시도 200개까지는 몫 안");
+    assert!(!take_at(key, t, "GET", "/v0/teams/abc1/heads"));
+    let a = take_alerts_for(key);
+    assert_eq!(a.len(), 1, "201번째 시도에 한 번: {a:?}");
+    assert_eq!(a[0]["kind"], "bg-cap");
+    let _ = take_at(key, t, "GET", "/v0/teams/abc1/heads");
+    assert_eq!(take_alerts_for(key).len(), 0, "칸마다 한 번");
+}
+
+#[test]
+fn 배경_폭주_알림의_맨_앞_경로는_사람_올리기가_더_많아도_배경_것() {
+    // 화면(alertKey)은 맨 앞 경로로 같은 원인을 거른다 — 사람 PUT 이 앞이면 또 '조각이 원인'으로 읽힌다
+    let (key, t) = ("storm-order-key", 24 * BUCKET_MS + 3);
+    for _ in 0..150 {
+        assert!(as_human(|| take_at(key, t, "PUT", PART_PATH)));
+    }
+    for _ in 0..50 {
+        assert!(take_at(key, t, "GET", "/v0/teams/abc1/heads"));
+    }
+    for _ in 0..151 {
+        assert!(!take_at(key, t, "GET", "/v0/teams/abc1/heads"));
+    }
+    let a = take_alerts_for(key);
+    assert_eq!(a.len(), 1, "{a:?}");
+    assert!(a[0]["detail"].as_str().unwrap().starts_with("막힘 GET /v0/teams/*/heads 151"), "{a:?}");
+}
+
 #[test]
 fn 사람_동작이_서버_429_를_받으면_알림() {
     let (d, kc, r) = logged_in("alert-429");
@@ -841,4 +940,50 @@ fn 사람_동작이_서버_429_를_받으면_알림() {
     let a = take_alerts_for(&k.public());
     assert_eq!(a.len(), 1, "{a:?}");
     assert_eq!((a[0]["kind"].as_str(), a[0]["detail"].as_str()), (Some("human-429"), Some("POST /v0/teams/*/rooms")));
+}
+
+// ── 팀 권한(relay ADR 0015) — /v0/me plan·팀별 open, 402 갈래별 말
+
+#[test]
+fn 팀_권한_plan_은_옛_중계면_None_있으면_그대로() {
+    assert_eq!(plan_of(&json!({ "account": null, "teams": [] })), None);
+    let p = plan_of(&json!({ "plan": { "lock": true, "contact": "mailto:support@example.com?subject=a%20b", "team": { "max": 1, "used": 1, "canCreate": false, "reason": "team_max" } } })).unwrap();
+    assert_eq!(p, TeamPlan { lock: true, can_create: false, reason: "team_max".into(), max: 1, used: 1, contact: "mailto:support@example.com?subject=a%20b".into() });
+    // canCreate 칸이 없으면 막지 않는다(화면은 예전처럼) — 판단은 늘 서버가 다시 한다
+    assert!(plan_of(&json!({ "plan": { "lock": false, "team": {} } })).unwrap().can_create);
+}
+
+#[test]
+fn 문의_주소는_https·mailto_만_빈칸·제어_글자·다른_스킴은_버린다() {
+    for bad in ["javascript:alert(1)", "file:///etc/passwd", "http://x.test", "mailto:a@b.c\nbcc:x@y.z", "https://a b", "chammo://x", &format!("https://{}", "a".repeat(300))] {
+        assert!(!contact_ok(bad), "{bad}");
+        assert_eq!(plan_of(&json!({ "plan": { "contact": bad, "team": {} } })).unwrap().contact, "", "{bad}");
+    }
+    assert!(contact_ok("https://chammo.app/contact"));
+    assert!(contact_ok("mailto:support@example.com?subject=Chammo%20%ED%8C%80"));
+}
+
+#[test]
+fn 닫힌_팀은_open_false_인_것만() {
+    let me = json!({ "teams": [{ "teamId": "a", "open": true }, { "teamId": "b", "open": false }, { "teamId": "c" }] });
+    assert_eq!(closed_of(&me), vec!["b".to_string()]);
+    assert!(closed_of(&json!({})).is_empty());
+}
+
+#[test]
+fn 팀_만들기_402_는_꼬리표_붙은_말_들어오기·쓰기_402_는_사람이_읽는_말() {
+    let pr = |reason: &str| json!({ "error": "payment_required", "feature": "team", "reason": reason, "max": 2 });
+    assert_eq!(why_register("/v0/teams", 402, &pr("team_create")), "[plan:team_create] 새 팀은 권한이 필요해요");
+    assert_eq!(why_register("/v0/teams", 402, &pr("team_expired")), "[plan:team_expired] 팀 만들기 권한이 끝났어요");
+    assert!(why_register("/v0/teams", 402, &pr("team_max")).starts_with("[plan:team_max] 이 계정은 팀을 2개까지"));
+    // 모르는 까닭도 문의 창으로(권한 없음으로 본다)
+    assert!(why_register("/v0/teams", 402, &pr("weird")).starts_with("[plan:team_create]"));
+    assert!(why_register("/v0/invites/redeem", 402, &pr("seat_limit")).contains("자리가 다 찼어요"));
+    assert!(why_register("/v0/invites/redeem", 402, &pr("team_locked")).contains("새 팀원을 받을 수 없어요"));
+    assert!(!why_register("/v0/invites/redeem", 402, &pr("team_locked")).starts_with('['));
+    assert!(why(402, &pr("team_locked")).contains("읽기만"));
+    assert!(!why(402, &pr("team_locked")).contains("팀장"), "누가 보는지 모른다 — 팀장에게 '팀장님께'가 나갔다");
+    assert!(why(402, &pr("seat_limit")).contains("문의하시면 자리를"));
+    // 402 가 아니면 예전 말 그대로
+    assert_eq!(why_register("/v0/teams", 410, &json!({})), why(410, &json!({})));
 }

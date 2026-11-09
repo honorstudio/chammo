@@ -737,3 +737,31 @@ fn 테일넷이_실패해도_중계_줄은_돌려준다() {
     let ok = combine(Ok(DevicesOut { me: "mac".into(), devices: vec![v("nPC", "connected")] }), vec![v("relay:a", "connected")]).unwrap();
     assert_eq!((ok.me.as_str(), ok.devices.len()), ("mac", 2));
 }
+
+#[test]
+fn 카드_모으기는_요청_마감을_짧게_묶는다() {
+    let dir = tmp("cap");
+    let kc = Fake::default();
+    kc.put(SERVICE, "nBOX", TOK);
+    save(&dir, &[Saved { id: "nBOX".into(), name: "B".into(), ip: "100.64.0.9".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None, relay_x: None }]).unwrap();
+    let saw = RefCell::new(vec![]);
+    let send = |_: &Target, _: &Request, w: Duration, _: usize| -> Result<Response, NetErr> {
+        saw.borrow_mut().push(w);
+        ok(200, "[]")
+    };
+    let here = Some("100.64.0.9".parse().unwrap());
+    call(&kc, &dir, "nBOX", here, "GET", "/api/direct", None, &cap_wait(&send, crate::peer_cards::WAIT)).unwrap();
+    call(&kc, &dir, "nBOX", here, "GET", "/api/direct", None, &send).unwrap();
+    // 더 긴 마감으로는 안 늘린다
+    call(&kc, &dir, "nBOX", here, "GET", "/api/direct", None, &cap_wait(&send, Duration::from_secs(60))).unwrap();
+    assert_eq!(*saw.borrow(), [Duration::from_secs(4), CALL_WAIT, CALL_WAIT]);
+}
+
+#[test]
+fn 테일넷이_꺼졌다는_기기만_바로_거른다() {
+    let peers = vec![peer("nON", true), peer("nOFF", false)];
+    assert!(tailnet_off(&peers, "nOFF"));
+    assert!(!tailnet_off(&peers, "nON"));
+    assert!(!tailnet_off(&peers, "nGONE"), "목록에 없는 기기는 call 이 이유를 낸다");
+    assert!(!tailnet_off(&[], "relay:abc"));
+}

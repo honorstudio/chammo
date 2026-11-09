@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { BUSY_GONE_GRACE, emptyRevive, GONE_GRACE, MAX_TRIES, planRevive, reviveCard, TRY_WINDOW, type ReviveMemo } from './orchRevive';
+import { BUSY_GONE_GRACE, emptyRevive, GONE_GRACE, MAX_TRIES, planRevive, reviveCard, seedRevive, TRY_WINDOW, type ReviveMemo } from './orchRevive';
+import type { LiveSnap } from './revive';
 
 const orch = (id: string, name = `참모-${id}`) => ({ id, sessionId: `${id}-full`, name, cwd: '/hq' });
 const A = orch('aaaaaaaa', '참모-2 · 참모 업데이트');
@@ -184,5 +185,89 @@ describe('planRevive — 맥이 바쁘면 다시 켜기를 늦춘다', () => {
     expect(r.revive.length).toBe(1);
     expect(poll(r.memo, [], 1000 + BUSY_GONE_GRACE + 1 + 31_000, { busy: true }).revive).toEqual([]);
     expect(poll(r.memo, [], 1000 + BUSY_GONE_GRACE + 1 + BUSY_GONE_GRACE + 1, { busy: true }).revive.length).toBe(1);
+  });
+});
+
+describe('seedRevive — 앱이 꺼져 있거나 멈춘 사이 꺼진 참모(2026-11-04 앱 113분 멈춤: 참모 5명이 안 살아나고 알림도 없었다)', () => {
+  const snap = (over: Partial<LiveSnap> = {}): LiveSnap => ({
+    daemon: 100,
+    lost: [],
+    sessions: [
+      { sessionId: A.sessionId, id: A.id, name: A.name, cwd: A.cwd },
+      { sessionId: B.sessionId, id: B.id, name: B.name, cwd: B.cwd },
+      { sessionId: 'cccccccc-full', id: 'cccccccc', name: 'shop-app', cwd: '/dev/shop' },
+    ],
+    ...over,
+  });
+  const isOrch = (s: { cwd: string }) => s.cwd === '/hq';
+  const seed = (s: LiveSnap | null, o: { stopped?: string[]; listed?: string[] | null } = {}) =>
+    seedRevive(emptyRevive, s, { isOrch, stopped: o.stopped ?? [], listed: o.listed === undefined ? [A.sessionId, B.sessionId, 'cccccccc-full'] : o.listed });
+
+  it('재현: 지난 기록엔 있었는데 켠 뒤 없는 참모 → 잠깐 기다렸다 같은 대화로 다시 켠다', () => {
+    const r = poll(poll(seed(snap()), [], 0).memo, [], GONE_GRACE);
+    expect(r.revive.map((x) => x.id).sort()).toEqual([A.id, B.id]);
+  });
+
+  it('살아 있는 참모는 안 켠다 — 켠 뒤 목록에 있으면 그대로', () => {
+    const r = poll(poll(seed(snap()), [A, B], 0).memo, [A, B], GONE_GRACE);
+    expect(r.revive).toEqual([]);
+  });
+
+  it('프로젝트 세션은 씨앗에 안 넣는다 — 하위 세션은 참모가 판단한다', () => {
+    expect(Object.keys(seed(snap()).seen).sort()).toEqual([A.id, B.id]);
+  });
+
+  it('사람이 끈 참모는 안 켠다 — 오래전 claude stop 도(daemon.log 전체를 본 목록)', () => {
+    const r = poll(poll(seed(snap(), { stopped: [A.id] }), [B], 0).memo, [B], GONE_GRACE);
+    expect(r.revive).toEqual([]);
+    expect(seed(snap(), { stopped: [A.id] }).seen[A.id]).toBeUndefined();
+  });
+
+  it('claude rm 으로 지운 참모는 안 켠다 — respawn 이 실패해 카드만 쌓인다', () => {
+    expect(seed(snap(), { listed: [B.sessionId] }).seen[A.id]).toBeUndefined();
+  });
+
+  it('agents --all 을 못 읽었으면(null) 씨앗을 안 넣는다 — 지운 걸 켜느니 지금처럼 홈에서', () => {
+    expect(seed(snap(), { listed: null })).toEqual(emptyRevive);
+    expect(seed(snap(), { listed: [] })).toEqual(emptyRevive);
+  });
+
+  it('관리 프로그램이 새로 떴으면 재시작 복구 몫이라 안 켠다', () => {
+    const r = poll(poll(seed(snap({ daemon: 99 })), [], 0).memo, [], GONE_GRACE);
+    expect(r.revive).toEqual([]);
+  });
+
+  it('막 사라진 흔적(gone)에 든 참모도 본다 — 앱 끄기 직전에 꺼진 참모', () => {
+    const s = snap({ sessions: [], gone: [{ sessionId: A.sessionId, id: A.id, name: A.name, cwd: A.cwd, goneAt: 1 }] });
+    expect(Object.keys(seed(s).seen)).toEqual([A.id]);
+  });
+
+  it('기록이 없거나 짧은 번호가 없는 옛 줄은 건너뛴다', () => {
+    expect(seed(null)).toEqual(emptyRevive);
+    const s = snap({ sessions: [{ sessionId: A.sessionId, name: A.name, cwd: A.cwd }] });
+    expect(seed(s)).toEqual(emptyRevive);
+  });
+
+  it('이미 지켜보던 참모의 기억을 덮지 않는다', () => {
+    const m = poll(emptyRevive, [A], 0, { daemon: 200 }).memo;
+    expect(seedRevive(m, snap(), { isOrch, stopped: [], listed: [A.sessionId, B.sessionId] }).seen[A.id]!.daemon).toBe(200);
+  });
+
+  it('연달아 죽으면 평소처럼 멈추고 카드 — 씨앗이라고 끝없이 켜지 않는다', () => {
+    let m = seed(snap({ sessions: [{ sessionId: A.sessionId, id: A.id, name: A.name, cwd: A.cwd }] }), {});
+    let t = 0, tries = 0;
+    let cards = 0;
+    for (; t < TRY_WINDOW - 1000; t += 3000) { const r = poll(m, [], t); m = r.memo; tries += r.revive.length; cards += r.giveUp.length; }
+    expect(tries).toBe(MAX_TRIES);
+    expect(cards).toBe(1);
+  });
+});
+
+describe('참모를 여럿 다시 켤 때 간격(11-07 재부팅 부하 122)', () => {
+  it('한가하면 3초, 바쁘면 15초', async () => {
+    const { reviveGap } = await import('./orchRevive');
+    expect(reviveGap('ok')).toBe(3000);
+    expect(reviveGap('busy')).toBe(15_000);
+    expect(reviveGap('boot')).toBe(15_000);
   });
 });

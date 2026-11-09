@@ -17,7 +17,7 @@ describe('보관함 프로젝트 쉬운 화면 배선', () => {
   });
   it('plain 이면 머리줄(종류·폴더 이름) 대신 카드 제목, 자리글은 사람 말', () => {
     expect(inbox).toMatch(/\{!plain && \(\s*<div className="card-top">/);
-    expect(inbox).toMatch(/placeholder=\{plain \? PLAIN_HINT\(\) : replyHint\(item\)\}/);
+    expect(inbox).toMatch(/hint=\{plain \? PLAIN_HINT\(\) : replyHint\(item\)\}/);
   });
   it('다음에 시킬 일 = 살아 있는 프로젝트 세션에, 없으면 참모에게(같은 sendTextToSession 길)', () => {
     expect(space).toMatch(/if \(s\) \{ await sendTextToSession\(s\.id, text\); return; \}/);

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { fmtMem, type LoadReport, type Lv, type SysLoad } from '../domain/load';
 import { loadCard, type CardItem } from '../domain/loadCard';
-import { assistant, tr } from '../i18n';
+import { assistant, machine, tr } from '../i18n';
 import { seenName } from '../domain/session';
 import { IconCpu, IconDisk, IconGauge, IconMemory, IconOpen, IconTrash } from './Icons';
+import { useHoverCard } from './useHoverCard';
 
 type Props = {
   sys: SysLoad;
@@ -69,42 +70,26 @@ function Face({ lv, bad }: { lv: Lv; bad: CardItem[] }) {
  */
 export function LoadChip({ sys, report, detailOn, onDetail, onHover, onClean, onOpenSession }: Props) {
   const chip = useRef<HTMLButtonElement>(null);
-  const [at, setAt] = useState<DOMRect | null>(null);
+  const { at, open, close } = useHoverCard(chip);
   const [sent, setSent] = useState<string | null>(null);
-  const timer = useRef<number | undefined>(undefined);
   const hoverRef = useRef(onHover);
   hoverRef.current = onHover;
   const card = loadCard(sys, report);
-  const open = (now = false) => {
-    window.clearTimeout(timer.current);
-    const go = () => { if (chip.current) setAt(chip.current.getBoundingClientRect()); };
-    if (now) go(); else timer.current = window.setTimeout(go, 150);
-  };
-  const close = (now = false) => {
-    window.clearTimeout(timer.current);
-    if (now) setAt(null); else timer.current = window.setTimeout(() => setAt(null), 220);
-  };
   useEffect(() => { hoverRef.current(!!at); if (!at) setSent(null); }, [at]);
-  useEffect(() => {
-    if (!at) return;
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') setAt(null); };
-    window.addEventListener('keydown', key);
-    return () => window.removeEventListener('keydown', key);
-  }, [at]);
-  useEffect(() => () => { window.clearTimeout(timer.current); hoverRef.current(false); }, []);
+  useEffect(() => () => hoverRef.current(false), []);
   const clean = async () => {
     const text = tr(`저장공간이 ${gb(sys.diskFreeGb ?? 0)} 남았어. 안 쓰는 파일 정리 좀 해줘`, `Only ${gb(sys.diskFreeGb ?? 0)} of storage left. Can you clean up files I don't need?`);
     try { await onClean(text); setSent(tr(`${assistant()}에게 전했어요`, `Sent to ${assistant()}`)); } catch (e) { setSent(String(e)); }
   };
   return <>
     <button ref={chip} type="button" className={`load-chip ${card.lv} ${detailOn || at ? 'on' : ''}`}
-      aria-label={tr(`이 맥 ${headline(card.bad, sys)} — 누르면 자세히 보기`, `This Mac: ${headline(card.bad, sys)} — click for details`)}
+      aria-label={tr(`이 ${machine()} ${headline(card.bad, sys)} — 누르면 자세히 보기`, `This ${machine()}: ${headline(card.bad, sys)} — click for details`)}
       aria-expanded={detailOn} onMouseEnter={() => open()} onMouseLeave={() => close()} onFocus={() => open(true)} onBlur={() => close()}
       onClick={(e) => { close(true); onDetail(e.currentTarget.getBoundingClientRect()); }}>
       <Face lv={card.lv} bad={card.bad} />
     </button>
     {at && !detailOn && (
-      <div className="lc-card" role="dialog" aria-label={tr('이 맥 상태', 'This Mac')} style={{ top: at.bottom + 6, left: Math.max(8, Math.min(at.left - 8, window.innerWidth - 340)) }}
+      <div className="lc-card" role="dialog" aria-label={tr(`이 ${machine()} 상태`, `This ${machine()}`)} style={{ top: at.bottom + 6, left: Math.max(8, Math.min(at.left - 8, window.innerWidth - 340)) }}
         onMouseEnter={() => open(true)} onMouseLeave={() => close()}>
         <div className="lc-head">
           <b>{headline(card.bad, sys)}</b>

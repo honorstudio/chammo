@@ -3,16 +3,19 @@
 
 import { tr } from '../i18n';
 import type { TamaEvent } from './tama/pet';
-import { coinsOf } from './tama/monsters';
 import { DAY_EXTRA, SHOW_PER_DAY, TALK_GAP_MIN } from './tama/sources';
 import { desk, furn, fx, hat, light, move, pal, skin, title, view } from './catalog/names';
 import { HALLOWEEN } from './catalog/halloween';
 import { HOME } from './catalog/home';
 import { MEME } from './catalog/meme';
 import { PALS } from './catalog/pals';
+import { ART_ITEMS, floorSize, wallSpan } from './catalog/art';
+import { sprOfChr, TAMA_CHARS } from './catalog/characters';
+import { defaultSeats } from './office';
+import { canHangWall, canMoveZone, canPlaceFloor, canPlaceFurn, deskCells, expandPrice, freeDeskCell, MAX_OFFICES, newRoom, officePrice, orchDeskAt, parseRoom, seatsOf, zoneSize, roomDims, type OfficeRoom, type OrchDesk, type WallSide } from './officeRoom';
 
 export type Rarity = '흔함' | '보통' | '희귀' | '전설';
-export type ItemKind = 'skin' | 'furn' | 'hat' | 'window' | 'friend' | 'fx' | 'action' | 'desk' | 'title' | 'light';
+export type ItemKind = 'skin' | 'furn' | 'hat' | 'window' | 'friend' | 'fx' | 'action' | 'desk' | 'title' | 'light' | 'chr' | 'floor' | 'wall';
 /** 등급은 키(색·확률·비교)로 쓰니 한국어 그대로 두고, 화면에 보일 때만 이걸로 */
 export const rarityLabel = (r: Rarity): string =>
   ({ 흔함: tr('흔함', 'Common'), 보통: tr('보통', 'Uncommon'), 희귀: tr('희귀', 'Rare'), 전설: tr('전설', 'Legendary') })[r];
@@ -156,6 +159,8 @@ export const CATALOG: Item[] = [
   { id: 'light.disco', kind: 'light', rarity: '희귀', name: light('디스코볼', 'Disco Ball') },
   // 2026-10-21 — 할로윈 한정(11/15 까지)·비스킨 대량(가구·책상·조명 / 모자·창밖·펑·칭호·액션·펫 친구)·밈 스킨. 그림은 ui/gacha/packs
   ...HALLOWEEN, ...HOME, ...PALS, ...MEME,
+  // 2026-11-06 사무실 v2 — 지금 도트 70종 + 새 캐릭터·가구·바닥 장식·벽 장식(catalog/art, 생성물)
+  ...TAMA_CHARS, ...ART_ITEMS,
 ];
 export const itemOf = (id: string) => CATALOG.find((c) => c.id === id);
 
@@ -204,7 +209,18 @@ export type GachaFile = {
   placed?: Record<string, [number, number] | null>;
   /** 폰에서 온 뽑기 요청 중 처리한 최근 것(domain/phoneGacha) — 같은 요청 id 가 다시 와도 코인이 두 번 안 빠지게 결과째 */
   phoneDone?: { rid: string; results: PullResult[] }[];
+  /** 사무실들(최대 3) — 없으면 기본 하나(officesOf). 옛 placed 는 읽을 때만 쓴다 */
+  offices?: OfficeRoom[];
+  /** 참모마다 캐릭터 — 참모 이름 → chr.* */
+  chars?: Record<string, string>;
+  /** 참모 책상 — 어느 사무실 어느 칸. 없으면 첫 사무실 뒷줄 차례 */
+  orchSeats?: Record<string, OrchSeat>;
+  /** 프로젝트 → 출근할 사무실 번호(0부터). 없으면 첫 사무실 */
+  assign?: Record<string, number>;
+  /** 다마고치에서 옮긴 기록 — 있으면 다시 안 옮긴다(domain/moveTama) */
+  tamaMoved?: { at: number; coins: number; chars: number };
 };
+export type OrchSeat = { office: number; x: number; y: number; /** 책상 폭 — 처음 앉을 때 정해져 안 바뀐다 */ w?: number };
 export type EquipKind = 'skin' | 'hat' | 'window' | 'fx' | 'action' | 'desk' | 'title' | 'light';
 const EQUIPPABLE: ItemKind[] = ['skin', 'hat', 'window', 'fx', 'action', 'desk', 'title', 'light'];
 export const EMPTY_GACHA: GachaFile = { coins: 0, since: 0, owned: {}, pity: 0, shards: 0, history: [], equip: {} };
@@ -219,7 +235,8 @@ export function parseGacha(text: string, since: number): GachaFile {
     const fresh = Array.isArray(v.fresh) ? v.fresh.filter((x): x is string => typeof x === 'string') : undefined;
     // 폰 요청 기록 — 모양이 틀리면 버린다(깨진 칸 하나로 폰 뽑기가 다 막히지 않게, 보안 리뷰 4)
     const phoneDone = Array.isArray(v.phoneDone) ? v.phoneDone.filter((d) => !!d && typeof d === 'object' && typeof d.rid === 'string' && Array.isArray(d.results)) : undefined;
-    return { ...EMPTY_GACHA, ...v, owned: v.owned ?? {}, history: v.history ?? [], equip: v.equip ?? {}, late, fresh, phoneDone } as GachaFile;
+    const offices = Array.isArray(v.offices) && v.offices.length ? v.offices.slice(0, MAX_OFFICES).map(parseRoom) : undefined;
+    return { ...EMPTY_GACHA, ...v, owned: v.owned ?? {}, history: v.history ?? [], equip: v.equip ?? {}, late, fresh, phoneDone, ...(offices ? { offices } : {}) } as GachaFile;
   } catch {
     return { ...EMPTY_GACHA, since };
   }
@@ -236,7 +253,7 @@ export const BIZ_FLOOR = 50;
 /** 코인 버는 법(뽑기 화면 표) — coinsFor 와 같은 값이어야 한다(테스트가 맞춘다). 끝낸 일 건수 상한은 tama/sources.balanceFeed, 코인 상한은 payOut */
 export const COIN_RULES: [number, string][] = [
   [10, tr('머지 · 결과물', 'Merge · result')],
-  [5, tr('시킨 일 끝남 · 장애 몬스터 처치(레벨 따라 15까지)', 'Task done · beating a trouble monster (up to 15 by level)')],
+  [5, tr('시킨 일 끝남', 'Task done')],
   [2, tr('CI 통과 · 검토 · 예약 · 테스트 든 커밋', 'CI pass · review · schedule · commit with tests')],
   [1, tr(`300줄 이하 커밋 · 대화 · 문서 · 세션이 일한 ${WORK_MIN}분`, `Commit ≤300 lines · talk · doc · ${WORK_MIN} min of session work`)],
 ];
@@ -264,7 +281,7 @@ function coinsFor(e: TamaEvent): number {
     case 'task': return 5;
     case 'ci': return e.pass ? 2 : 0;
     case 'commit': return (e.hasTest ? 2 : 0) + (e.lines <= 300 ? 1 : 0);
-    case 'slay': return coinsOf(e.lv);
+    case 'slay': return 0; // 몬스터는 없앴다(11-06) — 옛 기록만 남아 있을 수 있다
     default: return 0;
   }
 }
@@ -447,11 +464,130 @@ export const skinOfFile = (f: GachaFile): string => (f.equip.skin && (f.owned[f.
 /** 가진 것(여러 개여도 하나씩), 도감 순서 */
 export const ownedOf = (f: GachaFile, kind: ItemKind) => CATALOG.filter((c) => c.kind === kind && (f.owned[c.id] ?? 0) > 0).map((c) => c.id);
 
-/** 가구 놓기 — 가진 가구를 칸에(null = 창고로). 그 칸에 있던 다른 가구는 창고로 */
-export function place(f: GachaFile, id: string, cell: [number, number] | null): GachaFile {
-  if (itemOf(id)?.kind !== 'furn' || !(f.owned[id] ?? 0)) return f;
-  const placed = { ...(f.placed ?? {}) };
-  if (cell) for (const [k, v] of Object.entries(placed)) if (k !== id && v && v[0] === cell[0] && v[1] === cell[1]) placed[k] = null;
-  placed[id] = cell;
-  return { ...f, placed };
+
+// ───────── 사무실 v2(docs/plans/2026-11-06-office-v2.md) — 넓히기·추가·놓기·참모 캐릭터·출근. 안 되면 null 이나 같은 걸 돌려준다 ─────────
+
+/** 옛 파일 — 놓아 둔 가구 중 기본 방에 들어가는 것만 옮겨 온다(나머지는 창고) */
+function legacyRoom(f: GachaFile): OfficeRoom {
+  const room = newRoom();
+  for (const [id, c] of Object.entries(f.placed ?? {})) if (c && canPlaceFurn(room, [], id, c)) room.furn[id] = c;
+  return room;
 }
+export const officesOf = (f: GachaFile): OfficeRoom[] => (f.offices?.length ? f.offices : [legacyRoom(f)]);
+const withRoom = (f: GachaFile, i: number, room: OfficeRoom): GachaFile => { const offices = [...officesOf(f)]; offices[i] = room; return { ...f, offices }; };
+
+/** 넓힌 뒤 — 묶음이 방을 넘으면 안쪽으로, 새 자리에 깔린 가구는 창고, 새 자리와 겹친 참모 책상은 뒷줄로 */
+function settleZone(f: GachaFile, i: number, room: OfficeRoom): GachaFile {
+  const [cols, rows] = roomDims(room.lv), [w, h] = zoneSize(room.lv);
+  const zone: [number, number] = [Math.max(0, Math.min(room.zone[0], cols - w)), Math.max(0, Math.min(room.zone[1], rows - h))];
+  const taken = new Set(seatsOf({ lv: room.lv, zone }).flatMap(([x, y]) => [`${x},${y}`, `${x + 1},${y}`, `${x},${y + 1}`, `${x + 1},${y + 1}`]));
+  const furn = Object.fromEntries(Object.entries(room.furn).filter(([, c]) => !taken.has(`${c[0]},${c[1]}`)));
+  const orchSeats = Object.fromEntries(Object.entries(f.orchSeats ?? {}).filter(([, s]) => s.office !== i || !deskCells({ x: s.x, y: s.y, w: s.w ?? 1.6 }).some(([x, y]) => taken.has(`${x},${y}`))));
+  return { ...withRoom(f, i, { ...room, zone, furn }), ...(f.orchSeats ? { orchSeats } : {}) };
+}
+/** 사무실 넓히기 — 코인이 모자라거나 끝 단계면 null */
+export function buyExpand(f: GachaFile, i: number): GachaFile | null {
+  const room = officesOf(f)[i], price = room ? expandPrice(room.lv) : null;
+  if (!room || price === null || f.coins < price) return null;
+  return { ...settleZone(f, i, { ...room, lv: room.lv + 1 }), coins: f.coins - price };
+}
+/** 사무실 추가 — 다음 번호 값, 최대 3개 */
+export function buyOffice(f: GachaFile): GachaFile | null {
+  const rooms = officesOf(f), price = officePrice(rooms.length);
+  if (price === null || f.coins < price) return null;
+  return { ...f, offices: [...rooms, newRoom()], coins: f.coins - price };
+}
+
+/** 그 사무실 스킨 이름 — 첫 사무실은 equip.skin, 안 가졌으면 나무 */
+export function skinOfRoom(f: GachaFile, i: number): string {
+  if (i === 0) return skinOfFile(f);
+  const s = officesOf(f)[i]?.skin;
+  return s && (f.owned[`skin.${s}`] ?? 0) > 0 ? s : 'wood';
+}
+export function setRoomSkin(f: GachaFile, i: number, name: string): GachaFile {
+  if (i === 0) return setSkin(f, name);
+  const room = officesOf(f)[i];
+  if (!room) return f;
+  if (name === 'wood') { const { skin: _gone, ...rest } = room; return withRoom(f, i, rest); }
+  return (f.owned[`skin.${name}`] ?? 0) > 0 ? withRoom(f, i, { ...room, skin: name }) : f;
+}
+
+const has = (f: GachaFile, id: string, kind: ItemKind) => itemOf(id)?.kind === kind && (f.owned[id] ?? 0) > 0;
+/** 가구 — 칸에(null = 창고). 다른 사무실에 있었으면 거기선 빠진다 */
+export function placeFurnIn(f: GachaFile, i: number, id: string, cell: [number, number] | null, desks: OrchDesk[]): GachaFile {
+  const rooms = officesOf(f), room = rooms[i];
+  if (!room || !has(f, id, 'furn')) return f;
+  if (cell && !canPlaceFurn(room, desks, id, cell)) return f;
+  const offices = rooms.map((r) => { const { [id]: _gone, ...furn } = r.furn; return { ...r, furn }; });
+  if (cell) offices[i] = { ...offices[i]!, furn: { ...offices[i]!.furn, [id]: cell } };
+  return { ...f, offices };
+}
+/** 바닥 장식 — 칸에(null = 창고). 책상·가구 아래 되고, 끼리는 못 겹친다 */
+export function placeFloorIn(f: GachaFile, i: number, id: string, cell: [number, number] | null): GachaFile {
+  const rooms = officesOf(f), room = rooms[i];
+  if (!room || !has(f, id, 'floor')) return f;
+  if (cell && !canPlaceFloor(room, id, cell, floorSize)) return f;
+  const offices = rooms.map((r) => ({ ...r, floor: r.floor.filter((x) => x.id !== id) }));
+  if (cell) offices[i] = { ...offices[i]!, floor: [...offices[i]!.floor, { id, x: cell[0], y: cell[1] }] };
+  return { ...f, offices };
+}
+/** 벽 장식 — 벽 칸에(side null = 창고) */
+export function hangWall(f: GachaFile, i: number, id: string, side: WallSide | null, at: number): GachaFile {
+  const rooms = officesOf(f), room = rooms[i];
+  if (!room || !has(f, id, 'wall')) return f;
+  if (side && !canHangWall(room, id, side, at, wallSpan)) return f;
+  const offices = rooms.map((r) => ({ ...r, wall: r.wall.filter((x) => x.id !== id) }));
+  if (side) offices[i] = { ...offices[i]!, wall: [...offices[i]!.wall, { id, side, at }] };
+  return { ...f, offices };
+}
+export function moveZoneIn(f: GachaFile, i: number, cell: [number, number], desks: OrchDesk[]): GachaFile {
+  const room = officesOf(f)[i];
+  return room && canMoveZone(room, desks, cell) ? withRoom(f, i, { ...room, zone: cell }) : f;
+}
+
+/** 참모 캐릭터 — 가진 것만. 다른 참모와 겹쳐도 된다 */
+export const setChar = (f: GachaFile, name: string, id: string): GachaFile => (has(f, id, 'chr') ? { ...f, chars: { ...f.chars, [name]: id } } : f);
+/** 캐릭터를 아직 안 정한 참모 — 가진 캐릭터가 하나뿐이면 고를 게 없으니 묻지 않는다 */
+export function undecidedOrchs(f: GachaFile, names: string[]): string[] {
+  if (ownedOf(f, 'chr').length < 2) return [];
+  return names.filter((n) => !f.chars?.[n] || (f.owned[f.chars[n]!] ?? 0) === 0);
+}
+/** 참모 책상 자리 — null 이면 첫 사무실 뒷줄 차례로 */
+export function setOrchSeat(f: GachaFile, name: string, seat: OrchSeat | null): GachaFile {
+  if (seat && !officesOf(f)[seat.office]) return f;
+  const orchSeats = { ...f.orchSeats };
+  if (seat) orchSeats[name] = seat; else delete orchSeats[name];
+  return { ...f, orchSeats };
+}
+/** 켜진 참모에게 기본 자리를 정해 적어 둔다 — 꺼져도 그 자리가 비어 있게(이름표가 남는다). 이미 있으면 그대로 */
+export function ensureOrchSeats(f: GachaFile, names: string[]): GachaFile {
+  const auto = defaultSeats(names.map((name) => ({ name })), f.orchSeats);
+  if (!auto.size) return f;
+  const orchSeats = { ...f.orchSeats };
+  for (const [name, d] of auto) orchSeats[name] = { office: 0, x: d.x, y: d.y, w: d.w };
+  return { ...f, orchSeats };
+}
+/** 참모가 고른 캐릭터 도트 — 안 골랐거나 없으면 undefined(랜덤) */
+export const sprOfOrch = (f: GachaFile, name: string): string | undefined => { const id = f.chars?.[name]; return id && (f.owned[id] ?? 0) > 0 ? sprOfChr(id) : undefined; };
+/** 그 사무실 참모 책상들 — id 는 참모 이름(자리 판정용) */
+export const orchDesksOf = (f: GachaFile, i: number): OrchDesk[] => Object.entries(f.orchSeats ?? {}).filter(([, s]) => s.office === i).map(([id, s]) => ({ id, x: s.x, y: s.y, w: s.w ?? 1.6 }));
+/** 참모 책상을 다른 사무실로 — 거기 첫 빈 칸에. 자리가 없으면 그대로 */
+export function moveOrchToOffice(f: GachaFile, name: string, k: number): GachaFile {
+  const target = officesOf(f)[k];
+  if (!target || f.orchSeats?.[name]?.office === k) return f;
+  const w = f.orchSeats?.[name]?.w ?? 1.6;
+  const cell = freeDeskCell(target, orchDesksOf(f, k), name, w);
+  if (!cell) return f;
+  const at = orchDeskAt(cell, w);
+  return setOrchSeat(f, name, { office: k, x: at.x, y: at.y, w });
+}
+/** 되돌리기용 — 사무실 모양만(코인·뽑기 기록은 그대로) */
+export type Layout = Pick<GachaFile, 'offices' | 'orchSeats'>;
+export const layoutOf = (f: GachaFile): Layout => ({ offices: officesOf(f), orchSeats: f.orchSeats ?? {} });
+export const setLayout = (f: GachaFile, l: Layout): GachaFile => ({ ...f, offices: l.offices, orchSeats: l.orchSeats });
+export const officeOf = (f: GachaFile, name: string): number => { const o = f.orchSeats?.[name]?.office ?? 0; return officesOf(f)[o] ? o : 0; };
+/** 프로젝트 출근 사무실 */
+export function assignProject(f: GachaFile, project: string, i: number): GachaFile {
+  return officesOf(f)[i] ? { ...f, assign: { ...f.assign, [project]: i } } : f;
+}
+export const officeOfProject = (f: GachaFile, project: string): number => { const o = f.assign?.[project] ?? 0; return officesOf(f)[o] ? o : 0; };

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import loginCardSrc from '../ui/LoginCard.tsx?raw';
-import { addExtraProject, parseClaudeVersion, setupCommand, winSetupNotes, setupReady, shq, versionFit, versionWarning, type EnvCheck, WIZARD, canNext, nextWhy, trustExitNote, tildify, notifyRow, browserRow, browserChecklist, ghRow, installState, loginRow, GET_URL, setupFailed, setupFailLine, gitIdentityRow, gitIdentityError, firstRunName, claudeSignedInText, readyAccountNote } from './setup';
+import { addExtraProject, parseClaudeVersion, setupCommand, winSetupNotes, shq, versionFit, versionWarning, type EnvCheck, tildify, notifyRow, browserRow, browserChecklist, ghRow, installState, loginRow, GET_URL, setupFailed, setupFailLine, gitIdentityRow, gitIdentityError, firstRunName, claudeSignedInText } from './setup';
 
 describe('Claude Code 버전', () => {
   it('버전 글자를 숫자로', () => {
@@ -29,26 +29,6 @@ describe('Claude Code 버전', () => {
   });
 });
 
-describe('setupReady — 설정을 끝낼 수 있나', () => {
-  const ok: EnvCheck = { claudePath: '/h/.local/bin/claude', claudeVersion: '2.1.283', loggedIn: true, clt: true, ghPath: null, ghUser: null, ghStale: false };
-  it('Claude Code 설치·로그인·명령줄 도구가 다 있어야 한다. gh 는 없어도 된다', () => {
-    expect(setupReady(ok)).toBe(true);
-    expect(setupReady(null)).toBe(false);
-    expect(setupReady({ ...ok, claudePath: null })).toBe(false);
-    expect(setupReady({ ...ok, loggedIn: false })).toBe(false);
-    expect(setupReady({ ...ok, clt: false })).toBe(false);
-  });
-  it('윈도우에 파이썬 3 이 없으면(python: false) 못 끝낸다 — scripts/*·참모 앱·예약이 파이썬이다. 옛 점검 답(칸 없음)은 막지 않는다', () => {
-    expect(setupReady({ ...ok, python: false })).toBe(false);
-    expect(setupReady({ ...ok, python: true })).toBe(true);
-    expect(setupReady(ok)).toBe(true);
-    expect(canNext('check', { ...ok, python: false })).toBe(false);
-    // 회사 PC 가 '나중에 하기'로 넘겼으면 갈 수 있다(win-env H3)
-    expect(canNext('check', { ...ok, python: false, clt: false }, undefined, null, ['clt', 'python'])).toBe(true);
-    expect(nextWhy('check', { ...ok, python: false }, undefined, null, true, ['python'])).toBeNull();
-  });
-});
-
 describe('setupCommand — 설정 화면 터미널에서 돌릴 명령', () => {
   it('작은따옴표 감싸기', () => {
     expect(shq("it's")).toBe(`'it'\\''s'`);
@@ -61,65 +41,9 @@ describe('setupCommand — 설정 화면 터미널에서 돌릴 명령', () => {
     expect(setupCommand('install', {}, '끝', undefined, false, undefined, 'F')).toBe(`curl -fsSL https://claude.ai/install.sh | bash${end('끝')}`);
     expect(setupCommand('login', { claude: '/h/.local/bin/claude' }, 'done', undefined, false, undefined, 'F')).toBe(`'/h/.local/bin/claude' auth login${end('done')}`);
     expect(setupCommand('login', {}, 'd', undefined, false, undefined, 'F')).toBe(`'claude' auth login${end('d')}`);
-    expect(setupCommand('clt', {}, 'd', undefined, false, undefined, 'F')).toBe(`xcode-select --install${end('d')}`);
+    expect(setupCommand('clt', { getter: '/d/tools/bin/chammo-get-tool' }, 'd', undefined, false, undefined, 'F')).toBe(`'/d/tools/bin/chammo-get-tool' git${end('d')}`);
     expect(setupCommand('ghLogin', { gh: '/opt/homebrew/bin/gh' }, 'd', undefined, false, undefined, 'F')).toBe(`'/opt/homebrew/bin/gh' auth login${end('d')}`);
   });
-});
-
-describe('wizard — 첫 실행 마법사 단계(환영·점검·기본·기능·시작)', () => {
-  const ok = { claudePath: '/c', loggedIn: true, clt: true } as unknown as EnvCheck;
-  const noLogin = { claudePath: '/c', loggedIn: false, clt: true } as unknown as EnvCheck;
-  it('다섯 단계, 점검 단계는 필수가 다 돼야 다음', () => {
-    expect(WIZARD).toEqual(['welcome', 'check', 'basics', 'features', 'ready']);
-    expect(canNext('welcome', null)).toBe(true);
-    expect(canNext('check', null)).toBe(false);
-    expect(canNext('check', noLogin)).toBe(false);
-    expect(canNext('check', ok)).toBe(true);
-    expect(canNext('basics', ok, { dev: true, hq: true })).toBe(true);
-    expect(canNext('ready', ok)).toBe(false); // 마지막은 '시작하기'
-  });
-});
-
-describe('폴더 믿기 — 새 폴더에서 claude --bg 가 "Workspace not trusted" 로 멈추던 것(2026-09-28 실측)', () => {
-  const ok = { claudePath: '/c', loggedIn: true, clt: true } as unknown as EnvCheck;
-  it('믿기 명령 = 그 폴더에서 claude 를 대화형으로(믿음이 기록되면 앱이 창을 닫는다)', () => {
-    expect(setupCommand('trust', { claude: '/bin/claude' }, '끝', "/u/my dev")).toBe("cd '/u/my dev' && exec '/bin/claude'");
-  });
-  it('기본 설정 단계는 프로젝트 폴더·HQ 둘 다 믿어야 다음', () => {
-    expect(canNext('basics', ok, { dev: true, hq: false })).toBe(false);
-    expect(canNext('basics', ok, { dev: true, hq: true })).toBe(true);
-    expect(canNext('basics', ok)).toBe(false);
-  });
-});
-
-describe('nextWhy — 다음이 꺼진 까닭을 단추 옆에(2026-10-22 첫 사용자 QA 17: 믿기 줄이 창 아래라 왜 꺼졌는지 몰랐다)', () => {
-  const ok = { claudePath: '/c', loggedIn: true, clt: true, python: true } as unknown as EnvCheck;
-  it('재현: 기본 설정 단계에서 믿기가 남았으면 그 말', () => {
-    expect(nextWhy('basics', ok, { dev: true, hq: false }, null, false)).toMatch(/믿기/);
-    expect(nextWhy('basics', ok, undefined, null, false)).toMatch(/믿기/);
-    // 까닭 줄은 단추 위 — 믿기 두 줄은 그보다 위에 있다(QA 2차 '아래 두 폴더')
-    expect(nextWhy('basics', ok, undefined, null, false)).toMatch(/^위 /);
-  });
-  it('폴더가 막혀 있으면 그것부터', () => {
-    expect(nextWhy('basics', ok, { dev: true, hq: true }, { state: 'denied' } as never, false)).toMatch(/프로젝트 폴더/);
-  });
-  it('다 됐으면 없음, 점검 단계는 맥·윈도우 따로', () => {
-    expect(nextWhy('basics', ok, { dev: true, hq: true }, null, false)).toBeNull();
-    expect(nextWhy('check', null, undefined, null, true)).toMatch(/파이썬/);
-    expect(nextWhy('check', null, undefined, null, false)).toMatch(/명령줄 도구/);
-    expect(nextWhy('welcome', null, undefined, null, false)).toBeNull();
-  });
-});
-
-describe('trustExitNote — 믿기 터미널이 믿지 않고 끝났을 때 한 줄(2026-10-22 첫 사용자 QA 7)', () => {
-  const asked = 'Accessing workspace:\n\n/u/dev\n\nQuick safety check: Is this a project you created or one you trust?\n❯ 1. Yes, I trust this folder\n  2. No, exit';
-  it('질문을 보고 No 로 끝났으면 Yes 를 고르라고', () => expect(trustExitNote(asked)).toMatch(/Yes, I trust this folder/));
-  it('재현: 질문 전에 끝났는데(실행 실패) Yes 를 고르라고 했다 — 마지막 줄을 보여 준다', () => {
-    const n = trustExitNote('zsh: command not found: claude\n');
-    expect(n).not.toMatch(/Yes, I trust/);
-    expect(n).toContain('zsh: command not found: claude');
-  });
-  it('로그인이 안 됐으면 로그인부터', () => expect(trustExitNote('Invalid API key · Please run /login\n')).toMatch(/로그인/));
 });
 
 describe('폴더 고르기 결과를 입력칸 모양으로', () => {
@@ -132,11 +56,6 @@ describe('폴더 고르기 결과를 입력칸 모양으로', () => {
 
 describe('Claude Code 옛 버전 — 올려야 다음으로 (아이맥 2.1.267 실측)', () => {
   const ok: EnvCheck = { claudePath: '/h/.local/bin/claude', claudeVersion: '2.1.283', loggedIn: true, clt: true, ghPath: null, ghUser: null, ghStale: false };
-  it('옛 버전이면 설정을 못 끝낸다', () => expect(setupReady({ ...ok, claudeVersion: '2.1.267 (Claude Code)' })).toBe(false));
-  it('버전을 못 읽었거나 더 새것이면 막지 않는다', () => {
-    expect(setupReady({ ...ok, claudeVersion: '' })).toBe(true);
-    expect(setupReady({ ...ok, claudeVersion: '2.2.0' })).toBe(true);
-  });
   it('앱이 쓰는 그 claude 가 brew(Caskroom) 것이면 brew upgrade, 아니면 그 claude 로 update — brew 에도 하나 있다고 brew 를 올리면 엉뚱한 걸 올린다(아이맥: 공식 2.1.263 + brew 2.1.267)', () => {
     const cmd = setupCommand('update', { claude: '/Users/me/.local/bin/claude' }, 'done');
     expect(cmd).toContain("readlink -f '/Users/me/.local/bin/claude'");
@@ -154,20 +73,20 @@ describe('알림 권한 줄 — 놓치면 결정 대기·답 필요 알림이 �
   it('못 읽으면(개발 빌드 등) 선택으로 두고 막지 않는다', () => expect(notifyRow('unavailable')).toEqual({ state: 'opt', action: null }));
 });
 
-describe('브라우저 자동화 줄 — 설치 버튼 하나, 없는 것만 받는다(2026-10-05 딸깍)', () => {
+describe('참모 브라우저 줄 — 필수, 설치 버튼 하나, 없는 것만 받는다(2026-10-05 딸깍, 11-05 필수)', () => {
   const ready = { node: '/opt/homebrew/bin/node', nodeVersion: 'v22.3.0', nodeOk: true, nodeSource: 'system' as const, installed: true, chrome: true, chromeBeta: true, checked: true, ready: true };
   const fresh = { node: null, nodeVersion: '', nodeOk: false, nodeSource: '' as const, installed: false, chrome: false, chromeBeta: false, checked: false, ready: false };
   const idle = { running: false, step: null, pct: null, text: '', error: null, done: false };
   it('다 됐으면 됨', () => expect(browserRow(ready, idle)).toEqual({ state: 'ok', action: null, busy: false }));
   it('하나라도 없으면 설치 — Node 가 없어도(앱이 받는다)', () => {
-    expect(browserRow(fresh, idle)).toEqual({ state: 'opt', action: 'install', busy: false });
+    expect(browserRow(fresh, idle)).toEqual({ state: 'need', action: 'install', busy: false });
     expect(browserRow({ ...ready, chromeBeta: false, ready: false }, idle).action).toBe('install');
   });
   it('도는 중이면 버튼 없이 진행, 실패하면 다시 시도', () => {
-    expect(browserRow(fresh, { ...idle, running: true, step: 'chrome', pct: 40 })).toEqual({ state: 'opt', action: null, busy: true });
+    expect(browserRow(fresh, { ...idle, running: true, step: 'chrome', pct: 40 })).toEqual({ state: 'need', action: null, busy: true });
     expect(browserRow(fresh, { ...idle, step: 'chrome', error: '인터넷에 연결할 수 없어요' }).action).toBe('retry');
   });
-  it('모르면(읽기 실패) 버튼 없이 선택', () => expect(browserRow(null, null)).toEqual({ state: 'opt', action: null, busy: false }));
+  it('모르면(읽기 실패) 버튼 없이 선택', () => expect(browserRow(null, null)).toEqual({ state: 'need', action: null, busy: false }));
   it('확인 목록 네 칸 — 있는 것·지금 하는 것·실패한 것', () => {
     expect(browserChecklist(ready, idle).map((c) => c.state)).toEqual(['ok', 'ok', 'ok', 'ok']);
     expect(browserChecklist({ ...fresh, nodeOk: true }, { ...idle, running: true, step: 'chrome' }).map((c) => [c.key, c.state])).toEqual([
@@ -195,11 +114,6 @@ describe('addExtraProject — 프로젝트 폴더 밖 폴더를 하나씩 추가
 
 describe('setupCommand — 윈도우(cmd /C 가 읽는 모양, 윈도우판)', () => {
   const c = 'C:\\Users\\a\\AppData\\Local\\Microsoft\\WinGet\\Links\\claude.exe';
-  it('폴더 믿기: cd /d "폴더" && "claude"', () => {
-    expect(setupCommand('trust', { claude: c }, '', 'C:\\Users\\a\\dev', true)).toBe(`cd /d "C:\\Users\\a\\dev" && "${c}"`);
-    // 홈(C:\Users\a) + ~/.chammo/hq 가 합쳐져 \ 와 / 가 섞여 온다 — 윈도우 모양으로 맞춘다
-    expect(setupCommand('trust', { claude: c }, '', 'C:\\Users\\a/.chammo/hq', true)).toBe(`cd /d "C:\\Users\\a\\.chammo\\hq" && "${c}"`);
-  });
   // 끝 안내는 종료 코드로 갈라 찍는다(&& 성공 / || 실패) — & 로 이으면 실패해도 '끝났어요'였다(2026-11-01 win-first M3). 괄호 안이라 ( ) 도 ^ 로
   const end = (ok: string, fail = 'F') => ` && (echo.& echo ${ok}) || (echo.& echo ${fail})`;
   it('로그인: 큰따옴표 + 끝 안내는 성공·실패로 갈라서', () => {
@@ -294,9 +208,6 @@ describe('setupCommand — 윈도우(cmd /C 가 읽는 모양, 윈도우판)', (
     const own = 'C:\\Users\\a\\.local\\bin\\claude.exe';
     expect(setupCommand('update', { claude: own }, '', undefined, true)).toBe(`"${own}" update`);
   });
-  it('맥은 그대로', () => {
-    expect(setupCommand('trust', { claude: '/h/claude' }, '', '/h/dev', false)).toBe("cd '/h/dev' && exec '/h/claude'");
-  });
 });
 
 describe('ghRow — GitHub CLI 줄', () => {
@@ -315,7 +226,7 @@ describe('ghRow — GitHub CLI 줄', () => {
 
 describe('setupCommand — 맥 파이썬', () => {
   it('맥은 파이썬 줄이 없지만 부르면 명령줄 도구(python3 가 들어 있다)', () => {
-    expect(setupCommand('python', {}, '끝', undefined, false, undefined, 'F')).toBe("xcode-select --install; r=$?; echo; if [ $r -eq 0 ]; then echo '끝'; else echo 'F'; fi");
+    expect(setupCommand('python', { getter: '/g' }, '끝', undefined, false, undefined, 'F')).toBe("'/g' python; r=$?; echo; if [ $r -eq 0 ]; then echo '끝'; else echo 'F'; fi");
   });
   it('실패 줄을 화면에서 알아본다(설정 화면이 설치 실패를 가린다)', () => {
     expect(setupFailed(`blah\n${setupFailLine()}\n`)).toBe(true);
@@ -365,14 +276,6 @@ describe('윈도우 설치 — 깨진 npm 판·회사 PC(qa-1101 win-env H2·H3�
     expect(installState({ ...base, winget: false, failed: true })).toBe('noWinget');
     expect(installState({ ...base, win: false })).toBe('need');
   });
-  it('H3: 회사 PC 는 git·파이썬을 건너뛰고 다음으로 갈 수 있다 — Claude 설치·로그인은 그대로 필수', () => {
-    const c = { claudePath: 'C:\\x\\claude.exe', claudeVersion: '2.1.300 (Claude Code)', loggedIn: true, clt: false, ghPath: null, ghUser: null, ghStale: false, python: false };
-    expect(setupReady(c)).toBe(false);
-    expect(setupReady(c, ['clt'])).toBe(false);
-    expect(setupReady(c, ['clt', 'python'])).toBe(true);
-    expect(setupReady({ ...c, loggedIn: false }, ['clt', 'python'])).toBe(false);
-    expect(setupReady({ ...c, claudePath: null }, ['clt', 'python'])).toBe(false);
-  });
   it('M2: 로그인 확인 시간 초과는 로그인 안 됨이 아니다', () => {
     expect(loginRow({ loggedIn: true })).toBe('ok');
     expect(loginRow({ loggedIn: false })).toBe('need');
@@ -386,41 +289,7 @@ describe('윈도우 설치 — 깨진 npm 판·회사 PC(qa-1101 win-env H2·H3�
 
 describe('git 이름·메일 — 새 PC 는 비어 있어 새 프로젝트마다 첫 커밋을 못 하고 참모가 사용자에게 git config 를 치라고 했다(2026-11-01 win-first M1)', () => {
   const ok: EnvCheck = { claudePath: '/c', claudeVersion: '2.1.300 (Claude Code)', loggedIn: true, clt: true, ghPath: null, ghUser: null, ghStale: false, python: true };
-  it('git 이 있는데 이름·메일이 비면 다음으로 못 간다', () => {
-    expect(setupReady({ ...ok, gitName: 'Kim', gitEmail: 'k@x.com' })).toBe(true);
-    expect(setupReady({ ...ok, gitName: '', gitEmail: 'k@x.com' })).toBe(false);
-    expect(setupReady({ ...ok, gitName: 'Kim', gitEmail: '  ' })).toBe(false);
-    expect(gitIdentityRow({ ...ok, gitName: 'Kim', gitEmail: '' })).toBe('need');
-    expect(gitIdentityRow({ ...ok, gitName: 'Kim', gitEmail: 'k@x.com' })).toBe('ok');
-  });
-  it('git 이 없거나(그 줄이 따로 묻는다) 옛 점검 결과(칸 없음)면 이 줄은 막지 않는다', () => {
-    expect(gitIdentityRow({ ...ok, clt: false, gitName: '', gitEmail: '' })).toBe('hidden');
-    expect(gitIdentityRow(ok)).toBe('hidden');
-    expect(setupReady({ ...ok, clt: false, gitName: '', gitEmail: '' }, ['clt'])).toBe(true);
-  });
-  it('회사 PC 처럼 지금 못 정하면 이름·메일도 나중에 하기로 넘긴다 — 0.4.7 2차 검증(첫 설정을 막지 않게)', () => {
-    const blank = { ...ok, gitName: '', gitEmail: '' };
-    expect(setupReady(blank)).toBe(false);
-    expect(setupReady(blank, ['gitId'])).toBe(true);
-    expect(canNext('check', blank, undefined, null, ['gitId'])).toBe(true);
-    expect(nextWhy('check', blank, undefined, null, false, ['gitId'])).toBeNull();
-    // 넘겨도 Claude 설치·로그인은 그대로 필수
-    expect(setupReady({ ...blank, loggedIn: false }, ['gitId'])).toBe(false);
-  });
   // 깃은 선택(ADR 0024) — '코드 프로젝트에 git 쓰기'를 끈 사람에겐 이름·메일을 묻지도 막지도 않는다
-  it('git 스위치가 꺼져 있으면 이름·메일 줄은 숨고 다음을 막지 않는다', () => {
-    const blank = { ...ok, gitName: '', gitEmail: '' };
-    expect(gitIdentityRow(blank, false)).toBe('hidden');
-    expect(gitIdentityRow(blank, true)).toBe('need');
-    expect(setupReady(blank, [], false)).toBe(true);
-    expect(canNext('check', blank, undefined, null, [], false)).toBe(true);
-    expect(nextWhy('check', blank, undefined, null, false, [], false)).toBeNull();
-  });
-  it('다음이 꺼진 까닭(맥)에 git 이름·메일 말은 없다 — 명령줄 도구는 파이썬 때문에 그대로 필수', () => {
-    const why = nextWhy('check', { ...ok, clt: false }, undefined, null, false, [], false) ?? '';
-    expect(why).toMatch(/명령줄 도구/);
-    expect(why).not.toMatch(/이름·메일/);
-  });
   it('입력 검사 — 이름 빈칸·메일 모양', () => {
     expect(gitIdentityError('Kim', 'k@x.com')).toBeNull();
     expect(gitIdentityError('  ', 'k@x.com')).toBe('name');
@@ -432,14 +301,10 @@ describe('git 이름·메일 — 새 PC 는 비어 있어 새 프로젝트마다
   });
 });
 
-describe('첫 설정이 계정 로그인을 예고한다(2026-11-01 ux-start H1)', () => {
-  it("Claude 로그인 줄은 'Chammo 가 이 로그인을 그대로 쓴다'고 하지 않는다 — 다음 화면에 Chammo 계정 로그인이 따로 있다", () => {
+describe('점검의 Claude 로그인 줄(2026-11-01 ux-start H1)', () => {
+  it("'Chammo 가 이 로그인을 그대로 쓴다'고 하지 않는다 — Chammo 계정은 별개", () => {
     expect(claudeSignedInText()).not.toMatch(/Chammo 는 이 로그인을 그대로/);
-    expect(claudeSignedInText()).toContain('Chammo 계정');
-  });
-  it('준비 끝에 구글로 Chammo 계정에 로그인한다는 한 줄', () => {
-    expect(readyAccountNote()).toContain('구글');
-    expect(readyAccountNote()).toContain('Chammo 계정');
+    expect(claudeSignedInText()).toContain('세션들이');
   });
 });
 

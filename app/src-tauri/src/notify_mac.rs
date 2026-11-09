@@ -104,7 +104,8 @@ define_class!(
     }
 );
 
-/// 앱 시작 때 한 번 — 누름을 받을 델리게이트를 달고 알림 권한을 묻는다(처음 한 번 macOS 가 사용자에게 묻는다)
+/// 앱 시작 때 한 번 — 누름을 받을 델리게이트를 달고, 첫 설치를 마친 뒤면 알림 권한을 묻는다(처음 한 번 macOS 가 사람에게 묻는다).
+/// 첫 설치 중엔 안 묻는다 — '시작하기'가 notify_request 로 묻는다(ADR 0027 7항)
 pub fn init(app: &AppHandle) {
     if !available() {
         return;
@@ -115,11 +116,17 @@ pub fn init(app: &AppHandle) {
     center.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
     // delegate 는 약한 참조라 앱이 끝날 때까지 들고 있어야 한다
     std::mem::forget(delegate);
+    if crate::config::read_config().setup_done {
+        request_auth();
+    }
+}
+
+fn request_auth() {
     let done = RcBlock::new(|granted: Bool, err: *mut NSError| {
         let why = unsafe { err.as_ref() }.map(|e| e.localizedDescription().to_string()).unwrap_or_default();
         log_out("notify-auth", &format!("granted={} {why}", granted.as_bool()));
     });
-    center.requestAuthorizationWithOptions_completionHandler(
+    UNUserNotificationCenter::currentNotificationCenter().requestAuthorizationWithOptions_completionHandler(
         UNAuthorizationOptions::Alert | UNAuthorizationOptions::Sound | UNAuthorizationOptions::Badge,
         &done,
     );

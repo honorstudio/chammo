@@ -9,6 +9,7 @@ __doc__ = """Chammo task log — record what you delegate so the app's task pane
 Chammo 작업 기록 — 다른 세션에 시킨 일을 남기면 앱 오른쪽 작업 패널에 카드로 뜬다.
 
   scripts/task send   <session id|name> "<what you asked, one line>"   -> prints the task id
+                      [--team-work]  this is the team's work you just ran team ask for — task done's first line goes to that team's today box / 방금 team ask 한 팀의 일 표시
                       [--goal "<goal>[:N]"]  groups it under a goal in the home progress (N = total planned tasks, not the position; 0/N to start)
   scripts/task goal-done  "<goal>"          -> close the goal now (planned slots not sent are dropped) / 목표를 지금 닫는다
   scripts/task goal-total "<goal>" <N>      -> change the total planned count / 전체 예정 개수를 바꾼다
@@ -51,7 +52,7 @@ Merge rule: `send` prints MERGE_RULE on stderr — append it to the end of your 
 sessions open PRs but leave merging to you. It also prints ASK_RULE — sessions' choice prompts are seen by no one.
 And SENDER_RULE — instructions from assistants on the Chammo team (on this Mac, not messenger lines) count as the user's.
 """
-import datetime, json, os, re, secrets, shutil, subprocess, sys
+import datetime, json, os, re, secrets, shutil, subprocess, sys, time
 for _io in (sys.stdin, sys.stdout, sys.stderr):  # 윈도우 파이썬 기본은 cp949 — PYTHONUTF8 없이 떠도(데몬 env 세션·작업 스케줄러) 한글·'—' 를 UTF-8 로(2026-11-01 win-text H1)
     if _io and hasattr(_io, 'reconfigure') and (_io.encoding or '').lower().replace('-', '') != 'utf8':
         _io.reconfigure(encoding='utf-8', errors='replace')
@@ -222,27 +223,60 @@ def keep_candidates(project, lines):
 PROOF_RULE = T('단계가 셋 넘는 일이면 체크리스트(TaskCreate 나 docs/plans/)를 두고 다 지우기 전엔 끝났다고 하지 마. 끝났다고 할 땐 확인한 증거(결과물 파일 경로·PR 번호·주소·응답 코드·로그)를 같이 적고, 같은 조각이 세 번 실패하면 더 밀지 말고 이 지시를 보낸 세션에 계획부터 다시 물어. 끝나거나 막히면 이 지시를 보낸 세션에 SendMessage 로 결과 한 줄(+증거)을 보내 — 안 보내면 그 참모와 사용자는 끝난 줄 모른다. git 작성자(user.name·user.email)가 없으면 지어 넣지 말고(로그인 메일 등 — 공개 push 때 그대로 나간다) 커밋 없이 끝낸 뒤 그렇다고 알려.',
                "If this has more than three steps, keep a checklist (TaskCreate or docs/plans/) and don't call it done until it's empty. When you say done, include the proof you checked (result file path, PR number, URL, status code, log). If the same piece fails three times, stop pushing and ask the session that sent this to rethink the plan. When you finish or get stuck, SendMessage the session that sent this a one-line result (+ proof) — otherwise that assistant and the user never learn it is done. If git has no author (user.name / user.email), don't make one up (a login email would go public on push) — finish without committing and say so.")
 
-# How hard to verify — tasks with hidden edge cases get "verify hard", sketches get "be quick".
+# How hard to verify — tasks with hidden edge cases get "verify hard", sketches get "be quick", design work gets "rework it yourself first".
 HIGH = re.compile(r'결제|환불|보안|취약|권한|마이그|운영|배포|삭제|데이터|버그|고치|인증|로그인|토큰|시크릿|'
                   r'원인|수정|오류|에러|깨[짐지져]|누락|긴급|안 ?먹|안 ?[됨돼되]|두 번|스키마|'
                   r'\b(security|vuln\w*|permissions?|rls|migrations?|production|prod|deploy\w*|delete|db|data|bugs?|fix\w*|auth\w*|login|tokens?|secrets?'
                   r'|ota|eas update|errors?|broken|crash\w*|schema|urgent)\b')
-LOW = re.compile(r'시안|스케치|초안|문서|정리|조사|리서치|브레인|문구|카피|메모|'
-                 r'\b(mockups?|sketch\w*|drafts?|docs?|readme|research|brainstorm\w*|copy|notes?)\b')
+LOW = re.compile(r'스케치|초안|문서|정리|조사|리서치|브레인|문구|카피|메모|'
+                 r'\b(sketch\w*|drafts?|docs?|readme|research|brainstorm\w*|copy|notes?)\b')
 # "mockup approved -> build it" is not a sketch
 BUILD = re.compile(r'구현|적용|개발|리디자인|만들|착수|\b(implement\w*|build|redesign\w*|apply)\b')
+# Making a design never gets "be quick". The words also show up where nothing is being designed ("merge the mockup review",
+# "hand it to the design lead") — anything unclear stays at the default level.
+# The table lives in app/hq-tests/effort.fixture.json. Real requests often have no verb: "3 mockups", "mockup v2", "mockup first".
+NEVER_QUICK = re.compile(r'시안|디자인(?!.*(?:조사|리서치|문서))|\bmockups?\b|\bdesign\b(?!.*\b(?:research|docs?)\b)')  # design work never gets "be quick", unless it is research or docs
+DESIGN_NOUN = re.compile(r'시안|디자인|목업|랜딩|히어로|\b(mockups?|landing pages?|hero|redesign\w*)\b')
+DESIGN_MAKE = re.compile(r'만들|만드|뽑|그려|그리(?!고)|다듬|깎|새로(?!고침)|재생성|잡아|리디자인|디자인해|(?:시안|디자인)[^,+·→—]{0,20}(?:수정|고치|고쳐)|'
+                         r'\b(make|create|design|polish|refine|redo|rework|redesign\w*)\b')
+DESIGN_ASKED = re.compile(r'시안\s*(?:큐레이션|먼저|부터|\d|v\d|셋|둘|넷|$|[(—:+–-])|\d\s*(?:개|안|방향)\s*시안|'  # the mockup is the result — no verb
+                          r'\bmockups?\s*(?:first|v\d|$)|\b(?:\d+|two|three|four)\s+mockups?\b')
+JUST_HANDLING = re.compile(r'시안(?:\s+[a-z0-9.+-]+)?\s*[을를은이도]?\s*(?:보여|띄워|열어|찾아|옮겨|전달|공유|보내)|\b(show|open|find|move|send|share)\b')  # with the verbless shapes: handling a mockup that exists
+SCREEN_MAKE = re.compile(r'화면\S{0,2}\s*(?:새로(?!고침)|만들|만드|그려|그리(?!고)|다듬)|'
+                         r'\b(make|create|design|polish|redesign)\b.{0,24}\bscreens?\b')
+NOT_DESIGN = re.compile(r'문서|문구|카피|메모(?!리|장)|스케치|'                                  # writing
+                        r'구현|적용|개발|착수|시안\S*(?:\s+[a-z0-9.+-]+)?\s*반영|시안[^,+—]{0,20}확정|시안대로|\(시안\s*[a-z]\)|'  # turning a settled mockup into code
+                        r'(?:시안|디자인)[^,]*머지|담당|시안\S*\s*(?:파일|경로|png|pdf|캡처|커밋|스킬|시험|테스트|스크립트)|'
+                        r'\bmockups?\s+(?:png|pdf)\b|'  # only handling the mockup
+                        r'버그|오류|에러|깨[짐지져]|원인|누락|오타|안 ?먹|안 ?[됨돼되]|마이그|배포|삭제|'  # broken or production
+                        r'\b(docs?|readme|copy|notes?|sketch\w*|implement\w*|build|apply|approved|merge\w*|lead|path|files?|'
+                        r'screenshot|capture|commit|skill|tests?|scripts?|bugs?|fix\w*|errors?|broken|typo|migrations?|deploy\w*|delete)\b')
 EFFORT_LINE = {
     'high': T('검증이 중요한 일이야 — 먼저 재현하고, 예외·경계 케이스 테스트를 충분히 돌리고, 네 결과를 한 번 공격적으로 리뷰한 뒤 올려줘.',
               'This one needs careful verification — reproduce first, test edge cases thoroughly, and review your own result critically before you report.'),
     'low': T('빠르게 한 번 만들어서 보여줘 — 다듬기는 보고 나서.', 'Make a quick first version and show me — polish after I look.'),
+    'design': T('시안은 첫 판을 바로 내지 마 — 직접 띄워 보고 어디가 싸 보이는지 찾아 스스로 한 번 깎은 뒤에 보여줘.',
+                "Don't hand in your first pass of a design — render it, look at it yourself, find what looks cheap, rework it once, then show me."),
 }
+
+
+def is_design_work(t):
+    if NOT_DESIGN.search(t):
+        return False
+    if DESIGN_NOUN.search(t) and DESIGN_MAKE.search(t):
+        return True  # the login in "login screen mockup" is the subject — a mockup or design outranks HIGH words
+    if DESIGN_ASKED.search(t) and not JUST_HANDLING.search(t):
+        return True
+    return bool(SCREEN_MAKE.search(t)) and not HIGH.search(t)  # "make a login screen" is real login work
 
 
 def effort_for(text):
     t = text.lower()
+    if is_design_work(t):
+        return 'design', EFFORT_LINE['design']
     if HIGH.search(t):
         return 'high', EFFORT_LINE['high']
-    if LOW.search(t) and not BUILD.search(t):
+    if LOW.search(t) and not BUILD.search(t) and not NEVER_QUICK.search(t):
         return 'low', EFFORT_LINE['low']
     return 'medium', ''
 
@@ -790,7 +824,9 @@ def owners_of(events):
 def read_events():
     out = []
     try:
-        for l in open(LOG, encoding='utf-8'):
+        with open(LOG, encoding='utf-8') as f:
+            lines = f.readlines()
+        for l in lines:
             try:
                 out.append(json.loads(l))
             except ValueError:
@@ -967,6 +1003,32 @@ def take_goal(a):
         m = re.fullmatch(r'(.+?):(\d{1,3})', goal.strip())
         goal, total = (m.group(1).strip(), int(m.group(2))) if m else (goal.strip(), None)
     return rest, (goal or None), (total or None)
+
+
+TEAM_WORK_S = 2 * 3600
+
+
+def team_work_of(who):
+    """이 참모가 2시간 안에 team ask 한 팀(id) — 없으면 None"""
+    if not who:
+        return None
+    try:
+        with open(os.path.join(DATA, 'team-work.json'), encoding='utf-8') as f:
+            w = json.load(f).get(who) or {}
+    except (OSError, ValueError, AttributeError):
+        return None
+    return w.get('team') if time.time() - float(w.get('at') or 0) < TEAM_WORK_S else None
+
+
+def report_team(team, text, proof):
+    """팀 일 끝 — 결과 한 줄을 그 팀 오늘 칸에(scripts/team report). 못 넣어도 일 기록은 그대로"""
+    cmd = [sys.executable, os.path.join(os.path.dirname(os.path.realpath(__file__)), 'team'), 'report', team, '-'] + (['--proof', proof] if proof else [])
+    try:
+        r = subprocess.run(cmd, input=text, text=True, capture_output=True, timeout=90)
+        if r.returncode:
+            print(T(f'팀 오늘 칸에 못 넣었어: {r.stderr.strip()[:200]}', f"Couldn't add to the team's today box: {r.stderr.strip()[:200]}"), file=sys.stderr)
+    except (OSError, subprocess.SubprocessError) as e:
+        print(T(f'팀 오늘 칸에 못 넣었어: {e}', f"Couldn't add to the team's today box: {e}"), file=sys.stderr)
 
 
 def take_from_handover(a):
@@ -1185,6 +1247,8 @@ def main(a):
     hid = None
     if cmd == 'send':
         a, goal, total = take_goal(a)
+        team_flag = '--team-work' in a
+        a = [x for x in a if x != '--team-work']
         a, hid = take_from_handover(a)
     if cmd == 'send' and len(a) >= 3:
         left = open_tasks(a[1])
@@ -1199,6 +1263,13 @@ def main(a):
             ev['goal'] = goal
         if total:
             ev['goalTotal'] = total
+        # team ask 뒤 2시간 안이어도 --team-work 를 붙인 일만 그 팀 일 — 시각만 보면 다른 거래처 일의 결과가 팀에 간다(0.4.9 2차)
+        work_team = team_work_of(os.path.basename((os.environ.get('CLAUDE_JOB_DIR') or '').rstrip('/')))
+        if work_team and team_flag:
+            ev['team'] = work_team
+            print(T('(참모용) 이 일은 팀 일로 표시했어 — 끝나면 task done 첫 줄이 그 팀 오늘 칸에 들어가', "(for you) marked as team work — task done's first line goes to that team's today box"), file=sys.stderr)
+        elif work_team:
+            print(T('(참모용) 방금 team ask 를 했어 — 이 일이 그 팀 일이면 --team-work 를 붙여(안 붙이면 팀에 안 간다)', "(for you) you just ran team ask — add --team-work if this is that team's work (otherwise nothing goes to the team)"), file=sys.stderr)
         # who asked — the background session id (end of CLAUDE_JOB_DIR); the chat view groups sessions by assistant with it
         # 시킨 참모 — 채팅 뷰 대시보드가 참모마다 잡은 세션을 가른다
         who = os.path.basename((os.environ.get('CLAUDE_JOB_DIR') or '').rstrip('/'))
@@ -1306,6 +1377,10 @@ def main(a):
             print(T(f'{proj} 은 {other}도 최근 맡겨 왔어 — 사용자에게 한 줄 알리고, 한쪽으로 모으려면 scripts/task handoff <세션> <참모>',
                     f'{other} has also been delegating {proj} lately — tell the user in one line; to keep it with one assistant: scripts/task handoff <session> <assistant>'), file=sys.stderr)
         return 0
+    if cmd == 'lesson' and len(a) >= 3 and '팀 메모리 ·' in a[2]:
+        # 기억의 경계 = 참모의 경계 — 팀 참모 답을 개인 교훈으로 옮기면 그 팀 기억이 다른 일로 샌다
+        print(T('팀 메모리 답은 교훈에 안 옮겨 — 그 팀 일에서만 team ask 로 다시 물어', "Team memory answers don't go into lessons — ask again with team ask when you work on that team"), file=sys.stderr)
+        return 2
     if cmd == 'lesson' and len(a) >= 3:
         project = COMMON if a[1] == '--all' else a[1]
         wrote = add_lesson(project, a[2])
@@ -1377,6 +1452,12 @@ def main(a):
         if cmd == 'ask' and me:
             ev['to'] = me
         append(ev)
+        if cmd == 'done':
+            team = next((e.get('team') for e in read_events() if e.get('type') == 'send' and e.get('task') == a[1] and e.get('team')), None)
+            if team:
+                line = a[2].strip().split('\n')[0]
+                m = re.search(r'https?://\S+', line)
+                report_team(team, line, m.group(0) if m else '')
         return 0
     if cmd in ('goal-done', 'goal-total'):
         return goal_mark(cmd, a)

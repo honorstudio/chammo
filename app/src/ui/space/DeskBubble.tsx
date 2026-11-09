@@ -8,8 +8,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { listSessionsRaw, readCtx } from '../../data/tauri';
 import { promptInput } from '../../domain/chat';
 import { parseCtx, type Ctx } from '../../domain/ctx';
+import { keepSame } from '../../domain/keepSame';
 import { agentState } from '../../domain/session';
-import { DESK_PAD, POP_MS, deskPop, openKeep, deskStage, fanKeep, fanPlan, farEdges, fitPopSize, resizedPop, type Far, isDrag, popLayout, popSteps, readSpot, screenPlace, screenSave, stageBox, type PopAnim, type Pt, type Rect, type Screen } from '../../domain/orchBubble';
+import { DESK_PAD, POP_MS, deskFrame, openKeep, fanKeep, fanPlan, farEdges, fitPopSize, resizedPop, type Far, isDrag, popSteps, readSpot, screenPlace, screenSave, stageBox, type PopAnim, type Pt, type Rect, type Screen } from '../../domain/orchBubble';
 import { BadgeCore, BubbleFan, useHoverFan, type FanOrch } from './BubbleFan';
 import { shownName } from '../../domain/orchLabel';
 import { orchVars } from '../../domain/orchTheme';
@@ -29,8 +30,8 @@ import { imagePasteKey } from '../../domain/keys';
 import { IS_WIN } from '../../domain/reader';
 import './orchBubble.css';
 
-/** 바탕 배지 상자 — 배지 52(왼쪽 18·위 10) + 아래 숫자 알약 자리. 맥 창(무대)은 부채(FAN)·배너(PEEK)가 펼쳐질 자리를 화면 가운데 쪽으로 늘 품고(deskStage),
- *  네 방향 DESK_PAD 씩 넓다(물결·그림자) — 올림·뺌·배너엔 창을 안 바꾼다(10-28 사용자 "호버하면 깜빡이면서 잠깐 위치가 바뀜") */
+/** 바탕 배지 상자 — 배지 52(왼쪽 18·위 10) + 아래 숫자 알약 자리. 맥 창(한 판, deskFrame)은 부채(FAN)·배너(PEEK)가 펼쳐질 자리와 그 배지에서 열릴 대화창 자리를
+ *  늘 품고 네 방향 DESK_PAD 씩 넓다(물결·그림자) — 올림·뺌·배너·열기·접기엔 창을 안 바꾼다(10-28 사용자 "호버하면 깜빡", 11-05 "펼칠 때·닫힐 때 깜빡") */
 const DESK = 88;
 const FAN = 150;
 const BX = 18, BY = 10;
@@ -43,6 +44,8 @@ const SPOT_KEY = 'orchBubble.desk';
 /** 사람이 끌어 바꾼 대화창 보통 크기 */
 const SIZE_KEY = 'orchBubble.popSize';
 type Screens = { screens: Screen[]; app: string | null; win: (Rect & { id: string }) | null };
+type Frame = ReturnType<typeof deskFrame>;
+const sameRect = (a: Rect | null, b: Rect) => !!a && Math.abs(a.x - b.x) < 1 && Math.abs(a.y - b.y) < 1 && Math.abs(a.w - b.w) < 1 && Math.abs(a.h - b.h) < 1;
 const noop = () => {};
 /** 별명 — 이름 줄의 ' · ' 뒤(없으면 그대로) */
 const nick = (l: string) => shownName(l);
@@ -60,16 +63,17 @@ export function DeskBubble() {
   const [pick, setPick] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [anim, setAnim] = useState<PopAnim>('gone');
-  // 열린 동안 맥 창 안 자리(popLayout) — 배지 상자·대화창·자라는 점
-  const [lay, setLay] = useState<ReturnType<typeof popLayout>>({ win: { x: 0, y: 0, w: POP.w, h: POP.h }, pop: { x: 0, y: 0, ...POP }, box: { x: 0, y: 0 }, origin: { x: 0, y: 0 }, badge: false });
-  const layRef = useRef(lay);
-  layRef.current = lay;
-  const [back, setBack] = useState(false);
+  // 맥 창 한 판(deskFrame) — 창 안 배지 상자·펼치는 쪽·열릴 대화창·자라는 점. 닫혀도 열려도 같은 판이라 열기·접기에 창이 안 바뀐다
+  const [frame, setFrame] = useState<Frame>(() => ({ win: { x: 0, y: 0, w: 0, h: 0 }, box: stageBox({ x: -1, y: -1 }, EXT), side: { x: -1, y: -1 }, pop: null, origin: { x: 0, y: 0 }, badge: true }));
+  const frameRef = useRef(frame);
+  frameRef.current = frame;
   // 대화창 보통 크기 — 사람이 끌어 바꾼 크기(없으면 POP). '크게'는 따로 모드라 여기 안 적는다
   const sizeRef = useRef<{ w: number; h: number }>((() => { try { const v = JSON.parse(read(SIZE_KEY) ?? 'null') as { w?: number; h?: number } | null; return v && v.w! > 0 && v.h! > 0 ? { w: v.w!, h: v.h! } : POP; } catch { return POP; } })());
   // 별명 툴팁(얼굴 줄은 가로 스크롤이라 그 안에 그리면 잘린다 — 창 맨 위 층에)
   const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
   const [big, setBig] = useState(false);
+  const bigRef = useRef(big);
+  bigRef.current = big;
   const [sid, setSid] = useState<string | undefined>();
   const [state, setState] = useState('idle');
   const [err, setErr] = useState<string | null>(null);
@@ -79,10 +83,8 @@ export function DeskBubble() {
   const draggedRef = useRef(false);
   openRef.current = open;
   const who = roster.find((o) => o.id === (open ? pick ?? face : face)) ?? null;
-  // 무대가 펼치는 쪽(화면 가운데 쪽) — 창을 놓을 때 정해진다(toBadge). hide = 쪽이 바뀌어 창 자리와 웹뷰 안 배지 자리를 같이 옮기는 동안
-  const [side, setSide] = useState<{ x: 1 | -1; y: 1 | -1 }>({ x: -1, y: -1 });
-  const sideRef = useRef(side);
-  sideRef.current = side;
+  // 펼치는 쪽(화면 가운데 쪽) — 판을 놓을 때 정해진다(toBadge). hide = 창 안 배지 자리가 바뀌어 창 자리와 같이 옮기는 동안
+  const side = frame.side;
   const [hide, setHide] = useState(false);
   // 묻는 참모가 생기면 배지 옆 배너 — 누르면 그 참모 대화창(10-28 사용자 "배너 눌러서 대화"). 8초, 올려 두면 안 사라진다
   const askKey = who?.pip === 'ask' ? who.id : '';
@@ -103,30 +105,29 @@ export function DeskBubble() {
   const fanShown = hover.shown && !dragging;
   const fanRef = useRef(false);
   fanRef.current = fanShown;
-  // 무대 창 안 배지 상자 왼쪽 위(여백·펼칠 자리만큼 비켜 있다) — 끈 창에서 배지 자리를 읽는다. off = 여백 안(obd-wrap) 배지 원 자리
-  const boxOff = stageBox(side, EXT);
+  // 창 안 배지 상자 왼쪽 위(여백·펼칠 자리·대화창 자리만큼 비켜 있다) — 끈 창에서 배지 자리를 읽는다. off = 여백 안(obd-wrap) 배지 원 자리
+  const boxOff = frame.box;
   const off = { x: boxOff.x - DESK_PAD + BX, y: boxOff.y - DESK_PAD + BY };
-  const boxOffRef = useRef(boxOff);
-  boxOffRef.current = boxOff;
   const fp = fanPlan(roster, who?.id);
   const fanK = fp.shown.length + (fp.more.length ? 1 : 0);
   zoneRef.current = (p) => fanKeep(p, { x: DESK_PAD + off.x + 26, y: DESK_PAD + off.y + 26 }, side, fanK) || !!(p && document.elementFromPoint(p.x, p.y)?.closest('.obb-fan'));
 
-  // 배지 자리 — 기억한 모니터·비율(그 모니터가 빠졌으면 앱 창 모니터), 창 배치·해상도가 바뀌어도 다시 안으로. 창은 무대(deskStage) 크기 하나
+  // 배지 자리 → 맥 창 한 판(무대 + 그 자리에서 열 대화창, 키우기면 큰 대화창)
+  const frameAt = (b: Pt, screens: Screen[], isBig: boolean, size = sizeRef.current) => deskFrame({ x: b.x, y: b.y, w: DESK, h: DESK }, { x: b.x + BX, y: b.y + BY, w: 52, h: 52 }, screens, EXT, size, isBig);
+  // 배지 자리 — 기억한 모니터·비율(그 모니터가 빠졌으면 앱 창 모니터), 창 배치·해상도가 바뀌어도 다시 안으로. 창은 한 판(deskFrame) 크기
   const toBadge = useCallback(async (force = false) => {
     const s = await screensNow();
     if (!force && (openRef.current || peekRef.current || fanRef.current || draggingRef.current || openingRef.current)) return; // 배너·부채·대화창·끌기 중엔 창을 안 옮긴다(놓은 뒤 한 번)
     const p = screenPlace(readSpot(read(SPOT_KEY)), s.screens, s.app, DESK);
-    const st = deskStage({ x: p.x, y: p.y, w: DESK, h: DESK }, s.screens, EXT);
-    const same = (a: Rect | null) => !!a && Math.abs(a.x - st.win.x) < 1 && Math.abs(a.y - st.win.y) < 1 && Math.abs(a.w - st.win.w) < 1 && Math.abs(a.h - st.win.h) < 1;
-    // 쪽이 바뀌면 창 자리와 웹뷰 안 배지 자리가 같이 바뀐다 — 둘은 같은 프레임에 못 맞추니 감춘 채 옮기고 다 그린 뒤 보인다(대화창은 접는 동안 이미 안 보인다)
-    const flip = !openRef.current && (st.side.x !== sideRef.current.x || st.side.y !== sideRef.current.y);
-    if (same(s.win) && !flip) return;
+    const f = frameAt(p, s.screens, bigRef.current);
+    // 창 안 배지 자리가 바뀌면(쪽·대화창 자리가 바뀜) 창 자리와 웹뷰 안 배지 자리가 같이 바뀐다 — 둘은 같은 프레임에 못 맞추니 감춘 채 옮기고 다 그린 뒤 보인다
+    const flip = f.box.x !== frameRef.current.box.x || f.box.y !== frameRef.current.box.y;
+    if (sameRect(s.win, f.win) && !flip) { if (JSON.stringify(f) !== JSON.stringify(frameRef.current)) setFrame(f); return; }
     if (flip) { setHide(true); await paint(); }
-    await place(st.win, false, 0);
-    setSide(st.side);
+    await place(f.win, false, 0);
+    setFrame(f);
     if (flip) { await paint(); setHide(false); }
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const w = window as unknown as { __bubbleShow?: () => void; __bubbleMoved?: () => void; __bubbleHover?: (on: boolean) => void; __bubbleMouse?: (x: number, y: number) => void };
     // 올림 — Rust 가 전역 마우스로 본다(비활성 패널은 앱이 안 깨어 있으면 웹뷰에 마우스 올림이 안 와서 누를 때 부채가 떴다)
@@ -157,10 +158,10 @@ export function DeskBubble() {
         void screensNow().then(async (s) => {
           if (!s.win) return;
           // 열린 대화창째 끌었으면 배지 화면 밖으로 나간 만큼 창째 당긴다(배지·대화창 사이 자리는 그대로) — 이 옮김 사건은 위에서 draggedRef 를 내려 안 센다
-          const to = openRef.current ? openKeep(s.win, layRef.current.box, s.screens, DESK) : null;
-          if (to) await place({ ...s.win, ...to }, true, layRef.current.badge ? 0 : 14);
+          const to = openRef.current ? openKeep(s.win, frameRef.current.box, s.screens, DESK) : null;
+          if (to) await place({ ...s.win, ...to }, true, 0);
           const w0 = to ? { ...s.win, ...to } : s.win;
-          const b = openRef.current ? { x: w0.x + layRef.current.box.x, y: w0.y + layRef.current.box.y } : { x: w0.x + boxOffRef.current.x, y: w0.y + boxOffRef.current.y };
+          const b = { x: w0.x + frameRef.current.box.x, y: w0.y + frameRef.current.box.y };
           write(SPOT_KEY, JSON.stringify(screenSave({ x: b.x, y: b.y }, s.screens, DESK)));
           draggingRef.current = false;
           setDragging(false);
@@ -199,19 +200,21 @@ export function DeskBubble() {
   useEffect(() => {
     if (!chatId) return;
     let alive = true;
-    const tick = () => void listSessionsRaw().then((raw) => {
+    const tick = () => void listSessionsRaw().then(async (raw) => {
       const a = (JSON.parse(raw) as { id: string; sessionId?: string; status?: string; state?: string; cwd?: string }[]).find((x) => x.id === chatId);
       if (!alive) return;
       setSid(a?.sessionId);
       setCwd(a?.cwd);
       setState(a ? agentState(a) : 'idle');
       setErr(a ? null : tr('이 참모가 꺼졌어요', 'This assistant stopped'));
+      // 모델·컨텍스트 — 메인 채팅 칩과 같은 자료(상태줄이 세션마다 남긴 파일). 이 대화 것만 읽는다(옛 세션 파일이 수천 개)
+      if (a?.sessionId) {
+        const next = parseCtx(await readCtx([a.sessionId]));
+        if (alive) setCtxs((old) => keepSame(old, next));
+      }
     }).catch(() => {});
-    // 모델·컨텍스트 — 메인 채팅 칩과 같은 자료(상태줄이 세션마다 남긴 파일)
-    const ctxTick = async () => { setCtxs(parseCtx(await readCtx())); };
     tick();
-    void ctxTick().catch(() => {});
-    const iv = window.setInterval(() => { tick(); void ctxTick().catch(() => {}); }, 3000);
+    const iv = window.setInterval(tick, 3000);
     return () => { alive = false; window.clearInterval(iv); };
   }, [chatId]);
 
@@ -226,37 +229,42 @@ export function DeskBubble() {
     try {
       const s = await screensNow();
       if (!s.win) return;
-      // 배지 상자 = 무대 창 안 그 자리(창 왼쪽 위가 아니다). 이미 열린 대화창(키우기)은 창이 대화창이라 기억한 배지 자리로
-      const b = openRef.current ? { ...screenPlace(readSpot(read(SPOT_KEY)), s.screens, s.app, DESK), w: DESK, h: DESK } : { x: s.win.x + boxOffRef.current.x, y: s.win.y + boxOffRef.current.y, w: DESK, h: DESK };
-      const r = deskPop({ x: b.x, y: b.y, w: DESK, h: DESK }, s.screens, sizeRef.current, isBig);
-      if (!r) return;
+      // 배지 상자 = 창 안 그 자리(창 왼쪽 위가 아니다) — 닫혀도 열려도 같은 판이라 같은 길
+      const b = { x: s.win.x + frameRef.current.box.x, y: s.win.y + frameRef.current.box.y };
+      const f = frameAt(b, s.screens, isBig);
+      if (!f.pop) return;
       // 배지에서 열 때만 톡 — 이미 열린 대화창의 키우기·참모 바꾸기는 자리만 바꾼다
       const grow = !openRef.current;
-      const l = popLayout(b, { x: b.x + BX, y: b.y + BY, w: 52, h: 52 }, r);
-      setLay(l);
+      // 판이 그대로면(보통) 창을 안 바꾼다 — 배지는 제자리에 보인 채 대화창만 자란다. 판이 바뀌면(화면 배치가 막 바뀜) 닫혀 있던 배지만 감춘 채 옮긴다
+      const moved = !sameRect(s.win, f.win);
+      const flip = grow && moved && (f.box.x !== frameRef.current.box.x || f.box.y !== frameRef.current.box.y);
+      if (grow) setAnim('from');
+      if (flip) setHide(true);
+      setFrame(f);
       setPick(id ?? (open ? pick : face));
       setOpen(true);
       setPeek('');
-      // 접힌(안 보이는) 대화창을 먼저 그린 뒤 맥 창을 키운다 — 창 크기가 바뀌는 순간 배지가 큰 창 구석으로 튀어 보이지 않게(배지도 그동안 숨김)
-      if (grow) { setAnim('from'); await paint(); }
-      await place(l.win, true, l.badge ? 0 : 14);
-      if (grow) await paint();
+      if (grow) await paint(); // 접힌(안 보이는) 대화창을 먼저 그린 뒤 펼친다
+      await place(f.win, true, 0); // 대화창 = 키 창(글을 칠 수 있게) — 판이 같으면 자리·크기는 그대로
+      if (grow && moved) await paint();
+      if (flip) setHide(false);
       setAnim('in');
       requestAnimationFrame(() => focusIn.current?.());
     } finally {
       openingRef.current = false;
     }
   };
-  // 접기 — 배지 쪽으로 줄어들며 사라지고(out), 안 보이게 둔 채(gone) 창을 배지로 줄인 뒤 배지
+  // 접기 — 배지 쪽으로 줄어들며 사라지고(out) 배지만 남는다. 창은 같은 판 그대로 키만 내려놓는다(배지는 한 번도 안 감춘다)
   const closePop = async () => {
     if (popSteps(false, motionOn())[0] === 'out') { setAnim('out'); await wait(POP_MS.close); }
     setAnim('gone');
-    await paint();
-    await toBadge(true);
     setOpen(false);
-    setBack(true);
+    openRef.current = false;
+    const s = await screensNow().catch(() => null);
+    await place(s?.win ?? frameRef.current.win, false, 0);
+    await toBadge(true); // 대화창째 끌어 옮겼으면 그 자리 판으로(배지 자리가 바뀌면 감춘 채)
   };
-  // 부채 — 올리면 무대 창 안 화면 가운데 쪽으로 펼치기만 한다(창 크기·자리는 그대로 — 바꾸면 창과 웹뷰가 한 프레임 어긋나 배지가 튀었다, 10-28 사용자)
+  // 부채 — 올리면 창 안 화면 가운데 쪽으로 펼치기만 한다(창 크기·자리는 그대로 — 바꾸면 창과 웹뷰가 한 프레임 어긋나 배지가 튀었다, 10-28 사용자)
   const press = useRef<{ x: number; y: number; dragged: boolean } | null>(null);
   // 배지 누르기 — 닫힌 배지·열린 배지 같은 길: 5px 넘게 움직이면 창 끌기(열린 동안은 대화창째 옮겨진다), 아니면 click 이 열기·접기
   const grab = (e: React.PointerEvent) => { if (e.button === 0) press.current = { x: e.screenX, y: e.screenY, dragged: false }; };
@@ -277,23 +285,24 @@ export function DeskBubble() {
     if (e.button !== 0) return;
     e.preventDefault();
     (e.target as Element).setPointerCapture?.(e.pointerId);
-    const start = { x: e.screenX, y: e.screenY, size: { w: lay.pop.w, h: lay.pop.h }, far: farEdges(lay.origin, lay.pop), axis };
+    const pop = frame.pop ?? { x: 0, y: 0, ...POP };
+    const start = { x: e.screenX, y: e.screenY, size: { w: pop.w, h: pop.h }, far: farEdges(frame.origin, pop), axis };
     setBig(false); // 손으로 끌면 '크게' 모드는 풀린다 — 크게는 화면 높이 꽉 찬 따로 모드
     const s = await screensNow();
-    const b = { ...screenPlace(readSpot(read(SPOT_KEY)), s.screens, s.app, DESK), w: DESK, h: DESK };
+    const win = s.win ?? frameRef.current.win;
+    const b = { x: win.x + frameRef.current.box.x, y: win.y + frameRef.current.box.y, w: DESK, h: DESK };
     grip.current = { ...start, b, screens: s.screens, busy: false };
   };
   const moveGrip = (e: React.PointerEvent) => {
     const d = grip.current;
     if (!d || d.busy) return;
     const next = resizedPop(d.size, e.screenX - d.x, e.screenY - d.y, d.far, d.axis);
-    const r = deskPop(d.b, d.screens, next, false);
-    if (!r) return;
-    sizeRef.current = { w: r.w, h: r.h };
-    const l = popLayout(d.b, { x: d.b.x + BX, y: d.b.y + BY, w: 52, h: 52 }, r);
+    const f = frameAt(d.b, d.screens, false, next);
+    if (!f.pop) return;
+    sizeRef.current = { w: f.pop.w, h: f.pop.h };
     d.busy = true;
-    setLay(l);
-    void place(l.win, true, l.badge ? 0 : 14).finally(() => { d.busy = false; });
+    setFrame(f);
+    void place(f.win, true, 0).finally(() => { d.busy = false; });
   };
   const endGrip = () => {
     const d = grip.current;
@@ -380,9 +389,10 @@ export function DeskBubble() {
   // 배너 왼쪽(여백 안) — 화면 가운데 쪽, 배지 옆. 부채 자리 = 배지 상자에서 가운데 쪽으로 FAN 만큼(여백 포함)
   const peekX = side.x < 0 ? off.x - BX - PEEK + 6 : off.x + 52 + 12;
   const fanAt: [number, number, number, number] = [boxOff.x - P - (side.x < 0 ? FAN : 0), boxOff.y - P - (side.y < 0 ? FAN : 0), DESK + FAN + P * 2, DESK + FAN + P * 2];
-  const badgeAt: [number, number, number, number] = open ? [lay.box.x + BX, lay.box.y + BY, 52, 52] : [P + off.x, P + off.y, 52, 52];
+  const badgeAt: [number, number, number, number] = [P + off.x, P + off.y, 52, 52];
+  const pop = frame.pop;
   const hits = open
-    ? { hot: [[lay.pop.x, lay.pop.y, lay.pop.w, lay.pop.h], ...(lay.badge ? [badgeAt] : [])], hover: [] }
+    ? { hot: [...(pop ? [[pop.x, pop.y, pop.w, pop.h]] : []), ...(frame.badge ? [badgeAt] : [])], hover: [] }
     : fan ? { hot: [fanAt], hover: [badgeAt] } // 펴진 동안 머물기는 마우스 자리로(부채 둘레) — 네모 올림 칸이면 비스듬히 빼도 빈 모서리에서 안 접혔다
     : { hot: [badgeAt, ...(peek ? [[P + peekX, P + off.y, PEEK - 14, 52] as [number, number, number, number]] : [])], hover: [badgeAt] };
   const hitKey = JSON.stringify(hits);
@@ -392,19 +402,23 @@ export function DeskBubble() {
   const avatar = (o: typeof who, size: number) => <OrchAvatar name={o.owner} size={size} state={o.pip === 'ask' ? 'ask' : o.busy ? 'work' : 'rest'} color={o.color} label={o.label} />;
   const fanOrchs: FanOrch[] = roster.map((o) => ({ id: o.id, label: o.label, color: o.color, pip: o.pip ?? (o.busy ? 'run' : null), small: avatar(o, 28) }));
   const me = fanOrchs.find((o) => o.id === who.id)!;
-  if (!open) {
-    return (
-      <div className={`obd-wrap${hide ? ' hide' : ''}`} style={{ inset: DESK_PAD }} onPointerMove={(e) => { if (!draggingRef.current) hover.move({ x: e.clientX, y: e.clientY }); }} onPointerLeave={() => hover.move(null)}>
-      <button type="button" className={`obb-badge obd-badge${back ? ' obd-back' : ''}${dragging ? ' obb-drag' : ''}`} style={{ left: off.x, top: off.y, ...orchVars(who.color) } as React.CSSProperties}
-        aria-label={tr(`${who.label} 대화창 열기`, `Open ${who.label} chat`)} title={tr(`${who.label} — 누르면 대화, 끌면 옮기기`, `${who.label} — click to chat, drag to move`)}
-        onPointerEnter={hover.enter} onPointerLeave={hover.leave}
+  const still = !motionOn();
+  // 배지는 닫혀도 열려도 같은 요소·같은 자리(판이 같아서) — 열기·접기에 다시 붙지도 감춰지지도 않는다. 대화창은 그 위에 자라 나온다
+  return (
+    <div className="obd-desk">
+      {open && tip && <span className="obd-tip" style={{ left: tip.x, top: tip.y }}>{tip.text}</span>}
+      <div className={`obd-wrap${hide ? ' hide' : ''}`} style={{ inset: DESK_PAD }} onPointerMove={(e) => { if (!open && !draggingRef.current) hover.move({ x: e.clientX, y: e.clientY }); }} onPointerLeave={() => { if (!open) hover.move(null); }}>
+      <button type="button" className={`obb-badge obd-badge${dragging ? ' obb-drag' : ''}`} style={{ left: off.x, top: off.y, ...orchVars(who.color) } as React.CSSProperties}
+        aria-label={open ? tr(`${who.label} 대화창 접기`, `Collapse ${who.label} chat`) : tr(`${who.label} 대화창 열기`, `Open ${who.label} chat`)}
+        title={open ? tr(`${who.label} — 누르면 접기, 끌면 대화창째 옮기기`, `${who.label} — click to collapse, drag to move with the chat`) : tr(`${who.label} — 누르면 대화, 끌면 옮기기`, `${who.label} — click to chat, drag to move`)}
+        onPointerEnter={open ? undefined : hover.enter} onPointerLeave={open ? undefined : hover.leave}
         onPointerDown={grab} onPointerMove={drag}
-        onClick={() => { if (!pressed()) void openPop(true); }}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void openPop(true); } }}>
+        onClick={() => { if (!pressed()) void openPop(!open); }}
+        onKeyDown={(e) => { if (!open && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); void openPop(true); } }}>
         <BadgeCore face={me} node={avatar(who, 44)} orchs={fanOrchs} />
       </button>
-      {fanShown && <span className={`obd-name ${side.y < 0 ? 'up' : 'down'}${hover.out ? ' out' : ''}`} style={{ left: off.x + 26, top: side.y < 0 ? off.y - 10 : off.y + 52 + 30 }}>{nick(who.label)}</span>}
-      {peek && !dragging && (
+      {!open && fanShown && <span className={`obd-name ${side.y < 0 ? 'up' : 'down'}${hover.out ? ' out' : ''}`} style={{ left: off.x + 26, top: side.y < 0 ? off.y - 10 : off.y + 52 + 30 }}>{nick(who.label)}</span>}
+      {!open && peek && !dragging && (
         <button type="button" className="obd-peek" style={{ left: peekX, top: off.y, width: PEEK - 14 }}
           aria-label={tr(`${who.label} 대화하기 — 답을 기다려요`, `Chat with ${who.label} — waiting for your answer`)}
           onPointerEnter={() => window.clearTimeout(peekT.current)} onPointerLeave={() => { peekT.current = window.setTimeout(() => setPeek(''), 3000); }}
@@ -412,28 +426,13 @@ export function DeskBubble() {
           <b>{who.label}</b><span>{tr('답을 기다려요', 'Waiting for your answer')}</span><em>{tr('대화하기', 'Chat')}</em>
         </button>
       )}
-      {fanShown && <BubbleFan orchs={fanOrchs} front={who.id} cx={off.x + 26} cy={off.y + 26} side={side} out={hover.out} onEnter={hover.enter} onLeave={hover.leave}
+      {!open && fanShown && <BubbleFan orchs={fanOrchs} front={who.id} cx={off.x + 26} cy={off.y + 26} side={side} out={hover.out} onEnter={hover.enter} onLeave={hover.leave}
         onPick={(id) => { hover.close(); setPick(id); void openPop(true, big, id); }} />}
       </div>
-    );
-  }
-  const still = !motionOn();
-  return (
-    <div className={`obd-open a-${anim}`}>
-      {tip && <span className="obd-tip" style={{ left: tip.x, top: tip.y }}>{tip.text}</span>}
-      {lay.badge && (
-        <div className="obd-wrap" style={{ left: lay.box.x, top: lay.box.y, width: DESK, height: DESK }}>
-          <button type="button" className={`obb-badge obd-badge obd-back${dragging ? ' obb-drag' : ''}`} style={{ left: BX, top: BY, ...orchVars(who.color) } as React.CSSProperties}
-            aria-label={tr(`${who.label} 대화창 접기`, `Collapse ${who.label} chat`)} title={tr(`${who.label} — 누르면 접기, 끌면 대화창째 옮기기`, `${who.label} — click to collapse, drag to move with the chat`)}
-            onPointerDown={grab} onPointerMove={drag}
-            onClick={() => { if (!pressed()) void openPop(false); }}>
-            <BadgeCore face={me} node={avatar(who, 44)} orchs={fanOrchs} />
-          </button>
-        </div>
-      )}
-    <div className={`obd-pop a-${anim}${still ? ' still' : ''}`} style={{ left: lay.pop.x, top: lay.pop.y, width: lay.pop.w, height: lay.pop.h, transformOrigin: `${lay.origin.x}px ${lay.origin.y}px` }} role="dialog" aria-label={tr(`${who.label} 대화창`, `${who.label} chat`)}>
+    {open && pop && (
+    <div className={`obd-pop a-${anim}${still ? ' still' : ''}`} style={{ left: pop.x, top: pop.y, width: pop.w, height: pop.h, transformOrigin: `${frame.origin.x}px ${frame.origin.y}px` }} role="dialog" aria-label={tr(`${who.label} 대화창`, `${who.label} chat`)}>
       {!big && (() => {
-        const far = farEdges(lay.origin, lay.pop);
+        const far = farEdges(frame.origin, pop);
         return (['x', 'y', 'xy'] as const).map((g) => (
           <span key={g} className={`obd-grip g-${g} ${far.x} ${far.y}`} aria-hidden="true"
             onPointerDown={(e) => void startGrip(e, g)} onPointerMove={moveGrip} onPointerUp={endGrip} onPointerCancel={endGrip} />
@@ -474,6 +473,7 @@ export function DeskBubble() {
         </div>
       </div>
     </div>
+    )}
     </div>
   );
 }

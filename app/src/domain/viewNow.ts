@@ -89,7 +89,6 @@ export function selectionWord(s: { kind: string; name?: string; key?: string; id
     case 'loose': return tr('프로젝트 밖 세션', 'sessions outside projects');
     case 'load': return tr('부하', 'load');
     case 'replay': return tr('다시 보기', 'replay');
-    case 'tama': return tr('다마고치', 'pet');
     case 'external': return tr('외부 예약 세션', 'scheduled session');
     default: return s.kind;
   }

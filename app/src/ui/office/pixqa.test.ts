@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CATALOG } from '../../domain/gacha';
-import { planRoom, withLounge } from '../../domain/office';
+import { planOffice } from '../../domain/office';
+import { newRoom } from '../../domain/officeRoom';
 import { drawHat, drawItem } from '../gacha/icons';
 import { brush, drawRoom, pet, roomSize } from './draw';
 import { FakeCtx, holes } from './pixqa';
@@ -27,8 +28,10 @@ describe('도트 구멍 검사', () => {
   });
   it('스킨마다 방 전체(가구 전부 놓고)에 구멍이 없다 — 날씨(거품 등)는 빼고', () => {
     const seats = ['a', 'b', 'c', 'd', 'e'].map((p, i) => ({ id: p, label: p, project: `proj-${p}`, status: (['working', 'done', 'asks', 'idle', 'working'] as const)[i]!, startedAt: i }));
-    const furn = CATALOG.filter((c) => c.kind === 'furn').map((c) => c.id);
-    const room = withLounge(planRoom([{ id: 'boss', label: 'boss', project: 'boss', status: 'working', startedAt: 0 }], seats, 'bear'), furn);
+    const furn = CATALOG.filter((c) => c.kind === 'furn' && !c.id.startsWith('furn.a_')).map((c) => c.id); // 컬러 도트 가구는 아이콘 시험이 본다(그대로 찍는다)
+    // 큰 방 뒤쪽 둘레에 가구 전부 — 시험 칸을 넉넉히(가구 도트는 방 크기와 상관없다)
+    const shape = { ...newRoom(), lv: 3, zone: [1, 3] as [number, number], furn: Object.fromEntries(furn.map((id, k): [string, [number, number]] => [id, [(k % 8) + 6, (k >> 3) % 13]])) };
+    const room = planOffice({ room: shape, index: 0, orchs: [{ id: 'boss', name: 'boss', label: 'boss', project: 'boss', status: 'working', startedAt: 0, spr: 'bear' }], workers: seats });
     const { W, H } = roomSize(room);
     for (const [name] of SKIN_NAMES) {
       const cv = new FakeCtx(W, H);
@@ -36,8 +39,8 @@ describe('도트 구멍 검사', () => {
       expect(holes(cv, 12), name).toEqual([]);
     }
   });
-  it('휴게실 없는 8칸 방에서도 — 장식이 벽 밖·허공에 칠해지지 않는다(휴게실 방에서만 보면 오른쪽 벽 장식이 방 밖으로 나간 걸 못 잡았다)', () => {
-    const room = planRoom([{ id: 'boss', label: 'boss', project: 'boss', status: 'working', startedAt: 0 }], [{ id: 'a', label: 'a', project: 'proj-a', status: 'working', startedAt: 1 }], 'bear');
+  it('기본 8칸 방에서도 — 장식이 벽 밖·허공에 칠해지지 않는다', () => {
+    const room = planOffice({ room: newRoom(), index: 0, orchs: [{ id: 'boss', name: 'boss', label: 'boss', project: 'boss', status: 'working', startedAt: 0, spr: 'bear' }], workers: [{ id: 'a', label: 'a', project: 'proj-a', status: 'working', startedAt: 1 }] });
     const { W, H, ox, oy } = roomSize(room);
     const bad: string[] = [];
     for (const [name] of SKIN_NAMES) {
@@ -54,4 +57,20 @@ describe('도트 구멍 검사', () => {
     }
     expect(bad).toEqual([]);
   });
+  it('다들 괜찮은 서버실 — 벽 밑 불길이 책상·사람 높이로 안 솟는다(11-09 사용자 "불꽃이 책상과 사람을 덮어")', () => {
+    const room = planOffice({ room: { ...newRoom(), lv: 2 }, index: 0, orchs: [], workers: [] });
+    const { W, H, ox, oy } = roomSize(room);
+    const base = SKINS.serverfire!;
+    const draw = (scene: string[]) => { const cv = new FakeCtx(W, H); drawRoom(cv as unknown as CanvasRenderingContext2D, { ...room, desks: [] }, { ...base, weather: undefined, scene }, 3); return cv; };
+    const a = draw(['mm-racks']), b = draw(['mm-racks', 'mm-fire']);
+    const tall: number[] = [];
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4;
+      if (a.px[i] === b.px[i] && a.px[i + 1] === b.px[i + 1] && a.px[i + 2] === b.px[i + 2]) continue;
+      const z = oy + (ox - x) / 2 - y; // 왼 벽 위 높이(바닥 0)
+      if (z > 6 && z < 26) tall.push(Math.round(z)); // 바닥 불씨(≤6)와 사람 머리 위 랙 꼭대기 불(≥26, 앉은 캐릭터 키 25)만
+    }
+    expect(tall).toEqual([]);
+  });
 });
+

@@ -3,7 +3,7 @@
 import { tr } from '../i18n';
 import type { RoleMap } from './orchRoles';
 
-/** bg-cap = 배경 요청이 10분 칸 몫(200)을 처음 넘음(detail = 경로별 셈) · human-429 = 사람 동작이 서버 429(detail = 경로) */
+/** bg-cap = 배경 자신의 요청(보낸 것 + 막힌 것)이 10분 칸 몫(200)을 처음 넘음(detail = 경로별 셈, 배경 경로가 먼저. 사람 동작이 칸을 채운 건 notify.log 한 줄만) · human-429 = 사람 동작이 서버 429(detail = 경로) */
 export type PerfAlert = { kind: string; detail: string; at: number };
 
 const APP_ROLE = /앱 업데이트|참모 앱|chammo ?앱|app updates?/i;

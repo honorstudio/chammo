@@ -5,7 +5,7 @@ import { SubHead } from '../office/OfficeMenu';
 import { ItemIcon } from './GachaPage';
 import { StarCount, Stars } from './Stars';
 
-const KINDS: [ItemKind | 'all', string][] = [['all', tr('전체', 'All')], ['skin', tr('스킨', 'Skins')], ['furn', tr('가구', 'Furniture')], ['hat', tr('모자', 'Hats')], ['window', tr('창밖', 'Views')], ['fx', tr('이펙트', 'Effects')], ['action', tr('반장 액션', 'Boss moves')], ['friend', tr('펫 친구', 'Pet pals')], ['desk', tr('책상 소품', 'Desk items')], ['title', tr('칭호', 'Titles')], ['light', tr('조명', 'Lighting')]];
+const KINDS: [ItemKind | 'all', string][] = [['all', tr('전체', 'All')], ['chr', tr('캐릭터', 'Characters')], ['skin', tr('스킨', 'Skins')], ['furn', tr('가구', 'Furniture')], ['floor', tr('바닥 장식', 'Floor')], ['wall', tr('벽 장식', 'Wall')], ['hat', tr('모자', 'Hats')], ['window', tr('창밖', 'Views')], ['fx', tr('이펙트', 'Effects')], ['action', tr('반장 액션', 'Boss moves')], ['friend', tr('펫 친구', 'Pet pals')], ['desk', tr('책상 소품', 'Desk items')], ['title', tr('칭호', 'Titles')], ['light', tr('조명', 'Lighting')]];
 
 /** 도감(사무실 칸 안) — 모은 것·못 모은 것·별 보기만. 처음 얻고 안 눌러 본 건 NEW. 가진 칸을 누르면 꾸미기의 그 종류로 간다(끼우는 곳은 꾸미기 한 곳 — 2026-10-21 사용자 A안) */
 export function DexView({ file, onPick, onClose, nav }: { file: GachaFile | null; /** 가진 칸 누름 — NEW 끄고 꾸미기로 */ onPick: (id: string) => void; onClose: () => void; nav?: ReactNode }) {

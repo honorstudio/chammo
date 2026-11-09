@@ -6,7 +6,7 @@ import { splitRefs, stripMarks, type ChatItem } from '../../domain/chat';
 import { bubbleWho } from '../../domain/refChips';
 import { BottomSheet } from './kit';
 import { usePress } from './PhoneLockerParts';
-import { farFromBottom, jumpDot, nearBottom, phoneBubble, phoneName, stickBottom, wantEarlier, type PhoneAtt } from '../../domain/mobile';
+import { farFromBottom, jumpDot, nearAfterScroll, nearBottom, phoneBubble, phoneName, stickBottom, wantEarlier, type PhoneAtt } from '../../domain/mobile';
 import type { OutMsg } from '../../domain/mobileOutbox';
 import { sentMentionLabel, splitTokens } from '../../domain/chatTokens';
 import type { EarlierApi } from './useEarlier';
@@ -157,18 +157,24 @@ export function MessageList({ items, out, onRetry, onDrop, live, ask, who, earli
   useEffect(() => {
     const el = log.current;
     if (!el) return;
+    // 사람 손 — 손가락·휠·키. 이 1초 안의 스크롤만 '위로 읽는 중'으로 친다(nearAfterScroll)
+    let handAt = 0;
+    const hand = () => { handAt = Date.now(); };
     const on = () => {
-      near.current = nearBottom(el.scrollHeight, el.scrollTop, el.clientHeight);
+      near.current = nearAfterScroll({ was: near.current, nearNow: nearBottom(el.scrollHeight, el.scrollTop, el.clientHeight), handMs: Date.now() - handAt });
       setAway(farFromBottom(el.scrollHeight, el.scrollTop, el.clientHeight));
       prev.current.h = el.scrollHeight; // 그림이 늦게 그려져 높이가 바뀐 것도 따라간다(다음에 붙을 때 그만큼 더 밀지 않게)
       // 위로 무한 스크롤 — 위 끝에 닿기 전, 화면 한 장 남았을 때 미리(2026-10-03 사용자)
       if (el.scrollTop < el.clientHeight) top.current();
     };
+    const hands = ['touchstart', 'touchmove', 'wheel', 'pointerdown', 'keydown'] as const;
+    hands.forEach((t) => el.addEventListener(t, hand, { passive: true }));
     el.addEventListener('scroll', on, { passive: true });
-    if (typeof ResizeObserver === 'undefined') return () => el.removeEventListener('scroll', on);
+    const off = () => { el.removeEventListener('scroll', on); hands.forEach((t) => el.removeEventListener(t, hand)); };
+    if (typeof ResizeObserver === 'undefined') return off;
     const ro = new ResizeObserver(() => { if (near.current) toBottom(); });
     ro.observe(el);
-    return () => { el.removeEventListener('scroll', on); ro.disconnect(); };
+    return () => { off(); ro.disconnect(); };
   }, []);
   // 위로 화면 한 장도 안 남았으면 — 안 그린 말이 남았으면 더 그리고, 다 그렸으면 서버에서 앞 대화
   const top = useRef(() => {});

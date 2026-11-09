@@ -107,9 +107,43 @@ fn dot_ok(p: &Path, home: &Path) -> bool {
     })
 }
 
+fn share_ext(p: &Path) -> bool {
+    matches!(p.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(), Some("md" | "txt" | "html" | "htm" | "json" | "csv" | "tsv" | "log" | "yaml" | "yml" | "toml" | "ts" | "tsx" | "js" | "jsx" | "mjs" | "py" | "rs" | "sh" | "swift" | "kt" | "css" | "sql" | "png" | "jpg" | "jpeg" | "gif" | "webp" | "heic" | "pdf" | "pptx" | "ppt" | "key" | "docx" | "doc" | "pages" | "xlsx" | "xls" | "numbers" | "mp4" | "mov" | "m4v"))
+}
+
 pub fn shareable(p: &Path, r: &Rules) -> bool {
-    let ext_ok = matches!(p.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(), Some("md" | "txt" | "html" | "htm" | "json" | "csv" | "tsv" | "log" | "yaml" | "yml" | "toml" | "ts" | "tsx" | "js" | "jsx" | "mjs" | "py" | "rs" | "sh" | "swift" | "kt" | "css" | "sql" | "png" | "jpg" | "jpeg" | "gif" | "webp" | "heic" | "pdf" | "pptx" | "ppt" | "key" | "docx" | "doc" | "pages" | "xlsx" | "xls" | "numbers" | "mp4" | "mov" | "m4v"));
-    ext_ok && place_ok(p, r)
+    share_ext(p) && place_ok(p, r)
+}
+
+// ── 폰이 연 팀 파일(11-06 사용자 "디엠 온 거 파일 볼 수가 없음") — 풀어 둔 팀 파일은 데이터 폴더(team-locker-peek) 안이라 폰 보기 길에서 막힌다.
+//    폴더째 열면 방 사람이 보낸 html 이 옆 파일을 부를 수 있으니, 폰이 id 로 연 파일 하나씩만 집합에 넣는다(앱을 다시 켜면 잊고, 폰이 다시 열면 다시 든다) ──
+
+pub const TEAM_OPENED_MAX: usize = 200;
+static TEAM_OPENED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// 폰이 연 팀 파일을 기억 — 오래된 것부터 잊는다
+pub fn team_opened_add(p: &Path) {
+    let s = p.to_string_lossy().into_owned();
+    let mut v = TEAM_OPENED.lock().unwrap_or_else(|e| e.into_inner());
+    v.retain(|x| *x != s);
+    v.push(s);
+    let over = v.len().saturating_sub(TEAM_OPENED_MAX);
+    v.drain(..over);
+}
+
+pub fn team_opened() -> Vec<String> {
+    TEAM_OPENED.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+fn team_opened_has(p: &Path) -> bool {
+    let s = p.to_string_lossy();
+    TEAM_OPENED.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|x| *x == s)
+}
+
+/// 폰 보기로 여는 팀 파일 형식 — 내보낼 수 있는 형식에서 html(남이 올린 스크립트)과 영상(전용 길 /api/team-media)만 뺀다
+pub fn team_doc(p: &Path) -> bool {
+    let ext = p.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).unwrap_or_default();
+    share_ext(p) && !matches!(ext.as_str(), "html" | "htm") && kind_of(p) != Kind::Video
 }
 
 /// html 시안이 부르는 곁 파일 — 그림·스타일·글꼴·스크립트 형식(확장자 → Content-Type)
@@ -151,15 +185,18 @@ pub fn html_asset(html: &Path, rel: &str, rules: &Rules) -> Pick {
     }
 }
 
-/// 이름(민감 낱말)·자리(데이터 폴더·점 성분) 거름 — 확장자는 부르는 쪽이 본다
-fn place_ok(p: &Path, r: &Rules) -> bool {
-    let (data_dir, hq_dir) = (r.data_dir.as_path(), r.hq_dir.as_str());
+/// 이름 거름(민감 낱말) — 코드·설정 글(json 등)을 열면서 서비스 계정·SSH 키 이름도 막는다(2026-10-03). 글 속 키는 secret_in 이 따로 본다
+pub(crate) fn name_ok(p: &Path) -> bool {
     let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_ascii_lowercase();
-    // 코드·설정 글(json 등)을 열면서 서비스 계정·SSH 키 이름도 막는다(2026-10-03). 글 속 키는 secret_in 이 따로 본다
-    let word_bad = ["secret", "key", "token", "credential", "password", "infra", "service-account", "service_account", "adminsdk", "google-services", "googleservice", "id_rsa", "id_ed25519", "settings", "accounts"].iter().any(|w| name.contains(w))
+    !(["secret", "key", "token", "credential", "password", "infra", "service-account", "service_account", "adminsdk", "google-services", "googleservice", "id_rsa", "id_ed25519", "settings", "accounts"].iter().any(|w| name.contains(w))
         || name.ends_with(".local.md")
-        || name.starts_with(".env");
-    if word_bad {
+        || name.starts_with(".env"))
+}
+
+/// 이름(민감 낱말)·자리(데이터 폴더·점 성분) 거름 — 확장자는 부르는 쪽이 본다
+pub(crate) fn place_ok(p: &Path, r: &Rules) -> bool {
+    let (data_dir, hq_dir) = (r.data_dir.as_path(), r.hq_dir.as_str());
+    if !name_ok(p) {
         return false;
     }
     let routine = p.strip_prefix(data_dir.join("routines")).ok().is_some_and(|r| {
@@ -168,7 +205,7 @@ fn place_ok(p: &Path, r: &Rules) -> bool {
     });
     let starter = !hq_dir.is_empty() && p == Path::new(hq_dir).join("docs/starter.md");
     // 보관함 복사본(<데이터>/locker/files/<숫자>-<이름>) — 폰에서 올린 것·채팅에 붙인 그림을 보관함에 둔 것
-    if routine || starter || phone_attach(p, data_dir) || crate::locker::is_locker_copy(p, data_dir) {
+    if routine || starter || phone_attach(p, data_dir) || crate::locker::is_locker_copy(p, data_dir) || team_opened_has(p) {
         return true;
     }
     if within(p, data_dir) {
@@ -812,4 +849,10 @@ pub fn md_images(md: &str, doc: &Path) -> Vec<PathBuf> {
         }
     }
     out
+}
+
+/// md_images 가 찾은 그림이 폰이 물은 경로인가 — 윈도우는 push 가 \ 를 붙여(C:/…/work\a.png) 폰 모양(C:/…/work/a.png)과 글자가 달라
+/// 늘 403 이었다(공개 이슈 #15, 11-04 윈도우 실측). 드라이브 경로만 둘 다 / 로(config::fwd) 견주고, 맥 경로는 글자 그대로
+pub fn md_ref_matches(found: &Path, asked: &str) -> bool {
+    crate::config::fwd(&found.to_string_lossy()) == crate::config::fwd(asked)
 }

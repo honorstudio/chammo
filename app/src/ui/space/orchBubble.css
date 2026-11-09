@@ -31,8 +31,16 @@
    고리는 흰 원에 1px 겹친다(inset = 테두리 - 1) — 같은 자리에 두면 고리 안쪽·원 가장자리가 둘 다 반투명이라 1배 화면에서 틈이 비쳤다(사용자 379). 얼굴 위 층 — 얼굴 안 움직이는 층(.oa-l 44px)이 합성 층이라
    고리가 그 밑이면 투명 웹킷 창(바탕 배지)에서 고리 대각선에 네모 모서리가 남았다(사용자 363·18:30, 하네스 .shots/bubble-ring) */
 .obb-ring { --obb-drop: 0 6px 18px rgba(0, 0, 0, .2); position: absolute; z-index: calc(var(--z-base) + 1); inset: -2px; border: 3px solid var(--rc); border-radius: 50%; box-shadow: var(--obb-drop); pointer-events: none; transition: border-color .4s; }
-.obb-ring.r-ask { animation: obb-wave 1.6s ease-out infinite; }
-@keyframes obb-wave { 0% { box-shadow: var(--obb-drop), 0 0 0 0 color-mix(in srgb, var(--rc) 50%, transparent); } 100% { box-shadow: var(--obb-drop), 0 0 0 12px transparent; } }
+/* 묻는 참모 물결 — 고리 바깥으로 퍼지다 사라지는 원. 흰 원 뒤 층에서 크기·투명도만 움직여 합성기가 돌린다(프레임마다 안 칠한다).
+   box-shadow 로 돌릴 땐 묻는 세션이 있는 내내 프레임마다 스타일·칠하기라 작은 창 하나가 웹 9%·GPU 18%를 썼다(11-07 표본, FillRoundedRectShadow).
+   크기는 고리 바깥 반지름 28px → 40px(0→12px 퍼짐과 같다). 사람이 자리를 비우면(입력 2분 없음·잠김 — Rust 가 obd-away) 멈춘다 */
+.obb-wave { position: absolute; z-index: calc(var(--z-base) - 1); inset: -2px; border-radius: 50%; background: var(--blocked); opacity: 0; pointer-events: none; animation: obb-wave 1.6s ease-out infinite; }
+@keyframes obb-wave { from { transform: scale(1); opacity: .5; } to { transform: scale(1.4286); opacity: 0; } }
+/* 물결이 흰 원 뒤로 가게 — 배지 바탕 위·얼굴 칸 아래가 물결 층이라 얼굴 칸이 흰 원을 맡는다 */
+.obb-badge > .obb-clip { background: var(--surface); }
+/* 바탕 배지: 다른 앱을 쓰는 중에도 '물어봄'을 알려야 해서 창 포커스(oa-paused)로는 안 멈춘다 — 자리 비움(obd-away)·동작 줄이기만 멈춘다 */
+html.obd-root:not(.obd-away):not(.oa-calm) .obb-wave { animation-play-state: running !important; }
+html.obd-root.obd-away .obb-wave { animation-play-state: paused !important; }
 /* 얼굴은 원 안에만 — 배지·부채·머리 얼굴을 원으로 자른 칸에 둔다(투명 웹킷 창에서 얼굴 층 네모가 원 밖으로 안 나오게, 사용자 379) */
 .obb-clip { position: absolute; inset: 0; display: grid; place-items: center; border-radius: 50%; overflow: hidden; }
 /* 얼굴이 바뀌면 위에서 톡 */
@@ -105,23 +113,22 @@ html.obd-root .obb-fan { position: absolute; }
 .obd-peek em { grid-column: 2; grid-row: 1 / span 2; font-style: normal; font-weight: 650; color: var(--text); background: color-mix(in srgb, var(--blocked) 18%, var(--surface)); border-radius: 8px; padding: 6px 10px; }
 .obd-peek:hover em, .obd-peek:focus-visible em { background: color-mix(in srgb, var(--blocked) 30%, var(--surface)); }
 .obd-peek:focus-visible { outline: 2px solid var(--blocked); outline-offset: 2px; }
-/* 열린 동안 창 = 배지 상자 + 대화창(popLayout) — 배지는 제자리(누르면 접기), 대화창은 창 안 자리에. 창 크기가 바뀌는 동안(from·gone)은 배지도 숨긴다 */
-.obd-open { position: absolute; inset: 0; }
-.obd-open.a-from .obd-wrap, .obd-open.a-gone .obd-wrap { visibility: hidden; }
+/* 창 한 판(deskFrame) = 배지 상자 + 부채·배너 자리 + 대화창 자리 — 배지는 닫혀도 열려도 제자리에 늘 보이고(누르면 열기·접기), 대화창은 그 위에 자란다.
+   열기·접기에 창이 안 바뀌어서 배지를 감출 일이 없다(11-05 사용자 "펼칠 때·닫힐 때 깜빡" — 감췄다 보이는 게 깜빡임이었다) */
+.obd-desk { position: absolute; inset: 0; }
 /* 테두리는 안쪽 정수 border(10-28 사용자 "테두리 획 안 보임") — 바깥 퍼짐 그림자(0 0 0 1px)는 맥 창이 대화창 가장자리에 딱 맞게 잘려 위·옆 1px 이 창 밖으로 잘렸고,
    --line(#dcdce1)은 흰 창 위에서 거의 안 보였다. 투명 창이라 그림자도 못 깔아(합성 층 네모 자국) 진한 획 하나로 가른다 */
 .obd-pop { position: absolute; display: flex; flex-direction: column; box-sizing: border-box; background: var(--surface); border-radius: 14px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--text) 24%, var(--surface)); }
 .obd-head { cursor: grab; }
-/* 톡(10-28 사용자) — 배지 자리(transform-origin = 배지 쪽 변)에서 자라 나와 살짝 튀고, 접으면 그쪽으로 줄어든다. 창 크기는 접힌 동안(from·gone)에만 바뀐다 */
+/* 키우기처럼 대화창이 배지를 덮을 땐 배지(z panel+6)보다 위 — 배지는 늘 그려 두니(감췄다 보이면 깜빡) 층으로 가린다 */
+.obd-desk > .obd-pop { z-index: calc(var(--z-panel) + 8); }
+/* 톡(10-28 사용자) — 배지 자리(transform-origin = 배지 쪽 변)에서 자라 나와 살짝 튀고, 접으면 그쪽으로 줄어든다. 창 크기·자리는 안 바뀐다 */
 .obd-pop.a-from, .obd-pop.a-out, .obd-pop.a-gone { opacity: 0; transform: scale(.18); }
 .obd-pop.a-in { opacity: 1; transform: none; transition: transform .32s cubic-bezier(.22, 1.28, .42, 1), opacity .12s ease-out; }
 .obd-pop.a-out { transition: transform .18s cubic-bezier(.5, 0, .9, .5), opacity .18s ease-in; }
 .obd-pop.a-gone, .obd-pop.a-from { transition: none; }
 .obd-pop.still { transition: none; }
-/* 접고 돌아온 배지 — 작게 톡 */
-.obd-back { animation: obd-back .26s cubic-bezier(.22, 1.4, .42, 1) both; }
-@keyframes obd-back { from { opacity: 0; transform: scale(.6); } }
-@media (prefers-reduced-motion: reduce) { .obd-pop, .obd-pop.a-in, .obd-pop.a-out { transition: none; } .obd-back { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .obd-pop, .obd-pop.a-in, .obd-pop.a-out { transition: none; } }
 .obd-pop > .obd-head { display: flex; align-items: center; gap: 6px; height: 44px; padding: 0 6px 0 10px; border-bottom: 1px solid var(--line); flex: none; }
 .obd-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .obd-body > .gridbox, .obd-body .grid, .obd-body .cell, .obd-body .pane { flex: 1; min-height: 0; height: 100%; }

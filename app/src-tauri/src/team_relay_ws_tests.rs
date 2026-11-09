@@ -604,3 +604,11 @@ fn 팀_바뀜엔_그_팀_명부만_5분_주기엔_전부와_내_계정까지() {
     assert_eq!(refresh_plan(&teams, &set(&["t9"]), &set(&[]), false), (vec!["t9".to_string()], true), "모르는 팀 바뀜이면 내 계정도");
     assert_eq!(refresh_plan(&teams, &set(&[]), &set(&["t9"]), false), (vec!["t9".to_string()], true), "모르는 팀 방이 생겨도");
 }
+
+#[test]
+fn 권한_바뀜_알림만_내_계정도_다시_받게() {
+    assert!(plan_changed(&json!({ "t": "team_changed", "team": "t1", "plan": true })));
+    assert!(plan_changed(&json!({ "t": "team_changed", "team": "", "plan": true })));
+    assert!(!plan_changed(&json!({ "t": "team_changed", "team": "t1" })), "보통 바뀜은 명부만(10-31 팀 성능)");
+    assert!(!plan_changed(&json!({ "t": "team_changed", "team": "t1", "plan": "true" })));
+}

@@ -5,7 +5,7 @@ import { imageWidth, shownPercent, toggleFitActual } from '../../domain/imageFit
 import { IS_WIN, docUrl, kindOf, pageDoc } from '../../domain/reader';
 import { isCurationHtml } from '../../domain/curation';
 import { tr } from '../../i18n';
-import { IconMaximize, IconReveal, IconRestore } from '../Icons';
+import { IconMaximize, IconRefresh, IconReveal, IconRestore } from '../Icons';
 import { IconButton } from '../kit/IconButton';
 import { ExtraDoc, HtmlFrame } from '../reader/Reader';
 import { OfficeDoc } from './Preview';
@@ -58,6 +58,8 @@ export function FileTab({ path, where, attachTo, onAttach, onBig, big = false, o
     void invoke<string>('read_doc_text', { path }).then((t) => { if (isCurationHtml(t) && onCuration) onCuration(path); else setGate(false); }, () => setGate(false));
   }, [path]); // eslint-disable-line react-hooks/exhaustive-deps
   const [text, setText] = useState<string | null>(null);
+  // html 다시 불러오기 — 칸이 바깥으로 새서 비었을 때 원래 문서로(2026-11-05 참모 업데이트)
+  const [reload, setReload] = useState(0);
   useEffect(() => { if (kind === 'text') void invoke<string>('read_doc_text', { path }).then(setText, () => setText('')); }, [path, kind, stamp]);
   const textBox = useRef<HTMLPreElement>(null);
   useEffect(() => {
@@ -94,13 +96,14 @@ export function FileTab({ path, where, attachTo, onAttach, onBig, big = false, o
         <span className="cv-path" title={IS_WIN ? undefined : tr('끌어서 다른 앱으로 보내기', 'Drag to another app')} {...dragOut(path)}>{where}</span>
         <span className="cv-sp" />
         {zoomUi}
+        {kind === 'html' && <IconButton label={tr('다시 불러오기', 'Reload')} onClick={() => setReload((n) => n + 1)}><IconRefresh /></IconButton>}
         <CraftOpenChip path={path} />
         {/* 팀 파일(데이터 폴더에 풀어 둔 평문)은 파인더로 안 연다 — 머리 내려받기가 다운로드 폴더에 꺼낸다 */}
         {!isTeamCache(path) && <IconButton label={tr('폴더에서 보기', 'Show in folder')} onClick={() => void lockerApi.reveal(path).catch(() => {})}><IconReveal /></IconButton>}
         {onAttach && <SendToOrch to={attachTo} onClick={onAttach} />}
         <IconButton label={big ? tr('원래 크기로', 'Restore size') : tr('크게 보기', 'Open large')} title={big ? tr('원래 크기로', 'Restore size') : tr('크게 보기 — 확대·가득 채우기', 'Open large — zoom and fill')} onClick={onBig}>{big ? <IconRestore /> : <IconMaximize />}</IconButton>
       </div>}
-      <div className="ft-body" key={stamp}>
+      <div className="ft-body" key={`${stamp ?? ''}:${reload}`}>
         {gate ? null
           : kind === 'web' ? <WebPage url={path} />
           : kind === 'image' ? <><div className={`pv-image ${z === FIT ? 'fit' : ''}`} ref={imgBox} onPointerDown={imgOut}><img src={docUrl(path)} alt="" draggable={false} onLoad={onLoad}

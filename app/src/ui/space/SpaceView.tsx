@@ -1,7 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { askMatches, projectCovers, projectProgress } from '../../domain/projectsFriendly';
-import { appendTaskEvent, readSessionTasks, readTranscriptTails, sendTextToSession, spaceTrace, spawnLines } from '../../data/tauri';
+import { keepSame } from '../../domain/keepSame';
+import { appendTaskEvent, getAppEnv, openTarget, readSessionTasks, readTranscriptTails, sendTextToSession, spaceTrace, spawnLines } from '../../data/tauri';
+import { openLinkIn } from './openLink';
 import { craftTarget, keepScroll, queueShow, restoreTop, SCROLL_PANES, scrollKey, showBatch, traceLine } from '../../domain/spaceJump';
 import { dashFiles, ownBrowserLine, paneState, type DashFile } from '../../domain/dashboard';
 import { findTarget } from '../../domain/inbox';
@@ -32,6 +34,7 @@ import { SheetPage } from './SheetPage';
 import type { ShowAt } from '../../domain/showAt';
 import { ToolsPage } from './ToolsPage';
 import { CurationMode } from './CurationMode';
+import { VideoReview } from './VideoReview';
 import { HarnitorPanel } from '../HarnitorPanel';
 import type { HarnitorSel } from '../../domain/harnitor';
 import { pathWord, spaceWord } from '../../domain/viewNow';
@@ -66,6 +69,8 @@ import { HomeProgress } from '../GoalProgress';
 import { setModeChatHere, setModeDashHere } from '../mode/modeBus';
 import type { NoteBase } from '../../domain/noteEdits';
 import { projectRoot } from '../../domain/spaceTree';
+import { NotesSlot } from '../notes/NotesPanel';
+import { askRef } from '../refBus';
 import './space.css';
 import { attachCommand } from '../../domain/termCommand';
 import type { RoutineItem } from '../../domain/routine';
@@ -84,7 +89,7 @@ import { OfficeSheet, SheetIcons } from '../office/OfficeSheet';
 import { HOME_PICK as HOME } from '../../domain/orchHome';
 import type { HomeGo } from './HomeDash';
 import { PaneClose } from './PaneClose';
-import { IconClose, IconDashboard, IconDownload, IconFolder, IconHome, IconOffice, IconPet, IconApps } from '../Icons';
+import { IconClose, IconDashboard, IconDownload, IconFolder, IconHome, IconOffice, IconApps } from '../Icons';
 import { isTeamCache } from '../../domain/teamLocker';
 import { attachWhenReady, publishRoster, useGivePath, type GiveReq } from '../team/teamGive';
 import { BubbleFloatCtx, publishFace, useOrchBubble, type BubbleOrch } from './OrchBubble';
@@ -114,7 +119,9 @@ import { orchDisplay } from '../orchLabels';
 import { RoutineList } from './RoutineList';
 import { railWidth } from '../../domain/sessionDock';
 import { SessionPage } from './SessionPage';
-import { lockerApi, LOCKER_CHAT_ATTACH, LOCKER_DROP, LOCKER_MOVE, useLockerTree } from './useLocker';
+import { linksApi, lockerApi, LOCKER_CHAT_ATTACH, LOCKER_DROP, LOCKER_MOVE, useLockerLinks, useLockerTree } from './useLocker';
+import { linkDoc, mergeLinks } from '../../domain/lockerLinks';
+import type { LinkActs } from './LinksView';
 import { motionOn } from '../calm';
 
 const nameOf = (s: Session) => (s.workspace ? `${s.project} / ${s.workspace}` : s.project);
@@ -149,15 +156,14 @@ function SideSeg({ office, onPick }: { office: boolean; onPick: (want: 'office' 
   );
 }
 
-/** 머리 오른쪽 끝 세 칸 — 대시보드 · 펫 · 사무실. 그 참모 대시보드·펫·사무실 어디서든 같은 자리(cv-main 오른쪽 위)에 고정(2026-10-03 사용자) */
-function ViewSeg({ side, pet, office, onPick }: { side: SpaceSide; pet: boolean; office: boolean; onPick: (want: SpaceSide) => void }) {
+/** 머리 오른쪽 끝 — 대시보드 · 사무실. 어디서든 같은 자리(cv-main 오른쪽 위)에 고정(2026-10-03 사용자) */
+function ViewSeg({ side, office, onPick }: { side: SpaceSide; office: boolean; onPick: (want: SpaceSide) => void }) {
   const b = (k: SpaceSide, label: string, icon: React.ReactNode) => (
     <button className={side === k ? 'on' : ''} aria-pressed={side === k} aria-label={label} title={label} onClick={() => onPick(k)}>{icon}</button>
   );
   return (
-    <span className="seg cv-side cv-viewseg" role="group" aria-label={tr('대시보드 / 펫 / 사무실', 'Dashboard / pet / office')}>
+    <span className="seg cv-side cv-viewseg" role="group" aria-label={tr('대시보드 / 사무실', 'Dashboard / office')}>
       {b('dash', tr('대시보드', 'Dashboard'), <IconDashboard />)}
-      {pet && b('pet', tr('펫', 'Pet'), <IconPet />)}
       {office && b('office', tr('사무실', 'Office'), <IconOffice />)}
     </span>
   );
@@ -174,7 +180,9 @@ const sessionFill = (sessionId: string) => readSessionTasks(sessionId).then((t) 
 
 const NONE: never[] = []; // 기본값은 모듈 상수로 — [] 는 그릴 때마다 새 배열이라 그걸 의존성에 둔 훅이 매번 다시 돈다(stableDeps.test.ts)
 
-export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOrch, onMenuToggle, orchPins = [], orchOrder = [], pet, office, officeReq = null, onOfficeReq, onOfficeShown, harnitorReq = null, onHarnitorReq, onHarnitorShown, onHarnitorClosed, toolsReq = null, onToolsReq, onToolsShown, onToolsClosed, reviewReq = null, onReviewReq, onReviewShown, replayReq = null, onReplayReq, onReplayShown, replayPage, computerUse, orchs, stoppingIds, startingOrchs, orch: chatOrch, projectSessions, sessions, events, claudeBin, fontSize, home, orchHome, send, sendTo, live = {}, menuOpen = true, idle = NONE, stopped = NONE, orchCwd = '', onResume, onWakeOrch, onRemoveStopped, onNewSession, onNewOrch, routines, routinePage, reviewPage, ctxOf, onAddProject, projectsUi, onChatTab, helpers = [], loose = [], tasks, onMessage, bubble }: {
+export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onReorderOrch, onMenuToggle, orchPins = [], orchOrder = [], office, officeReq = null, onOfficeReq, onOfficeShown, harnitorReq = null, onHarnitorReq, onHarnitorShown, onHarnitorClosed, toolsReq = null, onToolsReq, onToolsShown, onToolsClosed, reviewReq = null, onReviewReq, onReviewShown, replayReq = null, onReplayReq, onReplayShown, replayPage, computerUse, orchs, stoppingIds, startingOrchs, orch: chatOrch, projectSessions, sessions, events, claudeBin, fontSize, home, orchHome, send, sendTo, live = {}, menuOpen = true, idle = NONE, stopped = NONE, orchCwd = '', onResume, onWakeOrch, onRemoveStopped, onNewSession, onNewOrch, routines, routinePage, reviewPage, ctxOf, onAddProject, projectsUi, onChatTab, helpers = [], loose = [], tasks, onMessage, bubble }: {
+  /** 내 메모 패널(App 이 연다) */
+  notes?: { open: boolean; onClose: () => void; onToWindow: () => void };
   /** 고정한 참모(대화 id, 고정한 순서) — 사이드바 줄 순서·압정 표시 */
   orchPins?: string[];
   /** 프사 띠에서 참모를 끌어 옮겼다(ids = 지금 순서, from 을 to 자리로) — 채팅 탭 끌기와 같은 길(App reorderOrchPanes) */
@@ -201,7 +209,6 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
   /** 하니터 열기·닫기 요청(탑바·⌘·scripts/app) — 받아 처리하면 onHarnitorReq 로 비운다. 하니터는 탭마다 기억되는 화면('h:')이라
    *  지금 탭에 열리고, 다른 탭으로 가면 그 탭 화면이 보인다(2026-10-02 사용자). 열려 있으면 스페이스 칸을 덮는다(채팅 열은 그대로) */
   /** 참모가 키우는 펫 — 참모 대시보드의 '펫' 탭(다마고치 기능을 끄면 없음) */
-  pet?: (who: (id: string) => { name: string; color: string } | null) => React.ReactNode;
   harnitorReq?: 'open' | 'close' | 'toggle' | null;
   onHarnitorReq?: () => void;
   /** 지금 탭에 하니터가 떠 있나(탑바 버튼 켜짐) */
@@ -274,7 +281,7 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
   onOpenSession: (id: string) => void;
   menuOpen?: boolean;
   /** 사무실 칸(터미널 뷰 사무실과 같은 것) — 없으면 사무실 기능 꺼짐. onOpen = 책상·카드를 누르면, dim = 옅게 할 이름표 */
-  office?: (onOpen: (id: string) => void, dim?: (id: string) => boolean) => React.ReactNode;
+  office?: (onOpen: (id: string) => void, dim?: (id: string) => boolean, /** 이 사무실을 연 참모 — 캐릭터를 안 정했으면 점 */ me?: string) => React.ReactNode;
   /** 사무실 켜기·끄기 요청(탑바 사무실 아이콘) — 받아 처리하면 onOfficeReq 로 비운다. 지금 탭 기준(탭마다 기억되는 화면) */
   officeReq?: 'open' | 'close' | 'toggle' | null;
   onOfficeReq?: () => void;
@@ -294,8 +301,7 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
   // 홈 기능 서랍 속 자리(리뷰 PR·예약 하나·도구 폴더) — 홈을 떠나지 않고 서랍 안에서만
   const [fnSub, setFnSub] = useState<{ k: FeatureKey; v: string } | null>(null);
   // 옛 대시보드 키(o:/p:)는 새 자리로(2026-10-12 패널 하나로 — domain/spaceNav legacyPick). 모든 화면 바꾸기가 이 길을 지난다
-  const petRef = useRef<string | null>(null);
-  const fixPick = (k: string) => legacyPick(k, { petFor: petRef.current, view: now.current.view, sessionOf: (root) => {
+  const fixPick = (k: string) => legacyPick(k, { petFor: null, view: now.current.view, sessionOf: (root) => {
     const g = groups.find((x) => x.root === root);
     const o = orchs.find((x) => x.id === now.current.view);
     return (g?.sessions.find((x) => heldBy(o).some((h) => h.id === x.id)) ?? g?.sessions[0])?.id;
@@ -375,8 +381,9 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
     t = window.setTimeout(put, 50);
     return () => window.clearTimeout(t);
   }, [pick, nav.view]); // eslint-disable-line react-hooks/exhaustive-deps
-  // 채팅 칸이 스페이스 참모를 바꿨을 때(App focusedBy) — 탭을 누르지 않았는데 오면 'follow' 로 남는다
-  useEffect(() => { if (chatOrch?.id && chatOrch.id !== nav.chat) switchTo(chatOrch.id, 'follow'); }, [chatOrch?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 채팅 칸이 스페이스 참모를 바꿨을 때(App focusedBy) — 탭을 누르지 않았는데 오면 'follow' 로 남는다.
+  // 그리기 전에 바꾼다 — useEffect 면 채팅 칸은 새 참모인데 스페이스는 앞 참모 화면인 그림이 한 번 나갔다(2026-11-05 남의 참모 문서가 비침)
+  useLayoutEffect(() => { if (chatOrch?.id && chatOrch.id !== nav.chat) switchTo(chatOrch.id, 'follow'); }, [chatOrch?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   // ⌘숫자·탭 고르기 — 홈을 보는 중 지금 탭 참모를 고르면 홈을 닫고 그 참모가 보던 화면으로(domain/spaceNav leaveHomeFor).
   // 받는 함수는 ref 로 늘 최신 — 귀는 한 번만 단다(매 그리기 다시 달면 같은 커밋에 탭 줄 효과가 쏜 사건이 떼어 둔 사이에 떨어진다)
   const onTabPick = useRef((_id: string) => {});
@@ -400,9 +407,6 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
   }, []);
   // 참모를 바꾸는 순간 — 흐림 + 불러오는 중을 먼저 그려 보여 주고(한 프레임), 무거운 대시보드는 그다음에(2026-09-30 사용자
   // "한참 있다가 스플래시"). 바뀐 걸 그리는 중에 알아채야 첫 화면부터 스플래시다
-  // 펫 탭을 연 참모 대시보드(하나만). 위젯 '더보기'는 이제 모달(ui/tama/PetModal)이라 여기로 안 온다
-  const [petFor, setPetFor] = useState<string | null>(null);
-  petRef.current = petFor;
   const [shownOrch, setShownOrch] = useState(orch?.id);
   // hold = 기다리는 바꾸기 번호(0 = 안 기다림) — 바꿀 때마다 늘 커지는 새 번호라 풀기와 합쳐져도 값이 바뀌어 푸는 타이머가 꼭 다시 걸린다(domain/switchHold holdRelease)
   const [hold, setHold] = useState(0);
@@ -574,8 +578,8 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
       d.forEach((it) => strayCraft.current(it));
     }, () => {});
     tick();
-    const t = setInterval(tick, 2000);
-    return () => { alive = false; clearInterval(t); };
+    const stop = every(tick, 2000); // 앱이 뒤면 5배 느리게 — 다시 보이면 바로 한 번
+    return () => { alive = false; stop(); };
   }, []);
   const craftLatest = useRef({ orchs, chatOrch, switchTo, orchIds, holders, team });
   craftLatest.current = { orchs, chatOrch, switchTo, orchIds, holders, team }; // 구독은 한 번 — 참모 목록·바꾸기는 늘 최신으로(처음 렌더의 빈 목록을 붙잡지 않게)
@@ -763,6 +767,7 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
       };
       if (f.by) curBy.current.set(f.path, f.by); // html 탭으로 먼저 열려 탭이 시안을 알아봐도 띄운 이가 남게
       if (/\.html?$/i.test(f.path)) void invoke<string>('read_doc_text', { path: f.path }).then((t) => (isCurationHtml(t) ? toCuration(f.path, f.by) : toTab()), toTab);
+      else if (kindOf(f.path) === 'video' && !f.at?.plain) toCuration(f.path, f.by); // 참모가 보여 준 영상은 검토 화면(11-04 사용자) — 그냥 재생은 scripts/show --plain
       else toTab();
       return;
     }
@@ -804,6 +809,7 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
     const fname = show.path.startsWith('data:') ? '' : ` — ${show.path.split('/').pop()}`;
     if (o) setCurNote(tr(`${josa(oname(o), '이', '가')} 파일을 띄웠어${fname}`, `${oname(o)} opened a file${fname}`));
     if (/\.html?$/i.test(show.path)) void invoke<string>('read_doc_text', { path: show.path }).then((t) => { if (isCurationHtml(t)) queueReview(owner, show); }, () => {});
+    else if (kindOf(show.path) === 'video' && !show.at?.plain) queueReview(owner, show);
     docScroll.current.delete(scrollKey(owner, q.screen.pick)); // 새로 띄운 건 맨 위부터
     setNewFor((x) => (x.has(owner) ? x : new Set(x).add(owner)));
     void spaceTrace(traceLine({ ts: new Date().toISOString(), why: 'show-queued', from: now.current.pick, to: now.current.pick, viewFrom: now.current.view, viewTo: now.current.view, chat: nav.chat })).catch(() => {});
@@ -849,12 +855,17 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
   useEffect(() => {
     if (!tailKey) return;
     let alive = true;
+    const raws: Record<string, string> = {}; // 글이 그대로면 다시 안 푼다(같은 문자열), 풀린 줄이 같으면 다시 안 그린다
     const tick = () => void readTranscriptTails(tailKey.split(',')).then((m) => {
       if (!alive) return;
       setTails((prev) => {
         const next = { ...prev };
-        for (const [k, v] of Object.entries(m)) next[k] = termTail(v, 8);
-        return next;
+        for (const [k, v] of Object.entries(m)) {
+          if (raws[k] === v && k in prev) continue;
+          raws[k] = v;
+          next[k] = termTail(v, 8);
+        }
+        return keepSame(prev, next);
       });
     }).catch(() => {});
     tick();
@@ -874,7 +885,7 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
       const tasks = noteOrch.sessionId ? await readSessionTasks(noteOrch.sessionId).catch(() => []) : [];
       const md = await invoke<string>('read_doc_text', { path: `${projectRoot(noteOrch.cwd)}/docs/starter.md` }).catch(() => '');
       if (alive) setHasStarter(md !== ''); // 공개판 HQ 엔 starter 가 없다 — 없는 문서를 여는 버튼은 숨긴다(0.2.0 검증)
-      if (alive) setNote({ tasks: tasks.map((t) => ({ id: t.id, text: t.subject, done: t.status === 'completed' })), decisions: starterLists(md).decisions });
+      if (alive) { const next: NoteBase = { tasks: tasks.map((t) => ({ id: t.id, text: t.subject, done: t.status === 'completed' })), decisions: starterLists(md).decisions }; setNote((o) => keepSame(o, next)); }
     };
     void tick();
     const stop = every(() => void tick(), 5000);
@@ -897,7 +908,7 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
       const tasks = (await Promise.all((g?.sessions ?? []).filter((x) => x.sessionId).map(async (x) =>
         (await readSessionTasks(x.sessionId!).catch(() => [])).filter((t) => t.status !== 'completed').map((t) => ({ text: t.status === 'in_progress' && t.activeForm ? t.activeForm : t.subject, doing: t.status === 'in_progress', by: x.workspace ?? tr('본체', 'main') }))))).flat();
       tasks.sort((a, b) => Number(b.doing) - Number(a.doing));
-      if (alive) setPlists({ todo: [...tasks, ...fromStarter.todo.map((text) => ({ text }))], decisions: fromStarter.decisions, source: md ? src : undefined });
+      if (alive) { const next: DashLists = { todo: [...tasks, ...fromStarter.todo.map((text) => ({ text }))], decisions: fromStarter.decisions, source: md ? src : undefined }; setPlists((o) => keepSame(o, next)); }
     };
     void tick();
     const stop = every(() => void tick(), 5000);
@@ -1028,7 +1039,7 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
     const back = sv?.pick ?? (o ? homeOf(o) : `l:${owner}`);
     screens.current.set(owner, { ...(sv ?? { modal: null, sheet: [] }), pick: reviewKey(f.path), modal: sv?.modal?.path === f.path ? null : sv?.modal ?? null });
     holds.current.set(owner, openReview(holds.current.get(owner) ?? null, owner, back, f.path));
-    if (o) setCurNote(tr(`${josa(oname(o), '이', '가')} 시안을 띄웠어`, `${oname(o)} opened a draft for review`));
+    if (o && kindOf(f.path) !== 'video') setCurNote(tr(`${josa(oname(o), '이', '가')} 시안을 띄웠어`, `${oname(o)} opened a draft for review`)); // 영상은 앞 줄 '파일을 띄웠어' 그대로
   };
   // 그 알림 한 줄 — 스페이스 위에 잠깐(경고 띠가 아니라 소식)
   const [curNote, setCurNote] = useState<string | null>(null);
@@ -1044,6 +1055,10 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
   const curationEl = (p: string, big: boolean) => {
     const own = curOwner(p);
     const to = own ?? chatOrch;
+    if (kindOf(p) === 'video') {
+      return <VideoReview key={p} path={p} big={big} onBig={() => setCurBig((b) => !b)} by={byTag(p)} sendTo={own ? oname(own) : sendTo ?? assistant()} color={to ? bodyColor(avatars, to.name || '', colorOf(to.name || '')) : undefined}
+        onSend={own ? async (text) => { window.dispatchEvent(new CustomEvent('chat-pending', { detail: { id: own.id, text } })); await sendTextToSession(own.id, text); } : send} onClose={() => closeReview(p)} />;
+    }
     return <CurationMode key={p} path={p} big={big} onBig={() => setCurBig((b) => !b)} by={byTag(p)} sendTo={own ? oname(own) : sendTo ?? assistant()} color={to ? bodyColor(avatars, to.name || '', colorOf(to.name || '')) : undefined}
       onSend={own ? async (text) => { window.dispatchEvent(new CustomEvent('chat-pending', { detail: { id: own.id, text } })); await sendTextToSession(own.id, text); } : send} onClose={() => closeReview(p)} />;
   };
@@ -1147,6 +1162,32 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
     };
     return () => { delete w.__browserPane; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // 시안 칸 안 링크(2026-11-05 사용자) — 지금 보는 참모가 맡긴 그 문서 프로젝트 세션 브라우저, 없으면 이 참모 브라우저(안 떠 있으면 띄운다)에 새 탭으로 열고
+  // 스페이스 칸을 그 브라우저로(domain/frameLink linkBrowser). 스페이스 밖 칸(리더 등)은 false — 부르는 쪽이 기본 브라우저로
+  const linkLatest = useRef({ orch, heldBy, lives, closedB, setPick, team });
+  linkLatest.current = { orch, heldBy, lives, closedB, setPick, team };
+  useEffect(() => {
+    const w = window as unknown as { __openLink?: (url: string, doc: string, frame: Element) => boolean };
+    w.__openLink = (url, doc, frame) => {
+      if (!frame.closest('.space, .dash-preview')) return false;
+      const { orch, heldBy, lives, closedB } = linkLatest.current;
+      const held = heldBy(orch).map((s) => { const l = liveOf(s, lives); return { cwd: s.cwd, live: l && !stillClosed(closedB, l) ? l : undefined }; });
+      void openLinkIn(url, doc, {
+        held,
+        devRoot: () => getAppEnv().then((e) => e.devRoot),
+        shown: (p) => {
+          const { team, setPick } = linkLatest.current;
+          if (team?.on) team.onLeave();
+          setModal(null);
+          setPick(browserKey(p), 'browser');
+        },
+        hqOpened: (p) => { setHqB(p); if (orch) setHqOpener(orch.id); },
+        fail: (e) => { setCurNote(tr(`링크를 앱 브라우저로 못 열어서 기본 브라우저로 열었어 — ${String(e)}`, `Could not open the link in the app browser, so it opened in your default browser — ${String(e)}`)); void openTarget('url', url).catch(() => {}); },
+      });
+      return true;
+    };
+    return () => { delete w.__openLink; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // 파일 보관함 v4(2026-10-11 사용자 "추천대로") — 참모마다 진짜 폴더(~/Documents/Chammo/<참모>, Rust locker_fs). 참모를 누르면 첫 화면.
   // 자리: l:<참모>(받은 것) · l:<참모>#d:<자리>(내 폴더) · l:<참모>#p:<뿌리>(프로젝트 폴더). 보관함에서 연 md·엑셀은 띠·나무 그대로 가운데 문서 탭
   const projectRoots = useMemo(() => [...groups.map((g) => ({ name: g.name, root: g.root })), ...idle], [groups, idle]);
@@ -1201,6 +1242,9 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
   }, [pick]);
   const lockerTree = useLockerTree(lockerOrch ? lockerOwner(lockerOrch) : null, 5000, isLockerOpen(lp));
   const place: LkPlace = lp?.place ?? (lkHold ? parseLkPick(lkHold.back)?.place ?? { kind: 'root' } : { kind: 'root' });
+  // 보관함 링크 칸(시안 locker-links v1 B) — 보관함 맨 위(파일 · 링크 머리 숫자)를 보는 동안만 그 참모 대화 기록을 이어 읽는다
+  const lockerAtRoot = !!lp && place.kind === 'root';
+  const lockerLinks = useLockerLinks(lockerOrch ? { id: lockerOrch.id, session: lockerOrch.sessionId } : null, lockerAtRoot);
   const lkRef = useRef({ tree: lockerTree, hold: lkHold });
   lkRef.current = { tree: lockerTree, hold: lkHold };
   // 그 참모 화면에 오면 프사 점을 지운다
@@ -1321,7 +1365,7 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
     const items = lockerLog(shown, lockerTree.entries, lockerTree.dir, projectRoots);
     const to = (p: LkPlace) => setPick(lkPick(lo.id, p));
     return {
-      held, items, chips: { active, all }, kit, rootNew: items.length > 0 && newFor.has(lo.id),
+      held, items, shown, chips: { active, all }, kit, rootNew: items.length > 0 && newFor.has(lo.id),
     };
   })();
   // 펼친 띠 폭 — 앱 전체 한 값(191.png: 맡은 일 글로 490px 까지 늘었다)
@@ -1497,6 +1541,14 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
   };
   // 보관함 파일을 열거나 붙이기 직전 — iCloud 로 빠졌으면 먼저 내려받는다(보관함 밖 파일은 맥에 맡김)
   const fetched = (p: string) => (lockerTree.dir && p.startsWith(`${lockerTree.dir}/`) ? lockerApi.fetch(p).catch((e: unknown) => { lockerFail(e); return false; }) : Promise.resolve(false));
+  // 링크 칸 동작 — 열기는 시안 칸 링크 다리(__openLink)와 같은 길: 맡긴 세션이 보여 준 주소면 그 세션 브라우저, 아니면 참모 브라우저 새 탭
+  const openHere = (url: string, doc: string, at: Element) => !!(window as unknown as { __openLink?: (u: string, d: string, f: Element) => boolean }).__openLink?.(url, doc, at);
+  const linkActs = (lo: Session): LinkActs => ({
+    onOpen: (l, at) => { if (!openHere(l.url, linkDoc(l, heldBy(lo)), at)) void openTarget('url', l.url).catch(() => {}); },
+    onOpenOut: (l) => void openTarget('url', l.url).catch(() => {}),
+    onAdd: (url) => linksApi.linkAdd(lo.id, url),
+    onHide: (ids, hide) => Promise.all(ids.map((id) => linksApi.linkHide(lo.id, id, hide))),
+  });
   const lockerActs = (lo: Session): CardActs => ({
     // 무엇이든 탭으로 연다 — md·엑셀은 편집 페이지, 그림·영상·html·pdf 는 탭 안 미리보기(2026-10-11 사용자). 모달은 '띄워 보기'·탭의 '크게 보기'
     onOpen: (p) => void fetched(p).then(() => {
@@ -1673,12 +1725,12 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
     );
   };
   // 사무실 + 사무실 위 창 — 참모 탭 사무실(pick OFFICE)과 홈 안 사무실(홈 사무실 칸)이 같이 쓴다. dim = 흐리게 그릴 책상(지금 탭 참모가 안 시킨 세션)
-  const officeView = (onDesk: (id: string) => void, dim?: (id: string) => boolean) => {
+  const officeView = (onDesk: (id: string) => void, dim?: (id: string) => boolean, me?: string) => {
     if (!office) return null;
     const top = sheet[sheet.length - 1];
     return (
       <div className="cv-office">
-        {office(onDesk, dim)}
+        {office(onDesk, dim, me)}
         {top && (() => {
           const icons = <SheetIcons onBack={sheet.length > 1 ? () => setSheet(sheetBack) : undefined} onBig={() => setPick(top)} onClose={() => setSheet([])} />;
           const s = top.startsWith('s:') ? sessions.find((x) => x.id === top.slice(2)) : undefined;
@@ -1705,17 +1757,14 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
   const atHome = pick === HOME || (!orchs.length && (pick === '' || pick.startsWith('o:') || pick === OFFICE));
   const seg = office ? <SideSeg office={pick === OFFICE} onPick={officeTo} /> : null;
   // 그 참모 대시보드·펫·사무실 — 세 칸 하나를 cv-main 오른쪽 위 한 자리에(아래 main 밖에 그린다)
-  const side = orch && (office || pet) ? spaceView(pick, petFor, orch.id) : null;
+  const side = orch && office ? spaceView(pick, null, orch.id) : null;
   const pickSide = (want: SpaceSide) => {
     if (!orch) return;
     if (want === 'office') { officeTo('office'); return; }
     // 펫 = o:<참모>(펫 자리만 남았다), 대시보드 칸 = 그 참모 홈(옛 대시보드 자리, 2026-10-12 패널 하나로)
-    const pet = want === 'pet' ? orch.id : null;
-    petRef.current = pet;
-    setPetFor(pet);
-    setPick(pet ? `o:${orch.id}` : lkPick(orch.id, { kind: 'home' }));
+    setPick(lkPick(orch.id, { kind: 'home' }));
   };
-  const viewSeg = side && !atHome && !teamOn ? <ViewSeg side={side} pet={!!pet} office={!!office} onPick={pickSide} /> : null;
+  const viewSeg = side && !atHome && !teamOn ? <ViewSeg side={side} office={!!office} onPick={pickSide} /> : null;
   const feat = featureOf(pick);
   // 기능 화면 닫기 — 다섯 화면이 같은 X 하나를 cv-main 오른쪽 위 한 자리에(2026-11-01 사용자, PaneClose). 팀 모드는 그 자리에 팀 화면이라 없음
   const featClose = feat && !held && !teamOn ? <PaneClose onClose={() => featureTo(feat, 'close')} /> : null;
@@ -1787,7 +1836,7 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
   } else if (pick === OFFICE && office && orch) {
     // 책상·카드 = 사무실 위 창에 그 세션 칸(사무실을 떠나지 않음, 오피스 A 1단계), 참모 책상 = 그 참모 채팅 탭. 지금 탭 참모가 시킨 세션만 이름표·현황판 진하게
     const mine = new Set([orch.id, ...heldBy(orch).map((s) => s.id)]);
-    main = officeView((id) => { const t = deskTarget(id, orchIds, orch.id); if (!t) return; if ('tab' in t) onChatTab?.(t.tab); else setSheet([t.sheet]); }, (id) => !mine.has(id));
+    main = officeView((id) => { const t = deskTarget(id, orchIds, orch.id); if (!t) return; if ('tab' in t) onChatTab?.(t.tab); else setSheet([t.sheet]); }, (id) => !mine.has(id), orch.id);
   } else if (lp) {
     const lo = lockerOrch;
     const ls = lockerSide;
@@ -1803,12 +1852,9 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
         onConnect={(folder) => void lockerApi.connect(lockerOwner(lo), folder).catch(lockerFail)}
         onNewDoc={(folder, kind) => void lockerApi.newDoc(lockerOwner(lo), folder, kind).then((p) => lockerActs(lo).onOpen(p), lockerFail)}
         onNewFolder={(parent) => lockerApi.mkdir(lockerOwner(lo), parent, tr('새 폴더', 'New folder')).catch((e: unknown) => { lockerFail(e); return ''; })}
-        acts={lockerActs(lo)} onBigProject={(id) => setPick(`s:${id}`)} onAddProject={onAddProject} kit={ls.kit} /></>
+        acts={lockerActs(lo)} onBigProject={(id) => setPick(`s:${id}`)} onAddProject={onAddProject} kit={ls.kit}
+        links={mergeLinks(lockerLinks, ls.shown)} linkActs={linkActs(lo)} /></>
     )) : <div className="cv-blank">{tr(`그 ${josa(assistant(), '이', '가')} 꺼졌어요`, 'That assistant is off')}</div>;
-  } else if (pick.startsWith('o:')) {
-    // 펫 자리 — 옛 참모 대시보드(o:)는 지웠다(패널 하나로 7). o: 는 펫 탭을 연 참모만 남는다(그 밖은 legacyPick 이 홈으로)
-    const o = orchs.find((x) => x.id === pick.slice(2));
-    main = o && pet && petFor === o.id ? <div className="cv-pet">{pet((id) => { const x = orchs.find((y) => y.id === id); return x ? { name: x.name || '', color: colorOf(x.name || '') } : null; })}</div> : null;
   } else if (holdOn && lkHold && lockerOrch) {
     docUp.current = lkHold.back; // ⌘[ 가 기록이 없으면 폴더로(탭 문서엔 뒤로 알약이 없다)
     main = lockerFrame(lockerOrch, (
@@ -1899,7 +1945,8 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
       })()}
       {far && far.main}
       {/* 기다리는 동안 옛 화면은 못 누른다 — 눌리면 옛 참모 보관함 자리가 박혀 다른 참모 기억으로 옮아 갔다(2026-10-13) */}
-      <main inert={held} hidden={!!far} className={`cv-main ${viewSeg && !hold ? 'has-viewseg' : ''} ${featClose ? 'has-pclose' : ''}`}>
+      {/* 보이지도 않는다(cv-held) — 덮개가 반투명이라 앞 참모 문서가 새 참모 탭에 비쳤다(2026-11-05). 편집기는 부수지 않고 살려 둔 채 숨기기만 */}
+      <main inert={held} hidden={!!far} className={`cv-main ${viewSeg && !hold ? 'has-viewseg' : ''} ${featClose ? 'has-pclose' : ''}${held ? ' cv-held' : ''}`}>
         {held ? shownMain.current : (shownMain.current = main)}
         {hold ? null : viewSeg}
         {featClose}
@@ -1907,6 +1954,9 @@ export function SpaceView({ homeDash, chat, railTop, far, team, fns, onReorderOr
         {curNote && <div className="cv-cur-note" role="status">{curNote}</div>}
         {switching && <div className="cv-switch" aria-live="polite"><span className="cv-spin" /><b>{tr(`${oname(orchs.find((x) => x.id === switching) ?? orch!)} 불러오는 중`, `Loading ${switching}`)}</b></div>}
       </main>
+      {/* 내 메모 — 칸 바깥이라 참모·팀·화면을 바꿔도 그대로 */}
+      {notes?.open && <NotesSlot onClose={notes.onClose} onToWindow={notes.onToWindow} onShare={(p) => { if (!chatOrch) return false; attach(p); return true; }}
+        onPaste={(text) => !!chatOrch && (askRef(chatOrch.id, { kind: 'chat', who: tr('내 메모', 'My notes'), text, plain: true }), true)} />}
       {/* 참모 모드 — '스페이스 패널로' 켠 것은 오른쪽에, 미리보기·꽉 채우기는 스페이스 위에(따로 창이 기본) */}
       <ModePanel rows={modeRows} />
       <ModeLayer rows={modeRows} />

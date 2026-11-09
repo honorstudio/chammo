@@ -348,6 +348,8 @@ body > .dash-preview .box > .content { border-radius: 0 0 14px 14px; overflow: h
 .cv-thumb-ql { width: 100%; height: 100%; object-fit: cover; object-position: top; background: #fff; }
 /* 참모 바꾸는 순간 — 흐림 + 불러오는 중 */
 .cv-switch { position: absolute; inset: 0; z-index: calc(var(--z-base) + 5); display: flex; align-items: center; justify-content: center; gap: 10px; background: color-mix(in srgb, var(--surface) 55%, transparent); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); font-size: 13px; color: var(--text-2); animation: cv-switch .45s ease-out forwards; }
+/* 참모를 바꾸는 동안 main 에 남은 앞 참모 화면은 안 보이게 — 남의 참모 문서가 덮개 너머로 비쳤다(2026-11-05). 부수지 않고 숨기기만(렉 방지 hold 그대로) */
+.cv-main.cv-held > :not(.cv-switch) { visibility: hidden; }
 .cv-switch .cv-spin { width: 16px; height: 16px; flex-basis: 16px; border-width: 2px; }
 @keyframes cv-switch { 0% { opacity: 0; } 20% { opacity: 1; } 75% { opacity: 1; } 100% { opacity: 0; } }
 /* 다른 참모가 띄운 것 알림 — 보던 화면은 그대로 두고 아래 가운데 한 줄(2026-10-06 사용자 "사람이 바꾸기 전엔 안 바뀐다") */
@@ -849,7 +851,7 @@ body > .dash-preview:not(.placed) { transition: none !important; }
 /* 대시보드 · 펫 · 사무실 세 칸 — cv-main 오른쪽 위 한 자리에 고정. 머리 내용 폭이 바뀌어도(할 일 칸 숨김 등) 안 움직인다(2026-10-03 사용자) */
 /* 할 일 판은 왼쪽으로 밀지 않고 세 칸 아래로 내린다 — 오른쪽 끝은 머리 오른쪽에 맞춘 채(2026-10-03 사용자 "저거 아래에 놔야지") */
 /* 버튼 42px 셋 + 틈 2px 둘 + 안쪽 여백 2px 둘 = 134 — 버튼 폭을 박아 둬야 묶음 폭이 맞는다(120 으로 박았더니 버튼 여백 때문에 셋째 칸이 잘렸다) */
-.cv-main { --vs-w: 134px; --vs-right: 32px; }
+.cv-main { --vs-w: 92px; --vs-right: 32px; }
 .cv-viewseg { position: absolute; top: 26px; right: var(--vs-right); z-index: calc(var(--z-base) + 6); background: var(--surface); width: var(--vs-w); box-sizing: border-box; }
 .cv-viewseg button { box-sizing: border-box; width: 42px; min-width: 42px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
 .cv-main.has-viewseg .cv-dash > .cv-page-head { padding-right: calc(var(--vs-w) + var(--vs-right) + 16px); }

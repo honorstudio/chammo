@@ -3,7 +3,13 @@
 // 기억은 프로필 폴더 안 ChammoChannel 한 줄 — 프로필을 옮기거나 링크로 나눠 써도 같이 간다. 크롬은 모르는 파일을 건드리지 않는다.
 //
 // 고르는 순서: ① 직접 고른 것(--channel · CHAMMO_BROWSER_CHANNEL) ② 기억 ③ 기억이 없는 옛 프로필은 크롬이 남긴 Last Version 의
-// 큰 번호가 같은 채널 ④ 기본(베타가 있으면 베타 — window.chromeLaunch 와 같은 규칙). ②③④는 프로필보다 낮은 판이면 열 수 있는 채널로 비킨다
+// 큰 번호가 같은 채널 ④ 기본(window.chromeLaunch 와 같은 규칙 — 맥은 베타가 있으면 베타, 윈도우·리눅스는 정식이 있으면 정식).
+// ②③④는 프로필보다 낮은 판이면 열 수 있는 채널로 비킨다
+//
+// 맥만 베타가 기본인 이유: 세션 크롬이 사용자 크롬과 같은 번들 id(com.google.Chrome)면 Dock 의 크롬·다른 앱의 링크가 세션 크롬으로 갔다
+// (2026-10-03, window.chromeLaunch). 'Chammo Browser' 사본(src/appcopy.js)도 Info.plist 의 번들 id 는 원본 그대로라 이 구분은 베타가 맡는다.
+// 윈도우는 그 문제가 없다(세션 크롬은 숨은 데스크톱, 프로필 폴더마다 따로) — 베타로 열 까닭 없이 베타 판만 따라가다 http 수집이 막혀서
+// (2026-11-09 윈도우 PC 수집 스크립트, 베타 158 https 균형 모드) 정식으로 바꿨다. 이미 베타로 열린 프로필은 정식으로 못 내리니 그대로 두고 note 로 알린다
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
@@ -48,11 +54,34 @@ function lastVersion(profileDir) {
   try { return fs.readFileSync(path.join(profileDir, 'Last Version'), 'utf8').trim() || null; } catch { return null; }
 }
 
+/** 맥이면 베타가 기본(위 머리글) */
+const betaFirst = (platform) => platform === 'darwin';
+
+const VERSION_DIR = /^\d+\.\d+\.\d+\.\d+$/;
+
+/** 윈도우 — <루트>\Google\Chrome[ Beta]\Application 에 chrome.exe 가 있으면 그 옆 판 이름 폴더 중 가장 높은 것 */
+function winVersions({ env, exists, readdir }) {
+  const roots = ['LOCALAPPDATA', 'ProgramFiles', 'ProgramFiles(x86)'].map((k) => (env[k] || '').trim()).filter(Boolean);
+  const out = {};
+  for (const [ch, name] of [['chrome', 'Chrome'], ['chrome-beta', 'Chrome Beta']]) {
+    for (const root of roots) {
+      const dir = path.win32.join(root, 'Google', name, 'Application');
+      if (!exists(path.win32.join(dir, 'chrome.exe'))) continue;
+      let names = [];
+      try { names = readdir(dir); } catch { continue; }
+      const top = names.filter((n) => VERSION_DIR.test(n)).sort((a, b) => cmpVersion(b, a))[0];
+      if (top) { out[ch] = top; break; }
+    }
+  }
+  return out;
+}
+
 /**
- * 깔린 채널의 판 { chrome?: '154.…', 'chrome-beta'?: '156.…' } — 맥은 /Applications·~/Applications 의 Info.plist.
- * 맥이 아니면 {} (판을 몰라 기억·기본만으로 고른다)
+ * 깔린 채널의 판 { chrome?: '154.…', 'chrome-beta'?: '156.…' } — 맥은 /Applications·~/Applications 의 Info.plist,
+ * 윈도우는 Application 아래 판 폴더. 그 밖은 {} (판을 몰라 기억·기본만으로 고른다)
  */
-function installedVersions({ platform = process.platform, home = require('os').homedir() } = {}) {
+function installedVersions({ platform = process.platform, home = require('os').homedir(), env = process.env, exists = fs.existsSync, readdir = fs.readdirSync } = {}) {
+  if (platform === 'win32') return winVersions({ env, exists, readdir });
   if (platform !== 'darwin') return {};
   const out = {};
   for (const [ch, name] of [['chrome', 'Google Chrome'], ['chrome-beta', 'Google Chrome Beta']]) {
@@ -72,10 +101,20 @@ function installedVersions({ platform = process.platform, home = require('os').h
  * @param {string} o.profileDir
  * @param {string} [o.want] 직접 고른 채널(--channel)
  * @param {object} [o.env] CHAMMO_BROWSER_CHANNEL
- * @param {object} [o.versions] 깔린 채널의 판(installedVersions). 비면 판 검사 없이 고른다(맥 아님)
- * @returns {{channel: string|null, why: 'asked'|'remembered'|'last-version'|'default', warn?: string}}
+ * @param {object} [o.versions] 깔린 채널의 판(installedVersions). 비면 판 검사 없이 고른다(리눅스)
+ * @param {string} [o.platform]
+ * @returns {{channel: string|null, why: 'asked'|'remembered'|'last-version'|'default', warn?: string, note?: string}}
+ *   note = 기본이 정식인 기계에서 베타로 열린 프로필이라 베타 그대로 연다는 한 줄(로그용)
  */
-function pickChannel({ profileDir, want = null, env = process.env, versions = installedVersions() }) {
+function pickChannel({ profileDir, want = null, env = process.env, platform = process.platform, versions = installedVersions({ platform, env }) }) {
+  const r = pickRaw({ profileDir, want, env, platform, versions });
+  if (r.why !== 'asked' && r.channel === 'chrome-beta' && versions.chrome && !betaFirst(platform)) {
+    r.note = `이 프로필은 크롬 베타(${versions['chrome-beta']})로 열린 적이 있어 베타로 엽니다 — 정식(${versions.chrome})으로는 못 내려요(새 프로필은 정식)`;
+  }
+  return r;
+}
+
+function pickRaw({ profileDir, want, env, platform, versions }) {
   const have = CHANNELS.filter((c) => versions[c]);
   const known = have.length > 0;
   const last = lastVersion(profileDir);
@@ -99,9 +138,10 @@ function pickChannel({ profileDir, want = null, env = process.env, versions = in
     const same = have.find((c) => major(versions[c]) === major(last));
     if (same) return safe(same, 'last-version');
   }
-  // 판을 모르면(맥 아님) null — window.chromeLaunch 가 깔린 것을 보고 고른다
+  // 판을 모르면(리눅스) null — window.chromeLaunch 가 깔린 것을 보고 고른다
   if (!known) return { channel: null, why: 'default' };
-  return safe(versions['chrome-beta'] ? 'chrome-beta' : have[0], 'default');
+  const first = betaFirst(platform) ? ['chrome-beta', 'chrome'] : ['chrome', 'chrome-beta'];
+  return safe(first.find((c) => versions[c]), 'default');
 }
 
-module.exports = { MARKER, normalize, cmpVersion, readMarker, remember, lastVersion, installedVersions, pickChannel };
+module.exports = { MARKER, betaFirst, normalize, cmpVersion, readMarker, remember, lastVersion, installedVersions, pickChannel };

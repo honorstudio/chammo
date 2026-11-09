@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { parseChat, type ChatItem } from './chat';
-import { addOut, applyStatus, beforeTail, findEarlier, LOOKBACK_PAGES, newOut, dueForCheck, labelCounts, markOut, OUTBOX_TTL, readDraft, readOutbox, settleOut, writeDraft, writeOutbox, type OutMsg } from './mobileOutbox';
+import mobileChat from '../ui/mobile/useMobileChat.ts?raw';
+import outboxUi from '../ui/mobile/outbox.ts?raw';
+import { addOut, applyStatus, beforeTail, CHECK_AFTER, findEarlier, LOST_AFTER, outPending, retryOut, LOOKBACK_PAGES, newOut, dueForCheck, labelCounts, markOut, OUTBOX_TTL, readDraft, readOutbox, settleOut, writeDraft, writeOutbox, type OutMsg } from './mobileOutbox';
 
 /** localStorage 흉내 — 화면을 새로 그려도(참모 바꾸기 = OrchSpace 다시 마운트) 남는 저장소 */
 const mem = () => {
@@ -25,13 +27,15 @@ describe('보내는 중 말풍선 — 참모를 바꿨다 와도 남는다(2026-
     writeOutbox(s, [{ id: 'm1', session: 'a', text: 'x', at: T, status: 'sending' }]);
     expect(readOutbox(s, T + 1000)[0]!.status).toBe('sent');
   });
-  it('너무 오래된(하루 가까이) 것은 버린다 — 실패한 건 남긴다(다시 보내기)', () => {
+  it('너무 오래된(하루 가까이) 것도 안 버린다 — 전해지지 않음으로 남겨 사람이 고른다, 실패한 건 그대로', () => {
     const s = mem();
     writeOutbox(s, [
       { id: 'old', session: 'a', text: 'x', at: T, status: 'sent' },
       { id: 'bad', session: 'a', text: 'y', at: T, status: 'failed' },
     ]);
-    expect(readOutbox(s, T + OUTBOX_TTL + 1).map((x) => x.id)).toEqual(['bad']);
+    const back = readOutbox(s, T + OUTBOX_TTL + 1);
+    expect(back.map((x) => [x.id, x.status])).toEqual([['old', 'failed'], ['bad', 'failed']]);
+    expect(back[1]!.lost).toBeUndefined();
   });
   it('저장소가 깨졌거나 없으면 빈 목록(사파리 개인 정보 보호 모드)', () => {
     const s = mem();
@@ -77,9 +81,9 @@ describe('markOut — 다시 보내기', () => {
 
 describe('기록에 안 뜬 말 확인(Load failed 뒤 — 2026-10-03)', () => {
   const sent: OutMsg = { id: 'm1', session: 'a', text: 'x', at: T, status: 'sent' };
-  it('보낸 지 60초 지나도 기록에 없으면 맥에 물어본다 — 15초에 한 번', () => {
-    expect(dueForCheck(sent, T + 59_000)).toBe(false);
-    expect(dueForCheck(sent, T + 61_000)).toBe(true);
+  it('보낸 지 15초 지나도 기록에 없으면 맥에 물어본다 — 15초에 한 번', () => {
+    expect(dueForCheck(sent, T + 14_000)).toBe(false);
+    expect(dueForCheck(sent, T + 16_000)).toBe(true);
     expect(dueForCheck({ ...sent, checked: T + 61_000 }, T + 70_000)).toBe(false);
     expect(dueForCheck({ ...sent, checked: T + 61_000 }, T + 77_000)).toBe(true);
     expect(dueForCheck({ ...sent, status: 'failed' }, T + 99_000)).toBe(false);
@@ -90,10 +94,45 @@ describe('기록에 안 뜬 말 확인(Load failed 뒤 — 2026-10-03)', () => {
     expect(applyStatus(list, 'm1', 'failed', 'attach failed', T + 61_000, true)[0]).toMatchObject({ status: 'failed', error: 'attach failed' });
     expect(applyStatus(list, 'm1', 'unknown', undefined, T + 61_000, true)[0]).toMatchObject({ status: 'failed', error: '전해지지 않았어요' });
   });
+  it('맥이 못 들어갔다고 하면(입력칸에 남음·선택 창) 15초 만에 다시 보내기 — 모름은 60초 전엔 기다린다(2026-11-06 12:12 그림 4장 말)', () => {
+    const list = [sent];
+    expect(applyStatus(list, 'm1', 'failed', '대화창에 들어가지 못했어요', T + 16_000, false)[0]).toMatchObject({ status: 'failed', error: '대화창에 들어가지 못했어요' });
+    expect(applyStatus(list, 'm1', 'unknown', undefined, T + 16_000, true)[0]).toMatchObject({ status: 'sent', checked: T + 16_000 });
+    expect(applyStatus(list, 'm1', 'done', undefined, T + 16_000, true, T)[0]).toMatchObject({ status: 'sent' });
+  });
   it('모름이 와도 대화 기록을 아직 다 못 봤으면(꼬리 앞 찾기 전·채팅을 안 열었음) 실패로 안 바꾸고 기다린다 — 맥이 실패라고 한 것은 바로', () => {
     const list = [sent];
     expect(applyStatus(list, 'm1', 'unknown', undefined, T + 61_000, false)[0]).toMatchObject({ status: 'sent', checked: T + 61_000 });
     expect(applyStatus(list, 'm1', 'failed', 'attach failed', T + 61_000, false)[0]).toMatchObject({ status: 'failed', error: 'attach failed' });
+  });
+});
+
+describe('맥이 쳤다는데 기록에 없는 말 — 입력칸에 남은 말(2026-11-04 사용자 폰, 10시간 생각 중)', () => {
+  const sent: OutMsg = { id: 'm1', session: 'a', text: '아니 그냥 결과 나한테', at: T, status: 'sent' };
+  const IDLE = T + 5_000;
+  it('재현: 쉬는 세션에서 쳤다(done)는 말이 기록에 끝내 없으면 실패로 — 다시 보내기가 뜨고 생각 중이 꺼진다', () => {
+    expect(applyStatus([sent], 'm1', 'done', undefined, IDLE + 61_000, true, IDLE)[0]).toMatchObject({ status: 'failed', error: '전해지지 않았어요', lost: true });
+  });
+  it('일하는 중(idleSince 없음)이면 줄 서 있을 수 있어 LOST_AFTER 까지 기다린다 — 끼어든 말은 늦게 적힌다', () => {
+    expect(applyStatus([sent], 'm1', 'done', undefined, T + LOST_AFTER - 1, true)[0]).toMatchObject({ status: 'sent' });
+  });
+  it('막 쉬기 시작했거나 기록을 다 못 봤으면 아직 기다린다', () => {
+    expect(applyStatus([sent], 'm1', 'done', undefined, IDLE + 59_000, true, IDLE)[0]).toMatchObject({ status: 'sent' });
+    expect(applyStatus([sent], 'm1', 'done', undefined, IDLE + 61_000, false, IDLE)[0]).toMatchObject({ status: 'sent' });
+  });
+  it('입력칸에 남았던 말을 다시 보내면 새 말 id 로 — 맥은 쳤다고 기억한 id 를 다시 안 친다. 보낸 때도 새로', () => {
+    const lost = applyStatus([sent], 'm1', 'done', undefined, IDLE + 61_000, true, IDLE);
+    const { list, id } = retryOut(lost, 'm1', 'm2', T + 100_000);
+    expect(id).toBe('m2');
+    expect(list[0]).toMatchObject({ id: 'm2', status: 'sending', at: T + 100_000 });
+    expect(list[0]).not.toHaveProperty('lost');
+    expect(list[0]).not.toHaveProperty('error');
+  });
+  it('맥이 실패라 한 말은 같은 id 로 — 맥이 이미 쳤으면 두 번 안 친다', () => {
+    const failed = applyStatus([sent], 'm1', 'failed', 'x', T + 61_000, false);
+    const { list, id } = retryOut(failed, 'm1', 'm2', T + 100_000);
+    expect(id).toBe('m1');
+    expect(list[0]).toMatchObject({ id: 'm1', status: 'sending', at: T });
   });
 });
 
@@ -199,5 +238,100 @@ describe('꼬리 밖으로 밀린 말 — 밤새 일한 뒤 아침에 열면 갔
     expect(beforeTail(failed, [...covering, ...tail], TAIL_START)).toEqual([]);
     // 꼬리에 시각 있는 항목이 하나도 없으면 — 덮는지 모르니 거슬러 본다
     expect(beforeTail(failed, [], TAIL_START).map((m) => m.id)).toEqual(['m1']);
+  });
+});
+
+describe('기록에 끝내 안 뜬 말 — 몇 시간 "생각 중"(11-07 사용자 폰 말, 맥은 쳤다는데 Claude 입력 기록에 없음)', () => {
+  const H = 60 * 60 * 1000;
+  const sent = (o: Partial<OutMsg> = {}): OutMsg => ({ id: 'm1', session: 'orch', text: '말', at: T, status: 'sent', ...o });
+
+  it('재현: 맥은 쳤다(done)고 하고 세션은 일하는 중 — 7시간 뒤에도 기다리면 안 된다', () => {
+    const r = applyStatus([sent()], 'm1', 'done', undefined, T + 7 * H, true, undefined)[0]!;
+    expect(r.status).toBe('failed');
+    expect(r.lost).toBe(true);
+    expect(r.error).toBe('전해지지 않았어요');
+  });
+
+  it('경계: 일하는 세션은 LOST_AFTER 까지 기다린다(줄 서 있을 수 있다) — 그 전엔 그대로', () => {
+    expect(applyStatus([sent()], 'm1', 'done', undefined, T + LOST_AFTER - 1, true, undefined)[0]!.status).toBe('sent');
+    expect(applyStatus([sent()], 'm1', 'done', undefined, T + LOST_AFTER, true, undefined)[0]!.status).toBe('failed');
+  });
+
+  it('맥이 계속 치는 중(typing)이라고만 해도 LOST_AFTER 면 전해지지 않은 것', () => {
+    expect(applyStatus([sent()], 'm1', 'typing', undefined, T + LOST_AFTER - 1, true, undefined)[0]!.status).toBe('sent');
+    const r = applyStatus([sent()], 'm1', 'typing', undefined, T + LOST_AFTER, true, undefined)[0]!;
+    expect([r.status, r.lost]).toEqual(['failed', true]);
+  });
+
+  it('기록을 아직 다 못 봤으면(looked 아님) 시간이 지나도 실패로 안 바꾼다 — 들어간 말을 "못 받았어요"로 만들지 않게', () => {
+    expect(applyStatus([sent()], 'm1', 'done', undefined, T + 7 * H, false, undefined)[0]!.status).toBe('sent');
+  });
+
+  it('쉬는 세션은 전처럼 1분 — 빨라진 길을 안 깬다', () => {
+    const r = applyStatus([sent()], 'm1', 'done', undefined, T + CHECK_AFTER + 1000, true, T)[0]!;
+    expect([r.status, r.lost]).toEqual(['failed', true]);
+  });
+
+  it('옛 말풍선: 저장돼 있던 말도 새 판을 받으면 풀린다 — 읽자마자 물어볼 차례, done 이면 전해지지 않음, 다시 보내면 새 id', () => {
+    const s = mem();
+    writeOutbox(s, [sent()]); // 새 칸(tried) 없는 옛 저장 모양
+    const now = T + 7 * H;
+    const back = readOutbox(s, now);
+    expect(back.map((m) => m.status)).toEqual(['sent']);
+    expect(dueForCheck(back[0]!, now)).toBe(true);
+    const done = applyStatus(back, 'm1', 'done', undefined, now, true, undefined);
+    expect(done[0]!.status).toBe('failed');
+    const { id, list } = retryOut(done, 'm1', 'm2', now + 1000);
+    expect(id).toBe('m2'); // 맥이 m1 을 '쳤음'으로 기억해 같은 id 면 안 친다
+    expect(list[0]).toMatchObject({ id: 'm2', status: 'sending', at: now + 1000 });
+  });
+
+  it('늦게 뜬 말: 전해지지 않음으로 바뀐 뒤 기록에 들어오면 말풍선이 빠진다(다시 보내기는 사람이 눌러야 나간다)', () => {
+    const lost = applyStatus([sent()], 'm1', 'done', undefined, T + LOST_AFTER, true, undefined);
+    const items = [u('a', new Date(T + LOST_AFTER + 5000).toISOString(), '말')];
+    expect(settleOut(lost, 'orch', items, T + LOST_AFTER + 6000)).toEqual([]);
+  });
+
+  it('다시 보낸 옛 말은 다시 보낸 때부터 잰다 — 보낸 때(at)가 옛날이라 바로 전해지지 않음으로 찍으면 사람이 또 눌러 두 번 나간다', () => {
+    const failed = sent({ status: 'failed', error: '못 보냄' });
+    const now = T + 7 * H;
+    const { list, id } = retryOut([failed], 'm1', 'm2', now);
+    expect(id).toBe('m1');
+    const typed = markOut(list, 'm1', 'sent');
+    expect(typed[0]!.at).toBe(T); // 기록 맞춤용 보낸 때는 그대로
+    expect(dueForCheck(typed[0]!, now + 1000)).toBe(false); // 물어보기도 다시 보낸 때부터
+    expect(applyStatus(typed, 'm1', 'done', undefined, now + 60_000, true, undefined)[0]!.status).toBe('sent');
+    expect(applyStatus(typed, 'm1', 'unknown', undefined, now + 30_000, true, undefined)[0]!.status).toBe('sent');
+    expect(applyStatus(typed, 'm1', 'done', undefined, now + 59_000, true, now - 5 * H)[0]!.status).toBe('sent'); // 쉬는 세션 1분도 다시 보낸 때부터
+    expect(applyStatus(typed, 'm1', 'done', undefined, now + 60_000, true, now - 5 * H)[0]!.status).toBe('failed');
+    expect(applyStatus(typed, 'm1', 'done', undefined, now + LOST_AFTER, true, undefined)[0]!.status).toBe('failed');
+  });
+
+  it('응답을 못 받고 매달린 말(sending)도 1분 지나면 맥에 묻는다 — 전엔 앱을 다시 열 때까지 영영 안 물었다', () => {
+    const m = sent({ status: 'sending' });
+    expect(dueForCheck(m, T + CHECK_AFTER - 1)).toBe(false);
+    expect(dueForCheck(m, T + CHECK_AFTER)).toBe(true);
+  });
+
+  it('20시간 넘은 말은 조용히 버리지 않고 전해지지 않음으로 남긴다 — 사라지는 게 제일 나쁘다', () => {
+    const s = mem();
+    writeOutbox(s, [sent()]);
+    const [m] = readOutbox(s, T + OUTBOX_TTL + 1);
+    expect([m?.status, m?.lost, m?.error]).toEqual(['failed', true, '전해지지 않았어요']);
+  });
+
+  it('생각 중은 기다릴 만한 말에만 — 실패·오래된 말은 안 센다', () => {
+    expect(outPending(sent(), T + 1000)).toBe(true);
+    expect(outPending(sent({ status: 'sending' }), T + 1000)).toBe(true);
+    expect(outPending(sent(), T + LOST_AFTER)).toBe(false); // 맥이 안 닿아 답을 못 받아도
+    expect(outPending(sent({ status: 'failed' }), T + 1000)).toBe(false);
+    expect(outPending(sent({ tried: T + 7 * H }), T + 7 * H + 1000)).toBe(true); // 다시 보낸 건 그때부터
+  });
+
+  it('폰 생각 중이 이 판단을 쓴다 — 데스크톱은 안 건드린다', () => {
+    expect(mobileChat).toContain('out.mine.filter((m) => outPending(m, now)).length');
+  });
+  it('말이 사라지면 기록이 안 바뀐다 — 보낼 함이 바뀔 때도 기록을 다시 봐야 looked 가 켜진다(안 그러면 다시 보낸 말이 또 붙는다)', () => {
+    expect(outboxUi).toMatch(/\}, \[session, sid, items, ids\]\);/);
   });
 });

@@ -145,4 +145,16 @@ fn 열쇠를_기다리는_글_수를_센다() {
     let items = vec![item("aaaaaaaaaaaaaaaa1", "m1", 1), lock("aaaaaaaaaaaaaaaa2"), lock("aaaaaaaaaaaaaaaa3"), gone, trash, file];
     assert_eq!(locked_posts(&items), 2, "살아 있는 글 중 못 연 것만 — 지운 글·휴지통·파일·열린 글은 빼고");
     assert_eq!(locked_posts(&[item("aaaaaaaaaaaaaaaa1", "m1", 1)]), 0);
+    // 예약한 이름(mem*.json)도 kind post — 팀 홈 글이 아니라 세지도 받지도 않는다
+    let mem = |id: &str, name: &str| Item { name: name.into(), ..lock(id) };
+    let ms = vec![mem("aaaaaaaaaaaaaaaa7", "mema.json"), mem("aaaaaaaaaaaaaaaa8", "memb.json"), mem("aaaaaaaaaaaaaaaa9", "memc.json"), lock("aaaaaaaaaaaaaaab1")];
+    assert_eq!(locked_posts(&ms), 1, "메모리 봉투는 못 연 글 수에 안 든다");
+}
+
+#[test]
+fn 팀_홈_글판은_메모리_봉투를_안_받는다() {
+    let code = include_str!("team_post.rs");
+    let read = &code[code.find("fn read_first(").unwrap()..];
+    let read = &read[..read.find("\n}\n").unwrap()];
+    assert!(read.contains("post_doc(i)"), "글판이 받을 봉투는 post_doc 으로 거른다(메모리 봉투는 글이 아니다)");
 }

@@ -56,7 +56,7 @@ describe('띠·앱 팝오버 — 같은 규칙(바깥 누름·Esc·창 blur·창
 });
 
 // 앞으로 새 팝오버가 같은 실수를 안 하게 — ui 아래 window 'mousedown' 은 capture(true)로만
-const files = import.meta.glob(['./**/*.tsx', '../App.tsx'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+const files = import.meta.glob(['./**/*.tsx', '../App.tsx', '../../../pro/web/**/*.tsx'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
 describe('window mousedown 버블 리스너 금지', () => {
   it('window.addEventListener(\'mousedown\', …) 는 capture 로 — 채팅 칸이 삼켜도 닫히게', () => {
     const bad = Object.entries(files).flatMap(([f, s]) => [...s.matchAll(/window\.addEventListener\('mousedown', [^,)]+\)/g)].map((m) => `${f}: ${m[0]}`));

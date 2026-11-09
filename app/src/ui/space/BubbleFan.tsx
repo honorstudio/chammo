@@ -20,6 +20,7 @@ export function BadgeCore({ face, node, orchs }: { face: FanOrch; node: React.Re
   return (
     <>
       <span className={`obb-ring r-${ringOf(face.pip)}`} aria-hidden="true" />
+      {face.pip === 'ask' && <span className="obb-wave" aria-hidden="true" />}
       <span key={face.id} className="obb-facein obb-clip">{node}</span>
       {face.pip === 'new' && <i className="obb-dot" aria-hidden="true" />}
       {(c.ask > 0 || c.work > 0) && (

@@ -258,6 +258,8 @@ const FS: &[&str] = &[
 
 /// 데이터 폴더만 만지는 함수 — 여기서 더 안 들어간다. 사용자 경로를 받을 수 있는 범용 함수(write_atomic 같은)는 넣지 말고 부르는 쪽을 넣는다
 const MAIN_OK: &[&str] = &[
+    // PATH 칸만 본다 — 프로그램을 띄울 때 libc 가 어차피 보던 자리라 새로 닿는 폴더가 없다
+    "platform::on_path",
     // 데이터 폴더 자체·config.json(처음 켤 때 한 번 devRoot 후보 is_dir — setup 이 UI 전에 먼저 불러 기억해 둔다)
     "config::data_dir", "config::data_file", "config::current", "config::write_file",
     // 기록 줄(notify.log·task-events.jsonl 등 <데이터>/…)
@@ -284,11 +286,24 @@ const MAIN_OK: &[&str] = &[
     // 브라우저 개입 기록 <데이터>/browser/live
     "agent_browser::read_live", "agent_browser::agent_ask_done", "takeover::read_file", "takeover::start", "takeover::ask_dialog", "takeover::hand_back_why",
     // 윈도우 보이는 창 요청·꺼냄 표시 <데이터>/browser/live/<프로필>.show·.shown, 맥 구글 크롬 .signed·.signed-on(win_desk)
-    "win_desk::ask", "win_desk::shown", "win_desk::ask_signed", "win_desk::signed_on", "win_desk::ask_to", "win_desk::mark_of",
+    "win_desk::ask", "win_desk::shown", "win_desk::ask_signed", "win_desk::signed_on", "win_desk::ask_to", "win_desk::mark_of", "win_desk::signed_auto", "win_desk::revert_on_human_end",
     // Craft 상태 <데이터>/craft-native
     "craft_window::read_info", "craft_window::craft_space_still", "craft_screen::start_closing",
     // 크롬 앱 자리(/Applications) 확인 — 보호 폴더 아님
     "platform::open_in_chrome",
+];
+
+/// 시작 때 메인 스레드에서 돌아도 되는 함수 — 다 데이터 폴더만 만진다(맥 보호 폴더가 아니다). 명령 쪽 MAIN_OK 와 따로 — 이 목록은 시작 길에만 쓴다
+const START_OK: &[&str] = &[
+    // 메뉴 목록 — 뒤에서 읽은 것, 없으면 데이터 폴더·앱 예시만(더한 폴더는 scan_for_menu 가 뒤에서)
+    "modes_host::menu_list", "modes::hidden_at", "modes_host::saved",
+    "theme::saved",
+    // 앱이 데이터 폴더에 푸는 스크립트·템플릿·표식
+    "routines::export", "daemon_env::write_mark", "browser::refresh", "hq::export_statusline", "project::export_templates",
+    // <데이터>/… 상태 파일
+    "team_alert::init", "modes::retire_examples", "modes::purge_removed",
+    // 메인에선 <데이터>/team.json·키체인만 읽는다 — 걸린 e2e_flow::ensure(쓰기)는 연결 스레드에 넘기는 클로저 안이다(검사가 클로저를 못 가린다)
+    "team_relay_ws::ensure",
 ];
 
 struct Src {
@@ -302,8 +317,10 @@ struct Src {
 
 fn load() -> Src {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
+    // 비공개 팀 코드(pro/rust)도 같은 규칙 — 공개본엔 폴더가 없다
+    let pro = concat!(env!("CARGO_MANIFEST_DIR"), "/../../pro/rust");
     let mut files = BTreeMap::new();
-    for e in std::fs::read_dir(dir).unwrap().flatten() {
+    for e in std::fs::read_dir(dir).unwrap().flatten().chain(std::fs::read_dir(pro).into_iter().flatten().flatten()) {
         let p = e.path();
         if p.extension().is_some_and(|x| x == "rs") {
             let m = p.file_stem().unwrap().to_string_lossy().into_owned();
@@ -340,7 +357,11 @@ impl Src {
 
     /// 명령에서 파일 낱말까지 가는 길(MAIN_OK 에서 멈춤) — 없으면 None
     fn fs_path(&self, m: &str, name: &str, body: &str) -> Option<String> {
-        let ok: BTreeSet<&str> = MAIN_OK.iter().copied().collect();
+        self.fs_path_ok(m, name, body, &[])
+    }
+
+    fn fs_path_ok(&self, m: &str, name: &str, body: &str, more: &[&str]) -> Option<String> {
+        let ok: BTreeSet<&str> = MAIN_OK.iter().chain(more).copied().collect();
         if ok.contains(format!("{m}::{name}").as_str()) {
             return None;
         }
@@ -459,6 +480,43 @@ mod tests {
             "메인 스레드(동기 명령)에서 파일을 건드린다 — 사용자 경로면 offmain READ(읽기)·WRITE(쓰기) 에, 데이터 폴더만이면 그 함수를 offmain_scan MAIN_OK 에(이유 주석):\n{}",
             bad.join("\n")
         );
+    }
+
+    /// 시작 때 메인 스레드 — setup·첫 메뉴. 여기서 ~/Desktop 을 stat 하면 맥 폴더 권한 창이 답을 기다리는 동안 앱째 안 뜬다(2026-11-04 113분, 메뉴 → 더한 모드 폴더)
+    fn startup_bodies(src: &Src) -> [(&'static str, String); 2] {
+        let main = &src.files["main"];
+        let a = main.find(".setup(|app| {").expect("setup 없음");
+        let b = main[a..].find("boot_watch::done()").expect("boot_watch::done 없음") + a;
+        [("build_menu", src.defs[&("main".to_string(), "build_menu".to_string())][0].clone()), ("setup", main[a..b].to_string())]
+    }
+
+    #[test]
+    fn 시작_메인_스레드는_사용자_파일을_안_건드린다() {
+        let src = load();
+        let mut bad = Vec::new();
+        for (name, body) in startup_bodies(&src) {
+            // 한 번에 다 보이게 — 걸린 길의 첫 함수를 빼고 다시 찾는다
+            let mut skip: Vec<String> = START_OK.iter().map(|x| x.to_string()).collect();
+            while let Some(why) = src.fs_path_ok("main", name, &body, &skip.iter().map(String::as_str).collect::<Vec<_>>()) {
+                let first = why.split(" : ").next().unwrap().split(" > ").next().unwrap().to_string();
+                bad.push(format!("{name}: {why}"));
+                if first == "(본문)" {
+                    break;
+                }
+                skip.push(first);
+            }
+        }
+        assert!(bad.is_empty(), "시작 때 메인 스레드에서 파일을 건드린다 — 사용자 경로면 thread::spawn 으로, 데이터 폴더만이면 START_OK 에(이유 주석):\n{}", bad.join("\n"));
+    }
+
+    #[test]
+    fn 시작_검사는_사고_길을_잡는다() {
+        let src = load();
+        for (body, via) in [("modes_host::rows();", "modes_host::rows"), ("hq::refresh_app_hq();", "hq::refresh_app_hq")] {
+            let why = src.fs_path_ok("main", "setup", body, START_OK).unwrap_or_else(|| panic!("{body} 를 못 잡음"));
+            assert!(why.contains(via), "{body}: {why}");
+        }
+        assert!(src.fs_path_ok("main", "setup", "std::thread::spawn(hq::refresh_app_hq);", START_OK).is_none(), "다른 스레드로 넘기면 괜찮다");
     }
 
     /// 검사가 진짜 사고 길을 잡는가 — 목록에서 빼면 걸려야 할 것들(QA 가 sample 로 본 locker_migrate → shots_only → read_dir 등)

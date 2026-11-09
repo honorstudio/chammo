@@ -62,7 +62,16 @@ const letters = (s: string) => s.replace(/[^\p{L}\p{N}]/gu, '');
 export function liveShown(live: string, items: ChatItem[]): boolean {
   const key = letters(live).slice(0, 40);
   if (key.length < 2) return true;
-  return items.filter((x) => x.kind === 'assistant').slice(-3).some((x) => letters(x.text).includes(key));
+  return items.filter((x) => x.kind === 'assistant').slice(-3).some((x) => { const rec = letters(x.text); return rec.includes(key) || sameWords(live, rec); });
+}
+
+/**
+ * 표가 든 답 — 좁은 칸의 터미널은 표를 '형식: …' 줄과 ─── 줄로 풀어 그려서 글자 순서가 기록(마크다운 표)과 달라 앞 글자로는 못 맞춘다.
+ * 그때 낱말이 거의 다 그 기록 안에 있으면 같은 글이다. 짧은 글은 우연히 겹치니 8낱말부터(2026-11-05 사용자 — 새 말 아래 지난 답이 다시 떴다)
+ */
+function sameWords(live: string, rec: string): boolean {
+  const words = live.split(/\s+/).map(letters).filter((w) => w.length >= 2);
+  return words.length >= 8 && words.filter((w) => rec.includes(w)).length / words.length >= 0.9;
 }
 
 /** 쓰는 중 글 붙잡기 — 화면에서 읽은 글(블록마다 하나, 오래된 것부터)·마지막으로 읽은 때·그때 기록의 마지막 사람 말(턴) */

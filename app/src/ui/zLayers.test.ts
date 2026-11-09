@@ -8,7 +8,7 @@ import mobileEntry from '../mobile.tsx?raw';
 // 2026-10-11 UI 재조사: z-index 가 1~3000 에 흩어져 같은 숫자끼리 DOM 순서로 싸웠다(토스트 45 가 모달 1000·대화창 2000 밑에 깔림).
 // 이제 층 이름 표(layers.css :root 의 --z-*) 만 쓴다 — 숫자 z-index 가 새로 생기면 여기서 걸린다.
 // 폰(mobile.css)도 같이 묶는다(2026-10-11 폰 시트 공용화).
-const sheets = import.meta.glob('/src/ui/**/*.css', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+const sheets = import.meta.glob(['/src/ui/**/*.css', '../../../pro/web/**/*.css'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
 const desktop = Object.entries(sheets);
 
 const noComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, '');
@@ -91,7 +91,6 @@ describe('z-index 층 이름 표', () => {
     above('.toasts', '.od-back');
     above('.toasts', '.abm-back');
     above('.toasts', '.setup');
-    above('.toasts', '.pet-modal');
     above('.toasts', '.tour');
     // 위험 확인 대화창은 다른 모달 위
     above('.od-back', '.abm-back');

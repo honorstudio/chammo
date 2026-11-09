@@ -126,7 +126,7 @@ export function paneStatus<S extends string>(status: S, live: Live | undefined):
 export function askName(live: Live, sessions: { procPid?: number; name?: string; cwd: string; project?: string }[]): string {
   const s = sessions.find((x) => x.procPid && x.procPid === live.sessionPid);
   if (!s) return live.profile;
-  // 워크트리 세션은 폴더 끝이 워크트리 이름이라 프로젝트(classifyWorkspace)부터 — 'binance-secrets-ignore · binance-setup' 으로 나왔다(2026-10-24)
+  // 워크트리 세션은 폴더 끝이 워크트리 이름이라 프로젝트(classifyWorkspace)부터 — 'exchange-secrets-ignore · exchange-setup' 으로 나왔다(2026-10-24)
   const proj = s.project || s.cwd.replace(/\/+$/, '').split('/').pop() || live.profile;
   return s.name && s.name !== proj ? `${proj} · ${seenName(s.name)}` : proj;
 }

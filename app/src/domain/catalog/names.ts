@@ -12,3 +12,5 @@ export const pal = named('펫 친구', 'Pet pal');
 export const desk = named('책상 소품', 'Desk item');
 export const title = named('칭호', 'Title');
 export const light = named('조명', 'Lighting');
+export const floorDeco = named('바닥 장식', 'Floor decor');
+export const wallDeco = named('벽 장식', 'Wall decor');

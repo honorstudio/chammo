@@ -83,7 +83,9 @@ body.reader-win { background: var(--bg); color: var(--text); font: 13px -apple-s
 .rd-bar .rd-zoom button { display: flex; align-items: center; justify-content: center; min-width: 28px; height: 26px; padding: 0 6px; box-sizing: border-box; }
 .rd-bar .rd-zoom button svg { width: 15px; height: 15px; }
 .rd-bar .rd-zoom .rd-zoom-pct { min-width: 50px; font-variant-numeric: tabular-nums; }
-.rd-zoombox { flex: 1; min-width: 0; min-height: 0; display: flex; overflow: hidden; }
+.rd-zoombox { flex: 1; min-width: 0; min-height: 0; display: flex; overflow: hidden; position: relative; }
+/* 시안 칸이 비었을 때 원래 문서로(ui/frameGuard gone) */
+.rd-frame-back { position: absolute; top: 12px; right: 12px; background: var(--bg); }
 .rd-zoombox.scroll { overflow: auto; }
 .rd-image.fit { align-items: center; overflow: hidden; }
 .rd-image.fit img { max-height: 100%; object-fit: contain; }

@@ -2,6 +2,8 @@
 
 Thanks for taking a look. Chammo is small and opinionated; these few rules keep it that way.
 
+We are not accepting external code pull requests right now; issues are welcome, and pull requests will open once the CLA is ready.
+
 ## Setup
 
 You need macOS 14+, Rust (stable), Node.js 22+, pnpm, Xcode Command Line Tools, and Claude Code 2.1.28x logged in.
@@ -22,7 +24,7 @@ When you test against real background sessions, clean them up afterwards with `c
 
 ## Tests
 
-Run all three before opening a PR:
+Run all three before changing code:
 
 ```sh
 cd app
@@ -70,4 +72,4 @@ Chammo depends on undocumented parts of Claude Code (`claude --bg`, `claude agen
 
 ## License
 
-By contributing you agree that your contribution is licensed under the [AGPL-3.0](LICENSE).
+The code is licensed under [AGPL-3.0](LICENSE), and that does not change. We are preparing a Contributor License Agreement (CLA). Once it is ready, pull requests will need a signed CLA before we can merge them.

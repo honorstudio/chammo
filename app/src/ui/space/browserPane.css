@@ -45,6 +45,9 @@
 .bp-turn-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bp-turn-in { flex: 0 1 220px; min-width: 120px; height: 32px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; }
 .bp-turn .cv-btn { flex: none; min-height: 36px; padding: 0 14px; font-size: 13px; }
+/* 계정 고르기(FedCM) — 계정 단추가 여럿이라 넘치면 다음 줄로(글이 0폭으로 깎이지 않게) */
+.bp-turn-many { flex-wrap: wrap; }
+.bp-turn-many .bp-turn-text { flex-basis: 240px; }
 /* 다 했어 — 사람 차례를 끝내는 주 단추라 색 면·44px(10-28 사용자: 글자 단추라 못 찾았다) */
 /* 끄기 확인 한 줄의 끄기 단추 — 되돌리기 어려운 동작이라 글자 + 위험 색 */
 .bp-turn .cv-btn.danger { background: var(--danger-bg); color: var(--danger-ink); border-color: var(--danger-ink); }

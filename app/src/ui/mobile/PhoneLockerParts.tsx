@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { LockerViewMode } from '../../domain/lockerLog';
 import { FileThumb } from './FileThumb';
 import { lockerMkdir, lockerNewDoc, lockerWrite, readFileText } from '../../data/web';
+import { useMdSave } from './useMdSave';
 import { IconFolder, IconFolderPlus } from '../Icons';
 import { BottomSheet } from './kit';
 import { tr } from '../../i18n';
@@ -130,27 +131,10 @@ export function NameSheet({ owner, kind, parent, onClose, onMade, onError }: { o
 /** md 글 칸 — 쓰는 대로 저장(0.8초 멈추면), 저장 버튼 없음. 서버가 그 참모 보관함 안 md 만 받는다 */
 export function MdEditor({ owner, path, onClose }: { owner: string; path: string; onClose: () => void }) {
   const [text, setText] = useState<string | null>(null);
-  const [st, setSt] = useState<'idle' | 'saving' | 'saved' | 'error' | 'outside'>('idle');
-  const timer = useRef<number | undefined>(undefined);
-  const last = useRef('');
-  useEffect(() => { readFileText(path).then((t) => { last.current = t; setText(t); }, () => setText('')); }, [path]);
-  // 저장은 한 줄로 — 앞 저장이 끝나야 base(last)가 바뀐다. 겹쳐 보내면 뒤 것이 옛 base 로 가 제 앞 저장 때문에 '바뀌었어요'를 맞았다(2026-10-22 코드 리뷰)
-  const chain = useRef<Promise<void>>(Promise.resolve());
-  const outside = useRef(false);
-  const save = (t: string) => {
-    if (t === last.current || outside.current) return;
-    setSt('saving');
-    // 맥에서 그새 바뀌었으면 덮지 않는다(⑦-5) — 글 칸은 그대로 두고 알린다. 닫고 다시 열면 그 판을 받는다
-    chain.current = chain.current.then(() => {
-      if (t === last.current || outside.current) return;
-      return lockerWrite(owner, path, t, last.current).then(() => { last.current = t; setSt('saved'); }, (e: Error) => {
-        if (e.message.includes('CHANGED_OUTSIDE')) { outside.current = true; setSt('outside'); } else setSt('error');
-      });
-    });
-  };
-  const change = (t: string) => { setText(t); window.clearTimeout(timer.current); timer.current = window.setTimeout(() => save(t), 800); };
-  const close = () => { window.clearTimeout(timer.current); if (text !== null) save(text); onClose(); };
-  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const { st, change: saveLater, flush, reset } = useMdSave((t, base) => lockerWrite(owner, path, t, base));
+  useEffect(() => { readFileText(path).then((t) => { reset(t); setText(t); }, () => setText('')); }, [path]); // eslint-disable-line react-hooks/exhaustive-deps
+  const change = (t: string) => { setText(t); saveLater(t); };
+  const close = () => { void flush(text); onClose(); };
   const title = (text ?? '').split('\n').find((l) => l.trim())?.replace(/^#+\s*/, '') || path.slice(path.lastIndexOf('/') + 1);
   return (
     <BottomSheet label={title} kind="full" title={title} titleClass="m-view-title" onClose={close}

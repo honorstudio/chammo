@@ -6,14 +6,14 @@ import type { ReactNode } from 'react';
 import { tr } from '../../i18n';
 import { teamMark } from '../../domain/teamChat';
 import type { MenuItem } from '../OrchDialogs';
-import { IconPlus } from '../Icons';
+import { IconPeople, IconPlus } from '../Icons';
 import { IconButton } from '../kit/IconButton';
 import { TeamMarkIcon } from './TeamFaces';
 import './team.css';
 
 type Stacked = { id: string; name: string; current: boolean };
 
-export function TeamRail({ icon, color, chats, on, wide, stack, unreadOf, onTeam, onMenu, onPickTeam, onAdd }: {
+export function TeamRail({ icon, color, chats, on, wide, stack, unreadOf, onTeam, onMenu, onPickTeam, onAdd, onIntro }: {
   /** 지금 팀 아이콘 그림(data URL, 팀 설정에서 팀장이 바꾼다) — 다른 팀은 첫 글자 */
   icon?: string;
   /** 지금 팀 색(팀 홈 판) — 없으면 이름 색 */
@@ -32,6 +32,8 @@ export function TeamRail({ icon, color, chats, on, wide, stack, unreadOf, onTeam
   onPickTeam: (id: string) => void;
   /** 맨 아래 + — 새 팀 만들기·초대 링크로 들어가기 두 줄(addMenu) */
   onAdd: (at: { x: number; y: number }) => void;
+  /** 팀이 없고 만들 권한이 없거나 로그인 전 — + 대신 '팀' 칸, 누르면 소개 판(시안 team-lock v1 C, chammo-relay ADR 0015) */
+  onIntro?: () => void;
 }) {
   return (
     <>
@@ -60,8 +62,10 @@ export function TeamRail({ icon, color, chats, on, wide, stack, unreadOf, onTeam
         );
       })}
       {/* 팀 추가 + — 넓어도 아이콘만(익숙한 동작, 아이콘+글자 줄 금지). 참모 + 와 같은 모양, 구분선과 툴팁으로 가른다 */}
-      <IconButton size="l" className="rail-new tmx-rail-add" label={tr('팀 추가', 'Add a team')} title="" data-tip={tr('팀 추가', 'Add a team')}
-        onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); onAdd({ x: r.right + 6, y: r.top }); }}><IconPlus /></IconButton>
+      {onIntro && !stack.length
+        ? <IconButton size="l" className="rail-new tmx-rail-add tml-rail-team" label={tr('팀', 'Team')} title="" data-tip={tr('팀', 'Team')} onClick={onIntro}><IconPeople /></IconButton>
+        : <IconButton size="l" className="rail-new tmx-rail-add" label={tr('팀 추가', 'Add a team')} title="" data-tip={tr('팀 추가', 'Add a team')}
+            onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); onAdd({ x: r.right + 6, y: r.top }); }}><IconPlus /></IconButton>}
     </>
   );
 }

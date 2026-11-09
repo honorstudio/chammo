@@ -191,6 +191,26 @@ export function deskStage(box: Rect, screens: Screen[], ext: { w: number; h: num
   return { win, box: stageBox(side, ext, pad), side };
 }
 
+/** 바탕 배지 창 한 판 — 무대(deskStage: 배지 + 부채·배너 자리)에 그 배지에서 열릴 대화창(popLayout)까지 품는다. 닫혀도 열려도 창은 이 판 그대로라
+ *  열기·접기에 창 크기·자리가 안 바뀌고 웹뷰 안 그림만 바뀐다(11-05 사용자 "펼쳐지기 시작할 때·닫힐 때 깜빡" — 창을 바꾸는 동안 배지를 감췄다 보였다).
+ *  box·pop·origin 은 창 기준 px, pop = 모니터를 모르면 null. 투명한 자리는 Rust 가 클릭을 바탕으로 넘긴다(bubble_hot) */
+export function deskFrame(box: Rect, badge: Rect, screens: Screen[], ext: { w: number; h: number }, size: { w: number; h: number }, big = false, pad = DESK_PAD): { win: Rect; box: Pt; side: Side; pop: Rect | null; origin: Pt; badge: boolean } {
+  const st = deskStage(box, screens, ext, pad);
+  const r = deskPop(box, screens, size, big);
+  const l = r ? popLayout(box, badge, r, pad) : null;
+  const a = st.win, b = l?.win ?? st.win;
+  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+  const win = { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
+  return {
+    win,
+    box: { x: box.x - x, y: box.y - y },
+    side: st.side,
+    pop: r ? { x: r.x - x, y: r.y - y, w: r.w, h: r.h } : null,
+    origin: l?.origin ?? { x: 0, y: 0 },
+    badge: l?.badge ?? true,
+  };
+}
+
 // ── v3 N(사용자 10-28 "이게 맞는 듯") — 원형 하나·얼굴 하나, 아래 숫자 알약, 올리면 부채 ──
 type Pip = string | null | undefined;
 const urgentPip = (p: Pip) => p === 'ask' || p === 'new';

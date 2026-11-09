@@ -24,7 +24,7 @@ import { attachCommand } from '../domain/termCommand';
 import { IS_WIN } from '../domain/reader';
 import { imagePasteKey } from '../domain/keys';
 import { runModelPick, type PickResult, type PickWant } from './chat/modelPickRun';
-import { claudeDefaults, pickLog } from '../data/tauri';
+import { chatSendLog, claudeDefaults, pickLog } from '../data/tauri';
 import { orchColor, useAvatars } from './avatar';
 import { bodyColor } from '../domain/avatar';
 import { orchVars } from '../domain/orchTheme';
@@ -109,6 +109,10 @@ const retakes = new Map<string, () => void>();
 const TYPE_TIMEOUT = 30_000;
 /** 다 쳤으면 true, 못 쳤으면(보기가 안 붙음·치기 거절·시간 넘김) false */
 function typeAndSend(id: string, text: string, enter = true): Promise<boolean> {
+  // 블랙박스 — 이 길엔 로그가 없어 '전달 안 됨'이 어디서 멈췄는지 못 가렸다(2026-11-05). 글 내용은 안 남긴다
+  const asked = Date.now();
+  const note = (s: string) => chatSendLog(`${id} ${s}`);
+  note(`in link=${linkNow.get(id) ?? '-'} pane=${links.get(id) ? 1 : 0} chars=${[...text].length}`);
   return typing.push(id, async () => {
     // 끊김이 굳은 칸이면 바로 실패 — 앞 말만 drop 되고 줄 뒤 말은 80초 기다리다 세션이 돌아오면 몰래 쳐졌다(리뷰).
     // 다른 창에 쫓겨난 칸(윈도우)은 세션이 살아 있다 — 다시 붙여 되찾고 붙을 때까지 기다린다(2026-10-30 '다시 보내도 안 감')
@@ -118,8 +122,9 @@ function typeAndSend(id: string, text: string, enter = true): Promise<boolean> {
     const from = Date.now();
     // 아직 붙는 중이면(attach 안내 줄뿐·맥이 바빠 목록을 못 읽음) 더 기다린다 — 80초에 버려 '전달 안 됨'이 떴다(2026-10-26 부팅 직후). 끊김이 굳으면 drop 으로 바로 놓인다
     const api = await links.wait(id, LINK_WAIT, () => { const st = linkNow.get(id); return (st === 'attaching' || st === 'reattaching') && Date.now() - from < HOLD_MAX; });
+    note(`type quiet=${api.quiet?.() ?? '-'} waited=${Date.now() - asked}`);
     await api.type(typedChunks(text), enter ? enterDelay(text.length, IS_WIN) : undefined);
-  }, HOLD_MAX + LINK_WAIT + TYPE_TIMEOUT).then(() => true, () => false);
+  }, HOLD_MAX + LINK_WAIT + TYPE_TIMEOUT).then(() => { note(`ok ms=${Date.now() - asked}`); return true; }, (e: unknown) => { note(`fail ${e instanceof Error ? e.message : String(e)} ms=${Date.now() - asked}`); return false; });
 }
 
 /** 입력칸 지우기(백스페이스 n개) — 앞 글을 치는 중이면 그 뒤에. 지운 뒤 칠 글은 typeAndSend 가 다시 이 뒤에 줄 선다 */
@@ -408,15 +413,15 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
                       note={memo?.note(s)}
                       onNoteClick={memo ? () => memo.onToggle(id) : undefined}
                       onLink={(st, why, retake) => {
-                        linkNow.set(id, st);
                         if (st === 'gone' && why === 'kicked' && retake) retakes.set(id, retake); else retakes.delete(id);
-                        links.set(id, st === 'live' ? panes.current.get(id) ?? null : null);
+                        links.set(id, st === 'live' ? panes.current.get(id) ?? null : null, panes);
+                        linkNow.set(id, links.get(id) ? 'live' : st); // 다른 격자의 같은 세션 칸이 살아 있으면 그 칸으로 친다
                         if (st === 'gone') links.drop(id);
                         setLinkOf((m) => (m[id] === st ? m : { ...m, [id]: st }));
                         setLinkWhy((m) => (m[id] === why ? m : { ...m, [id]: why }));
                       }}
                       inject={(api) => {
-                        if (!api) { panes.current.delete(id); links.set(id, null); linkNow.delete(id); return; }
+                        if (!api) { panes.current.delete(id); links.set(id, null, panes); if (links.get(id)) linkNow.set(id, 'live'); else linkNow.delete(id); return; }
                         panes.current.set(id, api);
                         if (want.current === id) focusNow(id); // 새로 붙은 창(화면 복귀·되돌리기)이 기다리던 창이면
                       }}

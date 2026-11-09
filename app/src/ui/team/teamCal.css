@@ -35,7 +35,8 @@
 .tcal-ev.done span, .tcal-lrow.done .tcal-lx span { text-decoration: line-through; }
 .tcal-ev.pend, .tcal-lrow.pend { opacity: .55; }
 .tcal-ev.fresh { box-shadow: 0 0 0 var(--ring-w) var(--c-blue); }
-.tcal-more { border: 0; background: none; padding: 0 5px; font: inherit; font-size: 11px; color: var(--text-3); text-align: left; cursor: pointer; }
+.tcal-dayv { display: flex; flex-direction: column; max-height: min(60vh, 480px); overflow: auto; }
+.tcal-more { flex: 0 0 15px; height: 15px; border: 0; background: none; padding: 0 5px; font: inherit; font-size: 11px; line-height: 15px; color: var(--text-3); text-align: left; cursor: pointer; }
 
 /* 월 */
 .tcal-month { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border-radius: 10px; border: 1px solid var(--line); overflow: hidden; }
@@ -148,3 +149,9 @@
 .tcal.phone .tcal-lrow { min-height: 48px; font-size: 14px; }
 .tcal.phone .tcal-top { flex-wrap: wrap; }
 .tcal.phone .tcal-seg button, .tcal.phone .tcal-today { height: 36px; }
+
+/* 참모가 넣은 일정 — 전체 테두리로, 추정은 점선 */
+.tcal-ev.by-agent { box-shadow: inset 0 0 0 1px var(--dc); }
+.tcal-ev.by-guess { box-shadow: none; outline: 1px dashed var(--dc); outline-offset: -1px; }
+.tcal-agent-tag { font-size: 11.5px; font-weight: 600; color: var(--text-2); border: 1px solid var(--line-strong); border-radius: 6px; padding: 1px 6px; white-space: nowrap; justify-self: start; }
+.tcal-agent-tag.guess { border-style: dashed; }

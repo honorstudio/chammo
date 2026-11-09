@@ -1,9 +1,10 @@
 // 참모가 앱이 끄지 않았는데 목록에서 사라지면 같은 대화로 다시 켠다 — 판단은 domain/orchRevive, 켜기는 App(resumeSession = claude respawn).
 // 3초마다 본다(목록 폴링과 같은 결). 연달아 죽어 멈추면 결정 대기함 카드 + 맥 알림 한 번, 그 참모가 다시 뜨면 카드를 닫는다
 import { useEffect, useRef, useState } from 'react';
-import { appendTaskEvent, appStoppedRecently, daemonStartedAt, daemonStoppedRecently } from '../data/tauri';
-import { emptyRevive, planRevive, reviveCard, type ReviveMemo, type ReviveOrch } from '../domain/orchRevive';
-import type { Session } from '../domain/session';
+import { appendTaskEvent, appStoppedRecently, daemonStartedAt, daemonStoppedEver, daemonStoppedRecently, listSessionsAllRaw } from '../data/tauri';
+import { emptyRevive, planRevive, reviveCard, reviveGap, seedRevive, type ReviveMemo, type ReviveOrch } from '../domain/orchRevive';
+import type { LiveSnap, SnapSession } from '../domain/revive';
+import { seenName, type Session } from '../domain/session';
 import { taskId } from '../domain/reviewSummary';
 import { tr } from '../i18n';
 import { notifyOnce } from './notifier';
@@ -18,12 +19,18 @@ export function useOrchRevive(o: {
   all: Session[];
   /** 세션 목록을 한 번이라도 읽었나 */
   ready: boolean;
+  /** 앱을 켜고 처음 읽은 live.json — 앱이 꺼져 있거나 멈춘 사이 꺼진 참모를 찾는다(seedRevive). ready 가 켜지면 읽혀 있다 */
+  bootSnap: () => LiveSnap | null | undefined;
+  isOrch: (s: SnapSession) => boolean;
   /** 다시 켜기 — 끝나면(실패해도) 돌아온다 */
   revive: (s: ReviveOrch) => Promise<void>;
   refresh: () => void;
 }): ReviveOrch[] {
   const memo = useRef<ReviveMemo>(emptyRevive);
   const cards = useRef(new Map<string, string>()); // 참모 id → 카드 일 id
+  const seeded = useRef<Set<string> | null>(null); // 켤 때 넣은 참모 번호 — 처음 한 번만 넣는다
+  const woke = useRef(new Set<string>()); // 그중 다시 켜는 중
+  const up = useRef<string[]>([]); // 그중 다시 뜬 이름 — 다 뜨면 한 번 알린다
   const [reviving, setReviving] = useState<ReviveOrch[]>([]);
   const latest = useRef(o);
   latest.current = o;
@@ -34,6 +41,13 @@ export function useOrchRevive(o: {
       if (busy || !c.ready) return;
       busy = true;
       try {
+        if (!seeded.current) {
+          // 끈 기록을 못 읽으면 넣지 않는다 — 사람이 끈 참모를 켜게 된다
+          const [ever, all] = await Promise.all([daemonStoppedEver().catch(() => null), listSessionsAllRaw().then((j) => JSON.parse(j) as { sessionId?: string }[], () => null)]);
+          const before = memo.current.seen;
+          if (ever) memo.current = seedRevive(memo.current, c.bootSnap() ?? null, { isOrch: c.isOrch, stopped: ever, listed: Array.isArray(all) ? all.flatMap((x) => x.sessionId ?? []) : null });
+          seeded.current = new Set(Object.keys(memo.current.seen).filter((id) => !before[id]));
+        }
         // 앱이 끈 목록을 못 읽으면 사람이 끈 참모를 켤 수 있다 — 그땐 판단하지 않는다
         const [daemon, stopped] = await Promise.all([daemonStartedAt().catch(() => null), appStoppedRecently().catch(() => null)]);
         if (!stopped) return;
@@ -62,7 +76,20 @@ export function useOrchRevive(o: {
           void appendTaskEvent(send).then(() => appendTaskEvent(ask)).then(() => latest.current.refresh(), () => {});
           notifyOnce({ kind: 'lost', session: s.id, orch: true, title: tr('참모 자동으로 다시 켜기 멈춤', 'Auto-restart paused'), body: String(ask.note) });
         }
-        for (const s of r.revive) await latest.current.revive(s);
+        // 켤 때 넣은 참모를 다시 켰으면 다 뜬 뒤 한 번 알린다 — 멈춰서 카드로 넘어간 참모는 기다리지 않는다
+        for (const s of r.revive) if (seeded.current?.delete(s.id)) woke.current.add(s.id);
+        for (const s of r.giveUp) woke.current.delete(s.id);
+        for (const s of live) if (woke.current.delete(s.id)) up.current.push(s.name);
+        if (up.current.length && !woke.current.size) {
+          const n = up.current.length;
+          notifyOnce({ kind: 'lost', session: 'orch-seeded', orch: true, title: tr(`꺼져 있던 참모 ${n}명을 다시 켰어요`, n > 1 ? `Restarted ${n} assistants that had stopped` : 'Restarted 1 assistant that had stopped'), body: up.current.map((x) => seenName(x) || x).join(', ') });
+          up.current = [];
+        }
+        // 하나씩 벌려 켠다 — 세션 하나가 뜰 때 MCP·셸까지 프로세스 수십 개라 한꺼번에 켜면 부하가 치솟아 서로 '응답 없음'으로 죽었다(10-26·11-07 재부팅 부하 122)
+        for (const [i, s] of r.revive.entries()) {
+          if (i) await new Promise((res) => setTimeout(res, reviveGap(busyNow())));
+          await latest.current.revive(s);
+        }
         if (r.revive.length) latest.current.refresh();
       } finally {
         busy = false;

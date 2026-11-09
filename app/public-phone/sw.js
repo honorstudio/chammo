@@ -9,7 +9,12 @@ const SHELL = '/__shell';
 const ASK_MS = 20_000;
 
 self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+// 새 워커가 깔리면 받아 둔 껍데기를 한 번 지워 입구를 거친다 — 껍데기는 터널로만 새 판을 받아서, 터널이 막힌 폰은 옛 화면에 영영 묶인다(2026-11-07 401).
+// 입구가 터널을 다시 보고 새 껍데기를 받거나, 풀렸으면 다시 잇기를 보인다. 화면 파일(/assets)은 둔다 — 안 바뀐 건 다시 안 받는다
+self.addEventListener('activate', (e) => e.waitUntil((async () => {
+  await (await caches.open(UI)).delete(SHELL);
+  await self.clients.claim();
+})()));
 
 /** 터널을 가진 창(컴퓨터 화면·입구)에 요청을 넘기고 답을 받는다 */
 async function viaWindow(req) {

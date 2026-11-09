@@ -35,3 +35,16 @@ export function ago(at: number, now: number): string {
 export function noteOf(text: string | undefined): string {
   return (text ?? '').replace(/\*\*|__|`|^#+\s*/gm, '').replace(/\s+/g, ' ').trim();
 }
+
+/** 현황판 카드 폭·사이·+N 단추 폭(styles.css .dock-card·.office-dock gap·.dock-more) */
+export const DOCK_CARD = 224, DOCK_GAP = 8, DOCK_MORE = 56;
+/**
+ * 현황판은 한 줄만 — 줄이 늘면 방 바닥을 가렸다(11-09 사용자 13장 = 세 줄). 넘치면 +N 단추 자리를 빼고 들어가는 만큼, 나머지는 단추를 눌러 편다.
+ * n = 카드 수, width = 현황판 폭(px)
+ */
+export function dockFit(n: number, width: number): { show: number; more: number } {
+  const fit = (w: number) => Math.max(1, Math.floor((w + DOCK_GAP) / (DOCK_CARD + DOCK_GAP)));
+  if (n <= fit(width)) return { show: n, more: 0 };
+  const show = Math.min(n, fit(width - DOCK_MORE - DOCK_GAP));
+  return { show, more: n - show };
+}

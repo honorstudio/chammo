@@ -303,10 +303,73 @@ pub fn open_file(me: &Me, p: &People, team: &str, f: &RemoteFile) -> Result<Open
 // ── 서버와 주고받기 ──
 
 /// 중계 길 — JSON 은 서명한 일반 요청, 조각은 빈 본문 서명(ADR 0009 결정 7)
+/// 다시 해 보기 전에 왜 기다리나 — 올리는 중 카드에 보인다
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Pause {
+    /// 망이 끊겼거나 서버가 잠깐 안 받는다
+    Net,
+    /// 서버가 쉬래요(429) — 10분 칸이 넘어가기를 기다린다
+    Busy,
+}
+
 pub trait Net {
     fn call(&self, method: &str, path: &str, body: Option<&Value>) -> Result<(u16, Value), String>;
     fn put(&self, path: &str, bytes: &[u8]) -> Result<u16, String>;
     fn get(&self, path: &str) -> Result<(u16, Vec<u8>), String>;
+    /// 올리기를 다시 해 보기 전에 기다린다 — false 면 안 기다리고 그 답으로 끝낸다(기본: 사람이 올리는 파일 길 CardNet 만 기다린다)
+    fn pause(&self, _why: Pause, _d: std::time::Duration) -> bool {
+        false
+    }
+}
+
+// ── 다시 해 보기(11-04 18:18 와이파이가 바뀌자 920MiB 파일의 조각 하나가 끊겨 30% 에서 파일 통째 실패, 이어 올리기 없음) ──
+//    같은 앱이 켜져 있는 동안은 끊긴 조각부터 저절로 잇는다. 조각은 같은 번호면 다시 올려도 덮어쓴다(locker_parts ON CONFLICT).
+//    앱을 끄면 처음부터 — 파일 열쇠를 디스크에 안 남겨서(부채)
+
+/// 연이은 망 끊김·5xx 를 이만큼 기다리면 포기
+const RETRY_FOR: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+/// 쉬라는 답을 칸 넘어갈 때까지 기다리기 — 다음 칸에도 쉬라면 서버 사정이 다른 것
+const BUSY_WAITS: u32 = 3;
+
+fn retry_wait(fails: u32) -> std::time::Duration {
+    std::time::Duration::from_secs((2u64 << fails.saturating_sub(1).min(5)).min(60))
+}
+
+/// 다시 해서 될 수 있는 실패인가 — 망·서버 사정만. 설정·권한·자리 문제는 바로 실패
+fn pause_for(r: &Result<u16, String>) -> Option<Pause> {
+    match r {
+        Ok(429) => Some(Pause::Busy),
+        Ok(408 | 425 | 500..=599) => Some(Pause::Net),
+        Ok(_) => None,
+        Err(e) if e == crate::team_relay::SLOW_DOWN => Some(Pause::Busy),
+        Err(e) => (e.contains("못 닿았어요") || e.contains("답을 못 읽었어요")).then_some(Pause::Net),
+    }
+}
+
+/// go 를 부르고, 다시 해서 될 실패면 기다렸다 또 부른다 — 돌려주는 건 마지막 답
+pub(crate) fn retrying<T>(net: &dyn Net, mut go: impl FnMut() -> Result<(u16, T), String>) -> Result<(u16, T), String> {
+    let (mut fails, mut busy, mut waited) = (0u32, 0u32, std::time::Duration::ZERO);
+    loop {
+        let r = go();
+        let code = r.as_ref().map(|x| x.0).map_err(Clone::clone);
+        match pause_for(&code) {
+            Some(Pause::Net) if waited < RETRY_FOR => {
+                fails += 1;
+                let d = retry_wait(fails);
+                waited += d;
+                if !net.pause(Pause::Net, d) {
+                    return r;
+                }
+            }
+            Some(Pause::Busy) if busy < BUSY_WAITS => {
+                busy += 1;
+                if !net.pause(Pause::Busy, crate::team_relay::bucket_left(now_ms())) {
+                    return r;
+                }
+            }
+            _ => return r,
+        }
+    }
 }
 
 fn why(code: u16, v: &Value) -> String {
@@ -388,8 +451,16 @@ fn send(net: &dyn Net, me: &Me, to: &[Recipient], team: &str, room: &str, kind: 
     if kind != "file" {
         body["kind"] = json!(kind);
     }
-    let (c, v) = net.call("POST", &format!("/v0/teams/{team}/locker/files"), Some(&body))?;
-    ok(c, v, 201)?;
+    // 답만 잃고 서버는 받은 뒤 다시 보내면 같은 id 라 file_exists — 줄은 이미 있다
+    let mut lost = false;
+    let (c, v) = retrying(net, || {
+        let r = net.call("POST", &format!("/v0/teams/{team}/locker/files"), Some(&body));
+        lost |= r.is_err();
+        r
+    })?;
+    if !(lost && c == 409 && v["error"] == "file_exists") {
+        ok(c, v, 201)?;
+    }
     let base = format!("/v0/teams/{team}/locker/files/{id}");
     let sent = (|| -> Result<(), String> {
         let mut buf = vec![0u8; CHUNK.min(plain.max(1) as usize)];
@@ -398,14 +469,25 @@ fn send(net: &dyn Net, me: &Me, to: &[Recipient], team: &str, room: &str, kind: 
         for i in 0..parts {
             let want = (plain - done).min(CHUNK as u64) as usize;
             file.read_exact(&mut buf[..want]).map_err(|e| format!("파일을 읽다 멈췄어(그새 바뀌었나?): {e}"))?;
-            let c = net.put(&format!("{base}/parts/{i}"), &seal_chunk(&k, team, room, &id, i, i + 1 == parts, &buf[..want]))?;
+            let part = format!("{base}/parts/{i}");
+            let sealed = seal_chunk(&k, team, room, &id, i, i + 1 == parts, &buf[..want]);
+            let (c, _) = retrying(net, || net.put(&part, &sealed).map(|c| (c, ())))?;
             if c != 200 {
                 return Err(why(c, &Value::Null));
             }
             done += want as u64;
             progress(done, plain);
         }
-        let (c, v) = net.call("POST", &format!("{base}/done"), Some(&json!({})))?;
+        // 답만 잃고 서버는 끝냈으면 다시 물을 때 not_uploading — 이미 다 올라간 파일이라 성공이다(치우면 다 올린 파일이 사라진다)
+        let mut lost = false;
+        let (c, v) = retrying(net, || {
+            let r = net.call("POST", &format!("{base}/done"), Some(&json!({})));
+            lost |= r.is_err();
+            r
+        })?;
+        if lost && c == 409 && v["error"] == "not_uploading" {
+            return Ok(());
+        }
         ok(c, v, 200).map(|_| ())
     })();
     if let Err(e) = sent {

@@ -3,16 +3,19 @@
 import { useEffect, useState } from 'react';
 import { readFileText } from '../../data/web';
 import { fileError, fileKind } from '../../domain/phoneFile';
-import { machine, tr } from '../../i18n';
+import { assistant, machine, tr } from '../../i18n';
 import type { ShowAt } from '../../domain/showAt';
 import { useBlobUrl } from './useBlobUrl';
 import { ImageViewer } from './ImageViewer';
 import PdfSheet from './PdfSheet';
 import HtmlSheet from './HtmlSheet';
 import { OfficeSheet, VideoSheet } from './OfficeSheet';
+import VideoReviewSheet from './VideoReviewSheet';
 import { CodeText, CsvTable, MdDoc } from './FileText';
 import { ShareButton } from './ShareButton';
 import { BottomSheet } from './kit';
+import { IconChatSend } from '../Icons';
+import { askRef } from '../refBus';
 
 // 붙은 컴퓨터(맥·PC)는 env 를 받은 뒤에 정해져서 모듈 상수가 아니라 부를 때 만든다
 const why = (): Record<string, string> => ({ 'secret inside': tr(`글 속에 키가 보여서 폰엔 안 보여 줘요 — ${machine()}에서 열어 주세요`, `There is a key inside this text, so it is hidden on the phone — open it on the ${machine()}`), 'not allowed': tr('폰에서 열 수 없는 파일이에요', "This file can't be opened on the phone"), 'file too large': tr(`너무 커서 폰에선 못 열어요 — ${machine()}에서`, `Too big to open on the phone — use the ${machine()}`) });
@@ -24,12 +27,15 @@ export function FileView({ path, title, at, orch, onClose }: { path: string; tit
   if (kind === 'image' && !data) return <ImageViewer path={path} title={title} onClose={onClose} />;
   if (kind === 'pdf') return <PdfSheet path={path} title={title} at={at} onClose={onClose} />;
   if (kind === 'office') return <OfficeSheet path={path} title={title} onClose={onClose} />;
-  if (kind === 'video') return <VideoSheet path={path} title={title} onClose={onClose} />;
+  // 참모가 보여 준 영상은 검토 화면(말 남기기·보내기), 참모 없이 연 것·--plain 은 그냥 재생
+  if (kind === 'video') return orch && !at?.plain ? <VideoReviewSheet path={path} title={title} orch={orch} onClose={onClose} /> : <VideoSheet path={path} title={title} onClose={onClose} />;
   if (kind === 'html') return <HtmlSheet path={path} title={title} orch={orch} onClose={onClose} />;
-  return <TextView path={path} data={data} kind={kind} title={title} at={at} onClose={onClose} />;
+  return <TextView path={path} data={data} kind={kind} title={title} at={at} orch={orch} onClose={onClose} />;
 }
 
-function TextView({ path, data, kind, title, at, onClose }: { path: string; data: boolean; kind: string; title: string; at?: ShowAt; onClose: () => void }) {
+/** orch = 이 문서를 연 참모 — 머리 보내기 아이콘이 그 참모 입력칸에 #file 칩으로 붙이고 닫는다(보내기는 사람이, 11-06) */
+function TextView({ path, data, kind, title, at, orch, onClose }: { path: string; data: boolean; kind: string; title: string; at?: ShowAt; orch?: string; onClose: () => void }) {
+  const send = orch && !data ? () => { askRef(orch, { kind: 'chat', who: '', text: '', file: { path, name: title } }); onClose(); } : null;
   const blob = useBlobUrl(data ? path : null);
   const [text, setText] = useState<string | null>(null);
   const [err, setErr] = useState<{ text: string; gone: boolean } | null>(null);
@@ -38,7 +44,8 @@ function TextView({ path, data, kind, title, at, onClose }: { path: string; data
     readFileText(path).then(setText, (e: unknown) => { const m = (e as Error).message; setErr(fileError(m, why())); });
   }, [path, data]);
   return (
-    <BottomSheet kind="full" label={title} title={title} titleClass="m-view-title m-view-file" onClose={onClose} actions={<ShareButton path={path} />}>
+    <BottomSheet kind="full" label={title} title={title} titleClass="m-view-title m-view-file" onClose={onClose}
+      actions={<>{send && <button type="button" className="m-rt-btn m-ico" onClick={send} aria-label={tr(`${assistant()}에게 보내기`, `Send to ${assistant()}`)} title={tr(`${assistant()}에게 보내기`, `Send to ${assistant()}`)}><IconChatSend /></button>}<ShareButton path={path} /></>}>
       <div className="m-view-body">
         {data && blob && <img src={blob} alt={title} />}
         {text !== null && (kind === 'md' ? <MdDoc path={path} text={text} at={at} />

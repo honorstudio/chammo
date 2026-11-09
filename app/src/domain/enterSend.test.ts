@@ -6,6 +6,7 @@ import { echoOfSent, enterAction } from './enterSend';
 const k = (key: string, keyCode: number, isComposing = false, shiftKey = false) => ({ key, keyCode, isComposing, shiftKey });
 
 describe('enterAction — Enter 를 언제 보내나', () => {
+  it('폰은 Enter 가 줄바꿈 — 폰 자판엔 Shift+Enter 가 없어 보내기는 단추로(11-06 팀원 건의)', () => expect(enterAction({ ...k('Enter', 13), phone: true })).toBe('skip'));
   it('보통 Enter 는 바로 보낸다', () => expect(enterAction(k('Enter', 13))).toBe('send'));
   it('입력기가 아직 글을 넣는 중인 Enter(229, WebKit 은 isComposing=false 로 준다)는 다음 차례에', () => expect(enterAction(k('Enter', 229))).toBe('defer'));
   it('조합 중 Enter(크롬·WebView2)는 안 보낸다 — 확정 뒤 Enter 가 따로 온다', () => expect(enterAction(k('Enter', 229, true))).toBe('skip'));
@@ -37,7 +38,7 @@ import chatView from '../ui/chat/ChatView.tsx?raw';
 
 describe('보내기 칸 연결 — 팀 메신저·참모 채팅', () => {
   it.each([['팀 메신저', teamConvo], ['참모 채팅', chatView]])('%s: Enter 는 enterAction 으로 가르고 229 는 다음 차례, 되살아난 글은 버린다', (_, src) => {
-    expect(src).toContain('enterAction({ key: e.key, keyCode: e.keyCode, isComposing: e.nativeEvent.isComposing, shiftKey: e.shiftKey })');
+    expect(src).toMatch(/enterAction\(\{ key: e\.key, keyCode: e\.keyCode, isComposing: e\.nativeEvent\.isComposing, shiftKey: e\.shiftKey(, phone)? \}\)/);
     expect(src).toMatch(/setTimeout\(\(\) => (sendNow|submitNow)\.current\(/);
     expect(src).toMatch(/echoOfSent\(e\.target\.value, (text|draft), lastSent\.current, Date\.now\(\)\)/);
     expect(src).not.toContain("e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {");

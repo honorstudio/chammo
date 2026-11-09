@@ -11,6 +11,8 @@ const SID: &str = "f00d0002-0000-4000-8000-004027383810";
 
 #[derive(Default)]
 pub(crate) struct Fake {
+    /// 공개 소스 빌드처럼 — 공식 설치 파일의 판이 없다(트레이트 기본 답과 같은 말)
+    no_pro: bool,
     calls: Mutex<Vec<String>>,
     /// show.jsonl 꼬리로 돌려줄 글
     show: String,
@@ -39,6 +41,8 @@ pub(crate) struct Fake {
     /// 맥 앱(뽑기)이 답을 안 한다 — 시간 초과 시험 · 답이 이만큼 늦다(진행 중 막이 시험)
     gacha_mute: bool,
     gacha_slow: Duration,
+    /// 보관함 링크 칸이 이어 읽을 대화 기록 파일(transcript_file)
+    tx_file: Option<PathBuf>,
     /// 팀 길마다 그때 사람 몫(team_relay::as_human)이었나 — 폰에서 누른 쓰기는 배경 몫에 안 막혀야
     human: Mutex<Vec<String>>,
     /// 그림 바꾸기(sips·qlmanage)가 없다 — 윈도우(공개 이슈 #15)
@@ -129,6 +133,14 @@ impl Backend for Fake {
         self.log(format!("team_say_re {to} {text} {re}"));
         Ok(serde_json::json!({ "room": "r1", "seq": 8 }))
     }
+    fn team_say_files(&self, to: &str, text: &str, _cid: &str, re: u64, files: Vec<serde_json::Value>) -> Result<serde_json::Value, String> {
+        self.log(format!("team_say_files {to} [{text}] {re} {}", files.iter().map(|f| f["id"].as_str().unwrap_or("?")).collect::<Vec<_>>().join(",")));
+        Ok(serde_json::json!({ "room": "r1", "seq": 9 }))
+    }
+    fn team_file_ref(&self, up: &str) -> Option<serde_json::Value> {
+        self.log(format!("team_file_ref {up}"));
+        (up == "up-0002done").then(|| serde_json::json!({ "file": { "id": "F1", "name": "a.jpg", "size": 3 } }))
+    }
     fn team_agents(&self, team: &str) -> Result<serde_json::Value, String> {
         self.log(format!("team_agents {team}"));
         Ok(serde_json::json!({ "team": team, "agents": [], "seen": {}, "owner": false, "me": "m1" }))
@@ -197,6 +209,15 @@ impl Backend for Fake {
         if id == "nope" { return Err("그림이 아니야".into()); }
         Ok(crate::mobile_http::TeamImage { bytes: b"\x89PNGteam".to_vec(), ctype: if view { "image/jpeg" } else { "image/png" }, dims: Some((3000, 2000)) })
     }
+    fn team_file_open(&self, team: &str, id: &str) -> Result<PathBuf, String> {
+        self.log(format!("team_file_open {team} {id}"));
+        let name = match id {
+            "doc-md" => "회의.md",
+            "doc-html" => "시안.html",
+            _ => return Err("그 파일이 없어".into()),
+        };
+        Ok(self.data.join("team-locker-peek").join(team).join("대화 파일").join(name))
+    }
     fn team_posts(&self, team: &str, seen: u64) -> Result<serde_json::Value, String> {
         self.log(format!("team_posts {team} {seen}"));
         Ok(serde_json::json!({ "team": team, "rev": 3, "posts": [], "pinned": "", "owner": false }))
@@ -204,6 +225,20 @@ impl Backend for Fake {
     fn team_home(&self, team: &str, seen: u64) -> Result<serde_json::Value, String> {
         self.log(format!("team_home {team} {seen}"));
         Ok(if seen == 5 { serde_json::json!({ "same": true }) } else { serde_json::json!({ "team": team, "rev": 5, "home": null, "content": {}, "owner": true }) })
+    }
+    fn pro_board(&self, team: &str, seen: u64) -> Result<serde_json::Value, String> {
+        self.log(format!("pro_board {team} {seen}"));
+        if self.no_pro {
+            return Err("not supported".into());
+        }
+        Ok(if seen == 7 { serde_json::json!({ "same": true }) } else { serde_json::json!({ "team": team, "rev": 7, "lines": [], "held": [], "days": [], "weeks": [], "today": [] }) })
+    }
+    fn pro_write(&self, team: &str, op: serde_json::Value) -> Result<(), (u16, String)> {
+        self.log(format!("pro_write {team} {op}"));
+        if self.no_pro {
+            return Err((404, "not found".into()));
+        }
+        Ok(())
     }
     fn team_cal(&self, team: &str, fresh: bool) -> Result<serde_json::Value, String> {
         self.log(format!("team_cal {team} {fresh}"));
@@ -229,12 +264,24 @@ impl Backend for Fake {
         self.log(format!("team_locker {team} {seen}"));
         Ok(if seen == 9 { serde_json::json!({ "same": true, "uploads": [] }) } else { serde_json::json!({ "rev": 9, "items": [], "uploads": [] }) })
     }
+    /// 폰 팀 영상 — id 로 흉내: going = 받는 중 30/100, fail = 망 실패, doc = 영상 아님, 그 밖 = <데이터>/team-locker-peek/<팀>/<id>.mp4
+    fn team_media(&self, team: &str, id: &str) -> Result<crate::team_media::Step, String> {
+        use crate::team_media::Step;
+        self.log(format!("team_media {team} {id}"));
+        match id {
+            "going" => Ok(Step::Going { done: 30, total: 100 }),
+            "fail" => Ok(Step::Failed { why: "net".into(), error: "중계 서버에 못 닿았어요".into() }),
+            "doc" => Err("영상만 폰에서 튼다".into()),
+            _ => Ok(Step::Ready(self.data_dir().join(crate::team_locker_app::VIEW_DIR).join(team).join(format!("{id}.mp4")))),
+        }
+    }
     fn team_locker_op(&self, o: &TeamLockerOp) -> Result<serde_json::Value, String> {
         self.log(format!("team_locker_op {} {} id={} name={} folder={} from={} to={}", o.team, o.op, o.id, o.name, o.folder, o.from, o.to));
         Ok(serde_json::json!({ "ok": true }))
     }
     fn team_locker_part(&self, p: &TeamLockerPart, bytes: &[u8]) -> Result<serde_json::Value, String> {
-        self.log(format!("team_locker_part {} {} {} {} {} {} {}", p.team, p.up, p.part, p.last, p.name, p.folder, bytes.len()));
+        let room = if p.room.is_empty() { String::new() } else { format!(" room={}", p.room) };
+        self.log(format!("team_locker_part {} {} {} {} {} {} {}{room}", p.team, p.up, p.part, p.last, p.name, p.folder, bytes.len()));
         Ok(serde_json::json!({ "have": bytes.len() }))
     }
     fn team_post(&self, team: &str, title: &str, body: &str, pin: bool) -> Result<serde_json::Value, String> {
@@ -333,6 +380,9 @@ impl Backend for Fake {
     fn show_log(&self) -> String {
         self.show.clone()
     }
+    fn transcript_file(&self, _session_id: &str) -> Option<PathBuf> {
+        self.tx_file.clone()
+    }
     fn locker_root(&self) -> Option<PathBuf> {
         self.locker.clone()
     }
@@ -381,7 +431,7 @@ impl Backend for Fake {
         }
         self.data.clone()
     }
-    fn ctx_files(&self) -> Vec<String> {
+    fn ctx_files(&self, _ids: &[String]) -> Vec<String> {
         vec![format!(r#"{{"sessionId":"{SID}","used":73,"ts":1}}"#), "깨진".into()]
     }
     fn attach(&self, ext: &str, bytes: &[u8]) -> Result<String, String> {
@@ -811,6 +861,8 @@ fn 세션_목록에_컨텍스트() {
     assert_eq!(v[0]["ctx"]["used"], 73);
     assert!(v[1].get("ctx").is_none());
     assert_eq!(with_ctx("not json", &[]), "not json");
+    assert_eq!(super::session_ids(&format!(r#"[{{"id":"aaaa0001","sessionId":"{SID}"}},{{"id":"bbbb0002"}}]"#)), vec![SID.to_string()], "대화 번호가 있는 줄만 — 끝난 세션 파일 수천 개를 안 읽게");
+    assert!(super::session_ids("not json").is_empty());
     let (_, _, r) = run(with_cookie(get("/api/sessions")));
     assert!(String::from_utf8_lossy(&r.body).starts_with('['));
 }
@@ -2644,7 +2696,9 @@ fn 폰_html_시안_앞에_글자_키움_막기를_head_맨_앞에_넣는다() {
     // 큰 시안(1MB 상한 꼭 맞게)도 원본 그대로 + 넣은 것
     let big = format!("<html><head></head><body>{}</body></html>", "가".repeat(340_000));
     let out = inject_shim(&big);
-    assert_eq!(out.len(), big.len() + HTML_HEAD.len() + HTML_SHIM.len());
+    // 링크 다리(시안 안 웹 링크 → 폰 새 창, 2026-11-05)도 같이 들어간다
+    assert_eq!(out.len(), big.len() + HTML_HEAD.len() + HTML_SHIM.len() + crate::reader::LINK_BRIDGE.len());
+    assert!(out.contains(crate::reader::LINK_BRIDGE));
     assert!(out.ends_with(&big["<html><head>".len()..]));
 }
 
@@ -3360,6 +3414,48 @@ fn 폰_보관함은_열_수_있는_것만_줄째() {
     assert_eq!(v["items"][0]["folder"], "10월");
     assert_eq!(v["items"][0]["owner"], "운영");
     assert_eq!(run(get("/api/locker")).0, 401);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn 폰_보관함_링크는_그_참모_기록에서_모으고_넣기_빼기() {
+    let d = tmp("locker-links");
+    let root = d.join("root");
+    let mine = root.join("참모-3 · 나스");
+    std::fs::create_dir_all(&mine).unwrap();
+    // 꺼졌다 되살아난 참모-3(aaaa0002, sessionId OFF) 의 보관함
+    std::fs::write(mine.join(".chammo"), "aaaa0002\n").unwrap();
+    let tx = d.join("tx.jsonl");
+    std::fs::write(&tx, format!("{}\n", serde_json::json!({ "type": "user", "uuid": "u9", "timestamp": "2026-11-06T05:00:00Z", "message": { "content": "이거 https://a.com/x" } }))).unwrap();
+    let fake = || Fake { locker: Some(root.clone()), data: d.join("data"), revived: true, tx_file: Some(tx.clone()), ..Default::default() };
+    // 글자에서 바로 만든다 — 퍼센트 꼴로 적어 두면 공개본 이름 가리기가 못 바꿔 폴더 이름과 어긋난다
+    let owner: String = "참모-3 · 나스".bytes().map(|b| if b.is_ascii_alphanumeric() || b == b'-' { (b as char).to_string() } else { format!("%{b:02X}") }).collect();
+    // 이어 읽기는 뒤에서 — 폰 일꾼을 안 붙들고 다음 차례에 차오른다
+    let mut v = serde_json::Value::Null;
+    for _ in 0..100 {
+        let (s, _, r) = run_with(with_cookie(get(&format!("/api/locker-links?owner={owner}"))), fake());
+        assert_eq!(s, 200, "{}", String::from_utf8_lossy(&r.body));
+        v = serde_json::from_slice(&r.body).unwrap();
+        if v["links"].as_array().is_some_and(|l| !l.is_empty()) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    assert_eq!(v["links"][0]["url"], "https://a.com/x");
+    assert_eq!(v["links"][0]["by"], "me");
+    // 넣기 → 빼기
+    let (s, _, r) = run_with(post("/api/locker-link-add", r#"{"owner":"참모-3 · 나스","url":"chammo.app/download"}"#), fake());
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&r.body));
+    let id = serde_json::from_slice::<serde_json::Value>(&r.body).unwrap()["id"].as_str().unwrap().to_string();
+    assert_eq!(run_with(post("/api/locker-link-hide", &format!(r#"{{"owner":"참모-3 · 나스","id":"{id}","hide":true}}"#)), fake()).0, 200);
+    let (_, _, r) = run_with(with_cookie(get(&format!("/api/locker-links?owner={owner}"))), fake());
+    let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+    assert_eq!(v["links"].as_array().unwrap().len(), 1);
+    assert_eq!(v["hidden"][0], id.as_str());
+    // 주소꼴 아님·없는 주인·로그인 없음
+    assert_eq!(run_with(post("/api/locker-link-add", r#"{"owner":"참모-3 · 나스","url":"그냥 글"}"#), fake()).0, 400);
+    assert_eq!(run_with(post("/api/locker-link-add", r#"{"owner":"남의 것","url":"https://a.com"}"#), fake()).0, 404);
+    assert_eq!(run(get(&format!("/api/locker-links?owner={owner}"))).0, 401);
     let _ = std::fs::remove_dir_all(&d);
 }
 
@@ -4481,13 +4577,13 @@ fn o1_사무실_모양은_아는_칸만_꼬리표로() {
     assert_eq!(office_get(&f, ""), (200, "{}".to_string()));
     std::fs::write(
         d.join("office.json"),
-        r#"{"v":1,"slots":["a1",null],"boss":"fire_cG","skin":"neon","furn":["furn.plant"],"placed":{"furn.plant":[1,2]},"deco":{"hat":"hat.cap"},"history":[{"x":1}],"coins":99}"#,
+        r#"{"v":1,"offices":[{"lv":1}],"slots":[["a1",null]],"skins":["neon"],"sprs":{"o":"fire_cG"},"deco":{"hat":"hat.cap"},"history":[{"x":1}],"coins":99}"#,
     )
     .unwrap();
     let (s, body) = office_get(&f, "");
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(s, 200);
-    assert_eq!((v["slots"][0].as_str(), v["boss"].as_str(), v["skin"].as_str(), v["placed"]["furn.plant"][1].as_u64(), v["deco"]["hat"].as_str()), (Some("a1"), Some("fire_cG"), Some("neon"), Some(2), Some("hat.cap")));
+    assert_eq!((v["slots"][0][0].as_str(), v["sprs"]["o"].as_str(), v["skins"][0].as_str(), v["offices"][0]["lv"].as_u64(), v["deco"]["hat"].as_str()), (Some("a1"), Some("fire_cG"), Some("neon"), Some(1), Some("hat.cap")));
     assert!(v.get("history").is_none() && v.get("coins").is_none(), "모르는 칸(뽑기 기록·코인)은 안 나간다: {body}");
     // since — 안 바뀌었으면 머리 줄만
     let (_, first) = office_get(&f, "?since=");
@@ -4755,6 +4851,38 @@ fn tm_폰_팀_참모_만들기·지우기·시험·자료() {
 }
 
 #[test]
+fn tm_폰_팀_메모리_읽기() {
+    // 폰 — 맥이 푼 판을 그대로. 같은 판 번호면 same
+    let g = peer_gate("tm000014");
+    let f = Fake::default();
+    let r = handle(&with_cookie(get("/api/team-memory?team=t-1&rev=0")), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(json_of(&r)["rev"], 7);
+    assert_eq!(json_of(&handle(&with_cookie(get("/api/team-memory?team=t-1&rev=7")), &g, &f))["same"], true);
+    for q in ["", "?team=", "?team=a%2Fb", "?team=t-1&rev=x"] {
+        assert_eq!(handle(&with_cookie(get(&format!("/api/team-memory{q}"))), &g, &f).status, 400, "{q}");
+    }
+    assert_eq!(handle(&get("/api/team-memory?team=t-1&rev=0"), &g, &f).status, 401, "폰 쿠키 없으면 못 읽는다");
+    assert_eq!(handle(&with_cookie(post("/api/team-memory", "{}")), &g, &f).status, 405, "읽기 길은 GET 만");
+    // 쓰기 — 모르는 칸·이상한 팀은 400(안의 op 모양은 맥 쪽이 본다)
+    let r = handle(&post("/api/team-memory-write", r#"{"team":"t-1","op":{"op":"today","text":"교정지 목요일 도착"}}"#), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(handle(&post("/api/team-memory-write", r#"{"team":"t-1","op":{"op":"on","on":true}}"#), &g, &f).status, 200);
+    assert_eq!(handle(&post("/api/team-memory-write", r#"{"team":"t-1","op":{"op":"hide","id":"a"},"spy":1}"#), &g, &f).status, 400);
+    assert_eq!(handle(&post("/api/team-memory-write", r#"{"team":"../x","op":{"op":"hide","id":"a"}}"#), &g, &f).status, 400);
+}
+
+#[test]
+fn tm_공개_빌드엔_폰_판_길이_404() {
+    let g = peer_gate("tm000015");
+    let f = Fake { no_pro: true, ..Fake::default() };
+    assert_eq!(handle(&with_cookie(get("/api/team-memory?team=t-1&rev=0")), &g, &f).status, 404);
+    assert_eq!(handle(&post("/api/team-memory-write", r#"{"team":"t-1","op":{"op":"hide","id":"a"}}"#), &g, &f).status, 404);
+    // 옳지 않은 팀은 그래도 먼저 400 — 있는 길과 같은 문
+    assert_eq!(handle(&with_cookie(get("/api/team-memory?team=a%2Fb")), &g, &f).status, 400);
+}
+
+#[test]
 fn tm_폰_팀_홈_판_읽기·꾸미기·블록_내용() {
     // ADR 0018 폰 — 데스크톱과 같은 판을 맥이 읽고 쓴다. 팀장·블록 검사는 맥의 저장 길(team_home_store)이 본다
     let g = peer_gate("tm000013");
@@ -4961,4 +5089,286 @@ fn peer_끊기_알림은_중계_peer_줄만() {
     assert_eq!(handle(&post("/api/peer-unlink", "{}"), &g, &f2).status, 403);
     assert!(f2.calls().is_empty());
     assert!(head_check(&post("/api/peer-unlink", "{}"), &g).is_none());
+}
+
+/// 영상 검토 — 저용량 256KB·그림 묶음·기록 저장 길. 폰은 표만 내고 경로를 안 준다
+#[test]
+fn media_low_sprite_and_record() {
+    let d = tmp("vr-media");
+    let v = d.join("v.mp4");
+    std::fs::write(&v, vec![7u8; 5000]).unwrap();
+    let other = d.join("남의.mp4");
+    std::fs::write(&other, vec![1u8; 10]).unwrap();
+    let data = d.join("data");
+    let g = gate();
+    let f = Fake { show: format!("{{\"path\":\"{}\"}}\n", v.display()), data: data.clone(), ..Default::default() };
+    let r = handle(&post("/api/media-ticket", &serde_json::json!({ "path": v.to_string_lossy() }).to_string()), &g, &f);
+    assert_eq!(r.status, 200);
+    let j: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+    let t = j["ticket"].as_str().unwrap().to_string();
+    assert!(j["prep"]["low"].is_null());
+    // 아직 없으면 404 — 폰은 원본으로 물러선다
+    assert_eq!(handle(&get(&format!("/api/media?t={t}&low=1")), &g, &f).status, 404);
+    assert_eq!(handle(&get(&format!("/api/media-sprite?t={t}&i=0")), &g, &f).status, 404);
+    // 준비됨 — 저용량은 300KB 파일이어도 256KB 씩
+    let dir = crate::video_prep::dir_of(&data, &crate::video_prep::fingerprint(&v).unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("low.mp4"), vec![3u8; 300 * 1024]).unwrap();
+    std::fs::write(dir.join("sprite-0.jpg"), b"jpegbytes").unwrap();
+    std::fs::write(dir.join("meta.json"), r#"{"fps":30,"duration":180}"#).unwrap();
+    std::fs::write(dir.join("done"), "").unwrap();
+    let r = handle(&set(get(&format!("/api/media?t={t}&low=1")), "range", Some("bytes=0-")), &g, &f);
+    assert_eq!(r.status, 206);
+    assert_eq!(r.body.len(), 256 * 1024);
+    assert_eq!(r.body[0], 3, "원본이 아니라 저용량");
+    // 원본 길은 그대로 — 표 하나로 둘 다
+    let r = handle(&set(get(&format!("/api/media?t={t}")), "range", Some("bytes=0-")), &g, &f);
+    assert_eq!((r.status, r.body.len(), r.body[0]), (206, 5000, 7));
+    let r = handle(&get(&format!("/api/media-sprite?t={t}&i=0")), &g, &f);
+    assert_eq!((r.status, r.body.as_slice()), (200, &b"jpegbytes"[..]));
+    assert_eq!(ctype(&r), "image/jpeg");
+    assert_eq!(handle(&get(&format!("/api/media-sprite?t={t}&i=x")), &g, &f).status, 400);
+    assert_eq!(handle(&get(&format!("/api/media-sprite?t={t}&i=1")), &g, &f).status, 404);
+    assert_eq!(handle(&get("/api/media-sprite?t=00112233445566778899aabbccddeeff&i=0"), &g, &f).status, 403, "틀린 표");
+    assert_eq!(handle(&post("/api/media-sprite", "{}"), &g, &f).status, 405);
+    // 기록 저장 길 — 보여 준 영상만
+    let body = serde_json::json!({ "path": v.to_string_lossy(), "text": "x", "store": {"v":1} }).to_string();
+    assert_eq!(handle(&post("/api/curation", &body), &g, &f).status, 200);
+    let body = serde_json::json!({ "path": other.to_string_lossy(), "text": "x", "store": {} }).to_string();
+    assert_eq!(handle(&post("/api/curation", &body), &g, &f).status, 403, "안 보여 준 영상");
+    assert_eq!(handle(&with_cookie(get(&format!("/api/curation-state?path={}", enc(&v.to_string_lossy())))), &g, &f).status, 200);
+    assert_eq!(handle(&with_cookie(get(&format!("/api/curation-state?path={}", enc(&other.to_string_lossy())))), &g, &f).status, 403, "안 보여 준 영상");
+}
+
+/// 폰 팀 보관함 영상(11-04 사용자 920MB mp4) — 맥이 뒤에서 받는 동안 진행, 다 받으면 영상 검토와 같은 표(저용량·원본·기록)
+#[test]
+fn tm_폰_팀_영상은_받는_동안_진행_다_받으면_영상_표() {
+    let d = tmp("team-media");
+    let data = d.join("data");
+    let tdir = data.join(crate::team_locker_app::VIEW_DIR).join("t-1");
+    std::fs::create_dir_all(&tdir).unwrap();
+    let v = tdir.join("AbC.mp4");
+    std::fs::write(&v, vec![7u8; 5000]).unwrap();
+    let g = peer_gate("tm000031");
+    let f = Fake { data: data.clone(), ..Default::default() };
+    let ask = |id: &str| handle(&post("/api/team-media", &format!(r#"{{"team":"t-1","id":"{id}"}}"#)), &g, &f);
+    let r = ask("going");
+    assert_eq!(r.status, 200);
+    assert_eq!((json_of(&r)["state"].as_str(), json_of(&r)["done"].as_u64(), json_of(&r)["total"].as_u64()), (Some("going"), Some(30), Some(100)));
+    let r = ask("fail");
+    assert_eq!((json_of(&r)["state"].as_str(), json_of(&r)["why"].as_str()), (Some("failed"), Some("net")));
+    assert_eq!(ask("doc").status, 409, "영상이 아니면 거절");
+    let r = ask("AbC");
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    let j = json_of(&r);
+    assert_eq!(j["state"], "ready");
+    assert_eq!(j["size"], 5000);
+    assert_eq!(j["path"].as_str(), Some(v.to_string_lossy().as_ref()), "기록·보낸 자리 이름표용");
+    let t = j["ticket"].as_str().unwrap().to_string();
+    assert_eq!(j["url"].as_str(), Some(format!("/api/media?t={t}").as_str()));
+    assert!(j["prep"]["record"].is_string(), "기록 자리도 같이(영상 검토와 같은 모양)");
+    // 표로 원본 — 보여 준 영상이 아니어도 풀어 둔 팀 영상이면 같은 문(저용량은 아직 없어 404)
+    let r = handle(&set(get(&format!("/api/media?t={t}")), "range", Some("bytes=0-")), &g, &f);
+    assert_eq!((r.status, r.body.len(), r.body[0]), (206, 5000, 7));
+    assert_eq!(handle(&get(&format!("/api/media?t={t}&low=1")), &g, &f).status, 404);
+    // 기록 저장도 풀어 둔 팀 영상이면 된다 — 그 밖 데이터 폴더 파일은 그대로 막힌다
+    let body = serde_json::json!({ "path": v.to_string_lossy(), "text": "x", "store": {"v":1} }).to_string();
+    assert_eq!(handle(&post("/api/curation", &body), &g, &f).status, 200);
+    assert_eq!(handle(&with_cookie(get(&format!("/api/curation-state?path={}", enc(&v.to_string_lossy())))), &g, &f).status, 200);
+    let other = data.join("남의.mp4");
+    std::fs::write(&other, b"x").unwrap();
+    let body = serde_json::json!({ "path": other.to_string_lossy(), "text": "x", "store": {} }).to_string();
+    assert_eq!(handle(&post("/api/curation", &body), &g, &f).status, 403, "풀어 둔 자리 밖 데이터 폴더 영상");
+    // 표 길(media-ticket)로 풀어 둔 자리 경로를 직접 대는 건 그대로 막힌다 — 팀 영상 표는 /api/team-media 만 낸다
+    assert_eq!(handle(&post("/api/media-ticket", &serde_json::json!({ "path": v.to_string_lossy() }).to_string()), &g, &f).status, 403);
+    // 풀어 둔 자리 안이라도 링크·영상 아닌 파일은 안 된다
+    let note = tdir.join("a.txt");
+    std::fs::write(&note, b"x").unwrap();
+    let body = serde_json::json!({ "path": note.to_string_lossy(), "text": "x", "store": {} }).to_string();
+    assert_eq!(handle(&post("/api/curation", &body), &g, &f).status, 403);
+    #[cfg(unix)]
+    {
+        let link = tdir.join("link.mp4");
+        std::os::unix::fs::symlink(&other, &link).unwrap();
+        let body = serde_json::json!({ "path": link.to_string_lossy(), "text": "x", "store": {} }).to_string();
+        assert_eq!(handle(&post("/api/curation", &body), &g, &f).status, 403, "링크로 자리 밖을 못 가리킨다");
+    }
+    // 모양·문
+    for b in [r#"{"team":"","id":"AbC"}"#, r#"{"team":"t-1","id":"a/b"}"#, r#"{"team":"t-1"}"#, r#"{"team":"t-1","id":"AbC","x":1}"#] {
+        assert_eq!(handle(&post("/api/team-media", b), &g, &f).status, 400, "{b}");
+    }
+    assert!(head_check(&post("/api/team-media", "{}"), &g).is_none(), "몸통 길 목록에 있다");
+    assert_eq!(handle(&set(post("/api/team-media", r#"{"team":"t-1","id":"AbC"}"#), "origin", Some("http://evil.example")), &g, &f).status, 403);
+    assert_eq!(handle(&set(post("/api/team-media", r#"{"team":"t-1","id":"AbC"}"#), "authorization", None), &g, &f).status, 401);
+    assert_eq!(handle(&as_peer(post("/api/team-media", r#"{"team":"t-1","id":"AbC"}"#)), &g, &f).status, 403, "다른 기기 참모 열쇠로는 못 받는다");
+    assert_eq!(handle(&with_cookie(get("/api/team-media")), &g, &f).status, 405);
+}
+
+#[test]
+fn 내_메모_폰_길은_맥_notes_만_읽고_쓰고_맥이_고친_걸_안_덮는다() {
+    let (d, f) = locker_home("notes-phone");
+    let dir = f().data_dir().join("notes");
+    let _ = std::fs::remove_dir_all(&dir);
+    // 처음엔 비어 있다 → 새 메모 → 저장
+    assert_eq!(json_of(&run_with(with_cookie(get("/api/notes")), f()).2), serde_json::json!([]));
+    let (s, _, r) = run_with(post("/api/note-new", "{}"), f());
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&r.body));
+    let name = json_of(&r)["name"].as_str().unwrap().to_string();
+    let w = |text: &str, base: &str| serde_json::json!({ "name": name, "text": text, "base": base }).to_string();
+    let (s, _, r) = run_with(post("/api/note-write", &w("장 볼 것 내용\n빵은 내일\n", "")), f());
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(json_of(&r)["title"], "장 볼 것 내용");
+    assert_eq!(std::fs::read_to_string(dir.join(&name)).unwrap(), "장 볼 것 내용\n빵은 내일\n");
+    // 읽기
+    let (s, _, r) = run_with(with_cookie(get(&format!("/api/note?name={name}"))), f());
+    assert_eq!(s, 200);
+    assert_eq!(String::from_utf8_lossy(&r.body), "장 볼 것 내용\n빵은 내일\n");
+    assert_eq!(json_of(&run_with(with_cookie(get("/api/notes")), f()).2)[0]["preview"], "빵은 내일");
+    // 맥에서 그새 고쳤으면 409, 안 덮는다
+    std::fs::write(dir.join(&name), "맥에서 고침\n").unwrap();
+    let (s, _, r) = run_with(post("/api/note-write", &w("폰 글\n", "장 볼 것 내용\n빵은 내일\n")), f());
+    assert_eq!((s, String::from_utf8_lossy(&r.body).into_owned()), (409, crate::reader::CHANGED_OUTSIDE.to_string()));
+    assert_eq!(std::fs::read_to_string(dir.join(&name)).unwrap(), "맥에서 고침\n");
+    // 폴더를 못 넘는다
+    let outside = d.join("밖.md");
+    std::fs::write(&outside, "비밀\n").unwrap();
+    for bad in ["../밖.md", "..%2F밖.md", "/etc/hosts", ".숨김.md", "x.txt"] {
+        assert_eq!(run_with(with_cookie(get(&format!("/api/note?name={bad}"))), f()).0, 404, "{bad}");
+    }
+    for bad in ["../밖.md", "/etc/hosts", ".숨김.md"] {
+        let b = serde_json::json!({ "name": bad, "text": "덮음" }).to_string();
+        assert_eq!(run_with(post("/api/note-write", &b), f()).0, 400, "{bad}");
+        assert_eq!(run_with(post("/api/note-trash", &b), f()).0, 400, "{bad}");
+    }
+    assert_eq!(std::fs::read_to_string(&outside).unwrap(), "비밀\n");
+    // 스킨·띄움 — 맥과 같은 목록(notes/.meta.json)
+    let m = serde_json::json!({ "name": name, "skin": "dark", "shown": false }).to_string();
+    let (s, _, r) = run_with(post("/api/note-meta", &m), f());
+    assert_eq!(s, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!((json_of(&r)["skin"].clone(), json_of(&r)["shown"].clone()), (serde_json::json!("dark"), serde_json::json!(false)));
+    assert_eq!(json_of(&run_with(with_cookie(get("/api/notes")), f()).2)[0]["skin"], "dark");
+    assert_eq!(run_with(post("/api/note-meta", &serde_json::json!({ "name": name, "skin": "neon" }).to_string()), f()).0, 400);
+    assert_eq!(run_with(post("/api/note-meta", &serde_json::json!({ "name": "../밖.md", "shown": true }).to_string()), f()).0, 400);
+    // 휴지통
+    let b = serde_json::json!({ "name": name }).to_string();
+    assert_eq!(run_with(post("/api/note-trash", &b), f()).0, 200);
+    assert!(!dir.join(&name).exists());
+    assert_eq!(std::fs::read_dir(dir.join(crate::notes::TRASH)).unwrap().count(), 1);
+    assert_eq!(json_of(&run_with(with_cookie(get("/api/notes")), f()).2), serde_json::json!([]));
+    let _ = std::fs::remove_dir_all(&d);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn 세션_목록_답_머리에_메모_도장이_실려_맥에서_고치면_바뀐다() {
+    // 2026-11-08 폰 메모 실시간 — 폰이 3초마다 받는 세션 목록 머리줄에 notes 폴더 도장. 요청은 안 늘고, 바뀌면 폰이 그 카드만 다시 받는다
+    let (d, f) = locker_home("notes-stamp");
+    let dir = f().data_dir().join("notes");
+    let _ = std::fs::remove_dir_all(&dir);
+    let stamp = || {
+        let r = run_with(with_cookie(get("/api/sessions?since=")), f()).2;
+        let body = String::from_utf8_lossy(&r.body).into_owned();
+        let m: serde_json::Value = serde_json::from_str(body.split_once('\n').unwrap().0).unwrap();
+        m["notes"].as_str().map(str::to_string)
+    };
+    assert_eq!(stamp(), None, "메모 폴더가 없으면 칸도 없다");
+    let (_, _, r) = run_with(post("/api/note-new", "{}"), f());
+    let name = json_of(&r)["name"].as_str().unwrap().to_string();
+    let a = stamp().expect("메모가 생기면 도장");
+    assert_eq!(stamp().as_deref(), Some(a.as_str()), "안 고치면 같다");
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    // 맥 화면 저장(문서 페이지 write_doc_text = 바꿔 끼우기)
+    crate::reader::write_checked(&dir.join(&name), "맥에서 고침\n", None, |_| {}).unwrap();
+    let b = stamp().unwrap();
+    assert_ne!(a, b, "맥 저장이면 바뀐다");
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    // 띄움·스킨(.meta.json 바꿔 끼우기)도
+    assert_eq!(run_with(post("/api/note-meta", &serde_json::json!({ "name": name, "shown": false }).to_string()), f()).0, 200);
+    assert_ne!(stamp().unwrap(), b, "메타가 바뀌어도 바뀐다");
+    let _ = std::fs::remove_dir_all(&d);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn 내_메모_폰_쓰기_길은_문지기를_지나고_다른_기기_길엔_없다() {
+    let (d, f) = locker_home("notes-gate");
+    for p in ["/api/note-new", "/api/note-write", "/api/note-trash", "/api/note-meta"] {
+        assert!(head_check(&post(p, "{}"), &gate()).is_none(), "{p} — 실제 서버는 head_check 몸통 목록에 있어야");
+        assert_eq!(run_with(set(post(p, r#"{"name":"a.md"}"#), "origin", Some("http://evil")), f()).0, 403, "{p}");
+        assert_eq!(run_with(with_cookie(get(p)), f()).0, 405, "{p}");
+    }
+    for p in ["/api/notes", "/api/note"] {
+        assert_eq!(run(with_cookie(post(p, "{}"))).0, 405, "{p}");
+        assert!(!peer_allowed("GET", p), "{p} — 다른 기기 참모·중계 쪽 길로 안 나간다");
+    }
+    assert_eq!(body_cap("/api/note-write"), MAX_WRITE_BODY);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn tm_폰_팀_대화_첨부는_방을_실어_조각으로_올리고_참조를_받아_말에_싣는다() {
+    // 11-06 사용자 — 폰 팀 DM·팀챗엔 첨부가 없었다. 올리기는 보관함과 같은 조각 길(room 만 더), 다 올린 참조는 따로 묻는다
+    let g = peer_gate("tm000021");
+    let f = Fake::default();
+    let r = handle(&put_req("team=t-1&up=up-0002done&part=0&last=1&name=a.jpg&room=r-1", b"\xFF\xD8\xFF"), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(f.calls(), vec!["team_locker_part t-1 up-0002done 0 true a.jpg  3 room=r-1"]);
+    assert_eq!(handle(&put_req("team=t-1&up=up-0002done&part=0&last=1&name=a.jpg&room=a%2Fb", b"x"), &g, &f).status, 400, "방 id 모양");
+    assert_eq!(handle(&put_req("team=t-1&up=up-0002done&part=0&last=1&name=a.jpg&room=r-1&folder=x", b"x"), &g, &f).status, 400, "대화 첨부는 폴더가 없다");
+    // 참조 묻기 — 끝났으면 file, 아직이면 wait
+    let r = handle(&with_cookie(get("/api/team-file-ref?up=up-0002done")), &g, &f);
+    assert_eq!(r.status, 200);
+    assert_eq!(json_of(&r)["file"]["id"], "F1");
+    assert_eq!(json_of(&handle(&with_cookie(get("/api/team-file-ref?up=up-0003wait")), &g, &f))["wait"], true);
+    assert_eq!(handle(&with_cookie(get("/api/team-file-ref?up=../x")), &g, &f).status, 400);
+    assert_eq!(handle(&as_peer(with_cookie(get("/api/team-file-ref?up=up-0002done"))), &g, &f).status, 403);
+    // 말에 싣기 — 글 없이 파일만도 된다, 10장 넘거나 모양이 틀리면 400
+    let r = handle(&post("/api/team-say", r#"{"to":"room:r1","text":"","files":[{"id":"F1","name":"a.jpg","size":3}]}"#), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert!(f.calls().contains(&"team_say_files room:r1 [] 0 F1".to_string()), "{:?}", f.calls());
+    let eleven = (0..11).map(|i| format!(r#"{{"id":"F{i}","name":"a.jpg","size":3}}"#)).collect::<Vec<_>>().join(",");
+    assert_eq!(handle(&post("/api/team-say", &format!(r#"{{"to":"room:r1","text":"","files":[{eleven}]}}"#)), &g, &f).status, 400);
+    assert_eq!(handle(&post("/api/team-say", r#"{"to":"room:r1","text":"","files":[{"id":"","name":"a","size":3}]}"#), &g, &f).status, 400);
+    assert_eq!(handle(&post("/api/team-say", r#"{"to":"room:r1","text":"","files":[]}"#), &g, &f).status, 400, "빈 말");
+}
+
+#[test]
+fn tm_폰_팀_문서_열기는_맥이_풀어_준_자리를_폰_보기_길로_연다() {
+    // 11-06 사용자 "디엠 온 거 파일 볼 수가 없음" — id 로 풀어 자리를 받고, 그 자리는 /api/file 로 읽는다. 옆 파일은 그대로 막힌다
+    let d = std::env::temp_dir().join(format!("chammo-mhttp-teamdoc-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    let dir = d.join("team-locker-peek/t-1/대화 파일");
+    std::fs::create_dir_all(&dir).unwrap();
+    let d = std::fs::canonicalize(&d).unwrap();
+    let dir = d.join("team-locker-peek/t-1/대화 파일");
+    for n in ["회의.md", "옆.md", "시안.html"] {
+        std::fs::write(dir.join(n), "# 회의").unwrap();
+    }
+    let g = peer_gate("tm000006");
+    let f = Fake { data: d.clone(), ..Default::default() };
+    let enc = |p: &std::path::Path| percent_encoding::utf8_percent_encode(p.to_str().unwrap(), percent_encoding::NON_ALPHANUMERIC).to_string();
+    let md = dir.join("회의.md");
+    assert_eq!(handle(&with_cookie(get(&format!("/api/file?path={}", enc(&md)))), &g, &f).status, 403, "열기 전엔 막힌다");
+    let r = handle(&with_cookie(get("/api/team-file-open?team=t-1&id=doc-md")), &g, &f);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+    assert_eq!(v["path"], md.to_str().unwrap());
+    let o = handle(&with_cookie(get(&format!("/api/file?path={}", enc(&md)))), &g, &f);
+    assert_eq!(o.status, 200, "연 파일은 폰 보기 길로: {}", String::from_utf8_lossy(&o.body));
+    assert_eq!(o.body, "# 회의".as_bytes());
+    assert_eq!(handle(&with_cookie(get(&format!("/api/file?path={}", enc(&dir.join("옆.md"))))), &g, &f).status, 403, "옆 파일은 막힌다");
+    // html 은 풀어도 안 낸다(스크립트) · 받기 실패는 까닭째
+    assert_eq!(handle(&with_cookie(get("/api/team-file-open?team=t-1&id=doc-html")), &g, &f).status, 415);
+    assert_eq!(handle(&with_cookie(get(&format!("/api/file?path={}", enc(&dir.join("시안.html"))))), &g, &f).status, 403);
+    let e = handle(&with_cookie(get("/api/team-file-open?team=t-1&id=nope")), &g, &f);
+    assert_eq!((e.status, String::from_utf8_lossy(&e.body).into_owned()), (502, "그 파일이 없어".to_string()));
+    // 문지기는 팀 그림 길과 같다
+    let p = "/api/team-file-open";
+    for q in ["", "?team=t-1", "?id=AbC", "?team=t-1&id=a%2Fb", "?team=a%2Fb&id=AbC"] {
+        assert_eq!(handle(&with_cookie(get(&format!("{p}{q}"))), &g, &f).status, 400, "{q}");
+    }
+    assert_eq!(handle(&as_peer(with_cookie(get(&format!("{p}?team=t-1&id=doc-md")))), &g, &f).status, 403, "다른 기기 참모 열쇠로는 못 연다");
+    assert_eq!(handle(&set(with_cookie(get(&format!("{p}?team=t-1&id=doc-md"))), "authorization", None), &g, &f).status, 401);
+    assert_eq!(handle(&post(p, "{}"), &g, &f).status, 405);
+    let _ = std::fs::remove_dir_all(&d);
 }

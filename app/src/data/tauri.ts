@@ -1,5 +1,6 @@
 // Rust 커맨드 호출을 한 곳에 모은다. UI 는 이 파일만 알고, invoke 이름은 여기서만 쓴다.
 import { Channel, invoke } from '@tauri-apps/api/core';
+import { makeTailReader, type TailReply } from '../domain/tailCache';
 import type { Step as AppInstallStep } from '../domain/appInstall';
 import type { Features } from '../domain/config';
 import type { OrgPolicy } from '../domain/orgPolicy';
@@ -87,6 +88,13 @@ export const makeDir = (dir: string) => invoke<void>('make_dir', { dir });
 
 // ── 환경 점검(Rust setup.rs, 판단은 domain/setup.ts) ──
 export const checkEnv = () => invoke<import('../domain/setup').EnvCheck>('check_env');
+/** 맥 기본 도구(명령줄 도구 없는 맥에서 앱이 받는 파이썬·git, ADR 0027) */
+export const baseTools = () => invoke<{ needed: boolean; python: boolean; git: boolean; getter: string }>('base_tools');
+/** 첫 설치 '시작' = 폴더 동의 */
+export const trustConsent = (devRoot: string) => invoke<void>('trust_consent', { devRoot });
+export const trustConsented = () => invoke<boolean>('trust_consented');
+export const trustFolders = (devRoot: string, hqDir: string) => invoke<void>('trust_folders', { devRoot, hqDir });
+export const firstRunWindow = (on: boolean) => invoke<void>('first_run_window', { on });
 /** git 전역 이름·메일 저장 — 오류 'name'·'email' 은 틀린 칸, 그 밖은 git 이 낸 글 */
 export const setGitIdentity = (name: string, email: string) => invoke<void>('set_git_identity', { name, email });
 /** Claude Code 가 이 폴더(또는 위 폴더)를 믿나 — ~/.claude.json */
@@ -130,6 +138,8 @@ export function openPty(
 
 export const writePty = (id: number, data: string) => invoke<void>('pty_write', { id, data });
 /** 앱이 세션에 글 치기 — 조각마다 6ms, enterMs 면 쉬고 Enter. Rust 가 TYPE_LOCK 을 잡아 다른 치기 길과 안 섞인다(끝나면 풀린다) */
+/** 보내기 블랙박스 한 줄(notify.log chat-send) — 글 내용을 넣지 않는다 */
+export const chatSendLog = (line: string) => { void invoke<void>('chat_send_log', { line }).catch(() => {}); };
 export const typePty = (id: number, keys: string[], enterMs?: number) => invoke<void>('pty_type', { id, keys, enterMs: enterMs ?? null });
 export const resizePty = (id: number, cols: number, rows: number) => invoke<void>('pty_resize', { id, cols, rows });
 export const closePty = (id: number) => invoke<void>('pty_close', { id });
@@ -176,6 +186,10 @@ export const stopSession = (id: string, why: string) => invoke<string>('stop_ses
 export const appStoppedRecently = () => invoke<string[]>('app_stopped_recently');
 /** 최근 10분 안에 앱 밖(터미널·스크립트)에서 claude stop 으로 꺼진 세션 번호 — daemon.log(#6). 못 읽으면 빈 목록 */
 export const daemonStoppedRecently = () => invoke<string[]>('daemon_stopped_recently');
+/** daemon.log 전체에서 마지막 일이 claude stop 인 세션 번호 — 앱이 꺼져 있던 사이를 볼 때(seedRevive). 못 읽으면 예외 */
+export const daemonStoppedEver = () => invoke<string[]>('daemon_stopped_ever');
+/** Claude Code 새 판이 맥 폴더 권한 창 답을 기다리는 것 같으면 그 판·폴더(folder_prompt.rs) */
+export const claudeFolderPrompt = () => invoke<{ version: string; folder: 'desktop' | 'documents' } | null>('claude_folder_prompt');
 /** 세션을 끄고 목록에서도 지운다(claude stop + rm). 대화 기록 파일은 남는다 */
 export const removeSession = (id: string, why: string) => invoke<string>('remove_session', { id, why });
 
@@ -188,8 +202,7 @@ export const spawnLines = (sessionId: string, from: number) => invoke<{ lines: s
 /** 참모가 띄운 분신(Agent) 기록 꼬리 — ids = Agent 호출 tool_use id */
 export const subagentTails = (sessionId: string, ids: string[]) => invoke<{ toolUseId: string; agentId: string; mtime: number; tail: string }[]>('subagent_tails', { sessionId, ids });
 /** tail = 끝에서 몇 바이트(없으면 256KB) — 음성이 깨운 말을 못 찾을 때만 길게(DEEP_TAIL) */
-export const readTranscriptTails = (sessionIds: string[], tail?: number) =>
-  invoke<Record<string, string>>('read_transcript_tails', { sessionIds, tail });
+export const readTranscriptTails = makeTailReader((sessionIds, tail, known) => invoke<Record<string, TailReply>>('read_transcript_tails', { sessionIds, tail, known }));
 /** 깨운 말이 꼬리 밖일 때 다시 읽는 길이 — 그림 읽기 몇 번이면 256KB 가 2분 치였다(10-28 디자인 담당). 말 안 건 참모 답 하나에 한 번만 */
 export const DEEP_TAIL = 8 * 1024 * 1024;
 
@@ -239,6 +252,12 @@ export const readUsage = () => invoke<string>('read_usage');
 export const commitLog = (devRoot: string, author: string, since: string, until?: string) =>
   invoke<string>('commit_log', { devRoot, author, since, until: until ?? null });
 
+/** 저장소들 지문 — 그대로면 commit_log 답도 그대로다(프로세스 없이 stat 만). 모르면 빈 글 */
+export const reposTag = (devRoot: string) => invoke<string>('repos_tag', { devRoot });
+
+/** 오늘(since 밀리초 뒤) 보관함에 들어온 파일 수 — 보관함을 시작한 적 없으면 0(문서 폴더 권한 창을 안 띄운다) */
+export const lockerTodayFiles = (since: number) => invoke<number>('locker_today_files', { since });
+
 /** 다마고치 배틀용 GitHub Actions 실행 원문 (파싱은 domain/tama/sources.ts). since = YYYY-MM-DD */
 export const ciRuns = (devRoot: string, user: string, since: string) =>
   invoke<string>('ci_runs', { devRoot, user, since });
@@ -254,15 +273,9 @@ export const gachaPhoneReply = (key: string, reply: unknown) => invoke<void>('ga
 /** 다마고치 저장 파일 ~/.honor-orchestrator/tama.json (없으면 '') */
 export const readTama = () => invoke<string>('read_tama');
 export const writeTama = (json: string) => invoke<void>('write_tama', { json });
-/** 테두리 없는 위젯 창 끌어 옮기기 시작 */
-export const tamaDrag = () => invoke<void>('tama_drag');
-/** 위젯 보이기/숨기기. 인자 없이 부르면 지금 보이는지만 */
-export const tamaWidget = (visible?: boolean) => invoke<boolean>('tama_widget', { visible: visible ?? null });
-/** 위젯 → 메인 창 부탁. kind 를 주면 보내고(메인 창을 앞으로), 안 주면 온 부탁을 꺼낸다 */
-export const tamaRequest = (kind?: string) => invoke<string | null>('tama_request', { kind: kind ?? null });
 
 /** 세션별 컨텍스트 사용량 파일 원문들 (파싱은 domain/ctx.ts) */
-export const readCtx = () => invoke<string[]>('read_ctx');
+export const readCtx = (ids: string[]) => invoke<string[]>('read_ctx', { ids });
 
 /** 결정 대기함 답장·앱이 넘기는 줄([앱] …) — 세션에 잠깐 attach 해서 글자 + Enter.
  *  다 친 뒤 그 세션 채팅에 '보낸 말'로 알린다 — 모르는 글로 입력칸에 걸려 보이면 Enter 를 다시 넣지도, 간 뒤 지우지도 못했다(2026-10-10:
@@ -290,6 +303,22 @@ export const startupModes = (ids: string[]) => invoke<Record<string, string>>('s
 /** 프로젝트 이름 → HOLO MEMO 파일 내용(없으면 빈 문자열) */
 export const readMemos = (names: string[]) => invoke<Record<string, string>>('read_memos', { names });
 export const writeMemo = (name: string, content: string) => invoke<void>('write_memo', { name, content });
+/** 내 메모(<데이터>/notes) — 읽고 쓰기는 문서 페이지(read_doc_text·write_doc_text) */
+export const notesList = () => invoke<import('../domain/notes').NoteRow[]>('notes_list');
+export const notesNew = () => invoke<import('../domain/notes').NoteRow>('notes_new');
+/** 스킨·띄움·따로 창 — 바꿀 것만(notes/.meta.json) */
+export const notesMeta = (name: string, patch: { skin?: string; shown?: boolean; win?: boolean }) => invoke<import('../domain/notes').NoteRow>('notes_meta', { name, patch });
+export const notesTrash = (name: string) => invoke<void>('notes_trash', { name });
+export const notesReveal = (name: string) => invoke<void>('notes_reveal', { name });
+/** 따로 창 — name 이면 그 메모 창, 없으면 띄운 메모를 다 창으로(터미널 뷰·패널 '다 창으로') */
+export const notesWindowOpen = (name?: string) => invoke<void>('notes_window_open', { name: name ?? null });
+export const notesWindowClose = (dock: boolean) => invoke<void>('notes_window_close', { dock });
+export const notesWindowPin = (on: boolean) => invoke<void>('notes_window_pin', { on });
+export const notesWindowDrag = () => invoke<void>('notes_window_drag');
+export const notesWindowDouble = () => invoke<void>('notes_window_double');
+export const notesShare = (name: string) => invoke<void>('notes_share', { name });
+export const notesPaste = (text: string) => invoke<void>('notes_paste', { text });
+export const notesShareDone = (ok: boolean) => invoke<void>('notes_share_done', { ok });
 export const readLessons = (names: string[]) => invoke<Record<string, string>>('read_lessons', { names });
 /** base = 고치기 전에 읽은 글 — 그 뒤 덧붙은 교훈은 Rust 가 잠근 채 다시 읽어 남긴다 */
 export const writeLessons = (name: string, content: string, base?: string) => invoke<void>('write_lessons', { name, content, base: base ?? null });
@@ -421,8 +450,6 @@ export const sendTextToSession = (id: string, text: string) => invoke<void>('sen
 
 /** scripts/show 기록 꼬리 — 세션마다 보여 준 파일(domain/spaceNav shownFiles) */
 export const readShowLog = () => invoke<string>('read_show_log');
-/** 다마고치 '대화' 먹이 — 대화 기록 id 들에 사람이 건 말의 시각(`id\t시각` 줄, 새로 붙은 줄만 읽는다) */
-export const humanTurns = (sessionIds: string[]) => invoke<string>('human_turns', { sessionIds });
 /** space-log.jsonl 꼬리 — 다마고치 목욕·놀아주기 */
 export const readSpaceLog = () => invoke<string>('read_space_log');
 
@@ -470,6 +497,8 @@ export const mobileApi = {
 
 /** 익명 사용 통계 — 기능을 연 횟수·화면 오류 종류만 센다(Rust usage_counts, 설정에서 끄면 안 셈). 실패는 조용히 */
 export type UsageKind = 'office' | 'messenger' | 'craft' | 'webview';
+/** 화면이 ErrorBoundary 로 멈춘 한 줄을 notify.log 'ui-crash' 칸에(창 이름은 Rust 가 붙인다) */
+export const uiCrash = (message: string) => invoke<void>('ui_crash', { message });
 export const bumpUsage = (kind: UsageKind) => {
   invoke<void>('usage_bump', { kind }).catch(() => {});
 };

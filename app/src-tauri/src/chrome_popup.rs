@@ -48,6 +48,18 @@ const MIN_W: f64 = 300.0;
 const MIN_H: f64 = 200.0;
 /// 같은 창·안쪽 판단 여유(px)
 const SLACK: f64 = 2.0;
+/// 권한 풍선은 이만큼 작아도 잡는다 — 알림 권한 풍선 320x178(2026-11-08 실측)이 MIN_H 에 걸려 카드가 안 떴다
+const PERM_MIN_H: f64 = 150.0;
+
+/// 왼쪽 위 사이트 정보 자리에 붙은 권한 풍선 — 위에서 75·왼쪽에서 126·폭 320(위치·카메라·알림 다 같은 자리, 2026-10-11·11-08 실측)
+fn perm_bubble(d: Rect, b: Rect) -> bool {
+    d.y - b.y <= 120.0 && (-SLACK..=220.0).contains(&(d.x - b.x)) && (MIN_W..=420.0).contains(&d.w) && d.h >= PERM_MIN_H
+}
+
+/// 대화상자로 볼 만한 크기인가 — 보통은 MIN_W x MIN_H, 권한 풍선 자리면 더 낮아도
+fn sized(d: Rect, b: Rect) -> bool {
+    d.w >= MIN_W && (d.h >= MIN_H || perm_bubble(d, b))
+}
 
 /// 그 크롬(pid)이 브라우저 창 말고 사람을 부를 창을 브라우저 창 안쪽에 띄워 두었나. browsers = CDP 로 읽은 브라우저 창 자리들
 pub fn popup_open(wins: &[Win], pid: i32, browsers: &[Rect]) -> bool {
@@ -74,8 +86,8 @@ fn found(wins: &[Win], pid: i32, browsers: &[Rect]) -> Vec<(Rect, Kind)> {
 /// 브라우저 창 하나(b) 안에 뜬 사람을 부를 창들과 그 종류 — 브라우저 창(window.open 팝업도)은 빼고
 fn inside<'a>(wins: &'a [Win], pid: i32, b: Rect, browsers: &[Rect]) -> Vec<(&'a Win, Kind)> {
     wins.iter()
-        .filter(|w| w.pid == pid && w.layer == 0 && w.rect.w >= MIN_W && w.rect.h >= MIN_H && !browsers.iter().any(|x| same(*x, w.rect)))
-        .filter(|d| within(d.rect, b) && !omnibox_list(d.rect, b))
+        .filter(|w| w.pid == pid && w.layer == 0 && !browsers.iter().any(|x| same(*x, w.rect)))
+        .filter(|d| sized(d.rect, b) && within(d.rect, b) && !omnibox_list(d.rect, b))
         .filter_map(|d| Some((d, kind_of(d, b)?)))
         .collect()
 }
@@ -156,8 +168,8 @@ pub fn same_rect(a: Rect, b: Rect) -> bool {
 /// 평소엔 CDP 를 안 부른다 — 크롬은 브라우저 창 밖에 숨은 큰 창(500x500)을 늘 하나 두어 '큰 창 둘'로는 못 가른다(실측).
 /// 안쪽 창이 주소창 목록·주소창 풍선뿐이어도 안 묻는다 — 비밀번호 저장 풍선은 사람이 닫을 때까지 떠 있어 그동안 1초마다 CDP 에 붙었다(바깥 큰 창 = 브라우저 창, 자리가 CDP 와 같다)
 pub fn worth_asking(wins: &[Win]) -> bool {
-    let big: Vec<&Win> = wins.iter().filter(|w| w.layer == 0 && w.rect.w >= MIN_W && w.rect.h >= MIN_H).collect();
-    big.iter().any(|a| big.iter().any(|b| !same(a.rect, b.rect) && within(a.rect, b.rect) && !omnibox_list(a.rect, b.rect) && kind_of(a, b.rect).is_some()))
+    let big: Vec<&Win> = wins.iter().filter(|w| w.layer == 0 && w.rect.w >= MIN_W && w.rect.h >= PERM_MIN_H).collect();
+    big.iter().any(|a| big.iter().any(|b| b.rect.h >= MIN_H && !same(a.rect, b.rect) && sized(a.rect, b.rect) && within(a.rect, b.rect) && !omnibox_list(a.rect, b.rect) && kind_of(a, b.rect).is_some()))
 }
 
 fn same(a: Rect, b: Rect) -> bool {
@@ -414,6 +426,30 @@ mod tests {
             ws.push(named(x, y, ww, h, name));
             assert_eq!(popup_kind(&ws, P, &[MAIN]), Some(Kind::Window), "{name}");
         }
+    }
+
+    #[test]
+    fn 키가_작은_권한_풍선도_잡는다() {
+        // 2026-11-08 실측(크롬 베타, 시험 크롬 1200x800 (-2850,1000)) — 알림 권한 풍선은 320x178 이라 대화상자 최소 높이(200)에 걸려 '크롬 창' 카드가 안 떴고,
+        // 칸 입력(CDP)은 풍선을 못 눌러 거래소 알림 풍선이 그대로 남았다. 권한 풍선은 다 왼쪽 위 사이트 정보 자리(-2724,1075)에 폭 320 으로 붙는다
+        for name in [Some("http://127.0.0.1:54655에서 다음 권한을 요청합니다"), None] {
+            let mut ws = idle();
+            ws.push(Win { name: name.map(String::from), ..w(-2724.0, 1075.0, 320.0, 178.0) });
+            assert_eq!(popup_kind(&ws, P, &[MAIN]), Some(Kind::Window), "{name:?}");
+            assert!(worth_asking(&ws), "{name:?}");
+            assert_eq!(popup_hosts(&ws, P, &[MAIN]), vec![MAIN]);
+        }
+        // 같은 크기라도 그 자리가 아니면(페이지 가운데·오른쪽 주소창 풍선 자리) 아직 대화상자로 안 본다 — 자동 완성 목록 같은 작은 창
+        for (x, y) in [(-2474.0, 1300.0), (-2183.0, 1080.0)] {
+            let mut ws = idle();
+            ws.push(w(x, y, 320.0, 178.0));
+            assert_eq!(popup_kind(&ws, P, &[MAIN]), None, "{x},{y}");
+            assert!(!worth_asking(&ws), "{x},{y}");
+        }
+        // 그 자리여도 더 작은 것(번역 풍선 237x87·한 줄짜리)은 아니다
+        let mut ws = idle();
+        ws.push(w(-2724.0, 1075.0, 320.0, 120.0));
+        assert_eq!(popup_kind(&ws, P, &[MAIN]), None);
     }
 
     #[test]

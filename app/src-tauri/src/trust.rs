@@ -95,6 +95,49 @@ pub fn before_spawn(cwd: &str) {
     }
 }
 
+/// 첫 설치 '시작' 단추 = 프로젝트 폴더에서 일해도 된다는 동의 — 터미널 ↓·Enter 대신(ADR 0027). 기록만 남긴다, 믿음은 trust_folders 가 적는다
+#[tauri::command]
+pub async fn trust_consent(dev_root: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || save_consent(&real(&crate::config::expand(&crate::config::home(), &dev_root)))).await.map_err(|e| e.to_string())
+}
+
+/// 시작을 눌렀나 — 껐다 켜면 준비부터(이어 하기). 브라우저 저장소에 두면 데이터 폴더를 지우고 다시 깔아도 남아 동의 없이 넘어갔다(11-05 실측)
+#[tauri::command]
+pub async fn trust_consented() -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(|| consent_root().is_some()).await.map_err(|e| e.to_string())
+}
+
+/// 첫 설치 — 프로젝트 폴더(+바로 아래 git 저장소 칸)와 작업 폴더를 믿음으로 적는다. claude 를 한 번도 안 켠 맥엔 ~/.claude.json 이 없다
+#[tauri::command]
+pub async fn trust_folders(dev_root: String, hq_dir: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = crate::config::home();
+        let path = &crate::tools::cfg().json;
+        if !path.exists() {
+            std::fs::write(path, "{}\n").map_err(|e| e.to_string())?;
+        }
+        let dev = real(&crate::config::expand(&home, &dev_root));
+        save_consent(&dev);
+        write(&folder_keys(&claude_json(), &dev, &real(&crate::config::expand(&home, &hq_dir)))).map(|_| ())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 첫 설치에 적을 칸 — 프로젝트 폴더·작업 폴더·프로젝트 폴더 바로 아래 저장소
+fn folder_keys(text: &str, dev: &str, hq: &str) -> Vec<String> {
+    let mut keys = vec![dev.to_string(), hq.to_string()];
+    keys.extend(repo_keys(text, dev));
+    keys.dedup();
+    keys
+}
+
+/// 앱이 만든 폴더 — 사용자가 믿은 프로젝트 폴더 밖이라 그 칸만 앱이 적는다. 사용자 파일은 없다
+#[cfg_attr(not(pro), allow(dead_code))]
+pub fn grant_app_dir(cwd: &str) -> Result<(), String> {
+    write(&[real(cwd)]).map(|_| ())
+}
+
 /// 주기 점검(프로젝트 폴더가 잘 읽힐 때) — 사용자가 프로젝트 폴더를 믿은 걸 보면 동의로 남기고,
 /// 동의한 폴더의 믿음이 지워졌으면 다시 적는다. 그 아래 git 저장소(있던 것·clone)는 칸을 따로 적는다(repo_keys)
 pub fn sweep(dev_root: &str) {
@@ -163,6 +206,25 @@ fn sweep_due(now: std::time::Instant) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 첫_설치_칸은_두_폴더와_바로_아래_저장소() {
+        let d = std::env::temp_dir().join(format!("chammo-trust-first-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("repo/.git")).unwrap();
+        std::fs::create_dir_all(d.join("plain")).unwrap();
+        let dev = d.to_string_lossy().replace('\\', "/");
+        let keys = folder_keys("{}", &dev, "/data/hq");
+        assert_eq!(keys[0], dev);
+        assert_eq!(keys[1], "/data/hq");
+        assert_eq!(keys.len(), 3, "{keys:?}");
+        assert!(keys[2].ends_with("/repo"));
+        // ~/.claude.json 이 빈 객체여도 믿음이 적힌다
+        let out = grant("{}\n", &keys).unwrap().unwrap();
+        for k in &keys {
+            assert!(crate::setup::trusted_exact(&out, k), "{k}");
+        }
+    }
 
     #[test]
     fn 주기_점검_쓰기는_10분에_한_번() {

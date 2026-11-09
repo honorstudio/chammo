@@ -22,6 +22,8 @@ Craft 앱(ArtCraft 오픈소스)을 고치지 않은 원본 그대로 앱 안에
   scripts/craft do <app> <method> ['<json>']              — a raw control-channel call (app.open, ui.inspect …) / 채널 명령 그대로
   scripts/craft shot <app> [--out <png>]  ·  close <app>  ·  status   — window picture / save if changed, then quit (closes the port) / what's open
   scripts/craft open <app> --native <file>  — open a file of the person's; on close it is saved back there (+ a layered .psd beside it)
+      if the app doesn't actually write it, the original is left alone: the edits go to '<name> (고친 판).<app format>' beside it, or the app stays open (exit 1) —
+      export them, then close <app> --no-save / 앱이 안 쓰면 원본은 그대로, 고친 판은 옆 새 파일로·못 쓰면 앱을 남겨 둠
                                      / 사람 파일 열기 — 닫을 때 그 자리에 저장(+ 옆에 레이어 살린 PSD)
   scripts/craft save <app>             — save if changed, keep the app open / 끄지 않고 저장만
   scripts/craft dialog <app> [close]   — the open dialog (kind, text) / close it whatever the app calls it / 떠 있는 대화창 보기·닫기(앱마다 다른 메서드를 알아서)
@@ -100,6 +102,24 @@ class FetchError(CraftError):
 
 class BusyError(CraftError):
     """앱이 떠 있어서 못 바꿈 — 저절로 새 판(auto_update)은 이걸 실패로 치지 않는다(끄고 다시 열면 바뀐다)"""
+
+
+class NotSaved(CraftError):
+    """앱 저장 명령이 작업 폴더 파일을 안 썼다(옵션 창만 띄움·조용히 실패) — 그 원본은 안 덮었다.
+    saved = 그래도 옮긴 자리, failed = [(작업 폴더 이름, 옮길 자리)]"""
+
+    def __init__(self, msg, saved=(), failed=()):
+        super().__init__(msg)
+        self.saved, self.failed = list(saved), list(failed)
+
+
+class CloseResult(str):
+    """close 가 찍을 한 줄 — ok=False 면 앱을 안 끄고 남겨 뒀다(고친 걸 못 건져서)"""
+
+    def __new__(cls, text, ok=True):
+        r = super().__new__(cls, text)
+        r.ok = ok
+        return r
 
 
 def data_dir(home=None, env=None, exists=os.path.isdir):
@@ -721,7 +741,9 @@ NATIVE = {
                      save='app.save', ext='.psd'),
     'wordcraft': _n('key', 'WORDCRAFT_PROFILE_DIR', save='file.saveAs', ext='.docx', extra=[_AS + 'WordCraft']),
     'pdfcraft': _n('file', save='file.save', ext='.pdf', extra=[_AS + 'PdfCraft']),
-    'vectorcraft': _n(env='VECTORCRAFT_CONFIG_DIR', roots='rw', save='file.saveAs', ext='.vectorcraft'),
+    # 참모 벡터는 file.save + path — file.saveAs 는 .svg 자리면 SVG 옵션 창만 띄우고 {pending} 으로 답해 아무것도 안 썼다(11-05 0.13.8).
+    # file.save 는 문서가 기억한 옵션으로 바로 쓴다(답은 {background: true} — 뒤에서 쓰니 saved_in_time 이 기다린다)
+    'vectorcraft': _n(env='VECTORCRAFT_CONFIG_DIR', roots='rw', save='file.save', ext='.vectorcraft'),
     'effectcraft': _n(env='EFFECTCRAFT_CONFIG_DIR', save='file.saveAs', ext='.ecproj'),  # 0.10 은 --automation-read-root 를 몰라 안 뜬다
     'lightcraft': _n(env='LIGHTCRAFT_CONFIG_DIR', args=['--library', '{dir}/library']),
     'designcraft': _n(env='DESIGNCRAFT_CONFIG_DIR', save='file.saveAs', ext='.dcdoc'),
@@ -1317,6 +1339,42 @@ def save_call(app, work, name):
     if app == 'pdfcraft':
         return 'ui.command', {'id': cmd}  # 메뉴 명령 — 제자리 저장
     return 'engine.execute', {'command': cmd, 'params': {'path': os.path.join(work, name)}}
+
+
+SAVE_WAIT = 5.0  # 앱 저장 뒤 작업 폴더 파일이 새로 쓰이길 기다리는 초(참모 벡터 file.save 는 뒤에서 쓴다)
+SAVE_SETTLE = 60.0  # 쓰기 시작한 파일이 다 쓰이길(크기·시각이 멈추길) 기다리는 최대 초
+
+
+def _stamp(path):
+    """파일 도장(시각 ns·크기·inode) — 없으면 None. 앱이 다시 쓰면(제자리든 바꿔 끼우기든) 달라진다"""
+    try:
+        s = os.stat(path)
+    except OSError:
+        return None
+    return (s.st_mtime_ns, s.st_size, s.st_ino)
+
+
+def saved_in_time(path, before, reply=None, wait=None):
+    """앱 저장 명령 뒤 — path 가 새로 쓰였나(없던 게 생겼거나 도장이 바뀜). 앱이 '저장'이라 답해도 안 쓸 수 있다:
+    옵션·확인 창만 띄우면 답이 {pending}(11-05 참모 벡터 .svg), 조용히 실패하면 파일이 그대로. 뒤에서 쓰는 앱은 wait 초까지 기다리고,
+    쓰기 시작했으면 크기·시각이 0.2초 멈출 때까지(반쯤 쓴 파일을 사람 자리에 옮기지 않게). 못 믿으면 False — 그땐 원본을 안 덮는다"""
+    if isinstance(reply, dict) and reply.get('pending'):
+        return False
+    end = time.time() + (SAVE_WAIT if wait is None else wait)
+    while True:
+        now = _stamp(path)
+        if now and now != before:
+            settle = time.time() + SAVE_SETTLE
+            while time.time() < settle:
+                time.sleep(0.2)
+                again = _stamp(path)
+                if again == now:
+                    return True
+                now = again
+            return False  # 아직도 쓰는 중 — 반쪽일 수 있다
+        if time.time() >= end:
+            return False
+        time.sleep(0.1)
 
 
 def quit_method(app):
@@ -2708,17 +2766,34 @@ def autosave(ddir, app, st):
         ours = {r.get('path') for r in recent(ddir) if r.get('saved')}  # 우리가 저장해 둔 자리 — 옆 PSD 는 다시 쓸 수 있다
         ext = spec.get('ext') or '.psd'
         plan = close_plan(doc, st.get('sources') or {}, st.get('saveDir'), work, ours, ext)
+        failed, why = [], ''
         for name, dest in plan:
             here = os.path.join(work, name)
             if os.path.abspath(dest) == os.path.abspath(here) and os.path.isfile(here):
                 keep_copy(here)  # --work 가 사람 파일 폴더면 앱 저장이 그 파일을 바로 덮는다
+            before = _stamp(here)
             m, p = save_call(app, work, name)
-            c.call(m, p)
+            try:
+                r = c.call(m, p)
+            except CraftError as e:  # 앱이 저장을 거절(편집 중·쓰기 오류) — 끄면 고친 게 사라지니 '안 쓰임'으로 건지기·남겨 두기에
+                failed.append((name, dest))
+                why = why or f'the app refused / 앱이 거절: {e}'
+                continue
+            # 앱 답만 믿지 않는다 — 안 쓰였으면 작업 폴더엔 열 때 사본이 그대로라, 옮기면 사람이 고친 게 원본째 사라진다(11-05)
+            if not saved_in_time(here, before, r):
+                failed.append((name, dest))
+                why = why or (f'it opened the {r["pending"]} dialog instead / 저장 대신 {r["pending"]} 창을 띄움'
+                              if isinstance(r, dict) and r.get('pending') else f'no change to the file in {SAVE_WAIT:g}s / {SAVE_WAIT:g}초 안에 파일이 안 바뀜')
+                if isinstance(r, dict) and r.get('pending'):
+                    with contextlib.suppress(CraftError):  # 띄운 창은 닫아 둔다 — 다음 명령(건지기·끄기)을 붙잡지 않게
+                        close_dialog(lambda mm, q=None: c.call(mm, q) if q is not None else c.call(mm))
     finally:
         c.close()
     out = []
     fresh = not (st.get('sources') or {}).get(doc.get('name') or '')
     for name, dest in plan:
+        if (name, dest) in failed:
+            continue  # 원본은 그대로 — 열 때 사본으로 덮지 않는다
         here = os.path.join(work, name)
         if fresh and os.path.isfile(here):
             # 앱이 되살린 지난 문서를 안 고치고 닫았다 — 우리가 써 둔 것과 같으면 한 벌 더 만들지 않는다(앱 저장이 작업 폴더에 바로 썼으면 그 사본만 지운다)
@@ -2737,20 +2812,68 @@ def autosave(ddir, app, st):
     src = set((st.get('sources') or {}).values())
     add_recent(ddir, base(app), [p for p in out if p in src])
     add_recent(ddir, base(app), [p for p in out if p not in src], saved=True)
+    if failed:
+        where = ', '.join(d for _, d in failed)
+        raise NotSaved(f'could not save / 저장 못 함 — {display(app)} did not write {", ".join(n for n, _ in failed)}: {why}. '
+                       f'Left as is / 그대로 둠: {where}', out, failed)
     return out
 
 
-def close_native(ddir, app, st):
-    """닫기 — 바뀐 게 있으면 저장하고, 저장이 실패해도 끄기는 끝까지(무인증 포트가 열린 채 남지 않게, 10/16 craft-smoke). 찍을 한 줄을 돌려준다"""
-    note = ''
+def rescue_save(ddir, app, st, failed):
+    """원래 형식으로 못 쓴 문서를 앱 자기 형식(.vectorcraft·.psd …)으로 새 이름에 — 원본 옆(새 문서면 저장 자리)에, 아무것도 안 덮고.
+    옮긴 자리, 이것도 못 쓰면 None. PDF 는 제자리 저장뿐이라 건질 길이 없다"""
+    ext = (NATIVE.get(base(app)) or {}).get('ext')
+    if not ext or base(app) == 'pdfcraft' or not failed:
+        return None
+    work = st.get('work') or '.'
+    name0, dest0 = failed[0]
+    here = free_name(os.path.join(work, f'{os.path.splitext(name0)[0]} (고친 판){ext}'))
+    name = os.path.basename(here)
+    before = _stamp(here)  # 보통 None(새 이름) — 부르기 전에 찍는다
+    c = Channel(st)
     try:
-        saved = autosave(ddir, app, st)
-        note = ' — saved / 저장: ' + ', '.join(saved) if saved else ''
-    except (CraftError, OSError) as e:
-        note = f' — could not save / 저장 못 함: {e}'
+        m, p = save_call(app, work, name)
+        r = c.call(m, p)
+        ok = saved_in_time(here, before, r)
+        if not ok and isinstance(r, dict) and r.get('pending'):
+            with contextlib.suppress(CraftError):
+                close_dialog(lambda mm, q=None: c.call(mm, q) if q is not None else c.call(mm))
+    finally:
+        c.close()
+    if not ok:
+        return None
+    dest = free_name(os.path.join(os.path.dirname(dest0), name))
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    _copy_over(here, dest)
+    add_recent(ddir, base(app), [dest], saved=True)
+    return dest
+
+
+def close_native(ddir, app, st, save=True):
+    """닫기 — 바뀐 게 있으면 저장하고 끈다. 찍을 한 줄(CloseResult)을 돌려준다.
+    앱이 저장 명령에 파일을 안 썼으면(NotSaved) 원본은 그대로 두고 고친 판을 앱 형식 새 파일로 건진 뒤 끈다 — 그것도 못 쓰면
+    끄지 않고 남겨 둔다(끄면 사람이 고친 게 사라진다, 11-05). 그 밖의 저장 실패(채널·디스크)는 끄기를 끝까지(무인증 포트가 열린 채 남지 않게, 10/16 craft-smoke).
+    save=False(close --no-save) = 저장 없이 끄기 — 남겨 둔 앱을 내보낸 뒤 끌 때"""
+    note = ''
+    if save:
+        try:
+            saved = autosave(ddir, app, st)
+            note = ' — saved / 저장: ' + ', '.join(saved) if saved else ''
+        except NotSaved as e:
+            try:
+                kept = rescue_save(ddir, app, st, e.failed)
+            except (CraftError, OSError):
+                kept = None
+            if not kept:
+                return CloseResult(f'{display(app)}: left open / 안 끄고 남겨 둠 — {e} — kept running so the edits are not lost: export them '
+                                   f'(scripts/craft run {app} document.export …), then scripts/craft close {app} --no-save / '
+                                   f'고친 걸 잃지 않게 앱을 그대로 둠 — 내보내기로 빼 둔 뒤 --no-save 로 끄기', ok=False)
+            note = f' — {e} — kept the edits as a new file / 고친 판은 새 파일로: {kept}' + (f' · saved / 저장: {", ".join(e.saved)}' if e.saved else '')
+        except (CraftError, OSError) as e:
+            note = f' — could not save / 저장 못 함: {e}'
     window_line(ddir, 'close', app)
     stop_app(ddir, app, st)
-    return f'{display(app)}: closed / 껐음{note}'
+    return CloseResult(f'{display(app)}: closed / 껐음{note}')
 
 def eject_save(app, doc_name):
     """꺼내기 전에 저장할 자리(작업 폴더 기준) — 지금은 PhotoCraft 만(PSD 로 레이어째)"""
@@ -3172,8 +3295,10 @@ def native_cmd(ddir, cmd, rest):
         who = session_name(owner)
         raise CraftError(f'{display(app)} belongs to {who} / {who} 세션 것 — 내 것은 scripts/craft open {base_app} --native 로 따로, 남의 창에 쓰려면 --force')
     if cmd == 'close':
-        print(close_native(ddir, app, st))  # 묻지 않고 저장 후 닫기 — 저장이 실패해도 끈다
-        return 0
+        # 묻지 않고 저장 후 닫기 — 앱이 안 써서 못 건졌으면 남겨 두고 1(--no-save = 저장 없이 끄기)
+        r = close_native(ddir, app, st, save='--no-save' not in rest)
+        print(r)
+        return 0 if getattr(r, 'ok', True) else 1
     if cmd == 'save':
         # 끄지 않고 저장만(앱을 끌 때 사람 화면에 꺼내 둔 앱) — 바뀐 게 없으면 아무것도 안 한다
         saved = autosave(ddir, app, st)
@@ -3341,7 +3466,10 @@ def eject(ddir, app, st):
         save = eject_save(app, doc.get('name', ''))
         if save is None:
             raise CraftError(f'{display(app)}: pop out is PhotoCraft-only for now / 꺼내기는 아직 PhotoCraft 만')
-        c.call('app.save', save)
+        here = os.path.join(st.get('work') or '.', save['path'])
+        before = _stamp(here)
+        if not saved_in_time(here, before, c.call('app.save', save)):  # 안 쓰였는데 끄면 다시 열 때 옛 파일 — 고친 게 사라진다
+            raise CraftError(f'{display(app)}: could not save before popping out, left as is / 꺼내기 전 저장이 안 돼 그대로 둠')
     finally:
         c.close()
     window_line(ddir, 'close', app)

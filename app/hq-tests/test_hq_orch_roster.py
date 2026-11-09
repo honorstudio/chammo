@@ -201,6 +201,43 @@ class HqSession(unittest.TestCase):
         self.assertFalse(self.hq({'cwd': 'C:/Users/me/dev/shop'}, cfg={'hqDir': 'C:\\Users\\me\\.chammo\\hq'}))
 
 
+class OnlyForHqSessions(unittest.TestCase):
+    """이름표(매 지시 ~1,100자)는 HQ 에서 띄운 참모에게만 — 앱 고치는 워크트리·프로젝트 세션엔 안 붙인다(2026-11-06 훅 다이어트).
+    가리다 실패하면 예전처럼 붙인다 — 훅은 어떤 경우에도 종료 0"""
+
+    def run_hook(self, inp):
+        import subprocess, tempfile
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, 'config.json'), 'w', encoding='utf-8') as f:
+                json.dump({'assistantName': '참모', 'hqDir': '/d/hq', 'devRoot': '/d/dev'}, f)
+            with open(os.path.join(d, 'live.json'), 'w', encoding='utf-8') as f:
+                json.dump({'sessions': AGENTS}, f)
+            r = subprocess.run([sys.executable, str(SCRIPTS / 'orch-roster')], input=json.dumps(inp), capture_output=True, text=True, timeout=20,
+                               env={'CHAMMO_HOME': d, 'HOME': d, 'PATH': '/usr/bin:/bin'})
+            return r.returncode, r.stdout
+
+    T = staticmethod(lambda folder: f'/home/u/.claude/projects/{folder}/0000-aaaa.jsonl')
+
+    def test_HQ_참모에겐_붙인다(self):
+        code, out = self.run_hook({'session_id': 'sid-1', 'transcript_path': self.T('-d-hq'), 'cwd': '/d/hq'})
+        self.assertEqual(code, 0)
+        self.assertIn('너 = 참모 · 뽀삐', out)
+
+    def test_워크트리_프로젝트_세션엔_안_붙인다(self):
+        for inp in ({'session_id': 'x', 'transcript_path': self.T('-d-hq--claude-worktrees-fix-a'), 'cwd': '/d/hq/.claude/worktrees/fix-a'},
+                    {'session_id': 'x', 'transcript_path': self.T('-d-dev-alpha-shop'), 'cwd': '/d/dev/alpha-shop'}):
+            with self.subTest(inp['cwd']):
+                self.assertEqual(self.run_hook(inp), (0, ''))
+
+    def test_못_가리면_예전처럼_붙이고_이상한_입력에도_종료_0(self):
+        code, out = self.run_hook({'session_id': 'sid-1'})
+        self.assertEqual(code, 0)
+        self.assertIn('참모 이름표', out)
+        with mock.patch.object(roster, 'hq_session', side_effect=RuntimeError('x')):
+            self.assertTrue(roster.wants_roster({'cwd': '/d/dev/x'}, {}, '/data', {}))
+        self.assertEqual(self.run_hook(['배열'])[0], 0)
+
+
 class LiveFallback(unittest.TestCase):
     def test_claude_agents_가_늦으면_앱_세션_목록으로(self):
         import json, os, tempfile, subprocess as sp

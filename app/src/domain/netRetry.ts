@@ -6,10 +6,10 @@
 export const RETRY_DELAYS_MS = [500, 1500, 2000, 3000] as const;
 
 /** 잠깐 끊김인가 — fetch 망 오류·터널이 낸 오류(둘 다 TypeError, 컴퓨터 꺼짐 OfflineError 도 이것을 잇는다).
- *  끊기(AbortError)·서버 답 오류(Error)·열쇠 없음은 아니다 */
+ *  끊기(AbortError)·서버 답 오류(Error)·열쇠 없음·연결이 풀림(TrustError — 다시 해도 소용없다)은 아니다 */
 export function isTransient(e: unknown): boolean {
   if (!(e instanceof TypeError)) return false;
-  return e.name !== 'AbortError';
+  return e.name !== 'AbortError' && e.name !== 'TrustError';
 }
 
 /** 다시 보내도 되는 요청인가 — 메서드가 없거나 GET·HEAD */

@@ -82,3 +82,92 @@ fn 로컬_중계_팀_보관함_끝까지() {
     assert_eq!(ve.items.iter().find(|i| i.id == r.id).unwrap().name, "견적서 확정.pdf");
     eprintln!("끝 — 팀 {team}, 파일 {}·{}", r.id, f.id);
 }
+
+// ── 올리기 잇기(11-04 18:18 와이파이가 바뀌자 파일 통째 실패) — 진짜 중계·진짜 망 길. 돌리는 쪽이 중계를 끄고 켠다 ──
+
+/// 팀 하나 + 조각 n 개짜리 파일
+fn one_team(tag: &str, parts: usize) -> (PathBuf, crate::accounts_store::fake::Fake, String, PathBuf, Vec<u8>) {
+    let server = base().unwrap();
+    let run = now();
+    let (d, k) = login(tag, &server, &format!("{tag}-{run}"), "사용자");
+    start(&d, &k);
+    relay::create(&d, &k, &Curl, "", &format!("잇기 {run}"), "사용자", "mac").unwrap();
+    let team = relay::load_state(&d).team_id.clone();
+    let body = bytes(crate::team_locker::CHUNK * parts - 100, 3);
+    let src = dir(&format!("{tag}-work")).join("큰 영상.mp4");
+    std::fs::write(&src, &body).unwrap();
+    (d, k, team, src, body)
+}
+
+/// 올리는 줄을 지켜보며 본 까닭(note)을 모은다. cut 이 있으면 30% 를 넘을 때 그 파일을 만들어 돌리는 쪽에 알린다
+fn watch(team: &str, cut: Option<String>) -> (std::sync::Arc<std::sync::atomic::AtomicBool>, std::thread::JoinHandle<Vec<String>>) {
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (s2, team) = (stop.clone(), team.to_string());
+    let h = std::thread::spawn(move || {
+        let (mut seen, mut told) = (Vec::new(), false);
+        while !s2.load(std::sync::atomic::Ordering::Relaxed) {
+            for u in uploads(&team) {
+                if !u.note.is_empty() && seen.last() != Some(&u.note) {
+                    eprintln!("[{}] {} — {}/{}", crate::team_relay::now_ms(), u.note, u.done, u.total);
+                    seen.push(u.note.clone());
+                }
+                if let Some(c) = cut.as_ref().filter(|_| !told && u.total > 0 && u.done * 10 >= u.total * 3) {
+                    std::fs::write(c, b"cut").unwrap();
+                    told = true;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        seen
+    });
+    (stop, h)
+}
+
+#[test]
+#[ignore]
+fn 로컬_중계_올리는_중에_중계가_끊겨도_같은_조각부터_이어_올린다() {
+    // 돌리는 쪽: CHAMMO_LIVE_CUT 파일이 생기면 wrangler 를 끄고 몇 초 뒤 같은 데이터로 다시 켠다
+    let Some(_) = base() else { return eprintln!("CHAMMO_E2E_LIVE 없음 — 건너뜀") };
+    let (d, k, team, src, body) = one_team("lk-cut", 40);
+    let (stop, h) = watch(&team, std::env::var("CHAMMO_LIVE_CUT").ok());
+    let began = std::time::Instant::now();
+    let r = relay::as_human(|| put_file_in(&d, &k, &Curl, &team, "", "file", "영상", &src));
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let seen = h.join().unwrap();
+    eprintln!("올리기 {:?} · 까닭 {seen:?} · {:?}", began.elapsed(), r.as_ref().map(|f| f.size));
+    let r = r.unwrap();
+    assert!(seen.iter().any(|n| n == "net"), "끊긴 걸 봤어야 한다 {seen:?}");
+    assert!(uploads(&team).is_empty(), "끝나면 줄이 사라진다");
+    let got = relay::as_human(|| fetch_to(&d, &k, &Curl, &team, &r.id, &dir("lk-cut-down"))).unwrap();
+    assert_eq!(std::fs::read(&got).unwrap(), body, "이어 올린 파일이 같은 바이트");
+}
+
+#[test]
+#[ignore]
+fn 로컬_중계_칸이_차면_칸이_넘어갈_때까지_기다렸다_끝까지_올린다() {
+    // 최대 10분 남짓 걸린다. 칸(300)을 사람 요청으로 다 채운 뒤 올린다
+    let Some(server) = base() else { return eprintln!("CHAMMO_E2E_LIVE 없음 — 건너뜀") };
+    let (d, k, team, src, body) = one_team("lk-busy", 2);
+    let st = relay::load_state(&d);
+    let keys = relay::device_keys(&k, &st).unwrap();
+    let mut n = 0;
+    let filled = relay::as_human(|| loop {
+        let (c, _) = relay::call(&Curl, &server, &keys, Some(&st.device_id), "GET", "/v0/me", None).unwrap();
+        n += 1;
+        if c == 429 || n > 400 {
+            break c;
+        }
+    });
+    eprintln!("칸 채움: {n}번째에 {filled}");
+    assert_eq!(filled, 429);
+    let (stop, h) = watch(&team, None);
+    let began = std::time::Instant::now();
+    let r = relay::as_human(|| put_file_in(&d, &k, &Curl, &team, "", "file", "", &src));
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let seen = h.join().unwrap();
+    eprintln!("올리기 {:?} · 까닭 {seen:?}", began.elapsed());
+    let r = r.unwrap();
+    assert!(seen.iter().any(|n| n == "busy"), "{seen:?}");
+    let got = relay::as_human(|| fetch_to(&d, &k, &Curl, &team, &r.id, &dir("lk-busy-down"))).unwrap();
+    assert_eq!(std::fs::read(&got).unwrap(), body);
+}

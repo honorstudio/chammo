@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deskTarget, homeDeskTarget, homeOfficeOrch, navPick, OFFICE, officePick, rememberSide, sheetBack, sheetOpen, showPick, spaceView, startPick } from './spaceOffice';
+import { charDot, deskAction, deskTarget, homeDeskTarget, homeOfficeOrch, navPick, OFFICE, officePick, rememberSide, sheetBack, sheetOpen, showPick, spaceView, startPick } from './spaceOffice';
 
 describe('officePick — 스페이스 머리 두 아이콘(사무실 / 스페이스)', () => {
   it('사무실을 켜면 보던 화면을 기억해 둔다', () => {
@@ -150,4 +150,26 @@ describe('homeDeskTarget — 홈 안에서 연 사무실의 책상 (2026-10-25 �
     expect(homeDeskTarget('o2', ['o1', 'o2'])).toEqual({ orch: 'o2' });
   });
   it('세션 책상은 홈 안 사무실 위 창', () => expect(homeDeskTarget('s9', ['o1'])).toEqual({ sheet: 's:s9' }));
+});
+
+describe('deskAction — 방에서 참모를 누르면 그 참모 캐릭터 고르기(11-09 사용자 "캐릭터 선택 어떻게 하는 거임?")', () => {
+  const o = { orchIds: ['o1', 'o2'], offIds: ['o3'], chars: true };
+  it('켜진 참모 = 캐릭터 고르기, 꺼진 참모 = 깨우기, 세션 = 원래 길', () => {
+    expect(deskAction('o1', o)).toBe('char');
+    expect(deskAction('o3', o)).toBe('wake');
+    expect(deskAction('s1', o)).toBe('open');
+  });
+  it('뽑기를 끈 앱은 참모도 원래 길', () => {
+    expect(deskAction('o1', { ...o, chars: false })).toBe('open');
+  });
+});
+
+describe('charDot — 이 사무실을 연 참모가 캐릭터를 안 정했으면 자기 캐릭터에 점', () => {
+  const orchs = [{ id: 'o1', name: '참모' }, { id: 'o2', name: '참모-2' }];
+  it('안 정했으면 그 책상, 정했거나 모르는 참모면 없음', () => {
+    expect(charDot('o2', orchs, (n) => n === '참모')).toBe('o2');
+    expect(charDot('o1', orchs, (n) => n === '참모')).toBeNull();
+    expect(charDot(undefined, orchs, () => false)).toBeNull();
+    expect(charDot('x', orchs, () => false)).toBeNull();
+  });
 });

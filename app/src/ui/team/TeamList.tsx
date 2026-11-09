@@ -22,7 +22,7 @@ function Row({ c, sel, onPick, onMenu, now }: { c: Convo; sel: string | null; on
   );
 }
 
-export function TeamList({ convos, rooms = [], sel, onPick, onMenu, onInvite, onNewRoom, roomsHint }: {
+export function TeamList({ convos, rooms = [], sel, onPick, onMenu, onInvite, onNewRoom, roomsHint, mine }: {
   convos: Convo[];
   /** 단톡방(roomConvos) — 없으면 방 묶음을 안 그린다(폰 옛 화면) */
   rooms?: Convo[];
@@ -36,6 +36,8 @@ export function TeamList({ convos, rooms = [], sel, onPick, onMenu, onInvite, on
   onNewRoom?: () => void;
   /** 팀챗이 하나도 없을 때 한 줄 더 — '전체'를 팀장 앱이 아직 안 만들었을 때(domain/teamAllRoom allRoomPending) */
   roomsHint?: string;
+  /** DM 묶음 맨 위 줄 — 공개 빌드엔 없다. 폰·따로 창은 아직 없음 */
+  mine?: { on: boolean; onPick: () => void; title: string; sub: string };
 }) {
   const now = Date.now();
   const [fold, setFold] = useState<{ rooms?: boolean; people?: boolean }>({});
@@ -57,6 +59,12 @@ export function TeamList({ convos, rooms = [], sel, onPick, onMenu, onInvite, on
       {showRooms && !fold.rooms && rooms.map((c) => <Row key={c.key} c={c} sel={sel} onPick={onPick} onMenu={onMenu} now={now} />)}
       {showRooms && !fold.rooms && !rooms.length && <div className="tmx-none tmx-sm">{roomsHint ?? tr('아직 팀챗이 없어요', 'No team chats yet')}</div>}
       {showRooms && head('people', tr('DM', 'DMs'))}
+      {!fold.people && mine && (
+        <button className={`tmx-li ${mine.on ? 'on' : ''}`} onClick={mine.onPick} aria-current={mine.on || undefined}>
+          <span className="tag-face" aria-hidden="true" />
+          <span className="tmx-tx"><b>{mine.title}</b><span>{mine.sub}</span></span>
+        </button>
+      )}
       {!fold.people && convos.map((c) => <Row key={c.key} c={c} sel={sel} onPick={onPick} onMenu={onMenu} now={now} />)}
     </>
   );

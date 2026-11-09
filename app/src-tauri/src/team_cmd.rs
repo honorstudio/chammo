@@ -7,6 +7,10 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::Path;
 
+/// 공식 설치 파일에만 있는 동사를 공개 소스 빌드에서 불렀을 때
+#[cfg(not(pro))]
+const NOT_IN_THIS_BUILD: &str = "이 판에는 없는 기능이에요 — 공식 설치 파일에 있어요 / Not in this build — it comes with the official installer";
+
 pub struct TeamReq {
     pub id: String,
     pub verb: String,
@@ -24,7 +28,7 @@ pub fn request(line: &str) -> Option<TeamReq> {
     }
     let verb = v["arg"]["verb"].as_str()?;
     // use·leave·kick·role 은 answer 에 있었는데 여기 빠져 앱이 버렸다(QA 5). leave·kick·role 은 answer 가 --yes(사용자 말) 없이는 안 한다
-    matches!(verb, "status" | "create" | "invite" | "join" | "members" | "use" | "leave" | "kick" | "role" | "say" | "inbox" | "deliver-to" | "forget" | "logout" | "login" | "devices" | "device-rename" | "device-remove" | "self-say" | "rooms" | "room-new" | "room-set" | "room-leave" | "room-say" | "room-read" | "locker-ls" | "locker-put" | "locker-get" | "locker-rm").then(|| TeamReq { id: id.into(), verb: verb.into(), arg: v["arg"].clone() })
+    matches!(verb, "ask" | "report" | "status" | "create" | "invite" | "join" | "members" | "use" | "leave" | "kick" | "role" | "say" | "inbox" | "deliver-to" | "forget" | "logout" | "login" | "devices" | "device-rename" | "device-remove" | "self-say" | "rooms" | "room-new" | "room-set" | "room-leave" | "room-say" | "room-read" | "locker-ls" | "locker-put" | "locker-get" | "locker-rm").then(|| TeamReq { id: id.into(), verb: verb.into(), arg: v["arg"].clone() })
 }
 
 /// 망·소켓 — 시험에선 가짜
@@ -156,7 +160,9 @@ pub(crate) fn view_with(st: &relay::TeamState, aka: &Aka) -> Value {
         "account": st.account.as_ref().map(|a| json!({ "email": a.email, "name": opt(&a.name) })),
         "devices": st.my_devices.iter().map(|d| json!({ "id": d.id, "name": clean(&d.name), "current": d.current, "kind": d.kind, "status": d.status, "lastSeen": d.last_seen, "reqCity": opt(&d.req_city), "reqCountry": opt(&d.req_country), "pendingSince": d.pending_since, "approvedBy": d.approved_by })).collect::<Vec<_>>(),
         "pending": st.pending, "pendingAutoAt": st.pending_auto_at, "revoked": st.revoked,
-        "teams": st.teams.iter().map(|t| json!({ "id": t.id, "name": opt(&t.name), "role": t.role, "me": opt(&t.display_name), "current": t.id == st.team_id })).collect::<Vec<_>>(),
+        // 팀 권한(relay ADR 0015) — 화면은 이걸로 문의 창·'읽기만' 줄을 고른다. 판단은 서버가 다시 한다
+        "plan": st.team_plan,
+        "teams": st.teams.iter().map(|t| json!({ "id": t.id, "name": opt(&t.name), "role": t.role, "me": opt(&t.display_name), "current": t.id == st.team_id, "closed": st.closed_teams.contains(&t.id) })).collect::<Vec<_>>(),
         "members": st.members.iter().map(|m| json!({ "id": m.id, "name": clean(&m.display_name), "label": aka.label(&m.display_name, &m.id), "role": m.role, "perms": m.perms, "me": m.id == st.member_id, "devices": m.devices.iter().map(|d| json!({ "id": d.id, "name": clean(&d.name) })).collect::<Vec<_>>() })).collect::<Vec<_>>(),
         "rooms": st.rooms.iter().map(|r| {
             let (with, left) = match r.kind.as_str() { "self" => ("self".to_string(), false), "group" => (clean(&r.name), false), _ => dm_with(&r.peer) };
@@ -288,6 +294,30 @@ pub fn answer(req: &TeamReq, dir: &Path, kc: &dyn Store, w: &dyn Wire) -> Value 
                 w.started(dir);
                 w.send_agent(dir, &room, &cid, &text, &by).map(|seq| json!({ "room": room, "seq": seq, "cid": cid }))
             })
+        }
+        // 공식 설치 파일의 동사 — 읽기만 하는 한 번 답. 사람 표 없음(참모 길)
+        "ask" => {
+            let text = arg["text"].as_str().unwrap_or("").to_string();
+            if text.trim().is_empty() {
+                return fail("빈 질문");
+            }
+            #[cfg(pro)]
+            let r = crate::pro::team_ask(dir, &s("team"), &text);
+            #[cfg(not(pro))]
+            let r: Result<Value, String> = Err(NOT_IN_THIS_BUILD.to_string());
+            r
+        }
+        // 팀 일 끝 — 결과 한 줄을 오늘 칸에 '참모 보고'로(a1). 거름은 저장 길이 건다
+        "report" => {
+            #[cfg(pro)]
+            let r = {
+                let text = arg["text"].as_str().unwrap_or("").to_string();
+                let st = relay::load_state(dir);
+                st.team(&s("team")).map(|t| t.id.clone()).and_then(|t| crate::pro::report_today(dir, kc, w.http(), &t, &text, "agent", &s("proof")).map(|job| job.spawn())).map(|_| json!({}))
+            };
+            #[cfg(not(pro))]
+            let r: Result<Value, String> = Err(NOT_IN_THIS_BUILD.to_string());
+            r
         }
         // 팀 보관함(chammo-relay ADR 0009) — 참모 길은 보기·올리기·받기·휴지통까지. 영구 지우기는 사람이 화면 확인 창에서만
         "locker-ls" => crate::team_locker_app::list(dir, kc, w.http(), &s("team")).map(|v| json!(v)),

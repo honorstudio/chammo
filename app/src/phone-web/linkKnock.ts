@@ -30,8 +30,12 @@ export const LINK_ERRORS: Record<string, string> = {
   replaced: '다른 화면에서 새 확인을 시작해서 이 확인은 닫혔어요',
 };
 
-/** onSas = 숫자를 화면에. confirm = 컴퓨터가 허용했다 — 폰에서도 사람이 '컴퓨터 숫자와 같았어요'를 눌러야 저장(양쪽 확인, 리뷰 1) */
-export async function knockLink(relay: string, device: string, mac: Computer, onSas: (text: string) => void, confirm: (text: string) => Promise<boolean>): Promise<Paired> {
+/** 메일 코드를 켠 컴퓨터의 답 — sent 메일을 보냄 · wait 방금 보내 몇 초 뒤 다시 · locked 5번 틀려 몇 초 동안 잠김 */
+export type MailAsk = { mail: true; sent: boolean; wait: number; locked: number };
+
+/** onSas = 숫자를 화면에. confirm = 컴퓨터가 허용했다 — 폰에서도 사람이 '컴퓨터 숫자와 같았어요'를 눌러야 저장(양쪽 확인, 리뷰 1).
+ *  메일 코드를 켠 컴퓨터면 숫자 없이 MailAsk(코드 넣기는 mailLink.knockCode) */
+export async function knockLink(relay: string, device: string, mac: Computer, onSas: (text: string) => void, confirm: (text: string) => Promise<boolean>): Promise<Paired | MailAsk> {
   const k = await phoneKeys();
   const mt = unb64(mac.tunnelPub);
   const run = new LinkRun({ pt: unb64(k.xPub), mt, sign: unb64(k.signPub), dev: device });
@@ -61,7 +65,9 @@ export async function knockLink(relay: string, device: string, mac: Computer, on
       if (m.t === 'error') return fail(m.code === 'too_many_steps' ? 'busy' : 'refused');
       if (m.t !== 'reply' || typeof m.box !== 'string') return;
       await unbox(m.box).then(async (x) => {
-        if (x.step === 'link2') {
+        if (x.step === 'mail') {
+          end(() => { ok(x); ws.close(); });
+        } else if (x.step === 'link2') {
           await send(await run.link2(unb64(String(x.cM ?? ''))));
         } else if (x.step === 'link4') {
           sas = sasText(await run.link4(unb64(String(x.nM ?? ''))));
@@ -76,6 +82,7 @@ export async function knockLink(relay: string, device: string, mac: Computer, on
       }).catch(() => fail('key'));
     });
   });
+  if (v.step === 'mail') return { mail: true, sent: v.sent === true, wait: typeof v.wait === 'number' ? v.wait : 0, locked: typeof v.locked === 'number' ? v.locked : 0 };
   if (v.ok !== true || typeof v.token !== 'string' || typeof v.device !== 'string') throw new Error(LINK_ERRORS[String(v.error ?? '')] ?? `확인 실패 (${String(v.error ?? '?')})`);
   if (!(await confirm(sas))) throw new Error(LINK_ERRORS.mismatch);
   const name = (v.mac as { name?: string } | undefined)?.name ?? mac.name;

@@ -14,8 +14,8 @@ describe('첫 설정 터미널은 열리면 바로 칠 수 있다', () => {
     expect(pane).toMatch(/scrollIntoView\(\{ block: 'nearest' \}\)/);
   });
 
-  it('설정 화면의 두 터미널(설치·로그인 / 폴더 믿기)이 autoFocus 를 준다', () => {
-    expect(setup.match(/<TerminalPane[\s\S]*?autoFocus[\s\S]*?\/>/g)?.length).toBe(2);
+  it('설정 화면의 터미널(설치·로그인)이 autoFocus 를 준다 — 폴더 믿기는 터미널 없이 앱이 적는다(ADR 0027)', () => {
+    expect(setup.match(/<TerminalPane[\s\S]*?autoFocus[\s\S]*?\/>/g)?.length).toBe(1);
   });
 });
 
@@ -25,9 +25,5 @@ describe('믿기 터미널이 믿지 않고 끝나면 닫고 다시 하라고 �
   it('TerminalPane 은 세션에 붙은 게 아닌 명령이 끝나면(빈 조각) onExit 을 부른다', () => {
     expect(pane).toMatch(/onExit\?: \(screen: string\) => void/);
     expect(pane).toMatch(/if \(!bytes\.length\) \{ if \(!disposed\) \{ onEnded\(\); if \(!sid\) exitRef\.current\?\.\(tailText\(\)\); \} return; \}/);
-  });
-  it('Setup 의 믿기 터미널은 끝나면 믿음을 다시 보고, 아니면 닫고 이유를 띄운다', () => {
-    expect(setup).toMatch(/const trustExit = \(screen: string\) => void refreshTrust\(\)\.then\(\(r\) => setTrusting\(\(w\) => \{ if \(w && !r\[w\]\) \{ setError\(trustExitNote\(screen\)\)/);
-    expect(setup).toMatch(/key=\{`trust-\$\{trusting\}`\}[\s\S]{0,80}onExit=\{trustExit\}/);
   });
 });

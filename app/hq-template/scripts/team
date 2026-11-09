@@ -26,6 +26,10 @@ __doc__ = """Team messenger — talk with people on your team and their assistan
   <lines>                                               stops the shell from expanding $(…) in quoted text), then EOF on its own line.
   EOF                                                   Short fixed words may go inline. Always sent as assistant words, never as the user's
   scripts/team inbox [<n>]                              last n received/sent lines (default 20)
+  scripts/team ask <team> - <<'EOF'                     ask your team assistant from that team's memory (read-only, one answer, your Claude). Body only through a
+  <question>                                            quoted heredoc. The answer starts with [팀 메모리 · <team>] — team knowledge: use it for this work, never copy it
+  EOF                                                   into your own memory or lessons. Work you then send with scripts/task --team-work is marked as that team's work
+  scripts/team report <team> - [--proof <url|file id>] <<'EOF'   put a one-line result in that team's today box (task done does this for you on --team-work tasks)
   scripts/team teamchat list                            team chats (group chats, 팀챗) you are in (name, people) — `room` is the same command
   scripts/team teamchat new <name> --with <a,b> [--team <t>] make a team chat with those people (names or member ids) — you are always in it
   scripts/team teamchat say <chat> - <<'EOF'            say in a team chat (name or id) — body only through a quoted heredoc, like say
@@ -99,7 +103,7 @@ def parse(argv):
             opts['trash'] = True
             i += 1
             continue
-        if argv[i] in ('--me', '--server', '--device', '--team', '--folder', '--to', '--with', '--name', '--add', '--remove'):
+        if argv[i] in ('--proof', '--me', '--server', '--device', '--team', '--folder', '--to', '--with', '--name', '--add', '--remove'):
             if i + 1 >= len(argv):
                 return None, USAGE
             opts[argv[i][2:]] = argv[i + 1]
@@ -130,6 +134,10 @@ def parse(argv):
         return {'verb': 'join', 'code': args[0], 'me': opts['me'], 'server': opts.get('server', ''), 'device': opts.get('device') or this_device()}, None
     if verb == 'say' and len(args) >= 2:
         return {'verb': 'say', 'to': args[0], 'text': ' '.join(args[1:]), **team}, None
+    if verb == 'ask' and args[1:] == ['-']:
+        return {'verb': 'ask', 'team': args[0], 'text': '-'}, None
+    if verb == 'report' and args[1:] == ['-']:
+        return {'verb': 'report', 'team': args[0], 'text': '-', 'proof': opts.get('proof', '')}, None
     if verb == 'inbox' and len(args) <= 1:
         try:
             return {'verb': 'inbox', 'n': int(args[0]) if args else 20}, None
@@ -251,6 +259,21 @@ def ask(data, arg, wait):
     return 1, f'Chammo did not answer in {wait:g}s — is the app open? / 앱이 답하지 않았어 — Chammo 가 켜져 있어야 해'
 
 
+def mark_team_work(data, team_id):
+    """이 참모가 그 팀 일을 시작했다는 흔적 — scripts/task send 가 2시간 안의 일을 그 팀 일로 표시한다(결과 한 줄 자동 보고)"""
+    who = os.path.basename((os.environ.get('CLAUDE_JOB_DIR') or '').rstrip('/'))
+    if not who or not team_id:
+        return
+    p = os.path.join(data, 'team-work.json')
+    try:
+        with open(p, encoding='utf-8') as f:
+            w = json.load(f)
+    except (OSError, ValueError):
+        w = {}
+    w[who] = {'team': team_id, 'at': time.time()}
+    write_600(p, json.dumps(w, ensure_ascii=False))
+
+
 def show_status(a):
     acc = a.get('account')
     if acc:
@@ -327,6 +350,8 @@ def main(argv):
     if err:
         print(err, file=sys.stderr)
         return 2
+    if arg['verb'] in ('ask', 'report'):
+        arg['text'] = sys.stdin.read().strip('\n')
     if arg['verb'] in ('say', 'self-say', 'room-say'):
         if arg['text'].strip() == '-':
             arg['text'] = sys.stdin.read().strip('\n')
@@ -337,7 +362,7 @@ def main(argv):
         print('opening the browser — the person signs in with Google there / 브라우저를 열었어 — 그 사람이 구글로 로그인해', file=sys.stderr)
     # 로그인은 사람이 브라우저에서 마칠 때까지(앱이 10분 기다린다)
     # 올리기·받기는 큰 파일이면 오래 — 앱이 다 올릴 때까지 기다린다
-    code, ans = ask(data_dir(), arg, {'login': 620, 'locker-put': 3600, 'locker-get': 3600}.get(arg['verb'], 60))
+    code, ans = ask(data_dir(), arg, {'login': 620, 'locker-put': 3600, 'locker-get': 3600, 'ask': 200}.get(arg['verb'], 60))
     if code or not isinstance(ans, dict):
         print(f'failed / 못 했어: {ans}', file=sys.stderr)
         return 1
@@ -350,6 +375,11 @@ def main(argv):
     elif v == 'invite':
         print('invite (one use, 24h) / 초대(한 번·24시간) — give this to the person / 이걸 그 사람에게:')
         print(ans.get('link'))
+    elif v == 'ask':
+        print(ans.get('answer', ''))
+        mark_team_work(data_dir(), ans.get('team', ''))
+    elif v == 'report':
+        print('put in the today box / 오늘 칸에 넣었어')
     elif v == 'say':
         print(f'sent / 보냄 — team#{ans.get("seq")}')
     elif v == 'inbox':

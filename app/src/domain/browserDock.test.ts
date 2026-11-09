@@ -293,3 +293,31 @@ describe('paneWantsPeek — 칸이 크롬 자체 창을 저절로 꺼낼 때', (
     expect(paneWantsPeek({ pressedAt: undefined, now, mac: { signable: true, signed: true } })).toBe(false);
   });
 });
+
+describe('칸 카드 — 크롬 자체 창이라 칸(CDP 입력)에서 안 눌리는 권한·계정 고르기(2026-11-08 거래소)', () => {
+  const perm = { kind: 'geolocation' as const, origin: 'https://www.exchange.com' };
+  const fedcm = { dialogId: 'd1', type: 'AccountChooser', title: 'google.com의 계정으로 exchange.com에 로그인하세요', accounts: [{ email: 'a@x.com', name: 'A' }, { email: 'b@x.com', name: 'B' }] };
+  it('사이트가 물은 위치·알림 권한 — 허용·거부를 칸 카드로', () => {
+    expect(turnCard(live(), { dialog: null, chooser: null, permission: perm })).toEqual({ kind: 'perm', text: 'www.exchange.com 이(가) 위치를 쓰려고 해' });
+    expect(turnCard(live(), { dialog: null, chooser: null, permission: { ...perm, kind: 'notifications' } })?.text).toBe('www.exchange.com 이(가) 알림을 보내려고 해');
+  });
+  it('구글 원탭(FedCM) 계정 고르기 — 계정마다 단추와 닫기', () => {
+    expect(turnCard(live(), { dialog: null, chooser: null, fedcm })).toEqual({
+      kind: 'fedcm', text: fedcm.title, dialogId: 'd1',
+      choices: [{ label: 'a@x.com', account: 0 }, { label: 'b@x.com', account: 1 }, { label: '닫기', account: null }],
+    });
+  });
+  it('차례 — 페이지 대화상자 > 계정 고르기 > 권한 > 세션 부름 > 파일 > 크롬 창(페이지가 그 답을 기다리는 동안 세션 부름의 다 했어는 못 끝낸다)', () => {
+    const all = { dialog: { type: 'alert', message: 'm' }, chooser: 'x', permission: perm, fedcm };
+    const asking = live({ ask: { reason: '로그인', at: 1 }, popup: true });
+    expect(turnCard(asking, all)?.kind).toBe('dialog');
+    expect(turnCard(asking, { ...all, dialog: null })?.kind).toBe('fedcm');
+    expect(turnCard(asking, { ...all, dialog: null, fedcm: null })?.kind).toBe('perm');
+    expect(turnCard(asking, { ...all, dialog: null, fedcm: null, permission: null })?.kind).toBe('ask');
+    expect(turnCard(live({ popup: true }), { dialog: null, chooser: null, permission: null, fedcm: null })?.kind).toBe('window');
+  });
+  it("'다 했어'로 걷은 부름이어도 권한·계정 카드는 남는다", () => {
+    const c = turnCard(live({ ask: { reason: 'x', at: 5 } }), { dialog: null, chooser: null, permission: perm });
+    expect(turnCardAfterDone(c, 5, 5)).toEqual(c);
+  });
+});

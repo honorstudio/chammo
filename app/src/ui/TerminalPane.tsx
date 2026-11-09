@@ -52,7 +52,7 @@ export const TERM_FONT = termFont(IS_WIN);
  *  claimPtt = 지구본 키 말하기를 이 창으로(채팅 입력칸에 포커스가 가면 터미널이 포커스를 안 받아서),
  *  screen = 지금 보이는 줄들 + 커서(칸, 줄) — 채팅 판이 입력칸 글을 읽는다 */
 /** type = 앱이 치는 글(채팅 보내기·Esc·지우기) — 다른 치기 길과 같은 자물쇠로(Rust pty_type). raw 는 사람이 친 키처럼 바로 */
-export type PaneApi = { write: (data: string) => void; raw: (data: string) => void; type: (keys: string[], enterMs?: number) => Promise<void>; focus: () => void; claimPtt: () => void; screen: (back?: number) => { lines: string[]; cursor: [number, number] } };
+export type PaneApi = { /** 마지막 터미널 출력 뒤 ms(-1 = 아직 없음) — 칸이 멈췄나 가리는 진단 */ quiet?: () => number; write: (data: string) => void; raw: (data: string) => void; type: (keys: string[], enterMs?: number) => Promise<void>; focus: () => void; claimPtt: () => void; screen: (back?: number) => { lines: string[]; cursor: [number, number] } };
 
 type Props = {
   /** pty 에서 돌릴 셸 명령. `exec '<claude>' attach <id>` 처럼 절대 경로로 */
@@ -222,7 +222,8 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
     // 세션 화면이 오기 전(attach 안내 줄뿐)엔 포커스 보고(ESC [ I·O)를 안 보낸다 — attach 가 아직 날 입력을 받기 전이라 터미널이 '^[[I' 로 메아리쳤다(2026-10-26 부팅 직후 캡처)
     let screenUp = false;
     term.onData((d) => { if (!screenUp && (d === '\x1b[I' || d === '\x1b[O')) return; imeTrace?.('xterm', { d: seqShape(d) }); write(d); });
-    injectRef.current?.({ write: (d) => { write(d); term.focus(); }, raw: write,
+    let lastOut = 0;
+    injectRef.current?.({ quiet: () => (lastOut ? Date.now() - lastOut : -1), write: (d) => { write(d); term.focus(); }, raw: write,
       // 번호를 받기 전(창이 막 열림)엔 자물쇠 길이 없다 — 모아 둔 쓰기로 넣고 Enter 시간만큼 기다린다
       type: (keys, enterMs) => (id != null ? typePty(id, keys, enterMs) : new Promise<void>((done) => {
         keys.forEach(write);
@@ -364,6 +365,7 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
         if (!bytes.length) letGo(); // 끝났으면 다음 칸 차례로
         if (!bytes.length) { if (!disposed) { onEnded(); if (!sid) exitRef.current?.(tailText()); } return; }
         term.write(bytes);
+        lastOut = Date.now();
         const text = dec.decode(bytes, { stream: true });
         if (!shown && !disposed) {
           const ph = phaseOf ? phaseOf(text) : 'ready';

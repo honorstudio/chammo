@@ -1,9 +1,9 @@
 // 팀 캘린더 탭(chammo-relay ADR 0011, 시안 v2 A) — 월·주·목록, 만들기·고치기·완료·지우기·지운 일정 되살리기. 앱이 직접 그린다(클로드 0)
-import { useContext, useMemo, useState } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { tr } from '../../i18n';
 import { desktopCal, type CalApi } from '../../data/teamCalApi';
 import {
-  addDays, byDay, lostLine, monthCells, newCalId, newEventDay, occurrences, shownSpan, skipDay, weekDays, withDone, ymd,
+  addDays, agentLabel, agentOf, byDay, lostLine, monthCells, monthFit, newCalId, newEventDay, occurrences, shownSpan, skipDay, weekDays, withDone, ymd,
   type CalData, type CalItem, type Occ,
 } from '../../domain/teamCal';
 import { stamp } from '../../domain/teamChat';
@@ -11,7 +11,7 @@ import { lookNames } from '../../domain/teamProfile';
 import { keyWaitNote } from '../../domain/teamLocker';
 import { BetaTag } from '../kit/BetaTag';
 import { IconButton } from '../kit/IconButton';
-import { IconBack, IconCalendar, IconForward, IconList, IconMore, IconPlus, IconRepeat } from '../Icons';
+import { IconBack, IconCalendar, IconClose, IconForward, IconList, IconMore, IconPlus, IconRepeat } from '../Icons';
 import { TeamDialog } from './TeamDialog';
 import type { HomeDialog } from './TeamHome';
 import { CalForm, CalView } from './CalForm';
@@ -35,6 +35,9 @@ export function TeamCal({ teamId, members, api = desktopCal, phone, Dialog = Tea
   const [anchor, setAnchor] = useState(today);
   const [picked, setPicked] = useState<string | null>(null); // 누른 날짜 — + 새 일정이 그날로(newEventDay)
   const [open, setOpen] = useState<Occ | null>(null);
+  const [dayOpen, setDayOpen] = useState<string | null>(null); // +N개 — 그날 일정 창
+  const monthRef = useRef<HTMLDivElement>(null);
+  const [cellH, setCellH] = useState(0); // 달력 칸 높이 — 들어가는 만큼 보여 준다(monthFit)
   const [edit, setEdit] = useState<{ item: CalItem | null; day: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [werr, setWerr] = useState('');
@@ -53,6 +56,16 @@ export function TeamCal({ teamId, members, api = desktopCal, phone, Dialog = Tea
   const days = view === 'month' ? monthCells(d.getFullYear(), d.getMonth()) : view === 'week' ? weekDays(anchor) : Array.from({ length: 60 }, (_, i) => addDays(anchor, i));
   const occ = useMemo(() => occurrences(items, days[0]!, addDays(days[days.length - 1]!, 1), { hideDone }), [items, days[0], days.length, hideDone]); // eslint-disable-line react-hooks/exhaustive-deps
   const cells = useMemo(() => byDay(occ, days), [occ]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const el = monthRef.current;
+    if (!el) return;
+    const read = () => setCellH(Math.floor(el.querySelector<HTMLElement>('.tcal-day')?.offsetHeight ?? 0));
+    read();
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [view, days.length]);
 
   const note = (t: Toast) => { setToast(t); window.setTimeout(() => setToast((x) => (x === t ? null : x)), 5000); };
   const write = async (it: CalItem | null, id: string, data: CalData | null, restore = false) => {
@@ -84,9 +97,15 @@ export function TeamCal({ teamId, members, api = desktopCal, phone, Dialog = Tea
     : d.toLocaleDateString(undefined, { year: 'numeric', month: 'long' });
   const fresh = (o: Occ) => !!snap && o.item.by !== snap.me && Date.now() - o.item.at < 60_000;
   const chip = (o: Occ, time = true) => (
-    <button key={o.key} className={`tcal-ev l-${o.label} ${o.done ? 'done' : ''} ${o.item.pending ? 'pend' : ''} ${fresh(o) ? 'fresh' : ''}`} onClick={(e) => { e.stopPropagation(); setOpen(o); }}
-      title={o.title}>
+    <button key={o.key} className={`tcal-ev l-${o.label} ${o.done ? 'done' : ''} ${o.item.pending ? 'pend' : ''} ${fresh(o) ? 'fresh' : ''} ${agentOf(o.item.data) ? 'by-agent' : ''} ${agentOf(o.item.data)?.guess ? 'by-guess' : ''}`} onClick={(e) => { e.stopPropagation(); setOpen(o); }}
+      title={agentOf(o.item.data) ? `${o.title} · ${agentLabel(o.item.data)}` : o.title}>
       <i />{time && !o.allDay && <em>{new Date(o.startMs).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}</em>}<span>{o.title}</span>{o.repeat && <IconRepeat />}
+    </button>
+  );
+  const row = (o: Occ, after?: () => void) => (
+    <button key={o.key} className={`tcal-lrow ${o.done ? 'done' : ''} ${o.item.pending ? 'pend' : ''}`} onClick={() => { after?.(); setOpen(o); }}>
+      <span className="tcal-lt">{o.allDay ? tr('종일', 'All day') : new Date(o.startMs).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}</span>
+      <span className={`tcal-lx l-${o.label}`}><i /><span>{o.title}</span>{o.repeat && <IconRepeat />}</span>
     </button>
   );
   const gone = items.filter((x) => x.del && !x.why).sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0));
@@ -131,15 +150,16 @@ export function TeamCal({ teamId, members, api = desktopCal, phone, Dialog = Tea
       {snap?.cached && <div className="tcal-banner soft">{tr('마지막으로 받은 일정이에요 — 새로 받는 중', 'Showing the last events — refreshing')}</div>}
 
       {view === 'month' && (
-        <div className="tcal-month" style={{ gridTemplateRows: `auto repeat(${days.length / 7}, minmax(0, 1fr))` }}>
+        <div ref={monthRef} className="tcal-month" style={{ gridTemplateRows: `auto repeat(${days.length / 7}, minmax(0, 1fr))` }}>
           {DOW().map((n, i) => <div key={n} className={`tcal-dow ${i === 0 || i === 6 ? 'we' : ''}`}>{n}</div>)}
           {days.map((day) => {
             const list = cells.get(day) ?? [];
+            const { show, more } = monthFit(cellH, list.length);
             return (
               <div key={day} className={`tcal-day ${day.slice(0, 7) !== anchor.slice(0, 7) ? 'out' : ''} ${day === today ? 'now' : ''} ${day === picked ? 'on' : ''}`} onClick={() => setPicked(day)} onDoubleClick={() => setEdit({ item: null, day })}>
                 <div className="tcal-dn"><span>{Number(day.slice(8))}</span></div>
-                {list.slice(0, 3).map((o) => chip(o, false))}
-                {list.length > 3 && <button className="tcal-more" onClick={() => { setAnchor(day); setView('list'); }}>{tr(`+${list.length - 3}개`, `+${list.length - 3}`)}</button>}
+                {list.slice(0, show).map((o) => chip(o, false))}
+                {more > 0 && <button className="tcal-more" onClick={(e) => { e.stopPropagation(); setDayOpen(day); }}>{tr(`+${more}개`, `+${more}`)}</button>}
               </div>
             );
           })}
@@ -189,12 +209,7 @@ export function TeamCal({ teamId, members, api = desktopCal, phone, Dialog = Tea
             return (
               <div key={day} className={`tcal-lday ${day === today ? 'now' : ''}`}>
                 <div className="tcal-lh">{day === today ? tr('오늘 · ', 'Today · ') : ''}{new Date(day.replace(/-/g, '/')).toLocaleDateString(undefined, { month: 'long', day: 'numeric', weekday: 'short' })}</div>
-                {list.map((o) => (
-                  <button key={o.key} className={`tcal-lrow ${o.done ? 'done' : ''} ${o.item.pending ? 'pend' : ''}`} onClick={() => setOpen(o)}>
-                    <span className="tcal-lt">{o.allDay ? tr('종일', 'All day') : new Date(o.startMs).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}</span>
-                    <span className={`tcal-lx l-${o.label}`}><i /><span>{o.title}</span>{o.repeat && <IconRepeat />}</span>
-                  </button>
-                ))}
+                {list.map((o) => row(o))}
               </div>
             );
           })}
@@ -209,6 +224,18 @@ export function TeamCal({ teamId, members, api = desktopCal, phone, Dialog = Tea
         </div>
       )}
 
+      {dayOpen && (
+        <Dialog label={new Date(dayOpen.replace(/-/g, '/')).toLocaleDateString(undefined, { month: 'long', day: 'numeric', weekday: 'short' })} onClose={() => setDayOpen(null)}>
+          <div className="tcal-view">
+            <div className="tcal-vbar">
+              <h3>{new Date(dayOpen.replace(/-/g, '/')).toLocaleDateString(undefined, { month: 'long', day: 'numeric', weekday: 'short' })}</h3>
+              <span className="tcal-sp" />
+              <IconButton label={tr('닫기', 'Close')} onClick={() => setDayOpen(null)}><IconClose /></IconButton>
+            </div>
+            <div className="tcal-dayv">{(cells.get(dayOpen) ?? []).map((o) => row(o, () => setDayOpen(null)))}</div>
+          </div>
+        </Dialog>
+      )}
       {open && !edit && (
         <Dialog label={open.title} onClose={() => setOpen(null)}>
           <CalView occ={open} nameOf={nameOf} onClose={() => setOpen(null)}

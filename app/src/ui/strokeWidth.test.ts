@@ -5,7 +5,7 @@ import layers from './layers.css?raw';
 // 원인 — box-shadow 퍼짐(spread)을 1.5px 처럼 소수점으로 주면 웹킷(맥 앱 창)이 안쪽 가장자리를 픽셀에 반올림해
 // 1배 화면에선 칸이 놓인 소수점 자리에 따라 한쪽 2px·반대쪽 1px 가 된다(3배 폰은 5·4). 1px·2px 같은 정수는 늘 같다.
 // 그래서 획처럼 쓰는 그림자 퍼짐은 정수 px 이거나 layers.css 의 --ring-w(배율마다 장치 픽셀 정수)만 쓴다.
-const sheets = import.meta.glob('/src/ui/**/*.css', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+const sheets = import.meta.glob(['/src/ui/**/*.css', '../../../pro/web/**/*.css'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
 const noComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, '');
 
 /** box-shadow 값마다 퍼짐(네 번째 길이)이 소수점 px 인 그림자 */

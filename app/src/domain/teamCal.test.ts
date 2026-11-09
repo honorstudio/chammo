@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   addDays, byDay, calPutOk, cleanDraft, draftOf, monthCells, newEventDay, occurrences, shownSpan, upcoming, weekDays, withDone, ymd,
   type CalData, type CalItem, type CalSnap,
+  monthFit,
 } from './teamCal';
 
 const item = (id: string, data: Partial<CalData>, o: Partial<CalItem> = {}): CalItem => ({
@@ -89,6 +90,14 @@ describe('팀 캘린더 — 홈 블록·만들기', () => {
     expect(u.flatMap((g) => g.occ.map((o) => o.id))).toEqual(['a', 'b']);
   });
 
+  it('참모가 넣은 일정(data.agent)을 사람이 고쳐 저장해도 꼬리표가 남는다', () => {
+    const it0 = item('mem-1', { title: '최종 PDF 보내기', start: '2026-11-14', end: '2026-11-15', people: ['m-harin'], agent: { src: { room: 'r1', day: '2026-11-03' }, guess: true } });
+    const d = draftOf(it0, '2026-11-14');
+    const out = cleanDraft({ ...d, title: '최종 PDF 보내기 — 봄담식품' }, it0.data);
+    expect(out.data?.agent).toEqual({ src: { room: 'r1', day: '2026-11-03' }, guess: true });
+    expect(out.data?.title).toBe('최종 PDF 보내기 — 봄담식품');
+  });
+
   it('만들기 칸 — 제목 비면 거절, 끝이 시작보다 앞이면 거절, 하루 종일 끝은 다음 날(미포함)로 저장', () => {
     const d = draftOf(null, '2026-11-03');
     expect(d.allDay).toBe(true);
@@ -169,5 +178,21 @@ describe('새 일정 날짜(11-01 사용자 "11월 3일을 고르고 + 를 눌�
   it('월 보기 칸은 그 달 날만 — 앞뒤 달 회색 칸(10/31)은 보이는 달이 아니다', () => {
     expect(shownSpan('month', '2026-11-01')).toEqual({ from: '2026-11-01', to: '2026-11-30' });
     expect(newEventDay('2026-10-31', shownSpan('month', '2026-11-01'), '2026-12-05')).toBe('2026-11-01');
+  });
+});
+
+describe('monthFit — 달력 칸에 들어가는 만큼', () => {
+  it('재기 전(0)엔 예전처럼 3개', () => {
+    expect(monthFit(0, 5)).toEqual({ show: 3, more: 2 });
+    expect(monthFit(0, 3)).toEqual({ show: 3, more: 0 });
+  });
+  it('칸이 크면 다 보여 주고 더보기가 없다', () => {
+    expect(monthFit(180, 4)).toEqual({ show: 4, more: 0 });
+  });
+  it('넘치면 더보기 줄 자리를 빼고 보여 준다', () => {
+    expect(monthFit(180, 30)).toEqual({ show: 6, more: 24 });
+  });
+  it('아주 작아도 하나는 보인다', () => {
+    expect(monthFit(30, 4)).toEqual({ show: 1, more: 3 });
   });
 });

@@ -437,6 +437,11 @@ describe('pinPatch — 손으로 바꾸거나 새 계정을 보관했을 때', (
 });
 
 describe('changedKeys — 저장할 것만(그새 설정에서 바꾼 키를 옛 값으로 덮지 않게)', () => {
+  it('키 순서만 다르면 바뀐 게 아니다 — readAuto 는 fp·seenAt 순, 상태줄 칸 쓰기는 seenAt 을 끝에 둬서 매번 저장·신호가 돌았다(11-06 초당 7번 저장)', () => {
+    const a = readAuto({ v: STATE_V, slots: { x: { fp: 1, seenAt: 2, five: { used: 1, resetsAt: 9 }, week: { used: 2, resetsAt: 9 } } } });
+    const b = { ...a, slots: { x: { fp: 1, five: { used: 1, resetsAt: 9 }, week: { used: 2, resetsAt: 9 }, seenAt: 2 } } };
+    expect(changedKeys(a, b)).toEqual({});
+  });
   it('바뀐 윗단 키만, null 은 null 로(지우기)', () => {
     const a = readAuto({ v: 2, on: false, pinned: 'a', slots: {} });
     const b = { ...a, pinned: null, switchedAt: 5 };

@@ -1,10 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
-import DOMPurify from 'dompurify';
-import { marked } from 'marked';
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { modKey } from '../../domain/keys';
-import { curStep, DOC_SANDBOX, emptyStore } from '../../domain/curation';
-import { docUrl, IS_WIN, isDocUrl, dropIndex, inStrip, kindOf, titleOf, type DocKind, type Surface, docFileUrl, inTime, PREVIEW_WAIT_MS } from '../../domain/reader';
+import { curationOutgoing, curStep, DOC_SANDBOX, emptyStore } from '../../domain/curation';
+import { docHtml } from '../md';
+import { docUrl, IS_WIN, isDocUrl, dropIndex, inStrip, kindOf, titleOf, type DocKind, type Surface, docFileUrl, inTime, PREVIEW_WAIT_MS, pathOfDocUrl } from '../../domain/reader';
 import { FIT, IMAGE_STEPS, parseZoom, stepZoom, withZoom, zoomable, zoomLabel, zoomOf, type ZoomMap } from '../../domain/readerZoom';
 import { IconCheck, IconClose, IconNote, IconOpen, IconPencil, IconRefresh, IconZoomIn, IconZoomOut } from '../Icons';
 import { IconButton } from '../kit/IconButton';
@@ -13,7 +12,9 @@ import { selectAllHere } from '../selectAll';
 import { assistant, tr } from '../../i18n';
 import { getAppEnv, projectScan } from '../../data/tauri';
 import { pathCandidates, projectRelCandidates } from '../../domain/links';
-import { followLink } from '../followLink';
+import { followLink, openFrameLink } from '../followLink';
+import { useFrameGuard } from '../frameGuard';
+import { frameLink } from '../../domain/frameLink';
 import { addComment, setBaseline } from '../space/pending';
 import { SendFab } from '../space/SendFab';
 import { lastSaved } from '../space/docSave';
@@ -89,9 +90,8 @@ function onDocClick(ev: React.MouseEvent<HTMLElement>, path: string) {
  */
 export function MdDoc({ path, md, zoom = 100 }: { path: string; md: string; zoom?: number }) {
   const dir = fwd(path).replace(/\/[^/]*$/, ''); // 윈도우 C:\… 여도 / 로(win-text M2)
-  const html = DOMPurify.sanitize(marked.parse(md, { async: false }) as string, { FORBID_TAGS: ['style', 'iframe', 'object', 'embed', 'form'] });
   // 그림의 상대 경로는 문서 폴더 기준 hodoc:// 로(리더가 홈 안 파일만 내준다)
-  const withImgs = html.replace(/(<img\b[^>]*\bsrc=")([^"]+)"/gi, (_m, pre: string, src: string) => `${pre}${docFileUrl(src, dir)}"`);
+  const withImgs = docHtml(md, (src) => docFileUrl(src, dir));
   // ⌘ 를 누르고 있는 동안 경로(코드 글자)에 밑줄·손가락 — 누를 수 있다는 표시(터미널과 같게, 사용자 2026-09-28)
   const [cmd, setCmd] = useState(false);
   const wide = useDocWide();
@@ -133,6 +133,17 @@ export function HtmlFrame({ src, zoom, className, point, pointKey, record, onLoa
   useEffect(post, [zoom]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (loaded.current) aim(); }, [pointKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { loaded.current = false; }, [src]);
+  // 칸 안 웹 링크(링크 다리 {hodoc:'link'}) — 이 칸이 보낸 것만, 다시 걸러 연다(ui/followLink openFrameLink — 스페이스면 참모 브라우저 새 탭)
+  useEffect(() => {
+    const on = (e: MessageEvent) => {
+      const f = ref.current;
+      if (!f?.contentWindow || e.source !== f.contentWindow) return;
+      const url = frameLink(e.data);
+      if (url) openFrameLink(url, pathOfDocUrl(src) ?? '', f);
+    };
+    window.addEventListener('message', on);
+    return () => window.removeEventListener('message', on);
+  }, [src]);
   useEffect(() => {
     if (!record) return;
     let first = true;
@@ -158,7 +169,7 @@ export function HtmlFrame({ src, zoom, className, point, pointKey, record, onLoa
         }, () => {});
         return;
       }
-      pending = { text: step.text, json: step.json };
+      pending = { text: curationOutgoing(step.text), json: step.json }; // 파일에도 이름표 — 참모는 '봤어'만 들으면 이 파일을 읽는다(C-1)
       window.clearTimeout(saveT);
       saveT = window.setTimeout(flush, 600);
     };
@@ -166,7 +177,14 @@ export function HtmlFrame({ src, zoom, className, point, pointKey, record, onLoa
     // 닫히거나 다른 시안으로 바뀌면 기다리던 저장을 바로 — 표시하고 곧바로 Esc 로 닫아도 마지막 표시가 남게
     return () => { window.removeEventListener('message', on); flush(); };
   }, [record, src]);
-  return <iframe ref={ref} className={className} src={src} sandbox={DOC_SANDBOX} onLoad={() => { loaded.current = true; post(); window.setTimeout(aim, 150); onLoad?.(); }} />;
+  const guard = useFrameGuard(ref, src);
+  return (
+    <>
+      <iframe ref={ref} className={className} src={src} sandbox={DOC_SANDBOX} onLoad={() => { loaded.current = true; post(); window.setTimeout(aim, 150); guard.onLoad(); onLoad?.(); }} />
+      {/* 칸이 바깥으로 새서 되돌려도 계속 비면 — 원래 문서로 다시 불러오기(ui/frameGuard) */}
+      {guard.gone && <IconButton className="rd-frame-back" tone="line" label={tr('원래 문서 다시 불러오기', 'Reload the document')} onClick={guard.reload}><IconRefresh /></IconButton>}
+    </>
+  );
 }
 
 /**

@@ -1,18 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { alreadyIn, clockText, gateErr, gateErrText, gateState, laterFor, lookEvery, offlineError, skewTime, watchGate } from './loginGate';
+import { alreadyIn, clockText, gateErr, gateErrText, gateState, laterFor, lookEvery, skewTime, watchGate } from './loginGate';
 
 const v = (o: { account?: boolean; pending?: boolean } = {}) => ({ account: o.account ? { email: 'a@b.c', name: 'a' } : null, pending: !!o.pending });
 
 describe('로그인 필수(10-24 사용자) — 앱을 켜면 계정 로그인부터', () => {
   it('로그인 안 된 기기는 로그인 화면, 된 기기는 아무것도 안 띄운다(다시 켜도 안 묻는다)', () => {
     expect(gateState(null, {})).toBe('none'); // 상태를 아직 못 읽음 — 깜빡임 없게
-    expect(gateState(v(), {})).toBe('login');
+    expect(gateState(v(), {}), '로그인 전엔 앱을 막지 않는다(ADR 0027)').toBe('none');
+    expect(gateState(v(), { asked: true }), "'다시 로그인'을 눌렀을 때만").toBe('login');
     expect(gateState(v({ account: true }), {})).toBe('none');
-  });
-  it('중계에 못 닿을 때만 일단 쓰기 — 이번 실행만, 다음에 켜면 다시 묻는다', () => {
-    expect(gateState(v(), { offline: true })).toBe('offline');
-    expect(gateState(v(), { offline: true, skipped: true })).toBe('none');
-    expect(gateState(v(), { skipped: true }), '닿는데 건너뛰기는 없다').toBe('login');
   });
   it('허용 대기 기기는 한 번 안내하고 쓰게 둔다(계정 기능만 막힘)', () => {
     expect(gateState(v({ account: true, pending: true }), {})).toBe('waiting');
@@ -60,7 +56,7 @@ describe('로그인 필수(10-24 사용자) — 앱을 켜면 계정 로그인�
     expect(watchGate(v({ account: true }), '', false), '로그인 전에 읽은 빈 단계').toBe(true);
     expect(watchGate(v({ account: true }), '', true), '로그인 뒤 읽은 빈 단계 = 정해짐').toBe(false);
     expect(watchGate(v({ account: true }), 'checking', true)).toBe(true);
-    expect(watchGate(v(), '', false), '로그인 화면 동안은 그대로').toBe(true);
+    expect(watchGate(v(), '', false), '로그인 전엔 가끔만').toBe(false);
   });
   it('로그인 직후엔 계정이 생긴 뒤 단계를 한 번 읽을 때까지 다시 묻는다 — 로그인 전 단계(빈 값)로 감시를 멈추면 다시 시작·첫 기기 화면이 앱을 다시 켤 때까지 안 떴다(10-26 아이맥 실측)', () => {
     expect(watchGate(v({ account: true }), '', false)).toBe(true);
@@ -68,21 +64,13 @@ describe('로그인 필수(10-24 사용자) — 앱을 켜면 계정 로그인�
     expect(watchGate(v({ account: true }), 'reset', true)).toBe(true);
   });
   it('로그인 화면 동안에도 다시 묻는다 — 밖(scripts/team login)에서 로그인하면 닫히게(QA 7)', () => {
-    expect(watchGate(v(), '')).toBe(true);
+    expect(watchGate(v(), '')).toBe(false);
     expect(alreadyIn('[already] 이미 이 기기는 로그인돼 있어요 — 화면을 새로 볼게요')).toBe(true);
     expect(alreadyIn('Already signed in on this device'), '문구가 바뀌어도(번역) 이름만 본다').toBe(false);
     expect(alreadyIn('[already] This device is already signed in')).toBe(true);
     expect(alreadyIn('브라우저에서 로그인을 마치지 않았어요')).toBe(false);
   });
-  it('망 끊김·서버 장애는 Rust 가 붙인 이름([offline])으로만 본다 — 문구 정규식은 번역·다듬기에서 조용히 깨진다(11-01 QA)', () => {
-    expect(offlineError('[offline] 중계 서버에 못 닿았어요: curl: (6) Could not resolve host: relay.chammo.app')).toBe(true);
-    expect(offlineError('[offline] 중계 서버 503 ')).toBe(true);
-    expect(offlineError('중계 서버에 못 닿았어요: curl: (7) Failed to connect'), '이름 없는 글은 오프라인으로 짐작하지 않는다').toBe(false);
-    expect(offlineError('중계 서버가 이상한 로그인 주소를 줬어 — 열지 않았어')).toBe(false);
-    expect(offlineError('로그인을 기다리다 시간이 지났어')).toBe(false);
-  });
-  it('시계가 틀렸으면([clock:<분>]) 일단 쓰기를 보여 주고 시계를 맞추라고 한다(11-01 QA H1 — 게이트에 갇혔다)', () => {
-    expect(offlineError('[clock:180] 이 기기 시계가 중계 서버와 180분 달라서 서명이 거절됐어')).toBe(true);
+  it('Rust 가 붙인 이름표로 가른다 — 문구 정규식은 번역·다듬기에서 조용히 깨진다(11-01 QA)', () => {
     expect(gateErr('[clock:-7] …')).toEqual({ kind: 'clock', min: -7, rest: '…' });
     expect(gateErr('[clock:180] x').kind).toBe('clock');
     expect(gateErr('[offline] 원문')).toEqual({ kind: 'offline', min: 0, rest: '원문' });

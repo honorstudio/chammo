@@ -127,6 +127,12 @@ describe('pendingState — 보낸 말이 지금 어디 있나', () => {
     expect(pendingState({ text: '빼기B', at: at(1) }, { ...base, termText: '빼기A\n빼기B' })).toBe('input');
   });
 
+  it('그림을 읽는 중(Pasting…)엔 입력칸에 있어도 보내는 중 — 앱이 끝나길 기다렸다 Enter 를 다시 넣는다(2026-11-05 send-stuck)', () => {
+    const term = '#img1 #img2 아카이빙 카페 심볼[Image #2] [Image #3]';
+    expect(pendingState({ text: '#img1 #img2 아카이빙 카페 심볼', at: at(1) }, { ...base, termText: term, pasting: true })).toBe('sending');
+    expect(pendingState({ text: '#img1 #img2 아카이빙 카페 심볼', at: at(1) }, { ...base, termText: term })).toBe('input');
+  });
+
   it('막 쳐서 Enter 를 기다리는 동안은 보내는 중', () => {
     expect(pendingState({ text: '안녕', at: at(30) - 500 }, { ...base, termText: '안녕' })).toBe('sending');
   });
@@ -162,6 +168,26 @@ describe('pendingState — 보낸 말이 지금 어디 있나', () => {
 // 실패한 줄 알았다. 실제론 17:10:30 Claude 대기열에 들어가 13초 뒤 참모에게 갔다. 긴 말은 치는 데 몇 초 걸리고(시험 세션 2.1.310 실측 3~8초)
 // 입력칸 높이를 넘으면 화면엔 토막만 보여, 앱이 제 말을 '모르는 글'로 봤다
 const LONG = Array.from({ length: 40 }, (_, i) => `${i}. 회의 메모 줄 — 오늘 할 일과 다음 주 일정을 정리했어요`).join('\n');
+describe('state blocked 는 선택 창이 아니다 — 2.1.318 은 답을 묻고 턴을 끝낸 쉬는 세션도 blocked/idle(2026-11-05 개발 담당 실측, 화면에 창 없음)', () => {
+  it('입력칸에 걸린 내 말의 Enter 는 화면에서 읽은 선택 창(dialog)으로만 막는다 — 자동 Enter 는 입력칸이 그 말뿐일 때만 고르니 창이 뜬 화면엔 안 간다', () => {
+    expect(chat).toMatch(/const stuckTarget = dialog \|\| compacting/);
+    expect(chat).toMatch(/const enterOk = \(\) => !dialogRef\.current;/);
+  });
+});
+
+describe('보내기 블랙박스(notify.log chat-send) — 다음엔 어디서 멈췄는지 바로 찾게(2026-11-05 개발 담당 전달 안 됨)', () => {
+  it('말마다 줄 들어감·붙음 상태·칸 있음·글자 수, 치기 직전 터미널 조용한 시간, 끝 결과·실패 이유 — 글 내용은 안 남긴다', () => {
+    expect(grid).toMatch(/note\(`in link=\$\{linkNow\.get\(id\) \?\? '-'\} pane=\$\{links\.get\(id\) \? 1 : 0\} chars=\$\{\[\.\.\.text\]\.length\}`\)/);
+    expect(grid).toMatch(/note\(`type quiet=\$\{api\.quiet\?\.\(\) \?\? '-'\} waited=/);
+    expect(grid).toMatch(/note\(`fail \$\{e instanceof Error \? e\.message : String\(e\)\}/);
+    expect(grid).not.toMatch(/note\([^)]*\$\{text\}/);
+    expect(pane).toMatch(/quiet: \(\) => \(lastOut \? Date\.now\(\) - lastOut : -1\)/);
+  });
+  it('보낸 순간 채팅 화면이 기록보다 얼마나 낡았나도 남긴다', () => {
+    expect(chat).toMatch(/chatSendLog\(`\$\{paneId\} view items=\$\{items\.length\} last=/);
+  });
+});
+
 describe('typingOf — 입력칸 글이 아직 안 들어간 내 말의 토막인가', () => {
   it('치는 중이라 앞부분만 들어온 말', () => {
     expect(typingOf(LONG.slice(0, 120), [LONG])).toBe(LONG);
@@ -210,6 +236,7 @@ describe('autoEnterTarget — Enter 가 사라져 입력칸에 그대로 남은 
 
   it('다른 글이 섞여 있으면 안 누른다 — 섞인 채 가 버린다', () => {
     expect(autoEnterTarget([{ text: 'A', at: at(1) }], { ...ctx, termText: 'A 그리고 쓰던 말' })).toBeNull();
+    expect(autoEnterTarget([{ text: 'A', at: at(1) }], { ...ctx, termText: 'A[Image #1]', pasting: true })).toBeNull(); // 그림을 읽는 중 Enter 는 버려진다
   });
 
   it('↑로 되돌린(popAll) 말은 사람이 고치는 중일 수 있어 안 누른다', () => {
@@ -367,7 +394,7 @@ describe('typeQueue — 세션별 앱 치기 줄', () => {
     expect(restoreDraft('안녕', '안녕')).toBe('안녕');
   });
   it('채팅 보내기 실패(치기 거절·시간 넘김)가 채팅 칸까지 닿는다 — 오류 한 줄 + 입력 되살림', () => {
-    expect(grid).toMatch(/LINK_WAIT \+ TYPE_TIMEOUT\)\.then\(\(\) => true, \(\) => false\)/);
+    expect(grid).toMatch(/LINK_WAIT \+ TYPE_TIMEOUT\)\.then\(\(\) => \{[\s\S]{0,80}return true; \}, \(e: unknown\) => \{[\s\S]{0,160}return false; \}\)/);
     expect(grid).toMatch(/const sent = typeAndSend\(id, text\);[\s\S]{0,240}return sent;/);
     expect(chat).toMatch(/restoreDraft\(/);
     expect(chat).toMatch(/sendFail &&/);

@@ -8,7 +8,7 @@ use std::time::Duration;
 /// 화면 쪽이 답할 때까지 — 뽑기는 파일 한 번 읽고 쓰기라 보통 수십 ms, 창이 가려져도 JS 는 돈다
 pub const WAIT: Duration = Duration::from_secs(8);
 const SLOTS: [&str; 8] = ["skin", "window", "light", "hat", "title", "desk", "action", "fx"];
-const VIEW_KEYS: [&str; 5] = ["coins", "pity", "owned", "equip", "fresh"];
+const VIEW_KEYS: [&str; 9] = ["coins", "pity", "owned", "equip", "fresh", "offices", "chars", "orchSeats", "assign"];
 
 fn rid_ok(s: &str) -> bool {
     (8..=64).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
@@ -17,6 +17,26 @@ fn rid_ok(s: &str) -> bool {
 fn id_ok(s: &str) -> bool {
     let Some((kind, name)) = s.split_once('.') else { return false };
     !kind.is_empty() && kind.bytes().all(|b| b.is_ascii_lowercase()) && (1..=40).contains(&name.len()) && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+}
+
+/// 참모·프로젝트 이름 — 한 줄, 80자 안(화면 쪽 nameOk 와 같은 규칙)
+fn name_ok(s: &str) -> bool {
+    let n = s.encode_utf16().count();
+    (1..=80).contains(&n) && !s.chars().any(|c| c.is_control())
+}
+fn office_no(v: &Value) -> Option<u64> {
+    v.get("office")?.as_u64().filter(|n| *n <= 2)
+}
+fn small(v: Option<&Value>) -> Option<u64> {
+    v?.as_u64().filter(|n| *n < 40)
+}
+/// 칸 [x, y] — 없으면 None, null 은 Some(Null)(창고)
+fn cell(v: &Value, allow_null: bool) -> Option<Value> {
+    match v.get("cell")? {
+        Value::Null if allow_null => Some(Value::Null),
+        Value::Array(a) if a.len() == 2 => Some(json!([small(a.first())?, small(a.get(1))?])),
+        _ => None,
+    }
 }
 
 /// 폰이 보낸 글 → 아는 칸만 담은 요청. 모르는 모양이면 None(화면 쪽 parsePhoneReq 와 같은 규칙 — 두 번 거른다)
@@ -35,6 +55,40 @@ pub fn check(v: &Value) -> Option<Value> {
                 _ => return None,
             };
             Some(json!({ "rid": rid, "op": "equip", "slot": slot, "id": id }))
+        }
+        "expand" => Some(json!({ "rid": rid, "op": "expand", "office": office_no(v)? })),
+        "open" => Some(json!({ "rid": rid, "op": "open" })),
+        "char" => {
+            let name = v.get("name")?.as_str().filter(|s| name_ok(s))?;
+            let id = v.get("id")?.as_str().filter(|s| id_ok(s))?;
+            Some(json!({ "rid": rid, "op": "char", "name": name, "id": id }))
+        }
+        "skin" => {
+            let name = v.get("name")?.as_str().filter(|s| (1..=40).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'))?;
+            Some(json!({ "rid": rid, "op": "skin", "office": office_no(v)?, "name": name }))
+        }
+        op @ ("furn" | "floor") => {
+            let id = v.get("id")?.as_str().filter(|s| id_ok(s))?;
+            Some(json!({ "rid": rid, "op": op, "office": office_no(v)?, "id": id, "cell": cell(v, true)? }))
+        }
+        "wall" => {
+            let id = v.get("id")?.as_str().filter(|s| id_ok(s))?;
+            let side = match v.get("side")? {
+                Value::Null => Value::Null,
+                Value::String(s) if s == "L" || s == "R" => Value::String(s.clone()),
+                _ => return None,
+            };
+            Some(json!({ "rid": rid, "op": "wall", "office": office_no(v)?, "id": id, "side": side, "at": small(v.get("at"))? }))
+        }
+        "zone" => Some(json!({ "rid": rid, "op": "zone", "office": office_no(v)?, "cell": cell(v, false)? })),
+        "orch" => {
+            let name = v.get("name")?.as_str().filter(|s| name_ok(s))?;
+            let w = v.get("w")?.as_f64().filter(|w| *w == 1.6 || *w == 2.4)?;
+            Some(json!({ "rid": rid, "op": "orch", "office": office_no(v)?, "name": name, "cell": cell(v, false)?, "w": w }))
+        }
+        "assign" => {
+            let project = v.get("project")?.as_str().filter(|s| name_ok(s))?;
+            Some(json!({ "rid": rid, "op": "assign", "project": project, "office": office_no(v)? }))
         }
         _ => None,
     }
@@ -102,6 +156,21 @@ pub fn begin<'a>(set: &'a std::sync::Mutex<std::collections::HashSet<String>>, d
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn 사무실_요청은_아는_칸만_넘긴다() {
+        let rid = "abcd1234";
+        assert_eq!(check(&json!({ "rid": rid, "op": "expand", "office": 1, "x": "몰래" })), Some(json!({ "rid": rid, "op": "expand", "office": 1 })));
+        assert_eq!(check(&json!({ "rid": rid, "op": "expand", "office": 3 })), None);
+        assert_eq!(check(&json!({ "rid": rid, "op": "furn", "office": 0, "id": "furn.sofa", "cell": [3, 4] })), Some(json!({ "rid": rid, "op": "furn", "office": 0, "id": "furn.sofa", "cell": [3, 4] })));
+        assert_eq!(check(&json!({ "rid": rid, "op": "furn", "office": 0, "id": "furn.sofa", "cell": null })), Some(json!({ "rid": rid, "op": "furn", "office": 0, "id": "furn.sofa", "cell": null })));
+        assert_eq!(check(&json!({ "rid": rid, "op": "zone", "office": 0, "cell": null })), None);
+        assert_eq!(check(&json!({ "rid": rid, "op": "floor", "office": 0, "id": "../x", "cell": [1, 1] })), None);
+        assert_eq!(check(&json!({ "rid": rid, "op": "wall", "office": 0, "id": "wall.mirror", "side": "X", "at": 1 })), None);
+        assert_eq!(check(&json!({ "rid": rid, "op": "orch", "office": 0, "name": "참모-2", "cell": [1, 1], "w": 1.6 })), Some(json!({ "rid": rid, "op": "orch", "office": 0, "name": "참모-2", "cell": [1, 1], "w": 1.6 })));
+        assert_eq!(check(&json!({ "rid": rid, "op": "orch", "office": 0, "name": "참모-2", "cell": [1, 1], "w": 9 })), None);
+        assert_eq!(check(&json!({ "rid": rid, "op": "assign", "project": "a\nb", "office": 0 })), None);
+    }
 
     #[test]
     fn 답이_오면_그_답() {

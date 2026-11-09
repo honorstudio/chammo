@@ -354,6 +354,15 @@ def live_agents(d):
     return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
 
 
+def wants_roster(inp, cfg, d, env):
+    """이름표는 HQ 에서 띄운 세션(참모·도우미)에게만 — 앱 고치는 워크트리·프로젝트 세션엔 매 지시 ~1,100자가 쓸데없다(2026-11-06).
+    못 가리면 예전처럼 붙인다 — 참모 이름표가 빠지는 쪽이 더 나쁘다"""
+    try:
+        return hq_session(inp, cfg, d, env)
+    except Exception:
+        return True
+
+
 def main():
     try:
         inp = json.load(sys.stdin)
@@ -372,8 +381,10 @@ def main():
         except Exception:
             ok = True  # 못 가리면 예전처럼 참모로 — 참모 음성이 빠지는 쪽이 더 나쁘다
         sys.exit(0 if ok else 1)
-    agents = live_agents(d)
     cfg = read_json(os.path.join(d, 'config.json'), {})
+    if not wants_roster(inp, cfg, d, os.environ):
+        return  # claude agents 도 안 부른다 — 워크트리 세션 훅이 빨라진다
+    agents = live_agents(d)
     try:
         out = build(me, [a for a in agents if isinstance(a, dict)] if isinstance(agents, list) else [], read_json(os.path.join(d, 'orch-roles.json'), {}),
                     read_events(os.path.join(d, 'tasks.jsonl')), cfg, datetime.datetime.now(datetime.timezone.utc))

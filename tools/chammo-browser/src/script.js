@@ -237,6 +237,7 @@ async function hold(o, { out = (r) => process.stdout.write(`${JSON.stringify(r)}
     fs.mkdirSync(profileDir, { recursive: true });
     const pick = channelMod.pickChannel({ profileDir, want: o.channel });
     if (pick.warn) log(pick.warn);
+    if (pick.note) log(pick.note);
     // 맥이면 래퍼와 같은 'Chammo Browser' 사본으로 — Dock·⌘Tab 에서 사용자 크롬과 갈리게(src/appcopy.js). 채널은 그대로
     const picked = sessionChrome(chromeLaunch(pick.channel ? { env: { ...process.env, CHAMMO_BROWSER_CHANNEL: pick.channel } } : {}));
     if (!picked.found) throw new Error('이 기계엔 세션 브라우저(크롬)가 없어요 — Chammo 설정 > 브라우저 자동화에서 "설치"를 눌러 주세요');

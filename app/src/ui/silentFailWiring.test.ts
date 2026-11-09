@@ -16,6 +16,6 @@ describe('실패를 삼키지 않는다', () => {
     expect(app).toMatch(/const replyItem = \(item: InboxItem, text: string\) => replyInbox\(\{/);
     expect(app).toMatch(/waiting: \(task\) => invoke<boolean>\('task_waiting', \{ task \}\)/);
     expect(inbox).toMatch(/await onReply\(item, t\);\n\s*setText\(''\);\n\s*\} catch/);
-    expect(inbox).toMatch(/\{fail && !why && <div className="inbox-why" role="alert">\{fail\}<\/div>\}/);
+    expect(inbox).toMatch(/\{r\.fail && !why && <div className="inbox-why" role="alert">\{r\.fail\}<\/div>\}/);
   });
 });

@@ -299,8 +299,8 @@ pub fn agent_handback(profile: String, pid: i32) -> Result<(), String> {
     if cfg!(target_os = "windows") && crate::win_desk::shown(&live_dir(), &profile, pid) {
         crate::win_desk::ask(&live_dir(), &profile, pid, false, None)?;
     }
-    // 맥 — 패스키로 구글 크롬에 바꿔 뒀으면 참모 브라우저(ad-hoc 사본)로. 쿠키는 프로필에 남아 로그인이 그대로다
-    if crate::win_desk::signed_on(&live_dir(), &profile, pid) {
+    // 맥 — 사람이 고른 구글 크롬이면 참모 브라우저(ad-hoc 사본)로. 쿠키는 프로필에 남아 로그인이 그대로다. 패스키 때문에 래퍼가 바꾼 것은 래퍼가 되돌린다
+    if crate::win_desk::revert_on_human_end(&live_dir(), &profile, pid) {
         crate::win_desk::ask_signed(&live_dir(), &profile, pid, false, None)?;
     }
     #[cfg(not(test))]
@@ -776,7 +776,10 @@ pub fn agent_tabs(profile: String) -> Tabs {
     };
     let hidden = !shown && pid.is_some_and(|p| app_window::hidden(p) == Some(true));
     let signable = live.as_ref().is_some_and(|l| l.signable);
-    let signed = live.as_ref().is_some_and(|l| crate::win_desk::signed_on(&live_dir(), &profile, l.pid));
+    let signed = crate::win_desk::signed_really(
+        live.as_ref().is_some_and(|l| crate::win_desk::signed_on(&live_dir(), &profile, l.pid)),
+        pid.and_then(exe_path).as_deref(),
+    );
     let signed_auto = signed && live.as_ref().is_some_and(|l| crate::win_desk::signed_auto(&live_dir(), &profile, l.pid));
     let view = touch(&profile);
     let v = view.lock().unwrap_or_else(|e| e.into_inner());
@@ -853,6 +856,25 @@ pub fn agent_close_tab(profile: String, pid: i32, target: String) -> Result<(), 
         v.pinned = None;
     }
     Ok(())
+}
+
+/// 새 탭 열기 인자 — 웹 주소(http·https)만, 주소는 그대로. 아니면 None
+pub fn open_tab_params(url: &str) -> Option<serde_json::Value> {
+    crate::agent_input::web_url(url).then(|| serde_json::json!({ "url": url }))
+}
+
+/// 시안 칸 안 링크(2026-11-05 사용자) — 그 브라우저 지금 창에 새 탭으로 열고 칸이 그 탭을 보게 한다(pin).
+/// 세션이 보던 탭은 안 건드린다(새 탭이라 세션 조작에 안 끼어든다 — 개입 없이). 답 = 새 탭 id
+#[tauri::command(async)]
+pub fn agent_open_tab(profile: String, url: String) -> Result<String, String> {
+    let params = open_tab_params(&url).ok_or("not a web address")?;
+    let live = read_live(&profile).ok_or("no live browser")?;
+    let mut cdp = Cdp { ws: connect(&live)?, next: 0 };
+    let made = cdp.call("Target.createTarget", params, None, |_| {})?;
+    let _ = cdp.ws.close(None);
+    let id = made["targetId"].as_str().ok_or("no tab")?.to_string();
+    touch(&profile).lock().unwrap_or_else(|e| e.into_inner()).pinned = Some(id.clone());
+    Ok(id)
 }
 
 /// 띠에서 탭을 골라 보기(에이전트 조작엔 안 끼어든다). None = 다시 알아서 따라가기
@@ -1136,8 +1158,8 @@ pub fn agent_ask_done(profile: String, pid: i32, at: Option<u64>, say: Option<St
     if cfg!(target_os = "windows") && crate::win_desk::shown(&live_dir(), &profile, pid) {
         return crate::win_desk::ask(&live_dir(), &profile, pid, false, Some(&mark));
     }
-    // 맥 구글 크롬(패스키 탈출구)도 같은 순서 — ad-hoc 사본으로 되돌린 뒤 '다 했어' 표
-    if crate::win_desk::signed_on(&live_dir(), &profile, pid) {
+    // 맥 구글 크롬(사람이 고른 패스키 탈출구)도 같은 순서 — ad-hoc 사본으로 되돌린 뒤 '다 했어' 표. 래퍼가 패스키로 바꾼 것은 그대로(부름 답일 뿐 패스키는 안 끝났을 수 있다)
+    if crate::win_desk::revert_on_human_end(&live_dir(), &profile, pid) {
         return crate::win_desk::ask_signed(&live_dir(), &profile, pid, false, Some(&mark));
     }
     let f = live_dir().join(format!("{profile}.done"));
@@ -2052,15 +2074,20 @@ pub fn parse_lock_pid(s: &str) -> Option<i32> {
     s.rsplit_once('-').and_then(|(_, p)| p.trim().parse::<i32>().ok()).filter(|p| *p > 0)
 }
 
-#[cfg(target_os = "macos")]
 fn is_chrome(pid: i32) -> bool {
+    cfg!(not(target_os = "macos")) || exe_path(pid).is_some_and(|p| p.contains("Chrom"))
+}
+
+/// 프로세스 실행 파일 경로(맥) — 칸이 구글 크롬 표를 실제 크롬과 맞춰 본다(win_desk::signed_really)
+#[cfg(target_os = "macos")]
+fn exe_path(pid: i32) -> Option<String> {
     let mut buf = vec![0u8; 4096];
     let n = unsafe { libc::proc_pidpath(pid, buf.as_mut_ptr() as *mut libc::c_void, buf.len() as u32) };
-    n > 0 && String::from_utf8_lossy(&buf[..n as usize]).contains("Chrom")
+    (n > 0).then(|| String::from_utf8_lossy(&buf[..n as usize]).into_owned())
 }
 #[cfg(not(target_os = "macos"))]
-fn is_chrome(_pid: i32) -> bool {
-    true
+fn exe_path(_pid: i32) -> Option<String> {
+    None
 }
 
 /// lsof 를 정한 시간만 기다린다 — 넘으면 죽이고 None
@@ -2795,6 +2822,15 @@ mod tests {
         // 크롬 대화상자(패스키)는 창이 다른 모니터로 가면 한 박자 늦게 따라온다 — 한 번 더 크기를 바꾸면 제자리(2026-10-11 실측)
         let r = crate::vdisplay::Rect { x: 700.0, y: 220.0, w: 520.0, h: 640.0 };
         assert_eq!(bounds_steps(r), [crate::vdisplay::Rect { h: 639.0, ..r }, r], "끝은 원래 자리·크기");
+    }
+
+    #[test]
+    fn 시안_링크는_웹_주소만_새_탭으로() {
+        let p = open_tab_params("https://www.awwwards.com/sites/zeroz?a=1").unwrap();
+        assert_eq!(p, serde_json::json!({ "url": "https://www.awwwards.com/sites/zeroz?a=1" }), "주소 그대로, 새 창 아님(지금 창의 새 탭)");
+        for bad in ["javascript:alert(1)", "file:///etc/passwd", "data:text/html,x", "hodoc://localhost/a.html", "https://a.com/ b", ""] {
+            assert!(open_tab_params(bad).is_none(), "{bad}");
+        }
     }
 
     #[test]

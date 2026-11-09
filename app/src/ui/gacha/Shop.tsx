@@ -14,19 +14,23 @@ type Props = {
   draw: (n: 1 | 10) => Promise<PullResult[] | null>;
   /** 끼기·빼기(같은 종류는 바꿔 낌) — NEW 도 끈다 */
   equip: (id: string) => void;
-  /** 방 스킨 고르기 — 'wood' = 기본 */
+  /** 방 스킨 고르기(지금 사무실) — 'wood' = 기본 */
   setSkin: (name: string) => void;
+  /** 지금 사무실 번호 — 스킨은 사무실마다 */
+  office?: number;
+  /** 참모 캐릭터 고르기 창 */
+  onChars?: () => void;
   /** NEW 끄기만(도감에서 봄) */
   see: (id: string) => void;
-  /** 가구 놓기 트레이 열기 — 사무실에서만 */
-  onPlace?: () => void;
+  /** 사무실 편집 열기(그 층으로) — 사무실에서만 */
+  onPlace?: (kind: 'furn' | 'floor' | 'wall') => void;
   onClose: () => void;
 };
 
-export function Shop({ view, onView, file, draw, equip, setSkin, see, onPlace, onClose }: Props) {
+export function Shop({ view, onView, file, draw, equip, setSkin, see, office = 0, onChars, onPlace, onClose }: Props) {
   const [focus, setFocus] = useState<string | null>(null);
   const nav = <ShopNav view={view} onView={(v) => { setFocus(null); onView(v); }} dot={{ dex: !!file?.fresh?.length }} />;
   if (view === 'dex') return <DexView file={file} onPick={(id) => { see(id); setFocus(id); onView('deco'); }} onClose={onClose} nav={nav} />;
-  if (view === 'deco') return <DecoView file={file} focus={focus} onEquip={equip} onSkin={setSkin} onPlace={onPlace} onClose={onClose} nav={nav} />;
+  if (view === 'deco') return <DecoView file={file} focus={focus} onEquip={equip} onSkin={setSkin} office={office} onChars={onChars} onPlace={onPlace} onClose={onClose} nav={nav} />;
   return <GachaPage file={file} draw={draw} onClose={onClose} nav={nav} />;
 }

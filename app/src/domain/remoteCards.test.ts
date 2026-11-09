@@ -20,6 +20,10 @@ describe('다른 기기 카드', () => {
   it('세션이 꺼진 카드는 기다림이 아니다', () => {
     expect(remoteCards([{ dev: 'nB', name: 'B', log: ask('44444444', 'dead0009'), sessions }], NOW)).toEqual([]);
   });
+  it('안 닿는 기기(off)의 마지막 카드는 숨기지 않고 이름에 연결 안 됨', () => {
+    const got = remoteCards([{ dev: 'nB', name: '참모 · 영상PC', log: ask('55555555', 'bbbb0002'), sessions, off: true }], NOW);
+    expect(got.map((x) => [x.dev, x.card.id, x.name])).toEqual([['nB', '55555555', '영상PC · 연결 안 됨 · shop']]);
+  });
   it('깨진 목록·빈 기록', () => {
     expect(remoteCards([{ dev: 'nB', name: 'B', log: '', sessions: 'x' }], NOW)).toEqual([]);
     expect(remoteCards('nope' as unknown as never, NOW)).toEqual([]);

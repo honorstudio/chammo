@@ -5,8 +5,7 @@ import { commitLog, readAutoAllow } from '../data/tauri';
 import { parseAllowLog } from '../domain/autoAllow';
 import { buildReplay, dayWindow, parseDayCommits, shiftDay, TASK_LANE, type DayWindow, type ReplayEvent, type ReplayKind } from '../domain/replay';
 import type { TaskEvent } from '../domain/tasks';
-import type { TamaFile } from '../domain/tama/store';
-import { drawSprite, spriteOf } from './tama/lcd';
+import { drawSprite } from './tama/lcd';
 import { IconNext, IconPause, IconPlay, IconPrev } from './Icons';
 import { fmtNum, tr } from '../i18n';
 
@@ -22,9 +21,9 @@ const hhmm = (t: number) => new Date(t).toLocaleTimeString(LOC(), { hour: '2-dig
 const dayLabel = (w: DayWindow) => new Date(w.start).toLocaleDateString(LOC(), { month: 'long', day: 'numeric', weekday: 'short' });
 
 /** author = 내 커밋 작성자 이메일(env.gitEmail) */
-type Props = { devRoot: string; author: string; tasks: TaskEvent[]; tama: TamaFile | null };
+type Props = { devRoot: string; author: string; tasks: TaskEvent[] };
 
-export function ReplayPage({ devRoot, author, tasks, tama }: Props) {
+export function ReplayPage({ devRoot, author, tasks }: Props) {
   const [win, setWin] = useState<DayWindow>(() => dayWindow(new Date()));
   const [raw, setRaw] = useState<{ commits: string; allow: string } | null>(null);
   const [pos, setPos] = useState(0); // 창 시작부터 ms
@@ -119,7 +118,7 @@ export function ReplayPage({ devRoot, author, tasks, tama }: Props) {
               </div>
             </div>
           ))}
-          <Walk tama={tama} events={r.events} cutX={x(cut)} walking={playing} x={x} cut={cut} />
+          <Walk events={r.events} cutX={x(cut)} walking={playing} x={x} cut={cut} />
         </div>
 
         <ol className="rp-feed">
@@ -181,9 +180,8 @@ const Row = ({ t, head, text }: { t?: number; head: string; text: string }) => (
 const Empty = ({ text }: { text?: string }) => <div className="rp-row dim">{text ?? tr('없어', 'None')}</div>;
 
 /** D — 다마고치가 재생 막대를 따라 걷는다. 커밋은 밥, 큰 커밋은 똥, 결정은 표지판 */
-function Walk({ tama, events, cutX, walking, x, cut }: { tama: TamaFile | null; events: ReplayEvent[]; cutX: string; walking: boolean; x: (t: number) => string; cut: number }) {
+function Walk({ events, cutX, walking, x, cut }: { events: ReplayEvent[]; cutX: string; walking: boolean; x: (t: number) => string; cut: number }) {
   const ref = useRef<HTMLCanvasElement>(null);
-  const pet = tama?.pet;
   useEffect(() => {
     const c = ref.current;
     if (!c) return;
@@ -191,8 +189,8 @@ function Walk({ tama, events, cutX, walking, x, cut }: { tama: TamaFile | null; 
     c.width = Math.round(36 * dpr);
     c.height = Math.round(36 * dpr);
     const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    drawSprite(c, pet && !pet.dead ? spriteOf(pet.egg, pet.slot) : 'egg', dark ? 'dark' : 'light');
-  }, [pet]);
+    drawSprite(c, 'bear', dark ? 'dark' : 'light');
+  }, []);
   return (
     <div className="rp-lane rp-walk">
       <span className="rp-lane-name">{tr('산책', 'Walk')}</span>

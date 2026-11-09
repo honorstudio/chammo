@@ -135,8 +135,24 @@ export function parseNotices(md: string): { name: string; license: string; body:
   return md.split(/^## /m).slice(1).map((sec) => {
     const [head, ...rest] = sec.split('\n');
     const i = head!.lastIndexOf(' — ');
-    return { name: (i < 0 ? head! : head!.slice(0, i)).trim(), license: i < 0 ? '' : head!.slice(i + 3).trim(), body: rest.join('\n').trim() };
+    // 원문은 들여쓴 코드 칸이라 원문 속 '## ' 줄이 절로 안 쪼개진다 — 보여 줄 땐 들여쓰기를 벗긴다
+    return { name: (i < 0 ? head! : head!.slice(0, i)).trim(), license: i < 0 ? '' : head!.slice(i + 3).trim(), body: rest.join('\n').trim().replace(/^ {4}/gm, '') };
   });
+}
+
+/** 창에 보일 고지 글 — 패키지 줄의 ` 와 링크 표기를 벗기고, 아파치 절이면 원문 파일(Apache-2.0.txt)을 뒤에 붙인다 */
+export function noticeText(body: string, apache = ''): string {
+  const isApache = body.includes('[`Apache-2.0.txt`]');
+  const text = body.replace(/^- `([^`]+)`/gm, '- $1').replace(/\[`([^`]+)`\]\([^)]*\)/g, '$1');
+  return isApache && apache ? `${text}\n\n${apache.trim()}` : text;
+}
+
+/** 사용 조건 파일(TERMS.md) 본문 — 첫 줄 '# 제목' 을 뺀 것. 머리가 다르면 없는 것으로: 없는 파일을 물으면 앱이 index.html 을 돌려준다 */
+export function termsBody(md: string): string | null {
+  const t = md.trimStart();
+  if (!t.startsWith('# ')) return null;
+  const body = t.split('\n').slice(1).join('\n').trim();
+  return body || null;
 }
 
 /** 라이선스 창 한 줄 글 — 참모 앱: 원작 이름·판(ChammoBasedOn 문장에서 판 번호만 — 앱마다 문장 모양이 달라서)·저장소, 원본: 원본 그대로·판·저장소 */

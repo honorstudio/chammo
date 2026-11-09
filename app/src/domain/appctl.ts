@@ -10,7 +10,7 @@ export const OPEN = ['settings', 'tour', 'office', 'review', 'all', 'replay', 'l
 export type OpenWhat = (typeof OPEN)[number];
 export const CLOSE = ['settings', 'office', 'reader', 'tasks', 'inbox', 'harnitor', 'tools', 'review'] as const;
 export type CloseWhat = (typeof CLOSE)[number];
-const FEATURES: FeatureSwitch[] = ['office', 'tama', 'gacha', 'review', 'voice', 'autoRevive', 'autoTidy', 'computerUse', 'usagePing', 'craftBasics', 'bubble', 'bubbleDesk', 'git'];
+const FEATURES: FeatureSwitch[] = ['office', 'gacha', 'review', 'voice', 'autoRevive', 'autoTidy', 'computerUse', 'usagePing', 'craftBasics', 'bubble', 'bubbleDesk', 'git'];
 
 export type AppIntent =
   | { kind: 'voice'; on: boolean }
@@ -20,7 +20,6 @@ export type AppIntent =
   | { kind: 'open'; what: OpenWhat }
   | { kind: 'close'; what: CloseWhat }
   | { kind: 'focus'; target: string; terminal?: true }
-  | { kind: 'pet'; show: boolean }
   | { kind: 'reload' }
   /** 폰(폰 서버 /api/rename)이 바꾼 참모 별명 — 앱 별명에 넣으면 쉬는 때 /rename 이 따라간다 */
   | { kind: 'label'; id: string; nick: string }
@@ -76,7 +75,6 @@ export function intentOf(line: unknown): AppIntent | null {
     return a ? { kind: 'focus', target: a } : null;
   }
   if (action === 'config') return a === 'reload' ? { kind: 'reload' } : null;
-  if (action === 'pet') return a === 'show' || a === 'hide' ? { kind: 'pet', show: a === 'show' } : null;
   return null;
 }
 

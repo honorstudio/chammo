@@ -1,6 +1,6 @@
 import '@blocknote/mantine/style.css';
 import { useEffect, useRef, useState } from 'react';
-import { getDefaultReactSlashMenuItems, SuggestionMenuController, useCreateBlockNote } from '@blocknote/react';
+import { getDefaultReactSlashMenuItems, SideMenuController, SuggestionMenuController, useCreateBlockNote } from '@blocknote/react';
 import { filterSuggestionItems } from '@blocknote/core/extensions';
 import { BlockNoteView } from '@blocknote/mantine';
 import { ko } from '@blocknote/core/locales';
@@ -9,6 +9,11 @@ import { BlockNoteSchema, defaultBlockSpecs, type BlockNoteEditor } from '@block
 import { DocDirContext, PageBlock } from './PageBlock';
 import './editorTone.css';
 import { installBlockDrag } from './blockDrag';
+import { installBlockPick } from './blockPick';
+import { DocSideMenu } from './HandleMenu';
+import { installImeEnter } from './imeEnter';
+import { cellRangeAt, installTableSelect, isCellPick, oneCellRange } from './tableSelect';
+import { linesAsBlocks } from '../../domain/pasteLines';
 import { duplicateBlock, notionSlashItems } from '../../domain/docBlocks';
 
 // 기본 블록 + 하위 페이지 블록(노션처럼)
@@ -19,6 +24,9 @@ if (typeof window !== 'undefined' && !(window as { __docOpen?: boolean }).__docO
   window.open = (url?: string | URL, ...rest: [string?, string?]) => {
     const p = url ? pathOfDocUrl(String(url)) : null;
     if (p) { void invoke('open_target', { kind: 'file', target: p }).catch(() => {}); return null; }
+    // 링크 단추의 웹 주소도 앱 창에선 안 열렸다 — 시안 칸 링크와 같은 길(스페이스면 참모 브라우저 새 탭, 2026-11-05)
+    const web = url ? frameLink({ hodoc: 'link', url: String(url) }) : null;
+    if (web) { openFrameLink(web, '', document.querySelector('.space') ?? document.body); return null; }
     return nativeOpen(url, ...rest);
   };
 }
@@ -29,6 +37,8 @@ import { copyText } from './copyText';
 import { selectAllStep, wholeText } from './selectAllStep';
 import { docSelectAll } from '../selectAll';
 import { docFileUrl, IS_WIN, pathOfDocUrl } from '../../domain/reader';
+import { frameLink } from '../../domain/frameLink';
+import { openFrameLink } from '../followLink';
 import { docDropBlocks, dropSlot } from '../../domain/drop';
 import { DOC_DROP_EVENT, DOC_OVER_EVENT } from '../fileDrop';
 import { useDocSync } from './docSync';
@@ -45,7 +55,7 @@ const dark = () => document.documentElement.dataset.theme === 'dark' || (documen
  * onReady(정리된 md) = 처음 읽었다 다시 쓴 모양 — BlockNote 는 md 모양을 조금 바꿔서(목록 기호·표), 비교 기준을 이걸로 잡아야
  * 한 줄 고쳤는데 문서 전체가 바뀐 것처럼 안 보인다. onChange(md) = 바뀔 때마다(제목 따라가기 등). 저장은 여기서(docSave·docSync — 밖에서 고친 걸 덮지 않게)
  */
-export default function SpaceEditor({ md, docPath, onReady, onChange, onEditor, onNewSubpage }: { md: string; docPath: string; onReady: (normalized: string) => void; onChange: (md: string) => void; onEditor?: (ed: BlockNoteEditor | null) => void;
+export default function SpaceEditor({ md, docPath, personal, onReady, onChange, onEditor, onNewSubpage }: { /** 내 메모 — 보낼 것·기록에 안 넣는다(docSave) */ personal?: boolean;  md: string; docPath: string; onReady: (normalized: string) => void; onChange: (md: string) => void; onEditor?: (ed: BlockNoteEditor | null) => void;
   /** "/페이지" — 하위 페이지를 만들고 그 파일 경로를 돌려준다(없으면 메뉴에 안 나옴) */
   onNewSubpage?: () => Promise<string> }) {
   const dir = fwd(docPath).replace(/\/[^/]*$/, ''); // 윈도우 C:\… 여도 / 로(win-text M2)
@@ -59,9 +69,20 @@ export default function SpaceEditor({ md, docPath, onReady, onChange, onEditor, 
     resolveFileUrl: async (url: string) => docFileUrl(url, dir),
     // 놓일 자리 표시 — 기본 연파랑(#ddeeff) 대신 앱 톤(2026-10-04 사용자 "파랑 위주")
     dropCursor: { color: 'rgba(128, 128, 128, .45)', width: 3 },
+    // 다른 앱의 맨 글(서식 없는 글) 여러 줄 — 노션처럼 줄마다 블록(기본은 md 로 읽어 줄바꿈 하나가 한 문단 안 줄바꿈이 됐다, 2026-11-09).
+    // 서식 있는 글·우리 문서 조각·파일·코드 블록·표 칸 안은 기본 그대로
+    pasteHandler: ({ event, editor: ed, defaultPasteHandler }) => {
+      const d = event.clipboardData;
+      const plain = d?.getData('text/plain') ?? '';
+      const rich = d ? [...d.types].some((t) => t !== 'text/plain') : true;
+      const { $from } = ed.prosemirrorState.selection;
+      if (rich || !/[\r\n]/.test(plain.trim()) || $from.parent.type.spec.code || cellRangeAt(ed.prosemirrorState.doc, $from.pos)) return defaultPasteHandler();
+      ed.pasteMarkdown(linesAsBlocks(plain));
+      return true;
+    },
   });
   useEffect(() => { onEditor?.(editor as unknown as BlockNoteEditor); return () => onEditor?.(null); }, [editor]); // eslint-disable-line react-hooks/exhaustive-deps
-  const sync = useDocSync(editor as unknown as BlockNoteEditor, docPath, md);
+  const sync = useDocSync(editor as unknown as BlockNoteEditor, docPath, md, personal);
   // 파인더에서 끌어다 놓은 파일 — 문서 옆 assets/ 로 복사해 가장 가까운 블록 위/아래에(그림·영상·소리, 나머지는 파일).
   // 지나가는 동안 들어갈 자리를 가로줄로 보여 준다(2026-10-01 사용자 — 정확히 블록 위에 놓아야만 들어가서 불편)
   const box = useRef<HTMLDivElement>(null);
@@ -97,11 +118,14 @@ export default function SpaceEditor({ md, docPath, onReady, onChange, onEditor, 
     el.addEventListener(DOC_DROP_EVENT, on);
     return () => { el.removeEventListener(DOC_DROP_EVENT, on); el.removeEventListener(DOC_OVER_EVENT, over); };
   }, [editor, docPath]);
-  // 블록 손잡이 끌기(마우스 따라가기 — 웹 끌기는 앱 창이 가져간다, blockDrag.ts) + ⌘D 블록 복제(노션)
+  // 블록 손잡이 끌기(마우스 따라가기 — 웹 끌기는 앱 창이 가져간다, blockDrag.ts) + 한글 Enter + ⌘D 블록 복제(노션)
   useEffect(() => {
     const el = box.current;
     if (!el) return;
-    const off = installBlockDrag(el, editor as unknown as BlockNoteEditor, setLine);
+    const pick = installBlockPick(el, editor as unknown as BlockNoteEditor); // 노션식 블록 고르기(Esc·손잡이·Shift+↑↓)
+    const off = installBlockDrag(el, editor as unknown as BlockNoteEditor, setLine, pick);
+    const offIme = installImeEnter(el, editor as unknown as BlockNoteEditor); // 한글 치고 Enter 한 번에 새 줄(imeEnter.ts)
+    const offTable = installTableSelect(el, editor as unknown as BlockNoteEditor); // 표 칸 안 = 글 선택, 여러 칸 = 칸 선택(tableSelect.ts)
     const key = (e: KeyboardEvent) => {
       if (e.code !== 'KeyD' || e.shiftKey || e.altKey || !(IS_WIN ? e.ctrlKey && !e.metaKey : e.metaKey && !e.ctrlKey)) return;
       e.preventDefault(); e.stopPropagation();
@@ -113,7 +137,7 @@ export default function SpaceEditor({ md, docPath, onReady, onChange, onEditor, 
       if (first) try { editor.setTextCursorPosition(first, 'end'); } catch { /* 글 칸 없는 블록(그림·페이지) */ }
     };
     el.addEventListener('keydown', key, true);
-    return () => { off(); el.removeEventListener('keydown', key, true); };
+    return () => { off(); pick.off(); offIme(); offTable(); el.removeEventListener('keydown', key, true); };
   }, [editor]);
   // 복사·잘라내기 — BlockNote 가 text/plain 에 마크다운(| --- |·백틱)을 넣는다. 그 뒤(거품 단계)에 사람 글로만 갈아 끼운다.
   // 글은 먼저(포착 단계) 읽어 둔다 — 잘라내기는 BlockNote 가 지운 뒤라 선택이 비어 있다. text/html 은 그대로(서식 붙여넣기용).
@@ -121,15 +145,30 @@ export default function SpaceEditor({ md, docPath, onReady, onChange, onEditor, 
   useEffect(() => {
     const el = box.current;
     if (!el) return;
+    // 표: 칸 하나짜리 칸 선택은 복사하는 동안만 그 칸 글 선택으로 바꿔 글로 복사하고(표 밖에 붙이면 1칸 표가 생겼다) 되돌린다.
+    // 여러 칸은 text/html(표)을 빼서 다른 앱엔 탭 구분 글 — 우리 문서엔 blocknote/html 로 표 그대로 붙는다(2026-11-09 사용자)
     let text: string | null = null;
-    const read = () => {
+    let back: BlockNoteEditor['prosemirrorState']['selection'] | null = null;
+    let cells = false;
+    const read = (ev: ClipboardEvent) => {
       // 빈 글(그림 블록만 고름 등)이면 BlockNote 것을 그대로 둔다. 바꾸다 실패해도 복사 자체는 산다
-      try { const s = editor.prosemirrorState.selection; text = s.empty ? null : copyText(s) || null; } catch { text = null; }
+      try {
+        const tip = editor._tiptapEditor;
+        const one = oneCellRange(tip.state.doc, tip.state.selection);
+        if (one) { if (ev.type === 'copy') back = tip.state.selection; tip.commands.setTextSelection(one); } // 잘라내기는 칸 글만 지우고 끝
+        const s = editor.prosemirrorState.selection;
+        cells = isCellPick(s);
+        text = s.empty ? null : copyText(s) || null;
+      } catch { text = null; }
     };
     const write = (ev: ClipboardEvent) => {
       // BlockNote 가 안 받은 복사(선택 없음·편집 안 되는 칸)는 브라우저 기본 그대로
-      if (ev.defaultPrevented && ev.clipboardData && text !== null) ev.clipboardData.setData('text/plain', text);
-      text = null;
+      if (ev.defaultPrevented && ev.clipboardData && text !== null) {
+        ev.clipboardData.setData('text/plain', text);
+        if (cells) ev.clipboardData.clearData('text/html');
+      }
+      if (back) try { const v = editor._tiptapEditor.view; v.dispatch(v.state.tr.setSelection(back)); } catch { /* 문서가 바뀌었으면 글 선택 그대로 */ }
+      text = null; back = null; cells = false;
     };
     el.addEventListener('copy', read, true);
     el.addEventListener('cut', read, true);
@@ -203,6 +242,7 @@ export default function SpaceEditor({ md, docPath, onReady, onChange, onEditor, 
         editor={editor}
         theme={theme}
         slashMenu={false}
+        sideMenu={false}
         onChange={() => {
           if (!ready.current) return;
           sync.edits.current++;
@@ -211,6 +251,8 @@ export default function SpaceEditor({ md, docPath, onReady, onChange, onEditor, 
           void sync.normalize().then((out) => { if (mine) saveSoon(sync.session, out); onChange(out); });
         }}
       >
+        {/* 손잡이 메뉴는 아이콘만(HandleMenu.tsx) */}
+        <SideMenuController sideMenu={DocSideMenu} />
         {/* "/" 메뉴 — 기본 블록(한글 이름 더함) + "페이지"(하위 페이지를 만들고 이 자리에 링크, 노션처럼 — 2026-09-30 사용자) */}
         <SuggestionMenuController triggerCharacter="/" getItems={async (query) => filterSuggestionItems(notionSlashItems(getDefaultReactSlashMenuItems(editor), onNewSubpage ? {
           key: 'page', title: '페이지', subtext: '하위 페이지를 만들고 여기에 링크', aliases: ['page', 'subpage', '페이지', '하위', 'ㅍ'], group: '기본 블록',

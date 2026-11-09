@@ -1,7 +1,7 @@
 // 세션 브라우저 독(2026-10-27 인앱 브라우저 시안 A) — 스페이스 탭 줄에 그 참모가 맡은 세션들의 브라우저가 아이콘 하나씩(Craft 독처럼, 세션 글자 배지).
 // 누르면 스페이스 칸 전체가 그 브라우저(b:<프로필>), 칸을 닫아도(숨김) 아이콘은 남는다 — 브라우저를 끄는 건 참모·세션
 import { josa, tr } from '../i18n';
-import { ACTIVE_MS, takeoverLine, type Live } from './agentBrowser';
+import { ACTIVE_MS, fedcmChoices, fedcmLine, permLine, takeoverLine, type FedcmDialog, type Live, type PagePermission } from './agentBrowser';
 
 export type BrowserDot = 'ask' | 'human' | 'agent' | '';
 /** who = 세션이 안 쥔 HQ 브라우저(hqBrowserHome) — 사람이 서랍에서 연 것(me)·주인 모름(unknown). 보는 참모 이름을 달지 않는다 */
@@ -74,10 +74,16 @@ export function paneTarget(profile: string, rows: { id: string; own?: Live; held
   return (hint && rows.some((r) => r.id === hint) ? hint : null) ?? browserOwner(profile, rows);
 }
 
-/** 사람 차례 카드(시안 A) — 칸 아래 작은 카드 하나. 페이지 대화상자(페이지가 굳음) > 세션 부름 > 파일 고르기 > 크롬 자체 창(패스키·권한) */
-export type TurnCard = { kind: 'dialog'; text: string; prompt: boolean } | { kind: 'ask' | 'file' | 'passkey' | 'window'; text: string };
-export function turnCard(l: Live, t: { dialog: { type: string; message: string } | null; chooser: string | null }, mac?: SignedState): TurnCard | null {
+/** 사람 차례 카드(시안 A) — 칸 아래 작은 카드 하나. 페이지 대화상자(페이지가 굳음) > 계정 고르기(FedCM) > 사이트 권한 > 세션 부름 > 파일 고르기 > 크롬 자체 창(패스키·권한 풍선) */
+export type TurnCard = { kind: 'dialog'; text: string; prompt: boolean }
+  | { kind: 'fedcm'; text: string; dialogId: string; choices: { label: string; account: number | null }[] }
+  | { kind: 'ask' | 'file' | 'passkey' | 'window' | 'perm'; text: string };
+export function turnCard(l: Live, t: { dialog: { type: string; message: string } | null; chooser: string | null; permission?: PagePermission | null; fedcm?: FedcmDialog | null }, mac?: SignedState): TurnCard | null {
   if (t.dialog) return { kind: 'dialog', text: t.dialog.message || tr('페이지가 확인을 기다려', 'The page is waiting for you'), prompt: t.dialog.type === 'prompt' };
+  // 구글 원탭(FedCM) 계정 고르기·사이트 권한 — 칸은 크롬 창을 비춰 크롬 자체 창이 보이지만 입력은 CDP 로 페이지에만 가서 안 눌렸다(2026-11-08 거래소).
+  // 일꾼이 받아 둔 것(agent_tabs)을 모달처럼 단추로. 페이지가 이 답을 기다리니 세션 부름보다 먼저
+  if (t.fedcm) return { kind: 'fedcm', text: fedcmLine(t.fedcm), dialogId: t.fedcm.dialogId, choices: fedcmChoices(t.fedcm) };
+  if (t.permission) return { kind: 'perm', text: permLine(t.permission) };
   if (l.ask) return { kind: 'ask', text: l.ask.reason ?? '' };
   if (t.chooser) return { kind: 'file', text: tr('올릴 파일을 골라 줘 — 앱 창에 붙은 창에서', 'Pick the file to upload — in the sheet on the app window') };
   // 래퍼가 패스키 때문에 바꾼 동안(auto)은 크롬 창이 뜨면 패스키다 — 창 이름('문제가 발생했습니다' 등)으로는 못 가를 때가 있다(10-30 실측)

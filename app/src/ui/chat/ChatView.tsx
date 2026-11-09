@@ -1,7 +1,7 @@
 import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { chatDrafts } from '../../data/drafts';
 import { interleave } from '../../domain/chatExtras';
-import { isCompacting } from '../../domain/compacting';
+import { isCompacting, isPasting } from '../../domain/compacting';
 import { ctxLevel } from '../../domain/ctx';
 import { invoke } from '@tauri-apps/api/core';
 import { ModelChip, type ModelInfo } from './ModelChip';
@@ -10,17 +10,18 @@ import { modelCommand } from '../../domain/modelPick';
 import { screenDialog, type ScreenDialog } from '../../domain/screenDialog';
 import type { PickResult, PickWant } from './modelPickRun';
 import { builtinSlash, completeSlash, isMemoryCmd, matchSlash, slashQuery, type SlashItem } from '../../domain/slash';
-import { appendChat, chatBusy, chatEscStops, chatNorm, escUnsends, enterDelay, parseChat, pasteKind, clickFocusesInput, sentByMe, promptInput, sendControls, splitPaths, splitRefs, stillPending, stuckInInput, taskCounts, termRest, withRefs, type ChatItem, type ChatRef } from '../../domain/chat';
+import { appendChat, chatBusy, chatEscStops, chatNorm, escUnsends, enterDelay, parseChat, pasteKind, clickFocusesInput, sentByMe, promptInput, sendControls, splitPaths, splitRefs, staleRefs, stillPending, stuckInInput, taskCounts, termRest, withRefs, type ChatItem, type ChatRef } from '../../domain/chat';
 import type { LinkState } from '../../domain/attachExit';
 import { HOLD_MAX } from '../../domain/paneLinks';
 import { absorbedAt, absorbedLeft, againPlan, applyQueueOps, autoEnterTarget, DUP_CONFIRM, emptyQueue, inputLeftover, keepAfterRemove, LOST_AFTER, mineForLeftover, newPending, pendAct, pendingState, pendLook, resent, restoreDraft, typingOf, waitingOf, type PendingState, type QueueState } from '../../domain/chatQueue';
 import { mdToHtml } from '../md';
 import { openWebLink } from '../followLink';
-import { openTarget, readSessionTasks, readTranscript, type SessionTask, type TranscriptChunk } from '../../data/tauri';
+import { chatSendLog, openTarget, readSessionTasks, readTranscript, type SessionTask, type TranscriptChunk } from '../../data/tauri';
 import { modKey } from '../../domain/keys';
 import { docUrl, IS_WIN } from '../../domain/reader';
 import { DROP_EVENT, DROP_PATHS_EVENT } from '../fileDrop';
-import { clearCount, nextEmpties } from '../../domain/termInput';
+import { clearCount, termReadDue } from '../../domain/termInput';
+import { attachStep, NO_ATT, type Att, type AttEvent, type AttState } from '../../domain/chatAttach';
 import { chipName, chipPastes, isFolderChip } from '../../domain/drop';
 import { assistant, josa, tr } from '../../i18n';
 import { orchestratorLike, seenName } from '../../domain/session';
@@ -42,6 +43,7 @@ import { openChatFile } from './openChatFile';
 import { attachToChat } from '../fileDrop';
 import { useRefInbox } from '../refBus';
 import { nextRefLabel, type RefKind } from '../../domain/refChips';
+import { withPlain } from '../../domain/notes';
 import { useCoverEvery } from '../poll';
 import { echoOfSent, enterAction } from '../../domain/enterSend';
 import { chatPollMs, liveReply, liveStep, liveView, NO_LIVE } from '../../domain/chatLive';
@@ -68,7 +70,10 @@ const md = (text: string) => {
 const topRef = (refs: ChatRef[]) => Math.max(0, ...refs.map((r) => Number(r.label.slice(5)) || 0));
 // 쓰던 글은 세션마다 — 참모 탭을 옮겨도, 앱을 다시 켜도 남는다(2026-09-30 사용자: 1→2 옮기다 긴 글이 날아갔다)
 // 보내는 중인 말도 세션마다 — 탭을 옮겨 창이 새로 그려져도 "보내는 중"이 남고, 안 보내졌으면 다시 Enter 를 넣을 수 있게
-const pendingBy = new Map<string, { text: string; at: number; since?: number }[]>();
+type Pend = { text: string; at: number; since?: number; imgs?: string[] };
+const pendingBy = new Map<string, Pend[]>();
+// 붙인 것(첨부 줄)도 세션마다 — 탭을 옮기거나 창이 새로 그려져도 터미널 입력칸에 든 그림이 줄에서 안 사라지게(메모리만)
+const attBy = new Map<string, AttState>();
 const drafts = chatDrafts;
 
 /**
@@ -169,28 +174,37 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     if (document.querySelector('.space-mode')) window.dispatchEvent(new CustomEvent(OPEN_PAGE, { detail: path }));
     else void openTarget('file', path);
   };
-  const [pending, setPending] = useState<{ text: string; at: number; since?: number }[]>(() => (paneId ? pendingBy.get(paneId) ?? [] : []));
+  const [pending, setPending] = useState<Pend[]>(() => (paneId ? pendingBy.get(paneId) ?? [] : []));
   useEffect(() => { if (paneId) pendingBy.set(paneId, pending); }, [paneId, pending]);
   const list = useRef<HTMLDivElement>(null);
   const backdrop = useRef<HTMLDivElement>(null);
   const root = useRef<HTMLDivElement>(null);
   // 보내기 전 붙인 것 — 그림은 썸네일, 나머지 파일은 이름(터미널 입력칸엔 [Image #n]·경로로 들어가 있다)
-  const [attached, setAttached] = useState<{ key: string; url?: string; name: string; label?: string; path?: string }[]>([]);
-  const attachedNow = useRef(attached);
-  attachedNow.current = attached;
-  // 붙인 그림에 #img1 #img2 이름표 — 입력칸에도 넣어 어느 그림 얘기인지 쓸 수 있게(2026-09-30 사용자, 10-12 @ 는 참모 멘션이 가져가고 # 로)
-  const imgCount = useRef(0); // 이번 메시지에 붙인 그림·파일 수 — 붙인 게 비면 0 으로
-  const fileCount = useRef(0);
-  const lastAttach = useRef(0);
+  // 보내기 전 붙인 것 — 그림은 썸네일, 나머지 파일은 이름(터미널 입력칸엔 [Image #n]·경로로 들어가 있다).
+  // 붙인 그림에 #img1 #img2 이름표 — 입력칸에도 넣어 어느 그림 얘기인지 쓸 수 있게(2026-09-30 사용자, 10-12 @ 는 참모 멘션이 가져가고 # 로). 비우는 때는 domain/chatAttach
+  const paneNow = useRef(paneId);
+  paneNow.current = paneId;
+  const att = useRef<AttState>((paneId && attBy.get(paneId)) || NO_ATT);
+  const [attached, setAttached] = useState<Att[]>(att.current.list);
+  const stepAtt = (e: AttEvent) => {
+    const r = attachStep(att.current, e);
+    if (r.s !== att.current) {
+      att.current = r.s;
+      if (paneNow.current) attBy.set(paneNow.current, r.s);
+      setAttached(r.s.list); // 줄이 그대로면 같은 배열 — 다시 안 그린다
+    }
+    return r;
+  };
   // 이번 메시지에 앱이 터미널 입력칸에 붙여 넣은 글 길이 — 화면 읽기는 긴 입력칸을 잘라 보여서 지울 때 모자랐다(domain/termInput)
   const pasted = useRef(0);
-  const attach = (item: { key: string; url?: string; name: string; path?: string }, kind: 'img' | 'file'): string => {
-    lastAttach.current = Date.now();
-    const label = kind === 'img' ? `${REF_PREFIX}img${++imgCount.current}` : `${REF_PREFIX}file${++fileCount.current}`;
-    setAttached((a) => [...a, { ...item, label }]);
+  const attach = (item: Att, kind: 'img' | 'file'): string => {
+    const label = stepAtt({ kind: 'add', item, as: kind, now: Date.now() }).label!;
     setDraft((d) => `${d}${d && !/\s$/.test(d) ? ' ' : ''}${label} `);
     return label;
   };
+  /** 보낸 말과 같이 간 것 — 줄에서 빼고, 그림은 대기 말풍선에 붙인다 */
+  const sendAtt = () => stepAtt({ kind: 'sent' }).went ?? [];
+  const imgsOf = (went: Att[]) => { const u = went.flatMap((a) => (a.url ? [a.url] : [])); return u.length ? { imgs: u } : {}; };
   // 말풍선 참조 #chat1 — 앞 말풍선에 마우스를 올려 "참조"를 누르면 입력칸에 이름표, 보낼 때 인용으로 붙는다(2026-09-30 사용자)
   const [refs, setRefs] = useState<ChatRef[]>(() => drafts.load(paneId).refs);
   const refCount = useRef(topRef(refs));
@@ -199,6 +213,8 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   useEffect(() => {
     if (draftKey.current === paneId) return;
     draftKey.current = paneId;
+    att.current = (paneId && attBy.get(paneId)) || NO_ATT;
+    setAttached(att.current.list);
     const d = drafts.load(paneId);
     setDraft(d.text);
     setRefs(d.refs);
@@ -219,7 +235,11 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   const addRefNow = useRef(addRef);
   addRefNow.current = addRef;
   const stableRef = useCallback((who: string, text: string) => addRefNow.current(who, text), []);
-  useRefInbox(remote ? undefined : paneId, (r) => addRef(r.who, r.text, r.kind));
+  useRefInbox(remote ? undefined : paneId, (r) => {
+    if (!r.plain) { addRef(r.who, r.text, r.kind); return; }
+    setDraft((d) => withPlain(d, r.text));
+    requestAnimationFrame(() => input.current?.focus());
+  });
   const dropRef = (label: string) => {
     setRefs((r) => r.filter((x) => x.label !== label));
     setDraft((d) => d.replace(new RegExp(`${label}(?!\\d)\\s?`), ''));
@@ -282,9 +302,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   const clearAttached = () => {
     clearTerminal(clearCount(termText, pasted.current));
     pasted.current = 0;
-    setAttached([]);
-    imgCount.current = 0;
-    fileCount.current = 0;
+    stepAtt({ kind: 'clear' });
     setDraft((d) => d.replace(/[#@](img|file)\d+\s?/g, ''));
     quietUntil.current = Date.now() + 800;
     setTermText('');
@@ -295,7 +313,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     if (!pane) return;
     const onPaths = (e: Event) => {
       // 같은 파일을 또 붙이면 새 번호를 안 매긴다 — 이미 붙은 이름표를 입력칸에 다시 쓰기만(2026-10-26 사용자 '같은 파일이면 하나')
-      const { fresh, again } = splitAttach(e as CustomEvent<string[]>, attachedNow.current);
+      const { fresh, again } = splitAttach(e as CustomEvent<string[]>, att.current.list);
       again.forEach((label) => setDraft((d) => (d.includes(label) ? d : `${d}${d && !/\s$/.test(d) ? ' ' : ''}${label} `)));
       const paths = fresh;
       if (!paths.length) { e.preventDefault(); return; }
@@ -471,6 +489,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   // 터미널 입력칸 글 — 지구본 키로 말하면 거기 받아 적힌다. 터미널로 바꾸지 않고 여기 보여 준다(2026-09-30 사용자)
   const [termText, setTermText] = useState('');
   const [compacting, setCompacting] = useState(false);
+  const [pasting, setPasting] = useState(false); // Claude 가 붙여넣은 그림을 읽는 중(isPasting)
   // 터미널에 뜬 선택 창 — 채팅에 버튼으로(2026-10-01 사용자 "cli 안 거치게")
   const [dialog, setDialog] = useState<ScreenDialog | null>(null);
   /** 늘리면 모델 칩 메뉴가 열린다(채팅에 /model 만 쳤을 때) */
@@ -479,32 +498,47 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   dialogRef.current = dialog;
   // 보낸 직후엔 보낸 글이 터미널 입력칸을 잠깐 지나간다 — 그 사이엔 위 줄에 안 띄운다(번쩍였다, 2026-09-30 사용자)
   const quietUntil = useRef(0);
-  const empties = useRef(0);
   // 답을 기다리는 중 — 세션 상태(3초마다)보다 먼저 보낸 말·마지막 사람 말로도 안다(기록 읽기 주기와 같은 신호)
   const answering = useRef(false);
   answering.current = pollMs < 1000;
+  // 부르는 쪽(SessionGrid·DeskBubble)은 screen 을 렌더마다 새 함수로 준다 — 타이머를 [screen] 에 걸면 부모가 0.4초보다 자주 그려지는
+  // 동안(일하는 중) 걸었다 지우기만 하고 한 번도 안 돌아, 위 줄이 보내기 직전 '#file1 "경로"' 에 얼어붙었다(2026-11-06 사용자). 있나 없나만 본다
+  const screenRef = useRef(screen);
+  screenRef.current = screen;
+  const hasScreen = !!screen;
+  // 가만히 있을 땐 화면을 2초에 한 번만 읽는다(termReadDue) — 0.4초마다 화면 전체를 읽어 가만히 앱 CPU 가 예산 위였다(11-06 perf-bench 4.16 > 3).
+  // 답 기다림·일 표시(busy)·쓰기·붙이기·보내기·답 상태가 바뀐 뒤 10초(stirred)는 0.4초 그대로 — 보낸 뒤 위 줄 비우기는 그대로 빠르다
+  const lastRead = useRef(0);
+  const stirred = useRef(0);
+  useEffect(() => { stirred.current = Date.now(); }, [draft, attached, pending.length, pollMs]);
+  const busyRef = useRef(false);
+  busyRef.current = attached.length > 0 || !!termText || !!dialog || pasting || compacting;
   useEffect(() => {
-    if (!screen) return;
+    if (!hasScreen) return;
     const id = window.setInterval(() => {
-      const full = answering.current ? screen(LIVE_BACK) : undefined;
+      const now = Date.now();
+      if (!termReadDue({ now, last: lastRead.current, answering: answering.current, stirred: stirred.current, busy: busyRef.current })) return;
+      lastRead.current = now;
+      const full = answering.current ? screenRef.current?.(LIVE_BACK) : undefined;
       hold.current = liveStep(hold.current, { now: Date.now(), answering: answering.current, text: full ? liveReply(full.lines) : null, items: itemsRef.current });
       setLive(hold.current.blocks); // 글이 그대로면 같은 배열 — 다시 안 그린다
-      const s = screen();
+      const s = screenRef.current?.();
       // raw — 읽은 입력칸 글 · null = 못 읽음(입력칸이 화면 밖) · undefined = 보낸 직후 잠깐 안 읽음. 읽을 터미널이 없는 창(바탕 배지 대화창)은 빈 칸으로 본다
-      const raw = !s ? '' : Date.now() >= quietUntil.current ? promptInput(s.lines, s.cursor) : undefined;
+      const read = !s ? '' : Date.now() >= quietUntil.current ? promptInput(s.lines, s.cursor) : undefined;
+      const raw = read && !att.current.list.length && staleRefs(read, itemsRef.current) ? '' : read; // 첨부 줄이 빈데 간 말의 붙임 표시뿐 = 낡은 읽기(staleRefs)
       const t = raw ?? '';
       setTermText((prev) => (prev === t ? prev : t));
       setCompacting(isCompacting(s?.lines));
+      setPasting(isPasting(s?.lines));
       const d = s ? screenDialog(s.lines) : null;
       setDialog((prev) => (JSON.stringify(prev) === JSON.stringify(d) ? prev : d));
       // 터미널 입력칸이 비면(보냈거나 지웠거나) 붙인 것도 비운다 — 한 번 빈칸으로 읽혔다고 지우면 썸네일이 사라지고 [Image #n] 만 남았다
       // 못 읽은 것(null)은 빈 칸이 아니다 — 비었다고 세면 글이 남은 채 #file 기억이 지워져 같은 파일이 #file1 로 또 붙었다(2026-11-01 사용자, domain/termInput)
-      empties.current = nextEmpties(empties.current, raw);
-      // 입력칸에 #file·#img 이름표가 남아 있거나 방금 붙였으면 아직 쓰는 중 — 번호를 1로 되돌리면 두 파일이 같은 @file1 이 됐다(2026-09-30 사용자)
-      if (empties.current >= 4 && !/[#@](img|file)\d+/.test(draftRef.current) && Date.now() - lastAttach.current > 5000) { imgCount.current = 0; fileCount.current = 0; pasted.current = 0; setAttached((a) => (a.length ? [] : a)); }
+      if (stepAtt({ kind: 'read', raw, draft: draftRef.current, now: Date.now() }).idle) pasted.current = 0;
     }, 400);
     return () => window.clearInterval(id);
-  }, [screen]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 안의 것은 다 ref·고정 setter(stepAtt 도 ref 만 만진다)
+  }, [hasScreen]);
 
   // 지구본 키로 말하면 Claude(voice.autoSubmit)가 보통 알아서 보낸다. 가끔 안 보내고 입력칸에 남는다(참모가 일할 때 등, 2026-09-30) —
   // 말이 끝나고 4초 뒤에도 받아 적은 글이 그대로면 대신 Enter. 그림 표시가 섞였거나 사람이 입력칸에 쓰는 중이면 두다
@@ -540,7 +574,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     return () => window.clearInterval(t);
   }, [waiting.length]);
   const enterWait = Math.max(0, ...waiting.map((p) => enterDelay(p.text.length, IS_WIN)));
-  const stateOf = new Map<number, PendingState>(waiting.map((p) => [p.at, pendingState(p, { queue, termText, now: Date.now(), enterWait, link })]));
+  const stateOf = new Map<number, PendingState>(waiting.map((p) => [p.at, pendingState(p, { queue, termText, now: Date.now(), enterWait, link, pasting })]));
   /** 지금 Esc 를 넘기면 방금 보낸 말이 거둬들여지나(domain/chat escUnsends) — 그땐 채팅 Esc·⌘Enter·지금 보내기가 Esc 를 안 넘긴다. ■ 멈춤 버튼은 그대로 */
   const unsendsNow = () => escUnsends(items, waiting.some((p) => stateOf.get(p.at) === 'sending' && absorbedAt(queue, p) === null)); // 흡수된 말은 이미 턴 안에 있다 — Esc 는 멈춤
 
@@ -548,8 +582,8 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   // 일하는 중 Enter 는 줄 서기다. 예전엔 쉴 때 한 번만 눌러, 일하는 중 걸린 말은 '보내는 중'으로 10분 남았다(2026-10-06 사용자)
   const tries = useRef<Record<number, number>>({});
   const [tryN, setTryN] = useState(0);
-  const stuckTarget = state === 'blocked' || dialog || compacting || (link && link !== 'live') ? null
-    : autoEnterTarget(waiting, { queue, termText, now: Date.now(), enterWait, tries: tries.current });
+  const stuckTarget = dialog || compacting || (link && link !== 'live') ? null
+    : autoEnterTarget(waiting, { queue, termText, now: Date.now(), enterWait, tries: tries.current, pasting });
   useEffect(() => {
     if (!stuckTarget) return;
     const t = window.setTimeout(() => {
@@ -585,12 +619,14 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     const t = window.setTimeout(() => setSendFail(false), 8000);
     return () => window.clearTimeout(t);
   }, [sendFail]);
-  const sendWatched = (text: string, at: number) => {
+  const sendWatched = (text: string, at: number, went: Att[] = []) => {
     pasted.current = 0; // 붙여 넣은 글은 이 말과 같이 간다
+    if (!remote) chatSendLog(`${paneId} view items=${items.length} last=${items[items.length - 1]?.ts ?? '-'} state=${state} link=${link ?? '-'}`); // 보낸 순간 화면이 기록보다 낡았나(11-05 80분 멈춘 칸)
     void Promise.resolve(send(text)).then((ok) => {
       if (ok !== false) return;
       dropPending(at);
       setDraft((d) => restoreDraft(d, text));
+      if (went.length) stepAtt({ kind: 'back', went }); // 그림은 아직 터미널 입력칸에 있다 — 줄에도 되돌린다
       setSendFail(true);
     });
   };
@@ -611,9 +647,9 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     return true;
   };
   /** 다시 보낸 말은 보낸 시각을 새로 — 안 그러면 입력칸이 잠깐 비어 보이는 사이 '안 갔어요'가 떠 두 번 누르게 된다 */
-  const repend = (p: { text: string; at: number; since?: number }) => setPending((ps) => [...ps.filter((x) => x.at !== p.at), resent(p, Date.now())]);
-  /** 손으로 넣는 Enter 도 선택 창이 떠 있으면 안 넣는다 — 창에서 골라 버린다 */
-  const enterOk = () => !dialogRef.current && state !== 'blocked';
+  const repend = (p: Pend) => setPending((ps) => [...ps.filter((x) => x.at !== p.at), resent(p, Date.now())]);
+  /** 손으로 넣는 Enter 도 선택 창이 떠 있으면 안 넣는다 — 창에서 골라 버린다. state blocked 는 안 본다: 답을 묻고 턴을 끝낸 쉬는 세션도 blocked 다(2.1.318) */
+  const enterOk = () => !dialogRef.current;
   /** 입력칸을 비우고 → (first 가 있으면 그 말을 보내고) → 남길 말만 다시 넣는다(Enter 없이). 세션 쪽이 차례대로 친다 */
   const rebuildInput = (keep: string[], first?: string) => {
     clearTerminal(clearCount(termText, pasted.current));
@@ -709,7 +745,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     const text = withRefs(expandMentions(draft.trim(), who), refs);
     if (!text && termFree && dupBlocked(termFree)) return;
     quietUntil.current = Date.now() + 1500;
-    if (!text && termFree) { submitTerminal(termFree); setPending((p) => [...p, newPending(termFree, items, Date.now())]); stick.current = true; return; }
+    if (!text && termFree) { submitTerminal(termFree); const went = sendAtt(); setPending((p) => [...p, { ...newPending(termFree, items, Date.now()), ...imgsOf(went) }]); stick.current = true; return; }
     if (!text) return;
     // /model·/effort 는 터미널 고르는 창 대신 칩으로 — 창은 보낸 Enter 가 바로 골라 기본값이 저장됐다(2026-10-01 시험)
     if (isMemoryCmd(text)) { setDraft(''); setSlashOff(''); openMemory(); return; }
@@ -721,6 +757,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
       return;
     }
     const at = Date.now();
+    const went = sendAtt();
     if (now) {
       // 끊고 바로 보내기 — 막 보낸 말을 Esc 로 끊으면 Claude 가 그 말을 입력칸에 되돌려 놓는다. 끊은 뒤 입력칸을 새로 읽어 정리하고 친다(리뷰)
       interrupt();
@@ -728,13 +765,13 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
         const s = screen?.();
         const t = s ? promptInput(s.lines, s.cursor) ?? '' : '';
         flushLeftover(t ? inputLeftover(t, knownRef.current) : null, t);
-        sendWatched(text, at);
+        sendWatched(text, at, went);
       }, 700);
     } else {
       flushLeftover();
-      sendWatched(text, at);
+      sendWatched(text, at, went);
     }
-    setPending((p) => [...p, newPending(text, items, at)]);
+    setPending((p) => [...p, { ...newPending(text, items, at), ...imgsOf(went) }]);
     setDraft('');
     lastSent.current = { text: draft.trim(), at };
     setRefs([]);
@@ -813,6 +850,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
           return (
             <div key={p.at} className="chat-row me">
               <div className={`bubble me pending st-${look}`}>
+                {p.imgs && <div className="chat-thumbs">{p.imgs.map((u, i) => <img key={i} className="chat-thumb" src={u} alt="" />)}</div>}
                 <AtText text={splitRefs(p.text).body} />
                 <span className="chat-meta">{{
                   sending: tr('보내는 중', 'Sending'),
@@ -1004,7 +1042,6 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
             if (kind === 'image') {
               e.preventDefault();
               pasteImage();
-              empties.current = 0;
               addImage({ key: `clip:${Date.now()}`, name: file?.name || tr('붙인 그림', 'Pasted image'), ...(file?.type.startsWith('image/') ? { url: URL.createObjectURL(file) } : {}) });
             }
           }}

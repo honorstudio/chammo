@@ -1,26 +1,39 @@
 import { describe, expect, it } from 'vitest';
-import { gachaDeco, officeAlert, officeDot, officeList, officeShape, parseOffice, phoneRoom, phoneSeat, ringOf, safeDoing, talkTargets, tapKind } from './phoneOffice';
+import { gachaDeco, officeAlert, officeDot, officeList, officeShape, parseOffice, phoneRooms, phoneSeat, ringOf, safeDoing, talkTargets, tapKind } from './phoneOffice';
 import officeSrc from '../ui/mobile/PhoneOffice.tsx?raw';
 import appSrc from '../ui/mobile/MobileApp.tsx?raw';
 import { EMPTY_GACHA } from './gacha';
-import { planRoom } from './office';
+import { planOffice, speciesFor, type OrchIn, type Seat } from './office';
+import { newRoom } from './officeRoom';
 import type { Session } from './session';
 
 const sess = (o: Partial<Session> & { id: string }): Session => ({ name: '', project: 'p', cwd: '/d/p', state: 'idle', kind: 'background', ...o }) as Session;
 
 describe('parseOffice — 맥 앱이 쓴 사무실 모양(/api/office)', () => {
   it('아는 칸만, 모양이 틀린 칸은 버린다', () => {
-    const s = parseOffice(JSON.stringify({ slots: ['a', null, 3], boss: 'fire_cG', skin: 'neon', furn: ['furn.plant', 1], placed: { 'furn.plant': [1, 2], x: 'bad', y: null }, deco: { hat: 'hat.cap', hasCat: true, palIds: ['friend.dog', 2], evil: { a: 1 } } }));
-    expect(s).toEqual({ slots: ['a', null], boss: 'fire_cG', skin: 'neon', furn: ['furn.plant'], placed: { 'furn.plant': [1, 2], y: null }, deco: { hat: 'hat.cap', hasCat: true, palIds: ['friend.dog'] } });
+    const r = parseOffice(JSON.stringify({ offices: [{ lv: 1, furn: { 'furn.a': [1, 2], x: 'bad' } }], slots: [['a', null, 3]], skins: ['neon'], seats: { o: { office: 0, x: 1, y: 2, w: 2.4 }, bad: { x: 1 } }, assign: { p: 1, q: 'x' }, sprs: { o: 'a_bunny', z: 1 }, off: [{ id: 'i', name: 'n', label: 'l' }, { id: 1 }], deco: { hat: 'hat.cap', dance: 'no', palIds: ['friend.a', 1] }, coins: 99 }));
+    expect(r.offices[0]).toMatchObject({ lv: 1, furn: { 'furn.a': [1, 2] } });
+    expect(r.slots).toEqual([['a', null]]);
+    expect(r.skins).toEqual(['neon']);
+    expect(r.seats).toEqual({ o: { office: 0, x: 1, y: 2, w: 2.4 } });
+    expect(r.assign).toEqual({ p: 1 });
+    expect(r.sprs).toEqual({ o: 'a_bunny' });
+    expect(r.off).toEqual([{ id: 'i', name: 'n', label: 'l' }]);
+    expect(r.deco).toEqual({ hat: 'hat.cap', palIds: ['friend.a'] });
+    expect(r).not.toHaveProperty('coins');
   });
-  it('비었거나 깨졌으면 기본 방(나무·곰)', () => {
-    expect(parseOffice('{}')).toEqual({ slots: undefined, boss: 'bear', skin: 'wood', furn: [], placed: {}, deco: {} });
-    expect(parseOffice('{깨짐').skin).toBe('wood');
+  it('비었거나 깨졌으면 기본 방 하나', () => {
+    for (const raw of ['{}', '{깨짐']) {
+      const r = parseOffice(raw);
+      expect(r.offices).toEqual([newRoom()]);
+      expect(r.skins).toEqual(['wood']);
+      expect(r.slots).toEqual([]);
+    }
   });
   it('맥이 쓰는 모양(officeShape)을 폰이 그대로 읽는다 — 커피 걷기는 첫 판 빼서 안 싣는다', () => {
-    const shape = officeShape({ slots: ['a'], boss: 'fire_cG', skin: 'mint', furn: ['furn.plant'], placed: { 'furn.plant': [2, 3] }, deco: { hat: 'hat.cap', coffee: true, dance: false } });
+    const shape = officeShape({ offices: [newRoom()], slots: [['a']], skins: ['mint'], seats: {}, assign: {}, sprs: {}, off: [], deco: { hat: 'hat.cap', coffee: true, dance: false } });
     expect(shape.deco).toEqual({ hat: 'hat.cap', dance: false });
-    expect(parseOffice(JSON.stringify(shape))).toEqual({ ...shape, slots: ['a'] });
+    expect(parseOffice(JSON.stringify(shape))).toEqual(shape);
   });
 });
 
@@ -54,8 +67,10 @@ describe('phoneSeat — 폰 세션 → 사무실 자리(데스크톱 seat 와 �
   });
 });
 
+const testRoom = (orchs: Seat[], workers: Seat[]) => planOffice({ room: { ...newRoom(), lv: 3 }, index: 0, orchs: orchs.map((o): OrchIn => ({ ...o, name: o.id })), workers });
+
 describe('officeList — 방 아래 세션 줄', () => {
-  const room = planRoom(
+  const room = testRoom(
     [{ id: 'o', label: '참모', project: 'hq', status: 'working', startedAt: 0 }],
     [
       { id: 'w', label: 'acme-shop', project: 'acme-shop', status: 'working', startedAt: 1 },
@@ -63,7 +78,6 @@ describe('officeList — 방 아래 세션 줄', () => {
       { id: 'd', label: 'ops', project: 'ops', status: 'done', startedAt: 3 },
       { id: 'h', label: 'pixel-blog', project: 'pixel-blog', status: 'idle', startedAt: 4, human: '' },
     ],
-    'bear',
   );
   it('사람 필요 → 물어봄 → 일하는 중만 줄로, 나머지는 접는다(반장은 빼고)', () => {
     const { rows, rest } = officeList(room.desks);
@@ -76,7 +90,7 @@ describe('officeList — 방 아래 세션 줄', () => {
   });
 });
 
-describe('phoneRoom — 폰 재료로 데스크톱과 같은 방', () => {
+describe('phoneRooms — 폰 재료로 데스크톱과 같은 방', () => {
   const hq = '/hq';
   const sessions = [
     sess({ id: 'o1', name: '참모', project: 'hq', cwd: hq, startedAt: 1 } as Partial<Session> & { id: string }),
@@ -84,21 +98,30 @@ describe('phoneRoom — 폰 재료로 데스크톱과 같은 방', () => {
     sess({ id: 'w2', name: 'pet-diary', project: 'pet-diary', cwd: '/d/pet-diary', startedAt: 3 } as Partial<Session> & { id: string }),
   ];
   const base = { sessions, hqDir: hq, statusOf: () => 'idle' as const, actOf: () => undefined, humanOf: () => undefined, labelOf: (s: Session) => s.name };
-  it('참모는 반장 자리(맥이 준 반장 그림), 하위 세션은 앞줄', () => {
-    const r = phoneRoom({ ...base, shape: parseOffice(JSON.stringify({ boss: 'fire_cG' })) });
+  const front = (r: { desks: { boss?: boolean; gy: number }[] }) => r.desks.filter((d) => !d.boss && d.gy >= 3);
+  it('참모는 고른 캐릭터로 반장 자리, 하위 세션은 직원 자리', () => {
+    const r = phoneRooms({ ...base, shape: parseOffice(JSON.stringify({ sprs: { 참모: 'fire_cG' } })) })[0]!;
     const boss = r.desks.find((d) => d.boss)!;
     expect([boss.id, boss.spr, boss.label]).toEqual(['o1', 'fire_cG', '참모']);
-    expect(r.desks.filter((d) => !d.boss).map((d) => d.id).sort()).toEqual(['w1', 'w2']);
+    expect(r.desks.filter((d) => !d.empty && !d.boss).map((d) => d.id).sort()).toEqual(['w1', 'w2']);
   });
   it('맥 자리표대로 앉는다 — 빈 자리(null)는 빈 책상', () => {
-    const r = phoneRoom({ ...base, shape: parseOffice(JSON.stringify({ slots: ['w2', null, 'w1'] })) });
-    const front = r.desks.filter((d) => !d.boss);
-    expect(front.map((d) => (d.empty ? '-' : d.id))).toEqual(['w2', '-', 'w1']);
+    const r = phoneRooms({ ...base, shape: parseOffice(JSON.stringify({ slots: [['w2', null, 'w1']] })) })[0]!;
+    expect(front(r).map((d) => ((d as { empty?: boolean }).empty ? '-' : (d as unknown as { id: string }).id))).toEqual(['w2', '-', 'w1', '-']);
   });
   it('사람 필요·상태가 책상에 실린다', () => {
-    const r = phoneRoom({ ...base, statusOf: (s) => (s.id === 'w2' ? 'asks' : 'idle'), humanOf: (s) => (s.id === 'w1' ? '로그인 코드' : undefined), shape: parseOffice('{}') });
+    const r = phoneRooms({ ...base, statusOf: (s) => (s.id === 'w2' ? 'asks' : 'idle'), humanOf: (s) => (s.id === 'w1' ? '로그인 코드' : undefined), shape: parseOffice('{}') })[0]!;
     expect(r.desks.find((d) => d.id === 'w2')!.st).toBe('asks');
     expect(r.desks.find((d) => d.id === 'w1')!.human).toBe('로그인 코드');
+  });
+  it('사무실마다 — 정해진 사무실로 출근, 꺼진 참모 자리는 비어 있다', () => {
+    const shape = parseOffice(JSON.stringify({ offices: [{}, {}], assign: { 'pet-diary': 1 }, off: [{ id: 'off1', name: '참모-2', label: '디자인' }], seats: { '참모-2': { office: 1, x: 2.2, y: 1.1 } } }));
+    const [a, b] = phoneRooms({ ...base, shape });
+    expect(a!.desks.some((d) => d.id === 'w2')).toBe(false);
+    expect(b!.desks.some((d) => d.id === 'w2')).toBe(true);
+    expect(b!.desks.find((d) => d.id === 'off1')).toMatchObject({ empty: true, off: true, label: '디자인' });
+    expect(a!.desks.some((d) => d.id === 'off1')).toBe(false);
+    expect(speciesFor('x')).toBeTruthy();
   });
 });
 
@@ -121,7 +144,7 @@ describe('officeDot — 홈 머리 사무실 아이콘 점(꼬리 없이 목록�
 });
 
 describe('사무실에서 참모 바꿔 말하기(10-23 사용자 "바로바로 참모 바꿔가면서 채팅")', () => {
-  const room = planRoom(
+  const room = testRoom(
     [
       { id: 'o1', label: '참모', project: 'hq', status: 'working', startedAt: 0 },
       { id: 'o2', label: '디자인', project: 'hq', status: 'idle', startedAt: 1 },
@@ -131,7 +154,6 @@ describe('사무실에서 참모 바꿔 말하기(10-23 사용자 "바로바로 
       { id: 'w', label: 'acme-shop', project: 'acme-shop', status: 'working', startedAt: 3 },
       { id: 'd', label: 'ops', project: 'ops', status: 'done', startedAt: 4 },
     ],
-    'bear',
   );
   const orchIds = ['o1', 'o2', 'o3'];
   it('talkTargets — 참모 자리(반장 포함)를 방 순서대로, 프로젝트 세션은 빼고', () => {
@@ -141,7 +163,7 @@ describe('사무실에서 참모 바꿔 말하기(10-23 사용자 "바로바로 
     const { rows, rest } = officeList(room.desks, new Set(orchIds));
     expect([...rows, ...rest].map((d) => d.id).sort()).toEqual(['d', 'w']);
   });
-  it('tapKind — 참모면 말 상대 바꾸기, 나머지는 세션(엿보기)', () => {
+  it('tapKind — 참모면 캐릭터 고르기, 나머지는 세션', () => {
     expect(tapKind('o2', orchIds)).toBe('orch');
     expect(tapKind('w', orchIds)).toBe('session');
   });

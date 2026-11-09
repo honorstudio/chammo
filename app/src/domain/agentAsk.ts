@@ -156,7 +156,9 @@ export function askPlaced(lives: Live[], everyone: Session[], events: TaskEvent[
 
 function placeOf(live: Live, everyone: Session[], events: TaskEvent[], orchs: Session[], front?: Session, heir?: (s: Session) => Session | undefined): AskPlaced {
   const session = everyone.find((s) => s.procPid && s.procPid === live.sessionPid);
-  return { live, session, owner: session ? forwardTo(session, events, orchs, everyone, front, heir) : front };
+  // 참모가 직접 부르면 그 참모 채팅에 — 참모 폴더(HQ)가 저장소면 forwardTo 가 그 저장소 워크트리에 일을 보낸 다른 참모를 골랐다(2026-11-08 트레이더 카드가 참모 업데이트에)
+  const self = session && orchs.find((o) => o.id === session.id);
+  return { live, session, owner: self ?? (session ? forwardTo(session, events, orchs, everyone, front, heir) : front) };
 }
 
 /** 크롬 자체 창(패스키 등) 알림을 누르면 갈 곳 — 부름 카드와 같은 그 브라우저(card:<참모>:b:…). 누르면 칸·모달이 바로 크롬을 꺼낸다(2026-11-02 사용자 —

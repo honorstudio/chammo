@@ -34,9 +34,9 @@ describe('폰 팀 보관함 줄 — 톡 = 보기(볼 수 있으면), 길게 = �
   });
 });
 
-describe('폰 팀 대화 PDF 칸 — 첫 장 그림이 있으면 누르면 첫 장 보기', () => {
-  it('PDF 칸도 버튼(그림·첫 장 썸네일이 뜬 것만)', () => {
-    expect(bits).toContain('onOpen && (!onlyPics || pic || page)');
+describe('폰 팀 대화 PDF 칸 — 썸네일과 상관없이 누르면 보기', () => {
+  it('PDF 칸도 버튼(열 수 있는 파일이면)', () => {
+    expect(bits).toContain('onOpen && (!canOpen || canOpen(f))');
   });
   it('PDF 는 썸네일 길 큰 판(1600)으로 — 그림 길은 PDF 를 거절한다', () => {
     expect(web).toContain('/api/team-file-thumb?team=${encodeURIComponent(team)}&id=${encodeURIComponent(id)}&size=1600');

@@ -51,7 +51,10 @@ export function makeTaskLog(read: (from: number | undefined, id: string | undefi
     const from = next;
     const c = await read(from, id);
     if (next !== from) return events;
-    if (c.reset) events = parseTaskLog(c.text);
+    if (c.reset) {
+      // 기록이 아직 없으면 폴링마다 처음부터(reset) — 빈 배열을 새로 만들면 3초마다 앱이 다시 그려진다
+      if (c.text || events.length) events = parseTaskLog(c.text);
+    }
     else if (c.text) events = events.concat(parseTaskLog(c.text));
     next = c.next;
     id = c.id;

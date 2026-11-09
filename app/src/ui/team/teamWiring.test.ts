@@ -9,7 +9,7 @@ import api from '../../data/teamApi.ts?raw';
 describe('메신저 연결', () => {
   it('보내기는 사람 문(teamHumanSay + 이 칸의 진짜 키·클릭 시각)만 — 앱이 저절로 보내는 길이 없다', () => {
     expect(convo).toContain('say = teamHumanSay');
-    expect(convo).toContain('say(sayTarget(convo), t, trustedAt.current)');
+    expect(convo).toContain('say(sayTarget(convo), b.text, trustedAt.current)'); // 10장씩 나눈 묶음도 같은 사람 문(11-05)
     expect(convo).toContain('e.nativeEvent.isTrusted ? Date.now() : 0');
     expect(convo).not.toMatch(/invoke\(/);
   });
@@ -40,9 +40,9 @@ import phone from '../mobile/PhoneTeam.tsx?raw';
 import web from '../../data/web.ts?raw';
 describe('폰 팀 탭', () => {
   it('폰 보내기도 진짜 누름 뒤 1.5초 문을 지나고, 읽기·쓰기는 TeamPhoneApi 하나로만(중계 직결로 갈아끼울 자리)', () => {
-    expect(phone).toContain('sendAllowed(at, Date.now()) && text.trim() ? api.say(to, text, cidFor(to, text), extra?.re) : null');
+    expect(phone).toContain('sendAllowed(at, Date.now()) && (text.trim() || extra?.files?.length) ? api.say(');
     expect(phone).not.toMatch(/fetch\(|'\/api\/team/);
-    expect(web).toContain("say: (to, text, cid, re) => post('/api/team-say', re ? { to, text, cid, re } : { to, text, cid })");
+    expect(web).toContain("say: (to, text, cid, re, files) => post('/api/team-say', { to, text, cid, ...(re ? { re } : {}), ...(files?.length ? { files } : {}) })");
   });
 });
 
@@ -56,9 +56,10 @@ describe('팀 보관함(중계 R2)', () => {
     expect(teamDropSrc).toContain("closest<HTMLElement>('[data-team-locker]')"); // 메인 창·따로 창이 같이 쓰는 teamDrop
   });
   it('영구 지우기는 Confirm 의 onOk 안에서만', () => {
-    const at = locker.indexOf("verb(p.id, 'purge')");
+    const at = locker.indexOf("verbAll(p.id, 'purge')"); // 대화 파일 쌍둥이까지 같이(11-08) — 그래도 확인 창 onOk 안에서만
     expect(at).toBeGreaterThan(0);
     expect(locker.slice(Math.max(0, at - 300), at)).toContain('onOk=');
+    expect(locker.match(/, 'purge'\)/g)?.length).toBe(1); // 영구 지우기를 부르는 곳은 이 하나
   });
   it('보기(목록·카드)는 기억하되 저장소가 막혀도 그린다', () => {
     expect(locker).toMatch(/const readView = \(\)[^\n]*try \{/);
@@ -120,8 +121,8 @@ describe('팀 파일 열기 = 스페이스(10-26 사용자 292.png)', () => {
   it('열기는 openTeamFile 하나 — 못 그리는 형식만 기본 앱, 그리는 건 show 길(openChatFile)', () => {
     expect(openTeam).toContain('opensInSpace(name)');
     expect(openTeam).toContain('openChatFile(path');
-    expect(locker).toContain("openTeamFile((external) => invoke<string>('team_locker_open', { team: teamId, id: i.id, external })");
-    expect(convo).toContain('openTeamFile((external) => files.open(');
+    expect(locker).toContain("openTeamFile((external, runOk) => invoke<string>('team_locker_open', { team: teamId, id: i.id, external, runOk })");
+    expect(convo).toContain('openTeamFile((external, runOk) => files.open(');
   });
   it('누르는 즉시 그 줄에 여는 중 — 끝나거나 실패하면 풀고, 여는 중에 또 눌러도 한 번만(10-26 사용자 "바로 안 열린다")', () => {
     expect(locker).toContain('setOpening((x) => new Set(x).add(i.id))');

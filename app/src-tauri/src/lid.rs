@@ -31,7 +31,7 @@ pub fn push_js(closed: bool) -> String {
 
 fn push<R: tauri::Runtime>(app: &tauri::AppHandle<R>, closed: bool) {
     use tauri::Manager;
-    for label in ["main", "tama"] {
+    for label in ["main"] {
         if let Some(w) = app.get_webview_window(label) {
             let _ = w.eval(push_js(closed));
         }
@@ -40,7 +40,7 @@ fn push<R: tauri::Runtime>(app: &tauri::AppHandle<R>, closed: bool) {
 
 /// 메인·다마고치 페이지가 (다시) 뜰 때 — 앞서 알린 값이 새 페이지엔 없다
 pub fn on_page_load<R: tauri::Runtime>(wv: &tauri::Webview<R>) {
-    if matches!(wv.label(), "main" | "tama") {
+    if wv.label() == "main" {
         let _ = wv.eval(push_js(CLOSED.load(Ordering::Relaxed)));
     }
 }

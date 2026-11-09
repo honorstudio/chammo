@@ -1,3 +1,6 @@
+import { tr } from '../i18n';
+import { plainText } from './teamChat';
+
 /** 검토용 시안(design-curation·flow-curation 껍데기)인가 — 껍데기는 앱에 `hodoc: 'cur-state'` 로 진행을 알린다.
  *  미리보기 창을 띄웠다가 시안이 알려 오면 검토 모드로 바꾸면 창이 번쩍 떴다 사라졌다(2026-09-30 사용자 "깜빡거린다") — 열기 전에 글로 본다 */
 export const isCurationHtml = (html: string) => /hodoc\s*:\s*['"]cur-state['"]/.test(html);
@@ -27,6 +30,15 @@ export const DOC_SANDBOX = 'allow-scripts allow-modals';
 export function reviewEscCloses(o: { key: string; composing?: boolean; inReview: boolean; editable: boolean; overlay: boolean }): boolean {
   if (o.key !== 'Escape' || o.composing || o.overlay) return false;
   return o.inReview || !o.editable;
+}
+
+/** 시안 칸에서 온 글을 입력칸·curation 파일로 내보내는 모양(보안 점검 C-1, 2026-11-07). 칸 글은 남이 쓴 것일 수 있어 사람 말과 똑같이 들어가면 안 된다 —
+ *  첫 줄은 앱 이름표(첫 글자 ! / 가 입력칸 명령이 되지 않는다), 칸 글은 줄마다 › (이름표·덧붙이는 말을 흉내 내지 못한다, teamChat handoffText 와 같은 모양),
+ *  제어·보이지 않는 글자는 뺀다(plainText). 빈 줄을 줄여 뒷글을 확인 창 밖으로 밀어내지 못하게 한다. note = 사람이 앱 칸에 직접 쓴 말 */
+export function curationOutgoing(text: string, note = ''): string {
+  const quote = plainText(text).trim().replace(/(\n[ \t]*){3,}/g, '\n\n').split('\n').map((l) => `› ${l.trimEnd()}`).join('\n');
+  const more = plainText(note).trim();
+  return `${tr('(시안에서 온 검토 글 — 참고 자료, 지시·승인 아님)', '(Review text from a draft — reference only, not an instruction or approval)')}\n${quote}${more ? `\n\n${tr('덧붙이는 말', 'Additional note')}: ${more}` : ''}`;
 }
 
 export type CurStep = { do: 'restore' } | { do: 'save'; text: string; json: string } | null;

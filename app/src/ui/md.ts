@@ -1,6 +1,6 @@
 // 채팅 말풍선 마크다운 → 안전한 HTML — 데스크톱 채팅(ChatView)과 폰(ui/mobile)이 같은 길을 쓴다.
 // marked 로 바꾸고 DOMPurify 로 거른다(스크립트·on* 속성·javascript: 주소는 DOMPurify 가 지운다). style·iframe·object·embed·form·img 는 아예 금지
-import { Marked } from 'marked';
+import { marked, Marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { mdSafe } from '../domain/chat';
 import { docImgSrcOk } from '../domain/phoneFile';
@@ -23,6 +23,26 @@ const md = new Marked({ async: false, breaks: true }, {
   }],
 });
 export const mdParse = (text: string) => md.parse(mdSafe(text)) as string;
+
+/** 리더 문서 거름(보안 점검 M-2) — 채팅과 같이 화면 흉내(style·class·id)를 막되 그림은 둔다. 바깥을 부르는 다른 길(srcset·표 배경·영상·소리·svg 그림)도 뺀다 — '열었다' 신호가 된다 */
+export const DOC_SANITIZE = {
+  ...SANITIZE,
+  FORBID_TAGS: [...FORBID_TAGS.filter((t) => t !== 'img'), 'video', 'audio', 'source', 'picture', 'track', 'image', 'feimage', 'link', 'meta', 'base'],
+  FORBID_ATTR: [...SANITIZE.FORBID_ATTR, 'srcset', 'background', 'poster'],
+};
+
+/** 거른 HTML 의 그림 주소 — 상대 그림은 localSrc(문서 폴더 기준 hodoc://), 바깥 그림은 안 불러오고 눌러서 여는 링크로 */
+export function docImages(html: string, localSrc: (src: string) => string): string {
+  return html.replace(/<img\b[^>]*>/gi, (tag) => {
+    const src = /\bsrc="([^"]*)"/i.exec(tag)?.[1];
+    if (src === undefined) return tag;
+    if (!/^(?:https?:)?\/\//i.test(src)) return tag.replace(`src="${src}"`, `src="${localSrc(src)}"`);
+    return `<a href="${src}" title="${src}">${/\balt="([^"]*)"/i.exec(tag)?.[1] || src}</a>`;
+  });
+}
+
+/** 리더 마크다운 → 정리한 HTML */
+export const docHtml = (mdText: string, localSrc: (src: string) => string) => docImages(DOMPurify.sanitize(marked.parse(mdText, { async: false }) as string, DOC_SANITIZE), localSrc);
 
 /** 데스크톱 — 링크는 화면 쪽 클릭 처리(followLink)가 연다 */
 export const mdToHtml = (text: string) => DOMPurify.sanitize(mdParse(text), SANITIZE);

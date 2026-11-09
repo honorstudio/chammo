@@ -9,7 +9,7 @@
 // room 을 주면 '대화 파일 보기' — 그 DM·팀챗에 붙인 파일만(팀 보관함엔 안 섞는다, 10-28 사용자 "디엠은 그 사용자랑만"). 폴더 칩은 놓으면 복사하는 자리로만
 import { invoke } from '@tauri-apps/api/core';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
-import { keyWaitNote, lockedFiles, allFolders, canPurge, othersOf, folderFiles, crumbsOf, dirId, dirOfId, kidFolders, moveTargets, parentOf, renamedPath, dropPlan, lockerUps, extOf, thumbKind, TEAM_LOCKER_DROP, TEAM_LOCKER_MOVE, TEAM_LOCKER_OUT, fmtBytes, inPlace, inRoom, readSort, sortItems, SORTS, usageText, whenText, type LockerItem, type LockerSort, type LockerUpload, type LockerView } from '../../domain/teamLocker';
+import { keyWaitNote, lockedFiles, allFolders, canPurge, othersOf, folderFiles, crumbsOf, dirId, dirOfId, kidFolders, moveTargets, parentOf, renamedPath, dropPlan, lockerUps, upNote, extOf, thumbKind, TEAM_LOCKER_DROP, TEAM_LOCKER_MOVE, TEAM_LOCKER_OUT, fmtBytes, inPlace, inRoom, roomTwins, readSort, sortItems, SORTS, usageText, whenText, type LockerItem, type LockerSort, type LockerUpload, type LockerView } from '../../domain/teamLocker';
 import { failText, opKey, withPending, type LockerOp } from '../../domain/teamLockerPending';
 import { needFetch, placeMemo, teamViewMemo } from '../../domain/teamViewMemo';
 import { opensOnClick } from '../../domain/ctxMenu';
@@ -206,6 +206,8 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, tail, icon,
   const busyFolders = shown?.busyFolders ?? new Set<string>();
   const roomId = room?.id ?? '';
   const items = useMemo(() => (shown ? sortItems(room ? inRoom(shown.items, roomId, trash) : inPlace(shown.items, place, trash), sort) : []), [shown, room, roomId, place, trash, sort]);
+  /** 남긴 줄 id → 접어 둔 사본 id(살아 있는 것·휴지통 둘 다 — 지운 뒤 '되돌리기'도 같이 되살린다) */
+  const twinsById = useMemo(() => (shown && room ? roomTwins(shown.items, roomId) : new Map<string, string[]>()), [shown, room, roomId]);
   const all = useMemo(() => (shown ? allFolders(shown.items) : []), [shown]);
   /** 지금 자리 폴더 타일 — 이름순 뒤집기만 따른다(참모 보관함과 같게) */
   const tiles = useMemo(() => {
@@ -236,7 +238,7 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, tail, icon,
   const open = (i: LockerItem, app: TeamOpenHow = false) => {
     if (i.why || trash || opening.has(i.id)) return;
     setOpening((x) => new Set(x).add(i.id));
-    const p = openTeamFile((external) => invoke<string>('team_locker_open', { team: teamId, id: i.id, external }), i.name, app);
+    const p = openTeamFile((external, runOk) => invoke<string>('team_locker_open', { team: teamId, id: i.id, external, runOk }), i.name, app);
     void downs.watch(p); // 큰 파일은 여는 동안에도 막대
     void p
       .catch((e: unknown) => setNote(String(e)))
@@ -276,6 +278,8 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, tail, icon,
   };
   const rename = (id: string, args: { name?: string; folder?: string }) => run({ k: 'meta', id, ...args }, () => invoke('team_locker_rename', { team: teamId, id, ...args }));
   const verb = (id: string, what: 'trash' | 'restore' | 'purge') => run({ k: 'act', id, verb: what }, () => invoke('team_locker_act', { team: teamId, id, verb: what }));
+  // 대화 파일 보기에 접어 둔 같은 파일 사본(roomTwins — 옛 판이 다시 올린 것)도 같이 — 안 그러면 지운 뒤 사본이 떠서 '안 지워졌다'로 보인다. 간 id 들
+  const verbAll = (id: string, what: 'trash' | 'restore' | 'purge') => [id, ...(twinsById.get(id) ?? [])].filter((x) => verb(x, what));
   /** 대화 파일을 폴더로 복사 — 이 기기에서 풀어 그 폴더에 새로 올린다(대화 파일은 방 사람 열쇠로만 봉해져 서버에서 바로 못 옮긴다). 원본은 대화에 남는다 */
   const copyTo = (ids: string[], to: string) => {
     if (!ids.length) return;
@@ -294,7 +298,7 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, tail, icon,
     copyTo(p.copy, to);
     if (p.stay) setNote(tr('대화 파일은 폴더 칩에 놓으면 그 폴더로 복사돼요', 'Drop chat files on a folder chip to copy them there'));
   };
-  const trashMany = (ids: string[]) => { const went = ids.filter((id) => verb(id, 'trash')); if (went.length) setUndone(went); pick.end(); };
+  const trashMany = (ids: string[]) => { const went = ids.flatMap((id) => verbAll(id, 'trash')); if (went.length) setUndone(went); pick.end(); };
   /** 고른 것 휴지통 — 파일은 바로(되돌리기 줄), 안에 파일이 든 폴더는 한 번 묻는다(빈 폴더는 바로) */
   const trashPicked = () => {
     const others = othersOf(picked);
@@ -344,7 +348,7 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, tail, icon,
   });
   /** 끌기 — 고른 묶음 안의 것을 끌면 묶음째(화면 순서), 밖이면 그 하나. 휴지통·잠긴 파일은 안 끈다 */
   const dragOf = (i: LockerItem) => {
-    if (trash || i.why) return {};
+    if (trash || i.why || naming?.id === i.id) return {};
     const ids = pick.many(i.id) ? order.filter((k) => pick.picked(k)) : [i.id];
     const label = ids.length > 1 ? tr(`${ids.length}개`, `${ids.length} items`) : i.name;
     // 대화 파일이 섞였으면 끄는 표에 미리 — 폴더 칩엔 옮기지 않고 복사된다
@@ -387,7 +391,7 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, tail, icon,
   const copyItems = (ids: string[], after?: () => void) => all.map((f) => ({ label: pathLabel(f), run: () => { copyTo(ids, f); after?.(); } }));
   const menuFor = (i: LockerItem): MenuItem[] => trash
     ? [
-      { label: tr('되살리기', 'Restore'), run: () => verb(i.id, 'restore') },
+      { label: tr('되살리기', 'Restore'), run: () => verbAll(i.id, 'restore') },
       ...(canPurge(i, canFiles) ? [{ label: tr('영구 지우기…', 'Delete forever…'), danger: true, sep: true, run: () => setPurge(i) }] : []),
     ]
     : [
@@ -409,14 +413,14 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, tail, icon,
           ],
         }]),
       ]),
-      { label: tr('휴지통으로', 'Move to trash'), sep: true, danger: true, run: () => { const go = () => { verb(i.id, 'trash'); }; if (i.mine) go(); else setAskOther({ body: otherOne(i, 'trash'), ok: tr('휴지통으로 옮기기', 'Move to trash'), go }); } },
+      { label: tr('휴지통으로', 'Move to trash'), sep: true, danger: true, run: () => { const go = () => { verbAll(i.id, 'trash'); }; if (i.mine) go(); else setAskOther({ body: otherOne(i, 'trash'), ok: tr('휴지통으로 옮기기', 'Move to trash'), go }); } },
     ];
   /** 여럿 고른 채 — 옮기기·휴지통(휴지통 안이면 되살리기) */
   const batchItems = (): MenuItem[] => {
     const ids = picked.map((i) => i.id);
     const dirIds = pickedDirs.map((f) => dirId(f.key));
     const n = ids.length + dirIds.length;
-    if (trash) return [{ label: tr(`${n}개 되살리기`, `Restore ${n}`), run: () => { ids.forEach((id) => verb(id, 'restore')); pick.end(); } }];
+    if (trash) return [{ label: tr(`${n}개 되살리기`, `Restore ${n}`), run: () => { ids.forEach((id) => verbAll(id, 'restore')); pick.end(); } }];
     const movable = [...dirIds, ...picked.filter((i) => !i.room).map((i) => i.id)];
     const chat = picked.filter((i) => i.room).map((i) => i.id);
     return [
@@ -489,7 +493,9 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, tail, icon,
         if (e.key === 'Enter' && !e.nativeEvent.isComposing && naming.value.trim()) {
           // 새 폴더로 옮기기 — 지금 보는 폴더 안에 그 이름으로
           const nf = naming.value.trim().replace(/\//g, '-');
-          rename(i.id, naming.what === 'name' ? { name: naming.value.trim() } : { folder: place ? `${place}/${nf}` : nf });
+          // 이름은 접어 둔 사본(twinsById)도 같이 — 하나만 바뀌면 옛 이름 사본이 따로 떠 보인다
+          if (naming.what === 'name') for (const id of [i.id, ...(twinsById.get(i.id) ?? [])]) rename(id, { name: naming.value.trim() });
+          else rename(i.id, { folder: place ? `${place}/${nf}` : nf });
           setNaming(null);
         }
       }} />
@@ -498,7 +504,7 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, tail, icon,
   /** 그 줄 끝 글 — 여는 중 · 반영 중(보낸 바꾸기) · 평소 */
   const state = (i: LockerItem, normal: ReactNode) => (opening.has(i.id) ? tr('여는 중', 'Opening') : busy.has(i.id) ? tr('반영 중', 'Saving') : normal);
   // 올리는 중 줄 — 팀 보관함 올리기만(대화 파일 붙이기는 채팅 칸이 그린다), 휴지통·대화 파일 보기에선 안 보인다
-  const myUps = lockerUps(ups, { trash, room: room?.id });
+  const myUps = lockerUps(ups, { trash, room: room?.id, folder: place });
   const n = picked.length + pickedDirs.length;
   /** 줄·카드 끝 '내 참모에게 보내기' — 줄이 단추라 안에 못 넣어 옆(겹친 자리)에. 고른 묶음 안이면 묶음째. 휴지통·잠긴 파일·이름 바꾸는 중엔 없다 */
   const giveBtn = (i: LockerItem) => !trash && !i.why && naming?.id !== i.id && (
@@ -508,6 +514,8 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, tail, icon,
   const downActs = (i: LockerItem) => !trash && !i.why && naming?.id !== i.id && (
     <DownActs className="tlk-dl" d={downs.of(i.id)} api={downs} onSave={() => save(i)} onRetry={downs.of(i.id)?.mode === 'open' ? () => open(i) : undefined} onFail={(e) => setNote(String(e))} />
   );
+  /** 이름 바꾸는 줄·카드는 단추가 아니라 div — 단추 안 입력칸은 스페이스·Enter 의 기본 처리가 그 단추를 눌러 띄어쓰기 대신 파일이 열렸다(11-05 사용자). 폴더 타일(FolderTile)과 같은 길 */
+  const rowTag = (i: LockerItem) => (naming?.id === i.id ? 'div' : 'button');
   const rowCls = (i: LockerItem, base: string) => [base, i.why ? 'tlk-locked' : '', opening.has(i.id) ? 'tlk-opening' : '', busy.has(i.id) ? 'tlk-pending' : '', pick.picked(i.id) ? 'picked' : ''].filter(Boolean).join(' ');
 
   return (
@@ -571,39 +579,39 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, tail, icon,
               {myUps.map((u) => (
                 <div key={u.local} className="tmx-lk-row tlk-up">
                   <span className="tmx-ext">{extOf(u.name) || tr('파일', 'file')}</span><b>{u.name}</b>
-                  {u.error ? <span className="d tlk-err" title={u.error}>{u.error}</span> : <><span className="tlk-prog"><i style={{ width: `${u.total ? (u.done / u.total) * 100 : 0}%` }} /></span><span className="d">{fmtBytes(u.total)}</span></>}
+                  {u.error ? <span className="d tlk-err" title={u.error}>{u.error}</span> : <><span className="tlk-prog"><i style={{ width: `${u.total ? (u.done / u.total) * 100 : 0}%` }} /></span><span className="d">{upNote(u) || fmtBytes(u.total)}</span></>}
                   {u.error && <IconButton size="s" label={tr('닫기', 'Dismiss')} onClick={() => void invoke('team_locker_dismiss', { local: u.local }).then(() => setUps((x) => x.filter((y) => y.local !== u.local)))}><IconClose /></IconButton>}
                 </div>
               ))}
-              {items.map((i) => (
+              {items.map((i) => { const Row = rowTag(i); return (
                 <div key={i.id} className="tlk-rw">
-                  <button data-pick={i.why ? undefined : i.id} className={rowCls(i, 'tmx-lk-row')} onClick={(e) => click(e, i)} onContextMenu={(e) => onMenu(e, i)} title={i.name} aria-busy={opening.has(i.id) || busy.has(i.id)} {...dragOf(i)}>
+                  <Row data-pick={i.why ? undefined : i.id} className={rowCls(i, 'tmx-lk-row')} onClick={(e) => click(e, i)} onContextMenu={(e) => onMenu(e, i)} title={i.name} aria-busy={opening.has(i.id) || busy.has(i.id)} {...dragOf(i)}>
                     <span className="tmx-ext">{extOf(i.name) || tr('파일', 'file')}</span>
                     {nameBox(i) || <b>{i.name || tr('잠긴 파일', 'Locked file')}</b>}
                     <span className="d">{state(i, <DownLine bin d={downs.of(i.id)} normal={meta(i)} />)}</span>
                     <DownBar d={downs.of(i.id)} className="tlk-row-bar" />
-                  </button>
+                  </Row>
                   {downActs(i)}
                   {giveBtn(i)}
                 </div>
-              ))}
+              ); })}
             </div>
           ) : (
             <div className="tlk-grid">
               {myUps.map((u) => (
-                <div key={u.local} className="tlk-card tlk-up"><span className="tlk-thumb"><span className="tlk-prog"><i style={{ width: `${u.total ? (u.done / u.total) * 100 : 0}%` }} /></span></span><span className="tlk-cap"><b>{u.name}</b><span>{u.error || fmtBytes(u.total)}</span></span></div>
+                <div key={u.local} className="tlk-card tlk-up"><span className="tlk-thumb"><span className="tlk-prog"><i style={{ width: `${u.total ? (u.done / u.total) * 100 : 0}%` }} /></span></span><span className="tlk-cap"><b>{u.name}</b><span>{u.error || upNote(u) || fmtBytes(u.total)}</span></span></div>
               ))}
-              {items.map((i) => (
+              {items.map((i) => { const Row = rowTag(i); return (
                 <div key={i.id} className="tlk-rw">
-                  <button data-pick={i.why ? undefined : i.id} className={rowCls(i, 'tlk-card')} onClick={(e) => click(e, i)} onContextMenu={(e) => onMenu(e, i)} title={i.name} aria-busy={opening.has(i.id) || busy.has(i.id)} {...dragOf(i)}>
+                  <Row data-pick={i.why ? undefined : i.id} className={rowCls(i, 'tlk-card')} onClick={(e) => click(e, i)} onContextMenu={(e) => onMenu(e, i)} title={i.name} aria-busy={opening.has(i.id) || busy.has(i.id)} {...dragOf(i)}>
                     <Thumb team={teamId} item={i} />
                     <DownBar d={downs.of(i.id)} className="tlk-card-bar" />
                     <span className="tlk-cap">{nameBox(i) || <b>{i.name || tr('잠긴 파일', 'Locked file')}</b>}<span>{state(i, i.why ? tr('아직 못 열어요', 'Locked') : <DownLine bin d={downs.of(i.id)} normal={`${i.by} · ${fmtBytes(i.size)}`} />)}</span></span>
-                  </button>
+                  </Row>
                   {downActs(i)}
                   {giveBtn(i)}
                 </div>
-              ))}
+              ); })}
             </div>
           )
         ) : !v && !err ? (
@@ -616,7 +624,7 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, tail, icon,
           <div className="lk-selbar" role="toolbar" aria-label={tr('고른 것', 'Selection')}>
             <b className="lk-selcount">{tr(`${n}개 고름`, `${n} selected`)}</b>
             <span className="lk-sp" />
-            {trash ? <button className="btn" onClick={() => { picked.forEach((i) => verb(i.id, 'restore')); pick.end(); }}>{tr('되살리기', 'Restore')}</button> : <>
+            {trash ? <button className="btn" onClick={() => { picked.forEach((i) => verbAll(i.id, 'restore')); pick.end(); }}>{tr('되살리기', 'Restore')}</button> : <>
               {picked.length > 0 && <IconButton label={GIVE_LABEL()} onClick={(x) => pickOrch(x, picked.map((i) => i.id))}><IconChatSend /></IconButton>}
               {(pickedDirs.length > 0 || picked.some((i) => !i.room)) && <IconButton label={tr('폴더로 옮기기', 'Move to folder')} onClick={(x) => { const r = x.currentTarget.getBoundingClientRect(); const ids = [...pickedDirs.map((f) => dirId(f.key)), ...picked.filter((i) => !i.room).map((i) => i.id)]; setMenu({ x: r.left, y: r.top - 8, items: moveItems(ids).map((m) => ({ ...m, run: () => { m.run(); pick.end(); } })) }); }}><IconFolderMove /></IconButton>}
               <IconButton label={tr('휴지통으로', 'Move to trash')} onClick={trashPicked}><IconTrash /></IconButton>
@@ -648,7 +656,7 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, tail, icon,
       {purge && (
         <Confirm danger title={tr('영구 지우기', 'Delete forever')} body={tr(`'${purge.name || '잠긴 파일'}' 을(를) 팀 모두에게서 지워요. 되돌릴 수 없어요.`, `Deletes '${purge.name || 'locked file'}' for the whole team. This can't be undone.`)}
           ok={tr('영구 지우기', 'Delete forever')} onCancel={() => setPurge(null)}
-          onOk={() => { const p = purge; setPurge(null); verb(p.id, 'purge'); }} />
+          onOk={() => { const p = purge; setPurge(null); verbAll(p.id, 'purge'); }} />
       )}
     </div>
   );

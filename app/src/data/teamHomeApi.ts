@@ -26,7 +26,7 @@ export const desktopHome: HomeApi = {
 export const desktopSources: HomeSources = {
   agents: async (team) => { const c = await teamAgentsCached(team).catch(() => null); return c?.agents.length ? c.agents : (await teamAgents(team)).agents; },
   files: async (team, fresh) => ((fresh ? null : await invoke<LockerView | null>('team_locker_cached', { team }).catch(() => null)) ?? (await invoke<LockerView>('team_locker_list', { team }))).items,
-  openFile: (team, i) => void openTeamFile((external) => invoke<string>('team_locker_open', { team, id: i.id, external }), i.name).catch(() => {}),
+  openFile: (team, i) => void openTeamFile((external, runOk) => invoke<string>('team_locker_open', { team, id: i.id, external, runOk }), i.name).catch(() => {}),
   openUrl: (url) => void openTarget('url', url).catch(() => {}),
   thumb: (team, i) => teamPeekedThumb(team, i),
 };

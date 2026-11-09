@@ -11,11 +11,17 @@ export type OutStatus = 'sending' | 'sent' | 'failed';
 /** session = 보낸 세션 id(앱 세션 id — /api/send 에 넣는 값) */
 /** checked = 기록에 안 떠서 맥에 마지막으로 물어본 때(send-status) */
 /** since = 이 시각 뒤 기록하고만 맞춘다(newOut) */
-export type OutMsg = { id: string; session: string; text: string; at: number; since?: number; status: OutStatus; error?: string; checked?: number };
+/** lost = 맥은 쳤다는데 기록에 끝내 없음(입력칸에 남음) — 맥이 그 id 를 '쳤음'으로 기억해 다시 보낼 땐 새 id(retryOut) */
+/** tried = 같은 id 로 다시 보낸 때 — at 은 기록 맞춤에 쓰여 그대로라, 기다린 시간은 이걸로 잰다 */
+export type OutMsg = { id: string; session: string; text: string; at: number; since?: number; status: OutStatus; error?: string; checked?: number; lost?: true; tried?: number };
 
 const OUTBOX_KEY = 'm.outbox';
-/** 기록에 끝내 안 뜬 말은 이만큼 지나면 버린다 — 실패한 건 사용자가 지우거나 다시 보낼 때까지 남긴다 */
+/** 앱을 안 연 채 이만큼 지난 말은 맥도 잊었을 때라(하루) 다시 열면 바로 '전해지지 않았어요'로 — 조용히 버리면 말이 사라진다 */
 export const OUTBOX_TTL = 20 * 60 * 60 * 1000;
+
+const notDelivered = () => tr('전해지지 않았어요', 'Not delivered');
+/** 마지막으로 보낸 때 */
+const sentAt = (m: OutMsg) => m.tried ?? m.at;
 
 const safeGet = (s: Store | null, k: string): string | null => { try { return s?.getItem(k) ?? null; } catch { return null; } };
 const safeSet = (s: Store | null, k: string, v: string | null) => {
@@ -27,14 +33,14 @@ function isOut(x: unknown): x is OutMsg {
   return !!o && typeof o.id === 'string' && typeof o.session === 'string' && typeof o.text === 'string' && typeof o.at === 'number';
 }
 
-/** 다시 열 때 — 보내다 끊긴 것(sending)은 서버가 받았을 수 있어 실패로 안 바꾸고 기록을 기다린다(sent). 오래된 대기는 버린다 */
+/** 다시 열 때 — 보내다 끊긴 것(sending)은 서버가 받았을 수 있어 실패로 안 바꾸고 기록을 기다린다(sent). 오래된 대기는 전해지지 않음으로(들어갔으면 settleOut·findEarlier 가 뺀다) */
 export function readOutbox(s: Store | null, now: number): OutMsg[] {
   try {
     const list = JSON.parse(safeGet(s, OUTBOX_KEY) ?? '[]') as unknown;
     if (!Array.isArray(list)) return [];
     return list.filter(isOut)
       .map((m) => (m.status === 'sending' ? { ...m, status: 'sent' as const } : m))
-      .filter((m) => m.status === 'failed' || now - m.at < OUTBOX_TTL);
+      .map((m) => (m.status !== 'failed' && now - sentAt(m) >= OUTBOX_TTL ? { ...m, status: 'failed' as const, lost: true as const, error: notDelivered() } : m));
   } catch {
     return [];
   }
@@ -90,20 +96,46 @@ export function labelCounts(files: { label: string }[]): { img: number; file: nu
   return { img: max('img'), file: max('file') };
 }
 
-/** 보낸 지 이만큼 지나도 기록에 없으면 맥에 물어본다 — 바쁜 참모는 끼어든 말을 늦게 적는다 */
+/** 보낸 지 이만큼 지나도 기록에 없으면 '모름'·'쉬는데 없음'을 못 간 것으로 본다 — 바쁜 참모는 끼어든 말을 늦게 적는다 */
 export const CHECK_AFTER = 60_000;
+/** 처음 물어보는 때 — 맥은 친 뒤 그 말이 입력칸에서 빠졌나까지 보고 '못 들어감'을 안다(그림 읽기까지 길어야 20초쯤).
+ *  60초를 기다리면 그동안 폰은 '보내는 중'이라 사라진 줄 몰랐다(2026-11-06 12:12 그림 4장 말) */
+export const FIRST_CHECK = 15_000;
 const CHECK_GAP = 15_000;
+/** 일하는 세션도 이만큼 기록에 없으면 전해지지 않은 것 — 끼어든 말은 95% 가 51초 안에 들어가고 10~30분 걸린 건 1,901건 중 2건(11-07 실측).
+ *  드물게 늦게 들어와도 말풍선이 빠질 뿐이고, 다시 보내기는 사람이 누른다 */
+export const LOST_AFTER = 10 * 60_000;
 
-/** 맥에 물어볼 때인가 — 서버가 받았다고 한(또는 응답을 못 받은) 말이 기록에 안 떴을 때만, 15초에 한 번 */
+/** '생각 중'에 셀 말인가 — 실패·오래된 말은 안 센다(맥에 안 닿아 답을 못 받는 동안에도 몇 시간씩 돌지 않게) */
+export const outPending = (m: OutMsg, now: number) => m.status !== 'failed' && now - sentAt(m) < LOST_AFTER;
+
+/** 맥에 물어볼 때인가 — 서버가 받았다고 한(또는 응답을 못 받은) 말이 기록에 안 떴을 때만, 15초에 한 번.
+ *  보내는 중(sending)은 1분 넘게 답이 없을 때도 — 날던 요청이 매달리면(홈 화면 앱) 앱을 다시 열 때까지 안 물었다 */
 export const dueForCheck = (m: OutMsg, now: number) =>
-  m.status === 'sent' && now - m.at >= CHECK_AFTER && (m.checked === undefined || now - m.checked >= CHECK_GAP);
+  (m.status === 'sent' ? now - sentAt(m) >= FIRST_CHECK : m.status === 'sending' && now - sentAt(m) >= CHECK_AFTER) && (m.checked === undefined || now - m.checked >= CHECK_GAP);
 
 /** 맥 답(send-status) — 쳤거나 치는 중이면 계속 기다리고, 실패면 다시 보내기로.
  *  모름(맥이 안 받음·치다 꺼짐)은 looked(그 말 보낸 때부터 대화 기록을 다 봤음 — 꼬리가 덮거나 꼬리 앞을 찾아봄)일 때만 실패로 — 아직이면 기다린다.
- *  기록을 안 보고 바로 실패로 바꾸니 들어간 말이 '못 받았어요'로 남았다(2026-10-11 사용자 폰) */
-export function applyStatus(list: OutMsg[], id: string, state: string, error: string | undefined, now: number, looked: boolean): OutMsg[] {
-  if (state === 'failed' || (state === 'unknown' && looked)) return markOut(list, id, 'failed', state === 'failed' ? error || tr('대화창에 들어가지 못했어요', "Didn't make it into the chat") : tr('전해지지 않았어요', 'Not delivered'));
+ *  기록을 안 보고 바로 실패로 바꾸니 들어간 말이 '못 받았어요'로 남았다(2026-10-11 사용자 폰).
+ *  쳤음(done)이어도 세션이 쉬는 채로(idleSince) 1분 넘게 기록에 없으면 입력칸에 남은 말이다 — Enter 가 안 먹으면 맥은 쳤다고 하루를 기억해
+ *  폰이 20시간 '생각 중'으로 기다렸다(2026-11-04 사용자). 일하는 중이면 줄 서 있는 것일 수 있어 기다리되 LOST_AFTER 까지 —
+ *  폰을 볼 때마다 세션이 일하는 중이면 7시간 넘게 붙어 있었다(2026-11-07 사용자, 맥은 쳤다는데 Claude 입력 기록에 없던 말). 맥이 치는 중(typing)이라고만 해도 같다 */
+export function applyStatus(list: OutMsg[], id: string, state: string, error: string | undefined, now: number, looked: boolean, idleSince?: number): OutMsg[] {
+  const m = list.find((x) => x.id === id);
+  if (m && looked && (state === 'done' || state === 'typing')) {
+    const idleLong = state === 'done' && idleSince !== undefined && now - Math.max(idleSince, sentAt(m)) >= CHECK_AFTER;
+    if (idleLong || now - sentAt(m) >= LOST_AFTER) return list.map((x) => (x.id === id ? { ...x, status: 'failed' as const, lost: true as const, error: notDelivered() } : x));
+  }
+  if (state === 'failed' || (state === 'unknown' && looked && m && now - sentAt(m) >= CHECK_AFTER)) return markOut(list, id, 'failed', state === 'failed' ? error || tr('대화창에 들어가지 못했어요', "Didn't make it into the chat") : notDelivered());
   return list.map((m) => (m.id === id ? { ...m, checked: now } : m));
+}
+
+/** 다시 보내기 — 보통은 같은 id(맥이 이미 쳤으면 두 번 안 친다), 보낸 때(at)도 그대로 두고 기다린 시간만 새로(tried). 입력칸에 남은 말(lost)은 맥이 '쳤음'으로 기억해 같은 id 면 안 치니 새 id·새 보낸 때로 */
+export function retryOut(list: OutMsg[], id: string, newId: string, now: number): { list: OutMsg[]; id: string } {
+  const m = list.find((x) => x.id === id);
+  if (!m?.lost) return { list: markOut(list, id, 'sending').map((x) => { if (x.id !== id) return x; const { checked: _c, ...r } = x; return { ...r, tried: now }; }), id };
+  const { lost: _l, error: _e, checked: _c, tried: _t, ...rest } = m;
+  return { list: list.map((x) => (x.id === id ? { ...rest, id: newId, status: 'sending' as const, at: now } : x)), id: newId };
 }
 
 /** 그 말을 맞출 기록의 시작(pendingLeft 와 같은 기준) */

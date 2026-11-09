@@ -239,7 +239,7 @@ Issues are welcome. We are not accepting external code pull requests right now. 
 
 [AGPL-3.0](LICENSE) © 2026 Honor Studio
 
-The terms of use for the 0.4.9 installers are in the app under "Open-source licenses".
+This repository contains the Chammo app source and is licensed under the AGPL-3.0 above. The official installers (the DMG and setup.exe on Releases) also include two team features that are not in this repository: team memory and My team assistant. A build from this source does not have them. The terms of use for the official installers as a whole are in the app under "Open-source licenses".
 
 Third-party: the terminal's Hangul font `app/public/fonts/ChammoHangul.woff2` is a modified (Hangul-only) version of NAVER [D2Coding](https://github.com/naver/d2codingfont), renamed as the SIL Open Font License 1.1 requires — see [`app/public/fonts/OFL.txt`](app/public/fonts/OFL.txt). The optional Supertonic voice is downloaded to your Mac only when you pick it: the `supertonic` package (MIT) and the Supertone model under the [OpenRAIL-M license](https://huggingface.co/Supertone/supertonic-3) with its use restrictions. The spreadsheet in Space uses [Univer](https://github.com/dream-num/univer) (open-source edition, Apache-2.0) — notices in [`app/public/licenses/THIRD_PARTY_NOTICES.md`](app/public/licenses/THIRD_PARTY_NOTICES.md). Libraries (Tauri, React, xterm.js, BlockNote, pdf.js, Playwright MCP, …) keep their own licenses (MIT / Apache-2.0 / MPL-2.0 / BSD-3-Clause — `ed25519-dalek`, `x25519-dalek` — and CDLA-Permissive-2.0 for the root certificate data in `webpki-roots`); see each package.
 

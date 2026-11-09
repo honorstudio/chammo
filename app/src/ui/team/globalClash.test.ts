@@ -4,7 +4,7 @@ import styles from '../styles.css?raw';
 // 2026-10-26 사용자 캡처: 팀챗 0개일 때 '아직 팀챗이 없어요'(.tmx-none.sm)가 한 글자씩 세로로 쌓여 'DM' 머리에 겹쳤다 —
 // .sm 은 styles.css 전역 상태 점(inline-flex, 폭·높이 12px)이라 본 앱·메신저 창(styles.css 를 부름)에서만 먹고 폰은 멀쩡했다.
 // 팀 화면 클래스는 tmx-·tmc- 이름으로 — 전역에 '홀로' 모양이 있는 짧은 이름(.sm·.side 류)을 같이 붙이지 않는다
-const team = import.meta.glob(['./*.tsx', '../mobile/PhoneTeam.tsx'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+const team = import.meta.glob(['./*.tsx', '../mobile/PhoneTeam.tsx', '../../../../pro/web/ui/*.tsx'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
 
 /** 일부러 쓰는 전역 모양 — 앱 공통 버튼 */
 const SHARED = new Set(['btn']);

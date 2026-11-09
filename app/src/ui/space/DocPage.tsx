@@ -17,6 +17,7 @@ import { FindBar } from './FindBar';
 import type { ShowAt } from '../../domain/showAt';
 import { flashWhenReady } from '../flash';
 import { DocWidthButton, useDocWide } from '../docWide';
+import { marginPick } from './marginPick';
 
 // 편집기(BlockNote)는 문서를 열 때 불러온다
 const SpaceEditor = lazy(() => import('./SpaceEditor'));
@@ -27,7 +28,9 @@ const TextEditor = lazy(() => import('./TextEditor'));
  * 문서 페이지 — 노션처럼 바로 고친다(리더 아님, 2026-09-30 사용자). 저장은 저절로, 고친 줄은 모아 두었다가
  * 오른쪽 아래 "보낼 것"으로 참모에게. 위 줄 = 어디 문서인지(주인 / 이름) + 고정
  */
-export function DocPage({ lead, tail, where, attachTo, path, title, owner, pinned, onPin, send, sendTo, onTitle, onAttach, onBack, onNewSubpage, onOpenPath, at, atKey, zoom = 100 }: {
+export function DocPage({ personal = false, lead, tail, where, attachTo, path, title, owner, pinned, onPin, send, sendTo, onTitle, onAttach, onBack, onNewSubpage, onOpenPath, at, atKey, zoom = 100 }: {
+  /** 내 메모 — 글만. 머리줄·보내기 단추·보낼 것·space-log 없이, ⌘F 도 가운데 문서 몫(참모에게 저절로 안 읽힌다) */
+  personal?: boolean;
   /** 탭 확대 배율(%) — 파일마다 기억(domain/tabZoom). 글 칸 전체가 CSS zoom 으로 커진다 */
   zoom?: number;
   /** 짚어 보여 줄 곳(scripts/show --line/--find) — atKey 가 바뀔 때마다 다시 반짝 */
@@ -55,7 +58,7 @@ export function DocPage({ lead, tail, where, attachTo, path, title, owner, pinne
   title?: string;
   pinned?: boolean;
   onPin?: () => void;
-  send: (text: string) => Promise<void>;
+  send?: (text: string) => Promise<void>;
   sendTo?: string;
   /** 첫 줄 제목이 바뀌면(내 페이지 메뉴 이름) */
   onTitle?: (title: string) => void;
@@ -74,6 +77,7 @@ export function DocPage({ lead, tail, where, attachTo, path, title, owner, pinne
   // ⌘F 는 보이는 문서로 — 살려 둔(숨은) 문서가 가로채지 않게(ui/space/docKeep)
   const shown = useContext(SpaceShown);
   useEffect(() => {
+    if (personal) return;
     if (plain || !shown) return; // 찾기 띠는 편집기 글을 훑는다 — 글 칸(textarea)은 못 훑으니 앱 기본 찾기에 맡긴다
     const w = window as unknown as { __docFind?: () => void };
     const mine = () => setFinding(true);
@@ -85,7 +89,7 @@ export function DocPage({ lead, tail, where, attachTo, path, title, owner, pinne
   const h1 = (md: string) => md.match(/^#\s+(.+)$/m)?.[1]?.trim();
   return (
     <div className={wide ? 'cv-doc doc-wide' : 'cv-doc'}>
-      <div className="cv-doc-bar">
+      {!personal && <div className="cv-doc-bar">
         {lead}
         {where !== undefined ? <span className="cv-path" title={path}>{where}</span> /* 탭으로 연 것 — 이름은 탭에, 머리엔 어느 폴더인지만(2026-10-11 사용자) */
           : <span className="cv-crumb">{onBack ? <button className="cv-back" onClick={onBack} title={owner}><IconChevron />{owner}</button> : <span>{owner}</span>}<i>/</i><b>{title ?? docTitle(path)}</b></span>}
@@ -96,21 +100,18 @@ export function DocPage({ lead, tail, where, attachTo, path, title, owner, pinne
           <IconButton pressed={!!pinned} label={pinned ? tr('고정됨', 'Pinned') : tr('고정', 'Pin')} title={pinned ? tr('고정됨 — 누르면 풀기', 'Pinned — click to unpin') : tr('고정 — 새 세션에서도 메뉴에 남는다', 'Pin — stays in the menu for new sessions')} onClick={onPin}><IconPin /></IconButton>
         )}
         {tail}
-      </div>
+      </div>}
       {finding && <FindBar root={() => bodyRef.current} onClose={() => setFinding(false)} />}
       <div className="cv-doc-scroll" onMouseDown={(e) => {
-        // 글 아래 빈 곳을 누르면 노션처럼 맨 끝에 캐럿 — 마지막 줄이 비어 있지 않으면 빈 줄을 하나 더(2026-09-30 사용자)
+        // 글 칸 밖 여백 — 끌면 그 줄부터 글 고르기, 그냥 누르면 캐럿(글 아래면 맨 끝 + 빈 줄). 예전엔 여기서 막기만 해서
+        // 여백에서 시작한 끌기가 하나도 안 골라졌다(11-05 사용자 "마우스 끌기가 안 된다", marginPick)
         const t = e.target as HTMLElement;
         const ed = editorRef.current;
-        if (!ed || t.closest('.bn-editor, .bn-side-menu, .bn-formatting-toolbar, button, a, input')) return;
+        if (e.button !== 0 || !ed || t.closest('.bn-editor, .bn-side-menu, .bn-formatting-toolbar, button, a, input')) return;
+        const root = bodyRef.current?.querySelector<HTMLElement>('.bn-editor');
+        if (!root) return;
         e.preventDefault();
-        const blocks = ed.document;
-        const last = blocks[blocks.length - 1];
-        const empty = last && last.type === 'paragraph' && Array.isArray(last.content) && last.content.length === 0;
-        if (last && !empty) ed.insertBlocks([{ type: 'paragraph' }], last, 'after');
-        const end = ed.document[ed.document.length - 1];
-        if (end) ed.setTextCursorPosition(end, 'end');
-        ed.focus();
+        marginPick(ed, root, e.clientX, e.clientY);
       }}>
         <div className="cv-doc-body" ref={bodyRef} style={zoom === 100 ? undefined : { zoom: zoom / 100 }} onClickCapture={(e) => {
           // 문서 속 링크 — 다른 페이지·파일(상대 경로)이면 스페이스에서 연다, 웹 주소는 그대로
@@ -127,14 +128,14 @@ export function DocPage({ lead, tail, where, attachTo, path, title, owner, pinne
             : text == null ? <div className="cv-blank">{tr('여는 중', 'Opening')}</div>
             : (
               <Suspense fallback={<div className="cv-blank">{tr('편집기 여는 중', 'Opening the editor')}</div>}>
-                {plain ? <TextEditor key={path} path={path} text={text} /> : <SpaceEditor key={path} md={text} docPath={path} onNewSubpage={onNewSubpage} onEditor={(ed) => { editorRef.current = ed; }}
-                  onReady={(n) => { lastSaved.set(path, n); setBaseline(path, n); }}
+                {plain ? <TextEditor key={path} path={path} text={text} /> : <SpaceEditor key={path} md={text} docPath={path} personal={personal} onNewSubpage={onNewSubpage} onEditor={(ed) => { editorRef.current = ed; }}
+                  onReady={(n) => { lastSaved.set(path, n); if (!personal) setBaseline(path, n); }}
                   onChange={(m) => { const t = h1(m); if (t) onTitle?.(t); }} />}
               </Suspense>
             )}
         </div>
       </div>
-      <SendFab send={send} sendTo={sendTo} path={path} />
+      {!personal && send && <SendFab send={send} sendTo={sendTo} path={path} />}
     </div>
   );
 }

@@ -1,8 +1,21 @@
 fn main() {
+    pro_folder();
     vdisplay_helper();
+    videoprep_helper();
     accessory_dylib();
     craft_mirror();
     tauri_build::build()
+}
+
+/// 비공개 팀 코드 — pro/rust/mod.rs 가 있으면 cfg(pro). 공개본엔 폴더가 없어 플래그 없이 꺼진다.
+/// 조용히 꺼지는 게 위험한 공식 빌드는 scripts/release-check 가 실행 파일 표식으로 본다
+fn pro_folder() {
+    println!("cargo:rustc-check-cfg=cfg(pro)");
+    let m = manifest_dir().join("../../pro/rust/mod.rs");
+    println!("cargo:rerun-if-changed={}", m.display());
+    if m.exists() {
+        println!("cargo:rustc-cfg=pro");
+    }
 }
 
 /// Craft 맥 앱 비추기(tools/craft-mirror, Swift) — 맥이면 정적 라이브러리로 빌드해 링크하고 `craft_mirror` cfg 를 켠다.
@@ -84,6 +97,30 @@ fn vdisplay_helper() {
     }
 }
 
+/// 영상 검토 도우미(tools/chammo-videoprep, Swift) — 맥이면 swiftc 로 OUT_DIR 에(video_prep.rs 가 include_bytes).
+/// 없거나 실패하면 빈 파일 — 폰은 저용량 없이 원본 + LTE 확인. 공유 CARGO_TARGET_DIR 에서 다른 워크트리가 이 스크립트를 쓸 수 있어 패닉하지 않는다(accessory 와 같은 까닭), 공개본 누락은 release-check 가 본다
+fn videoprep_helper() {
+    let src = manifest_dir().join("../../tools/chammo-videoprep/main.swift");
+    println!("cargo:rerun-if-changed={}", src.display());
+    let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("chammo-videoprep");
+    let mac = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos");
+    let arch = if std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("x86_64") { "x86_64" } else { "arm64" };
+    let built = mac
+        && src.exists()
+        && std::process::Command::new("swiftc")
+            .args(["-O", "-target", &format!("{arch}-apple-macos11.0"), "-o"])
+            .arg(&out)
+            .arg(&src)
+            .status()
+            .is_ok_and(|s| s.success());
+    if !built {
+        if mac {
+            println!("cargo:warning=chammo-videoprep did not build — the phone gets the original video without a small copy");
+        }
+        let _ = std::fs::write(&out, []);
+    }
+}
+
 /// 세션 크롬 Dock·⌘Tab 빼기 dylib(tools/chammo-browser/native/accessory.m) — 맥이면 clang 으로 OUT_DIR 에(accessory.rs 가 include_bytes).
 /// 실패하면 빈 파일 — 앱은 그 파일을 안 풀고, 래퍼는 사본을 구글 서명 그대로 띄운다(Dock 에 보일 뿐)
 fn accessory_dylib() {
@@ -100,7 +137,8 @@ fn accessory_dylib() {
     let arch = if std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("x86_64") { "x86_64" } else { "arm64" };
     let built = mac
         && std::process::Command::new("clang")
-            .args(["-dynamiclib", "-fobjc-arc", "-O2", "-target", &format!("{arch}-apple-macos11.0"), "-framework", "AppKit", "-o"])
+            // install_name 을 안 주면 빌드한 맥의 절대 경로가 dylib 에 박혀 실행 파일로 나간다(0.4.9 binary-scan)
+            .args(["-dynamiclib", "-fobjc-arc", "-O2", "-Wl,-install_name,chammo-accessory.dylib", "-target", &format!("{arch}-apple-macos11.0"), "-framework", "AppKit", "-o"])
             .arg(&out)
             .arg(&src)
             .status()

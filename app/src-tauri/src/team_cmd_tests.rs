@@ -499,3 +499,35 @@ fn 보관함_올리기·받기는_사람_몫으로_나간다() {
     let (d2, kc2) = in_locker_team("locker-bg", "tB");
     assert!(human_flags(&d2, &kc2, json!({ "verb": "locker-ls" })).iter().all(|h| !*h), "보기는 배경");
 }
+
+#[test]
+fn 화면_상태에_팀_권한과_팀마다_닫힘() {
+    // 옛 중계(plan 없음) — plan 은 null, 팀은 다 열림(화면은 예전처럼)
+    let mut st = relay::TeamState::default();
+    st.put_team(relay::TeamEntry { id: "t1".into(), name: "가".into(), ..Default::default() });
+    st.put_team(relay::TeamEntry { id: "t2".into(), name: "나".into(), ..Default::default() });
+    let v = view(&st);
+    assert!(v["plan"].is_null());
+    assert_eq!(v["teams"].as_array().unwrap().iter().map(|t| t["closed"].as_bool().unwrap()).collect::<Vec<_>>(), vec![false, false]);
+    st.team_plan = relay::plan_of(&serde_json::json!({ "plan": { "lock": true, "contact": "mailto:a@b.co", "team": { "canCreate": false, "reason": "team_create" } } }));
+    st.closed_teams = vec!["t2".into()];
+    let v = view(&st);
+    assert_eq!(v["plan"]["canCreate"], false);
+    assert_eq!(v["plan"]["reason"], "team_create");
+    assert_eq!(v["plan"]["contact"], "mailto:a@b.co");
+    assert_eq!(v["teams"][1]["closed"], true);
+    assert_eq!(v["teams"][0]["closed"], false);
+}
+
+#[cfg(not(pro))]
+#[test]
+fn 공개_빌드엔_공식_설치_파일의_동사가_없다고_답한다() {
+    let d = dir("no-pro");
+    joined(&d);
+    let w = FakeWire::default();
+    for verb in ["ask", "report"] {
+        let v = answer(&request(&line(json!({ "verb": verb, "team": "t", "text": "x" }))).unwrap(), &d, &Fake::default(), &w);
+        assert_eq!(v["ok"], false, "{verb}");
+        assert!(v.to_string().contains("official installer"), "{verb}: {v}");
+    }
+}

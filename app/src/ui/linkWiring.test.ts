@@ -22,7 +22,7 @@ describe('끊긴 터미널 보기 — 다시 붙기·기다렸다 치기·말풍
   });
 
   it('ChatView 는 붙음 상태를 말풍선 판단에 넘기고, 끊긴 동안엔 Enter 다시 넣기를 안 한다', () => {
-    expect(chat).toMatch(/pendingState\(p, \{ queue, termText, now: Date\.now\(\), enterWait, link \}\)/);
+    expect(chat).toMatch(/pendingState\(p, \{ queue, termText, now: Date\.now\(\), enterWait, link(, pasting)? \}\)/);
     expect(chat).toMatch(/\(link && link !== 'live'\) \? null/);
     expect(chat).toMatch(/wait: tr\(/);
   });

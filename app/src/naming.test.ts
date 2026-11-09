@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 // 2026-10-22 처음 쓰는 사람 QA 15: 한 앱 안에서 '오케스트레이터'(첫 화면)·'비서'(설정·폰)·'참모'(터미널 뷰)가 섞여
 // 같은 걸 넷으로 불렀다. 부르는 이름은 '참모'(영문 assistant) 하나 — 화면에 나가는 글에 옛 이름이 새로 생기면 여기서 걸린다.
 // 주석·코드 이름(orchestrator 변수 등)은 상관없다 — 따옴표 안 글만 본다.
-const sources = import.meta.glob(['/src/**/*.{ts,tsx}', '!/src/**/*.test.ts'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+const sources = import.meta.glob(['/src/**/*.{ts,tsx}', '!/src/**/*.test.ts', '../../pro/web/**/*.{ts,tsx}', '!../../pro/web/**/*.test.ts'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
 
 const noComments = (src: string) =>
   src
@@ -84,8 +84,6 @@ describe('참모 이름은 별명 먼저 — 번호 이름이 화면 글에 새�
       ['ui/space/HomeDash.tsx', /<b>\{q\.target\}|<b>\{peekRow\.target\}|\$\{x\.target\} ·|\[x\.target,/],
       ['ui/TaskPanel.tsx', /name=\{c\.target\}/],
       ['ui/space/SpaceView.tsx', /\$\{o\.name \|\| '참모'\}/],
-      ['ui/tama/PetView.tsx', /label=\{o\.name\}/],
-      ['ui/tama/Widget.tsx', /— \$\{file\.keeper\.name\}/],
       ['ui/avatar/OrchAvatar.tsx', /label \?\? key/],
       ['App.tsx', /\{remoteChat\.name\}/],
       ['ui/team/TeamSettings.tsx', /\$\{view\.deliverTo\}/],

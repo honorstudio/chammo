@@ -86,6 +86,14 @@ pub trait Backend: Send + Sync {
     fn team_say_re(&self, to: &str, text: &str, cid: &str, _re: u64) -> Result<serde_json::Value, String> {
         self.team_say(to, text, cid)
     }
+    /// 파일을 실은 사람 말(대화 첨부 참조 — 모양은 Extra::check 가 봤다)
+    fn team_say_files(&self, _to: &str, _text: &str, _cid: &str, _re: u64, _files: Vec<serde_json::Value>) -> Result<serde_json::Value, String> {
+        Err("not supported".into())
+    }
+    /// 대화 첨부 올림 결과 — None 이면 아직(올리는 중)
+    fn team_file_ref(&self, _up: &str) -> Option<serde_json::Value> {
+        None
+    }
     /// 팀 참모 목록 + 이 기기가 확인한 판(데스크톱 team_agents 와 같은 길)
     fn team_agents(&self, _team: &str) -> Result<serde_json::Value, String> {
         Err("not supported".into())
@@ -148,6 +156,14 @@ pub trait Backend: Send + Sync {
     fn team_home(&self, _team: &str, _seen: u64) -> Result<serde_json::Value, String> {
         Err("not supported".into())
     }
+    /// 공식 설치 파일에만 있는 팀 판 읽기 — 없는 판이면 not supported(폰엔 404)
+    fn pro_board(&self, _team: &str, _seen: u64) -> Result<serde_json::Value, String> {
+        Err("not supported".into())
+    }
+    /// 같은 판 쓰기 — 사람이 폰에서 누른 것. 안의 모양·권한은 맥 쪽이 본다. (상태 코드, 까닭)
+    fn pro_write(&self, _team: &str, _op: serde_json::Value) -> Result<(), (u16, String)> {
+        Err((404, "not found".into()))
+    }
     /// 폰 팀 캘린더(relay ADR 0011) — fresh 가 아니면 이 맥 기억·봉한 캐시(망 안 씀, 처음이면 따라잡기), fresh 면 따라잡기
     fn team_cal(&self, _team: &str, _fresh: bool) -> Result<serde_json::Value, String> {
         Err("not supported".into())
@@ -175,6 +191,14 @@ pub trait Backend: Send + Sync {
     }
     /// 폰 대화 그림 크게 보기(11-01) — 이 맥이 풀어(팀 보관함 peek) view 면 보기용(view_plan), 아니면 원본. 그림이 아니면 Err
     fn team_file_image(&self, _team: &str, _id: &str, _view: bool) -> Result<TeamImage, String> {
+        Err("not supported".into())
+    }
+    /// 폰 팀 문서 열기(11-06) — 사람이 누른 받기로 풀어(peek, 50MB 까지) 풀어 둔 자리를 준다. 읽기는 /api/file
+    fn team_file_open(&self, _team: &str, _id: &str) -> Result<PathBuf, String> {
+        Err("not supported".into())
+    }
+    /// 폰 팀 보관함 영상(11-04) — 맥이 뒤에서 받아 풀고(team_media) 받는 중이면 진행, 다 받으면 풀어 둔 자리. 영상이 아니면 Err
+    fn team_media(&self, _team: &str, _id: &str) -> Result<crate::team_media::Step, String> {
         Err("not supported".into())
     }
     /// 폰 팀 홈 새 글(고치기·지우기는 데스크톱) — pin 은 팀장만(Rust team_post::pin 이 다시 본다)
@@ -244,6 +268,10 @@ pub trait Backend: Send + Sync {
     fn transcript_read(&self, _session: &str, _offset: u64) -> Option<String> {
         None
     }
+    /// 그 세션 대화 기록 파일(~/.claude/projects/<폴더>/<sessionId>.jsonl) — 보관함 링크 칸이 이어 읽는다
+    fn transcript_file(&self, session_id: &str) -> Option<PathBuf> {
+        crate::claude::transcript_path(session_id)
+    }
     /// 화면 파일 — 이름은 문지기가 이미 걸렀다("mobile.html" 또는 "assets/<안전한 이름>")
     fn asset(&self, path: &str) -> Option<(Vec<u8>, String)>;
     /// scripts/show 기록 꼬리 — 파일 길의 허용 집합 출처
@@ -292,7 +320,8 @@ pub trait Backend: Send + Sync {
     }
     fn data_dir(&self) -> PathBuf;
     /// 세션별 컨텍스트 파일 원문(<데이터>/ctx/*.json)
-    fn ctx_files(&self) -> Vec<String>;
+    /// 그 세션들의 ctx 파일 원문 — 끝난 세션 파일이 수천 개라 전부 읽지 않는다
+    fn ctx_files(&self, ids: &[String]) -> Vec<String>;
     /// 붙인 그림 저장(<데이터>/attach) → 저장한 경로
     fn attach(&self, ext: &str, bytes: &[u8]) -> Result<String, String>;
     /// 참모 프사 목록(<데이터>/avatars/*.json — 키 검사·형식 검사를 거친 것만)
@@ -827,6 +856,12 @@ fn same_origin_upload(req: &Req, gate: &Gate) -> bool {
             || matches!(ct.as_str(), "application/pdf" | "application/zip" | "application/x-zip-compressed" | "application/octet-stream" | "text/plain" | "text/markdown" | "text/x-markdown" | "text/csv" | "application/json"))
 }
 
+/// 세션 목록(claude agents --json)의 대화 번호들
+pub fn session_ids(sessions_json: &str) -> Vec<String> {
+    let Ok(serde_json::Value::Array(list)) = serde_json::from_str::<serde_json::Value>(sessions_json) else { return Vec::new() };
+    list.iter().filter_map(|a| a["sessionId"].as_str().map(str::to_string)).collect()
+}
+
 /// 세션 목록에 컨텍스트를 붙인다 — 그 세션(sessionId) 의 ctx 파일 내용을 "ctx" 칸에 그대로(파싱은 domain/ctx.ts)
 pub fn with_ctx(sessions_json: &str, ctx_files: &[String]) -> String {
     let Ok(serde_json::Value::Array(mut list)) = serde_json::from_str::<serde_json::Value>(sessions_json) else { return sessions_json.to_string() };
@@ -883,15 +918,24 @@ fn body_tag(s: &str) -> String {
 /// since(지난번 꼬리표)가 있으면 첫 줄 {"tag","same"} + 바뀌었을 때만 원문 — show 기록 5초·세션 목록 3초마다 통째로 받던 것(2026-10-09).
 /// show 기록은 세션별 공평 나누기 꼬리라 바이트 자리 이어 받기(/api/tasks?from=)가 안 맞아 꼬리표 비교로. 화면은 domain/tagTail
 fn tagged(req: &Req, body: String) -> Resp {
+    tagged_with(req, body, None)
+}
+
+/// notes = 메모 폴더 도장 — 세션 목록 머리줄에만(폰 메모 탭이 바뀌면 그 카드만 다시 받는다). 꼬리표(tag)엔 안 섞는다
+fn tagged_with(req: &Req, body: String, notes: Option<String>) -> Resp {
     let tag = body_tag(&body);
     let same = req.param("since") == Some(tag.as_str());
     let body = if same { String::new() } else { body };
-    Resp::new(200, "text/plain; charset=utf-8", format!("{}\n{body}", serde_json::json!({ "tag": tag, "same": same })))
+    let mut head = serde_json::json!({ "tag": tag, "same": same });
+    if let Some(n) = notes {
+        head["notes"] = n.into();
+    }
+    Resp::new(200, "text/plain; charset=utf-8", format!("{head}\n{body}"))
 }
 
 /// 폰 사무실 모양 — 맥 앱이 쓴 office.json(ui/App, domain/phoneOffice officeShape)에서 아는 칸만. 아직 없으면 빈 모양(폰은 기본 방),
 /// 깨졌으면 '없음'과 갈라 이유째
-const OFFICE_KEYS: [&str; 6] = ["slots", "boss", "skin", "furn", "placed", "deco"];
+const OFFICE_KEYS: [&str; 8] = ["offices", "slots", "skins", "seats", "assign", "sprs", "off", "deco"];
 fn office_shape(data: &std::path::Path) -> Result<String, String> {
     let raw = match std::fs::read_to_string(data.join("office.json")) {
         Ok(r) => r,
@@ -1088,6 +1132,24 @@ fn phone_team_home(req: &Req, be: &dyn Backend) -> Resp {
     }
 }
 
+/// 공식 설치 파일에만 있는 팀 판 쓰기 — 모르는 칸은 400
+fn phone_pro_write(req: &Req, be: &dyn Backend) -> Resp {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct B {
+        team: String,
+        op: serde_json::Value,
+    }
+    let b: B = match body(req) { Ok(b) => b, Err(r) => return r };
+    if !team_id_ok(&b.team) {
+        return Resp::text(400, "bad team");
+    }
+    match be.pro_write(&b.team, b.op) {
+        Ok(()) => Resp::json(&serde_json::json!({ "ok": true })),
+        Err((code, e)) => Resp::text(code, &e),
+    }
+}
+
 /// 폰 팀 메신저 쓰기 — 말 보내기(사람 말, cid 는 이 기기가 붙인다)·초대 링크·팀 만들기·바꾸기·들어가기. 몸통에 모르는 칸이 있으면 400
 fn phone_team(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
     #[derive(serde::Deserialize)]
@@ -1118,6 +1180,9 @@ fn phone_team(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         /// 이어 묻기 — 이은 팀 참모 답 seq(ADR 0017)
         #[serde(default)]
         re: u64,
+        /// 말에 실을 대화 첨부 참조(/api/team-file-ref 로 받은 것) — 10장까지
+        #[serde(default)]
+        files: Vec<serde_json::Value>,
     }
     let b: B = match body(req) { Ok(b) => b, Err(r) => return r };
     // 말 보내기·글 올리기는 같은 분당 상한을 나눠 쓴다(폰 하나가 팀에 쏟아붓지 않게)
@@ -1143,8 +1208,11 @@ fn phone_team(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             be.team_post(&b.team, title, &b.body, b.pin)
         }
         "/api/team-say" => {
-            if b.to.trim().is_empty() || b.to.chars().count() > 120 || b.text.trim().is_empty() || b.text.chars().count() > 4000 {
+            if b.to.trim().is_empty() || b.to.chars().count() > 120 || (b.text.trim().is_empty() && b.files.is_empty()) || b.text.chars().count() > 4000 {
                 return Resp::text(400, "bad body");
+            }
+            if (crate::e2e_envelope::Extra { files: b.files.clone(), ..Default::default() }).check().is_err() {
+                return Resp::text(400, "bad files");
             }
             if !b.cid.is_empty() && (b.cid.len() > 60 || !b.cid.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')) {
                 return Resp::text(400, "bad cid");
@@ -1159,7 +1227,13 @@ fn phone_team(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             } else {
                 format!("p-{}", b.cid)
             };
-            if b.re > 0 { be.team_say_re(b.to.trim(), &b.text, &cid, b.re) } else { be.team_say(b.to.trim(), &b.text, &cid) }
+            if !b.files.is_empty() {
+                be.team_say_files(b.to.trim(), &b.text, &cid, b.re, b.files)
+            } else if b.re > 0 {
+                be.team_say_re(b.to.trim(), &b.text, &cid, b.re)
+            } else {
+                be.team_say(b.to.trim(), &b.text, &cid)
+            }
         }
         "/api/team-handoff" => {
             if b.to.trim().is_empty() || b.to.chars().count() > 120 || b.text.trim().is_empty() || b.text.chars().count() > 8000 {
@@ -1226,6 +1300,8 @@ pub struct TeamLockerPart {
     pub last: bool,
     pub name: String,
     pub folder: String,
+    /// 대화 첨부면 그 방 id(폴더 없음) — 다 모이면 팀 보관함 대신 그 방 사람 기기마다 올리고 참조를 남긴다(11-06)
+    pub room: String,
 }
 
 /// 팀 파일 id — 중계가 준 모양만
@@ -1274,8 +1350,10 @@ fn phone_team_locker_put(req: &Req, be: &dyn Backend) -> Resp {
         last: req.param("last") == Some("1"),
         name: dec("name").unwrap_or_default().trim().to_string(),
         folder: dec("folder").unwrap_or_default(),
+        room: req.param("room").unwrap_or("").to_string(),
     };
-    if !team_id_ok(&p.team) || !crate::team_phone_up::up_id_ok(&p.up) || !locker_name_ok(&p.name) || !locker_folder_ok(&p.folder) {
+    let room_ok = p.room.is_empty() || (team_id_ok(&p.room) && p.folder.is_empty());
+    if !team_id_ok(&p.team) || !crate::team_phone_up::up_id_ok(&p.up) || !locker_name_ok(&p.name) || !locker_folder_ok(&p.folder) || !room_ok {
         return Resp::text(400, "bad upload");
     }
     match be.team_locker_part(&p, &req.body) {
@@ -1331,10 +1409,11 @@ fn locker_view(be: &dyn Backend) -> serde_json::Value {
     v
 }
 
-/// 폰이 읽어도 되는 경로 집합 — 보여 준 파일·지침서·starter(allowed_files) + 보관함에 넣은 파일
+/// 폰이 읽어도 되는 경로 집합 — 보여 준 파일·지침서·starter(allowed_files) + 보관함에 넣은 파일 + 폰이 연 팀 파일
 fn allowed_of(be: &dyn Backend) -> Vec<String> {
     let mut v = mobile_files::allowed_files(&be.show_log(), &be.routines().unwrap_or_default(), &be.data_dir(), &be.hq_dir());
     v.extend(be.locker_root().map(|r| crate::locker_fs::phone_paths(&r, &be.home())).unwrap_or_default());
+    v.extend(mobile_files::team_opened());
     v
 }
 
@@ -1352,7 +1431,7 @@ fn file_resp(req: &Req, be: &dyn Backend) -> Resp {
             let Ok(text) = mobile_files::read_verified(&doc, mobile_files::MAX_TEXT_FILE) else { return Resp::text(403, "not allowed") };
             let root = mobile_files::md_root(Path::new(doc.as_ref()), be.locker_root().as_deref());
             let refs = mobile_files::md_images(&String::from_utf8_lossy(&text), Path::new(doc.as_ref()));
-            if !refs.iter().any(|p| p.as_os_str() == path.as_ref() as &str && p.starts_with(&root)) {
+            if !refs.iter().any(|p| mobile_files::md_ref_matches(p, &path) && p.starts_with(&root)) {
                 return Resp::text(403, "not allowed");
             }
             vec![path.to_string()]
@@ -1729,14 +1808,115 @@ struct ModeNameBody {
 }
 
 /// 폰 홈·보관함 v1 에 더한 쓰기 길 — 같은 출처 문지기·head_check 몸통 목록·405 가 이 목록 하나를 본다
-const PHONE_POSTS: &[&str] = &["/api/device-number", "/api/login-terms-retry", "/api/gacha", "/api/peer-human-say", "/api/team-say", "/api/team-read", "/api/team-invite", "/api/team-create", "/api/team-use", "/api/team-join", "/api/team-handoff", "/api/team-post", "/api/team-agent-confirm", "/api/team-agent-save", "/api/team-agent-remove", "/api/team-agent-try", "/api/team-home-save", "/api/team-home-content", "/api/team-cal-put", "/api/team-locker-op", "/api/locker-alias", "/api/locker-unalias", "/api/locker-new", "/api/locker-mkdir", "/api/locker-write", "/api/mode-act", "/api/mode-open", "/api/mode-close", "/api/mode-remove", "/api/mode-restore"];
-const PHONE_GETS: &[&str] = &["/api/gacha", "/api/office", "/api/modes", "/api/mode-view", "/api/mode-card", "/api/peer-get", "/api/peer-devices", "/api/team", "/api/team-profiles", "/api/team-posts", "/api/team-home", "/api/team-cal", "/api/team-cal-poll", "/api/team-agents", "/api/team-agent-usage", "/api/team-agent-refs", "/api/team-file-thumb", "/api/team-file-image", "/api/team-locker", "/api/team-locker-put"];
+const PHONE_POSTS: &[&str] = &["/api/note-new", "/api/note-write", "/api/note-trash", "/api/note-meta", "/api/device-number", "/api/login-terms-retry", "/api/gacha", "/api/peer-human-say", "/api/team-say", "/api/team-read", "/api/team-invite", "/api/team-create", "/api/team-use", "/api/team-join", "/api/team-handoff", "/api/team-post", "/api/team-agent-confirm", "/api/team-agent-save", "/api/team-agent-remove", "/api/team-agent-try", "/api/team-home-save", "/api/team-home-content", "/api/team-memory-write", "/api/team-cal-put", "/api/team-locker-op", "/api/team-media", "/api/locker-alias", "/api/locker-unalias", "/api/locker-new", "/api/locker-mkdir", "/api/locker-write", "/api/locker-link-add", "/api/locker-link-hide", "/api/mode-act", "/api/mode-open", "/api/mode-close", "/api/mode-remove", "/api/mode-restore"];
+const PHONE_GETS: &[&str] = &["/api/notes", "/api/note", "/api/gacha", "/api/office", "/api/modes", "/api/mode-view", "/api/mode-card", "/api/peer-get", "/api/peer-devices", "/api/team", "/api/team-profiles", "/api/team-posts", "/api/team-home", "/api/team-memory", "/api/team-cal", "/api/team-cal-poll", "/api/team-agents", "/api/team-agent-usage", "/api/team-agent-refs", "/api/team-file-thumb", "/api/team-file-image", "/api/team-file-open", "/api/team-locker", "/api/team-locker-put", "/api/team-file-ref", "/api/locker-links"];
 /// 폰 md 글 칸 저장만 몸통을 크게(글 512KB + JSON)
 const MAX_WRITE_BODY: usize = crate::locker_fs::MAX_PHONE_MD + 64 * 1024;
+
+#[derive(Deserialize)]
+struct NoteBody {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    text: String,
+    /// 폰이 알던 글 — 맥에서 그새 바뀌었으면 409 CHANGED_OUTSIDE
+    #[serde(default)]
+    base: Option<String>,
+    /// /api/note-meta — 스킨·띄움(폰은 따로 창 자리를 안 바꾼다)
+    #[serde(default)]
+    skin: Option<String>,
+    #[serde(default)]
+    shown: Option<bool>,
+}
+
+/// 내 메모 쓰기 길 — 새로·저장·휴지통. 이름은 notes::name_ok 가 본다(폴더를 못 넘는다)
+fn note_op(req: &Req, be: &dyn Backend) -> Resp {
+    let b: NoteBody = match body(req) { Ok(b) => b, Err(r) => return r };
+    let dir = be.data_dir().join("notes");
+    match req.path.as_str() {
+        "/api/note-new" => match crate::notes::create_in(&dir, crate::notes::now_ms()) {
+            Ok(r) => Resp::json(&serde_json::json!(r)),
+            Err(e) => Resp::text(400, &e),
+        },
+        "/api/note-meta" => {
+            let p = crate::notes::MetaPatch { skin: b.skin.clone(), shown: b.shown, ..Default::default() };
+            match crate::notes::meta_in(&dir, &b.name, &p) {
+                Ok(r) => Resp::json(&serde_json::json!(r)),
+                Err(e) => Resp::text(400, &e),
+            }
+        }
+        "/api/note-trash" => match crate::notes::trash_in(&dir, &b.name, crate::notes::now_ms()) {
+            Ok(()) => Resp::json(&serde_json::json!({ "ok": true })),
+            Err(e) => Resp::text(400, &e),
+        },
+        _ => {
+            // 고치기 전 판을 데이터 폴더 history 에(맥 문서 저장과 같이) — 시험은 진짜 데이터 폴더를 안 건드린다
+            let keep = |_p: &Path| {
+                #[cfg(not(test))]
+                crate::reader::keep_history_as(_p, "md");
+            };
+            match crate::notes::write_in(&dir, &b.name, &b.text, b.base.as_deref(), keep) {
+                Ok(r) => Resp::json(&serde_json::json!(r)),
+                Err(e) if e == crate::reader::CHANGED_OUTSIDE => Resp::text(409, &e),
+                Err(e) => Resp::text(400, &e),
+            }
+        }
+    }
+}
 
 /// 모드 이름 — 모드 폴더 이름 꼴만(modes.rs 가 다시 찾는다)
 fn mode_name_ok(n: &str) -> bool {
     !n.is_empty() && n.len() <= 80 && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// 폰 보관함 주인(참모 폴더 이름) → 참모 id(.chammo) — 링크 칸 열쇠
+fn phone_locker_id(be: &dyn Backend, owner: &str) -> Option<String> {
+    let dir = crate::locker_fs::phone_owner(&be.locker_root()?, owner.trim())?;
+    crate::locker_fs::id_of(&dir)
+}
+
+/// 폰 보관함 링크 칸 — 그 참모 대화 기록은 뒤에서 이어 읽고 지금 목록을 바로 준다(locker_links::scan_soon)
+fn locker_links_resp(req: &Req, be: &dyn Backend) -> Resp {
+    let Some(owner) = req.param("owner").and_then(|o| percent_encoding::percent_decode_str(o).decode_utf8().ok()) else { return Resp::text(400, "no owner") };
+    let Some(id) = phone_locker_id(be, &owner) else { return Resp::text(404, "no locker") };
+    let data = be.data_dir();
+    if let Some(sid) = be.sessions().ok().and_then(|j| crate::locker_links::sid_of(&j, &id)) {
+        if let Some(tr) = be.transcript_file(&sid) {
+            crate::locker_links::scan_soon(data.clone(), id.clone(), sid, tr);
+        }
+    }
+    match crate::locker_links::read(&data, &id) {
+        Ok(v) => Resp::json(&serde_json::json!(v)),
+        Err(e) => Resp::text(400, &e),
+    }
+}
+
+#[derive(Deserialize)]
+struct WebLinkBody {
+    owner: String,
+    #[serde(default)]
+    url: String,
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    hide: bool,
+}
+
+/// 폰 링크 넣기·빼기·되돌리기 — 그 참모 링크 칸에만
+fn locker_link_op(req: &Req, be: &dyn Backend) -> Resp {
+    let b: WebLinkBody = match body(req) { Ok(b) => b, Err(r) => return r };
+    let Some(id) = phone_locker_id(be, &b.owner) else { return Resp::text(404, "no locker") };
+    let data = be.data_dir();
+    if req.path == "/api/locker-link-add" {
+        return match crate::locker_links::add_hand(&data, &id, &b.url) {
+            Ok(l) => Resp::json(&serde_json::json!(l)),
+            Err(e) => Resp::text(400, &e),
+        };
+    }
+    match crate::locker_links::set_hidden(&data, &id, &b.id, b.hide) {
+        Ok(()) => Resp::json(&serde_json::json!({ "ok": true })),
+        Err(e) => Resp::text(400, &e),
+    }
 }
 
 /// 폰 보관함 쓰기 — 그 참모 보관함 안에서만. 참모 폴더는 이름으로 있는 것만(폰은 새로 안 만든다)
@@ -1868,7 +2048,8 @@ const HTML_HEAD: &str = r#"<style>html{-webkit-text-size-adjust:100%;text-size-a
 fn inject_shim(html: &str) -> String {
     let low = html.to_ascii_lowercase();
     let at = ["head", "html", "!doctype"].iter().find_map(|n| crate::reader::tag_end(low.as_bytes(), n)).unwrap_or(0);
-    format!("{}{HTML_HEAD}{HTML_SHIM}{}", &html[..at], &html[at..])
+    // 링크 다리 — 시안 안 웹 링크를 폰이 새 창으로 연다(sandbox 라 target=_blank 가 막힌다, 맥과 같은 다리)
+    format!("{}{HTML_HEAD}{HTML_SHIM}{}{}", &html[..at], crate::reader::LINK_BRIDGE, &html[at..])
 }
 
 /// 표 주소로 시안 — 열쇠 없이(iframe 이 못 싣는다) 표만 본다. 응답은 sandbox allow-scripts(불투명 출처: 폰 열쇠·/api 에 못 닿음),
@@ -1880,7 +2061,10 @@ fn ticket_path(req: &Req, gate: &Gate) -> Option<String> {
 fn ticket_of(gate: &Gate, t: Option<&str>) -> Option<String> {
     let mut m = gate.tickets.lock().unwrap_or_else(|e| e.into_inner());
     m.retain(|_, (_, at)| at.elapsed() < TICKET_KEEP);
-    t.and_then(|t| m.get(t)).map(|(p, _)| p.clone())
+    // 쓰는 동안은 안 끝난다 — 영상 검토는 10분을 넘겨 본다(그 표 파일만 열 수 있는 건 그대로)
+    let e = m.get_mut(t?)?;
+    e.1 = std::time::Instant::now();
+    Some(e.0.clone())
 }
 
 fn new_ticket(gate: &Gate, path: &str) -> Option<String> {
@@ -1894,15 +2078,85 @@ fn new_ticket(gate: &Gate, path: &str) -> Option<String> {
 /// 영상 한 번에 보내는 조각 — 느린 LTE 로도 쓰기 마감 안에
 const MEDIA_CHUNK: u64 = 1024 * 1024;
 
-/// 표 주소로 영상 — 열쇠 없이 표만(<video> 는 Bearer 를 못 싣는다), Range 로 1MB 씩(206)
-fn media_page(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
-    let Some(path) = ticket_path(req, gate) else { return Resp::text(403, "bad ticket") };
-    let kind = mobile_files::kind_of(Path::new(&path));
-    if kind != Kind::Video || !matches!(pick_shown(be, &path), Pick::Ok(_)) {
-        return Resp::text(403, "not allowed");
+/// 저용량 조각 — 터널에선 창이 한 조각을 다 모아야 영상에 넘겨서, 1MB 면 느린 길에서 첫 화면이 13초 걸렸다(120KB/s, 256KB 면 2초 — 11-04 실측)
+const LOW_CHUNK: u64 = 256 * 1024;
+
+/// 표가 가리키는 영상 — 보여 준 영상인지까지 본다(그림 묶음·저용량·원본 같은 문)
+fn shown_video(req: &Req, gate: &Gate, be: &dyn Backend) -> Result<String, Resp> {
+    let Some(path) = ticket_path(req, gate) else { return Err(Resp::text(403, "bad ticket")) };
+    if mobile_files::kind_of(Path::new(&path)) != Kind::Video || !(matches!(pick_shown(be, &path), Pick::Ok(_)) || team_peek_video(be, &path)) {
+        return Err(Resp::text(403, "not allowed"));
     }
+    Ok(path)
+}
+
+/// 맥이 풀어 둔 팀 보관함 영상인가(<데이터>/team-locker-peek 안, 링크 아닌 진짜 파일) — 표는 /api/team-media 만 내지만
+/// 표 주소·검토 기록 길은 보여 준 영상과 같은 문을 쓴다. 데이터 폴더의 다른 파일은 그대로 막힌다
+fn team_peek_video(be: &dyn Backend, path: &str) -> bool {
+    let p = Path::new(path);
+    let (Ok(root), Ok(real)) = (std::fs::canonicalize(be.data_dir().join(crate::team_locker_app::VIEW_DIR)), std::fs::canonicalize(p)) else { return false };
+    mobile_files::kind_of(p) == Kind::Video && real.starts_with(&root) && std::fs::symlink_metadata(p).is_ok_and(|m| m.is_file())
+}
+
+/// 영상 표 + 검토 준비물 — 보여 준 영상(/api/media-ticket)과 풀어 둔 팀 영상(/api/team-media)이 같은 모양으로 받는다
+fn media_ticket_json(gate: &Gate, be: &dyn Backend, path: &str, size: u64) -> Result<serde_json::Value, Resp> {
+    let Some(t) = new_ticket(gate, path) else { return Err(Resp::text(500, "no random")) };
+    // 표를 받으면 만들기 시작(이미 있으면 그대로). 폰이 저용량·그림 묶음 상태를 보고 고른다
+    let data = be.data_dir();
+    crate::video_prep::start(&data, Path::new(path));
+    let mut prep = crate::video_prep::view(&data, Path::new(path));
+    prep["record"] = serde_json::json!(crate::reader::curation_state_path(path).to_string_lossy());
+    Ok(serde_json::json!({ "url": format!("/api/media?t={t}"), "size": size, "ticket": t, "prep": prep }))
+}
+
+/// 폰 팀 보관함 영상 — 받는 중 {state:going, done, total} · 실패 {state:failed, why} · 다 받음 {state:ready, path, …영상 표}
+fn phone_team_media(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct B {
+        team: String,
+        id: String,
+    }
+    let b: B = match body(req) { Ok(b) => b, Err(r) => return r };
+    if !team_file_ok(&b.team, &b.id) {
+        return Resp::text(400, "bad team or id");
+    }
+    use crate::team_media::Step;
+    match be.team_media(&b.team, &b.id) {
+        Ok(Step::Going { done, total }) => Resp::json(&serde_json::json!({ "state": "going", "done": done, "total": total })),
+        Ok(Step::Failed { why, .. }) => Resp::json(&serde_json::json!({ "state": "failed", "why": why })),
+        Ok(Step::Ready(p)) => {
+            let path = p.to_string_lossy().into_owned();
+            if !team_peek_video(be, &path) {
+                return Resp::json(&serde_json::json!({ "state": "failed", "why": "other" }));
+            }
+            let Ok((_, size)) = mobile_files::open_verified(&path) else { return Resp::json(&serde_json::json!({ "state": "failed", "why": "gone" })) };
+            match media_ticket_json(gate, be, &path, size) {
+                Ok(mut j) => {
+                    j["state"] = "ready".into();
+                    j["path"] = path.into();
+                    Resp::json(&j)
+                }
+                Err(r) => r,
+            }
+        }
+        Err(e) => Resp::text(409, &e),
+    }
+}
+
+/// 표 주소로 영상 — 열쇠 없이 표만(<video> 는 Bearer 를 못 싣는다), Range 로 1MB 씩(206). low=1 이면 준비된 저용량을 256KB 씩 — 폰은 경로를 안 주고 표만 낸다
+fn media_page(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
+    let path = match shown_video(req, gate, be) { Ok(p) => p, Err(r) => return r };
+    let (path, cap) = if req.param("low") == Some("1") {
+        match crate::video_prep::low_path(&be.data_dir(), Path::new(&path)) {
+            Some(p) => (p.to_string_lossy().into_owned(), LOW_CHUNK),
+            None => return Resp::text(404, "no small copy"),
+        }
+    } else {
+        (path, MEDIA_CHUNK)
+    };
     let Ok((_, total)) = mobile_files::open_verified(&path) else { return Resp::text(403, "not allowed") };
-    let Some((start, end)) = mobile_files::parse_range(req.header("range"), total, MEDIA_CHUNK) else {
+    let Some((start, end)) = mobile_files::parse_range(req.header("range"), total, cap) else {
         let mut r = Resp::text(416, "bad range");
         r.headers.push(("Content-Range", format!("bytes */{total}")));
         return r;
@@ -1913,6 +2167,17 @@ fn media_page(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
     r.headers.push(("Content-Range", format!("bytes {start}-{end}/{total}")));
     r.headers.push(("Accept-Ranges", "bytes".into()));
     r
+}
+
+/// 표 주소로 그림 묶음 한 장 — 끄는 동안 폰이 보여 준다. 번호만 받고 경로는 표에서
+fn media_sprite(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
+    let path = match shown_video(req, gate, be) { Ok(p) => p, Err(r) => return r };
+    let Some(i) = req.param("i").and_then(|v| v.parse::<u32>().ok()) else { return Resp::text(400, "bad index") };
+    let Some(p) = crate::video_prep::sprite_path(&be.data_dir(), Path::new(&path), i) else { return Resp::text(404, "not ready") };
+    match std::fs::read(p) {
+        Ok(b) => Resp::new(200, "image/jpeg", b),
+        Err(_) => Resp::text(404, "not ready"),
+    }
 }
 
 /// 받기 한 번에 통째로 줄 수 있는 크기 — 응답을 메모리에 올려 보낸다(쓰기 마감도 크기만큼 늘어난다). 넘으면 맥에서
@@ -2357,6 +2622,9 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
     if req.path == "/api/media" {
         return if is_get { media_page(req, gate, be) } else { Resp::text(405, "method not allowed") };
     }
+    if req.path == "/api/media-sprite" {
+        return if is_get { media_sprite(req, gate, be) } else { Resp::text(405, "method not allowed") };
+    }
     if !authed(req, gate) {
         return Resp::text(401, "no key");
     }
@@ -2424,8 +2692,8 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
     match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/api/env") => Resp::json(&be.env()),
         ("GET", "/api/sessions") => match be.sessions() {
-            Ok(s) if req.param("since").is_some() => tagged(req, with_ctx(&s, &be.ctx_files())),
-            Ok(s) => Resp::raw_json(with_ctx(&s, &be.ctx_files())),
+            Ok(s) if req.param("since").is_some() => tagged_with(req, with_ctx(&s, &be.ctx_files(&session_ids(&s))), crate::notes::stamp_in(&be.data_dir().join("notes"))),
+            Ok(s) => Resp::raw_json(with_ctx(&s, &be.ctx_files(&session_ids(&s)))),
             Err(e) => Resp::text(502, &e),
         },
         // 폰 뽑기·스킨 — 보기는 필요한 칸만, 쓰기는 거른 요청을 맥 앱에(굴리기·장착은 화면 쪽 한 줄)
@@ -2506,13 +2774,14 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         },
         ("GET", "/api/curation-state") => {
             let Some(p) = req.param("path").and_then(|p| percent_encoding::percent_decode_str(p).decode_utf8().ok()) else { return Resp::text(400, "no path") };
-            if !is_html(&p) || !matches!(pick_shown(be, &p), Pick::Ok(_)) {
+            if !(is_html(&p) || mobile_files::kind_of(Path::new(&*p)) == Kind::Video) || !(matches!(pick_shown(be, &p), Pick::Ok(_)) || team_peek_video(be, &p)) {
                 return Resp::text(403, "not allowed");
             }
             Resp::new(200, "application/json; charset=utf-8", be.read_curation_state(&p).into_bytes())
         }
         ("GET", "/api/shows") => shows_resp(req, be),
         ("GET", "/api/locker") => locker_resp(be),
+        ("GET", "/api/locker-links") => locker_links_resp(req, be),
         // 꺼진 참모 — HQ 폴더의 꺼진 대화만(프로젝트 세션은 참모가 다룬다). 파싱은 화면 domain/stopped
         ("GET", "/api/stopped") => {
             let (all, live) = match (be.sessions_all(), be.sessions()) {
@@ -2594,6 +2863,17 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             }
         }
         ("POST", "/api/locker-alias" | "/api/locker-unalias" | "/api/locker-new" | "/api/locker-mkdir" | "/api/locker-write") => locker_op(req, be),
+        ("POST", "/api/locker-link-add" | "/api/locker-link-hide") => locker_link_op(req, be),
+        // 내 메모 — 맥 <데이터>/notes. 기기 열쇠로만, 다른 기기 길(peer_allowed)엔 없다
+        ("GET", "/api/notes") => match crate::notes::list_in(&be.data_dir().join("notes"), crate::notes::now_ms()) {
+            Ok(rows) => Resp::json(&serde_json::json!(rows)),
+            Err(e) => Resp::text(500, &e),
+        },
+        ("GET", "/api/note") => match crate::notes::read_in(&be.data_dir().join("notes"), req.param("name").unwrap_or("")) {
+            Ok(t) => Resp::text(200, &t),
+            Err(e) => Resp::text(404, &e),
+        },
+        ("POST", "/api/note-new" | "/api/note-write" | "/api/note-trash" | "/api/note-meta") => note_op(req, be),
         // 폰 홈 모드 카드 — 목록 · 한 칸 그리기(글자 칸 크기) · 누름 · 고른 모드 켜기·이 홈에서 끄기(대시보드 칸 자리 = 그 참모)
         ("GET", "/api/modes") => Resp::json(&be.modes()),
         ("GET", "/api/mode-card") => {
@@ -2704,9 +2984,12 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
                 Pick::NotFound => return Resp::text(404, "not found"),
             }
             let Ok((_, size)) = mobile_files::open_verified(&b.path) else { return Resp::text(403, "not allowed") };
-            let Some(t) = new_ticket(gate, &b.path) else { return Resp::text(500, "no random") };
-            Resp::json(&serde_json::json!({ "url": format!("/api/media?t={t}"), "size": size }))
+            match media_ticket_json(gate, be, &b.path, size) {
+                Ok(j) => Resp::json(&j),
+                Err(r) => r,
+            }
         }
+        ("POST", "/api/team-media") => phone_team_media(req, gate, be),
         // 맥에서 열기 — 폰에서 못 보는 오피스·영상을 맥 앱으로(보여 준 것만, 3초에 한 번)
         ("POST", "/api/open-mac") => {
             let b: PathBody = match body(req) { Ok(b) => b, Err(r) => return r };
@@ -2724,7 +3007,7 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         // 시안 검토 표시 — 데스크톱과 같은 curation/ 에(참모는 보내기 전에도 여기서 읽는다)
         ("POST", "/api/curation") => {
             let b: CurationBody = match body(req) { Ok(b) => b, Err(r) => return r };
-            if !is_html(&b.path) || !matches!(pick_shown(be, &b.path), Pick::Ok(_)) {
+            if !(is_html(&b.path) || mobile_files::kind_of(Path::new(&b.path)) == Kind::Video) || !(matches!(pick_shown(be, &b.path), Pick::Ok(_)) || team_peek_video(be, &b.path)) {
                 return Resp::text(403, "not allowed");
             }
             match be.save_curation(&b.path, &b.text, &b.store.to_string()) {
@@ -3109,6 +3392,13 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         }
         ("POST", "/api/team-locker-op") => phone_team_locker_op(req, be),
         ("POST", "/api/team-locker-put") => phone_team_locker_put(req, be),
+        ("GET", "/api/team-file-ref") => {
+            let up = req.param("up").unwrap_or("");
+            if !crate::team_phone_up::up_id_ok(up) {
+                return Resp::text(400, "bad upload");
+            }
+            Resp::json(&be.team_file_ref(up).unwrap_or_else(|| serde_json::json!({ "wait": true })))
+        }
         ("GET", "/api/team-agents") => {
             let team = req.param("team").unwrap_or("");
             if !team_id_ok(team) {
@@ -3141,6 +3431,7 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         }
         ("POST", "/api/team-agent-save" | "/api/team-agent-remove" | "/api/team-agent-try") => phone_team_agent(req, be),
         ("POST", "/api/team-home-save" | "/api/team-home-content") => phone_team_home(req, be),
+        ("POST", "/api/team-memory-write") => phone_pro_write(req, be),
         ("GET", "/api/team-cal" | "/api/team-cal-poll") => {
             let team = req.param("team").unwrap_or("");
             if !team_id_ok(team) {
@@ -3171,7 +3462,7 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
                 Err(e) => Resp::text(409, &e),
             }
         }
-        ("GET", "/api/team-profiles" | "/api/team-posts" | "/api/team-home") => {
+        ("GET", "/api/team-profiles" | "/api/team-posts" | "/api/team-home" | "/api/team-memory") => {
             let team = req.param("team").unwrap_or("");
             let Some(seen) = req.param("rev").map_or(Some(0), |v| v.parse::<u64>().ok()) else { return Resp::text(400, "bad rev") };
             if !team_id_ok(team) {
@@ -3180,10 +3471,12 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             let r = match req.path.as_str() {
                 "/api/team-profiles" => be.team_profiles(team, seen),
                 "/api/team-home" => be.team_home(team, seen),
+                "/api/team-memory" => be.pro_board(team, seen),
                 _ => be.team_posts(team, seen),
             };
             match r {
                 Ok(v) => Resp::json(&v),
+                Err(e) if req.path == "/api/team-memory" && e == "not supported" => Resp::text(404, "not found"),
                 Err(e) => Resp::text(502, &e),
             }
         }
@@ -3220,6 +3513,22 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
                     r
                 }
                 Err(e) => Resp::text(415, &e),
+            }
+        }
+        // 대화·보관함 문서 열기(11-06 사용자 "디엠 온 거 파일 볼 수가 없음") — 맥이 풀어 둔 자리를 주면 폰 보기(/api/file)가 그 파일 하나만 읽는다.
+        // 글 속 비밀·형식·이름 거름은 /api/file 이 그대로 본다
+        ("GET", "/api/team-file-open") => {
+            let (team, id) = (req.param("team").unwrap_or(""), req.param("id").unwrap_or(""));
+            if !team_file_ok(team, id) {
+                return Resp::text(400, "bad team or id");
+            }
+            match be.team_file_open(team, id) {
+                Ok(p) if mobile_files::team_doc(&p) => {
+                    mobile_files::team_opened_add(&p);
+                    Resp::json(&serde_json::json!({ "path": p.to_string_lossy() }))
+                }
+                Ok(_) => Resp::text(415, "not allowed"),
+                Err(e) => Resp::text(502, &e),
             }
         }
         // 짝지은 다른 기기의 카드(ADR 0011) — 폰이 이 기기를 거쳐 보고 누른다. peer 열쇠는 이 길이 허용 목록 밖이라 못 온다(403)
@@ -3465,7 +3774,7 @@ fn body_cap(path: &str) -> usize {
     match path {
         "/api/attach" => mobile_files::MAX_ATTACH,
         "/api/team-locker-put" => crate::team_phone_up::PART,
-        "/api/locker-write" => MAX_WRITE_BODY,
+        "/api/locker-write" | "/api/note-write" => MAX_WRITE_BODY,
         // 팀 홈 글 본문 2만 자(한글 3바이트)
         "/api/team-post" => 128 * 1024,
         // 팀 참모 지침 8천 자 + 시험 이전 문답

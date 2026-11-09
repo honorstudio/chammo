@@ -243,14 +243,14 @@ describe('askWakes — 시간 초과 뒤 사람이 끝낸 부름은 그 세션 �
   });
 });
 
-// 2026-10-24 트레이더 제보 — 워크트리 도우미(binance-setup)의 사람 부르기가 폰 채팅·대기함에 안 떴다.
+// 2026-10-24 트레이더 제보 — 워크트리 도우미(exchange-setup)의 사람 부르기가 폰 채팅·대기함에 안 떴다.
 // 알림 갈 곳이 session:<프로필>(=session:project-t)이라 폰이 눌러도 못 갔고, 채팅에 붙는 카드가 없었다
 describe('askPlaced·askTarget — 사람 부르기를 맡긴 참모 채팅에(워크트리 세션도)', () => {
   const sess = (id: string, o: Partial<Session> = {}): Session => ({ id, name: id, cwd: `/d/${id}`, kind: 'background', state: 'idle', project: id, workspace: null, startedAt: 0, ...o });
   const trader = sess('o7', { name: '참모-7 · 트레이더', cwd: '/hq', project: 'hq' });
   const front = sess('o1', { name: '참모', cwd: '/hq', project: 'hq' });
   const main = sess('m1', { name: 'project-t', cwd: '/d/project-t/.claude/worktrees/ops', project: 'project-t', workspace: 'ops' });
-  const helper = sess('h1', { name: 'binance-setup', cwd: '/d/project-t/.claude/worktrees/binance-secrets-ignore', project: 'project-t', workspace: 'binance-secrets-ignore', procPid: 77 });
+  const helper = sess('h1', { name: 'exchange-setup', cwd: '/d/project-t/.claude/worktrees/exchange-secrets-ignore', project: 'project-t', workspace: 'exchange-secrets-ignore', procPid: 77 });
   const events: TaskEvent[] = [{ ts: '2026-10-24T01:00:00Z', type: 'send', task: 't1', target: 'm1', from: 'o7', fromName: '참모-7 · 트레이더' } as TaskEvent];
   const everyone = [front, trader, main, helper];
   const orchs = [front, trader];
@@ -272,8 +272,24 @@ describe('askPlaced·askTarget — 사람 부르기를 맡긴 참모 채팅에(�
     expect(readAskCardKey('d:abc')).toBeNull();
     expect(readAskCardKey('b:project-t:')).toBeNull();
   });
-  it('이름은 워크트리 폴더 말고 프로젝트 — "binance-secrets-ignore · binance-setup" 이 아니라 "project-t · binance-setup"', () => {
-    expect(askName(asking('project-t', 5, { sessionPid: 77 }), everyone)).toBe('project-t · binance-setup');
+  // 2026-11-08 사용자 "트레이더 세션이 사람을 불러요 카드가 왜 참모 업데이트한테 떠?" — 부른 건 참모(트레이더) 자신인데, 폴더가 HQ 라
+  // project 가 HQ 저장소(honor-orchestrator)로 잡혀 '같은 프로젝트를 최근에 맡긴 참모'(그 저장소 워크트리에 일을 보낸 참모 업데이트)에게 갔다
+  it('참모가 직접 부르면 그 참모 채팅에 — 같은 프로젝트(HQ 저장소)에 일을 보낸 다른 참모가 아니라', () => {
+    const hq = '/d/honor-orchestrator';
+    const me = sess('o7', { name: '참모-7 · 트레이더', cwd: hq, project: 'honor-orchestrator', procPid: 88 });
+    const upd = sess('o2', { name: '참모-2 · 참모 업데이트', cwd: hq, project: 'honor-orchestrator', procPid: 89 });
+    const wt = sess('w1', { name: 'honor-orchestrator', cwd: `${hq}/.claude/worktrees/browser-prompts`, project: 'honor-orchestrator', workspace: 'browser-prompts' });
+    const ev: TaskEvent[] = [{ ts: '2026-11-08T14:00:00Z', type: 'send', task: 't9', target: 'w1', from: 'o2', fromName: '참모-2 · 참모 업데이트' } as TaskEvent];
+    // 목록마다 다른 객체여도(앱은 orchestrators 를 따로 만든다) 번호로 알아본다
+    const r = askPlaced([asking('honor-orchestrator', 5, { pid: 41, sessionPid: 88 })], [front, { ...me }, upd, wt], ev, [front, me, upd], front);
+    expect(r.map((p) => [p.session?.id, p.owner?.id])).toEqual([['o7', 'o7']]);
+    expect(popupTarget(live('honor-orchestrator', { pid: 41, sessionPid: 88, popup: true }), [front, me, upd, wt], ev, [front, me, upd], front)).toBe('card:o7:b:honor-orchestrator:41');
+    // 그 저장소의 워크트리 세션이 부르면 예전처럼 일을 보낸 참모(참모 업데이트)에게
+    const sub = { ...wt, procPid: 90 };
+    expect(askPlaced([asking('honor-orchestrator', 6, { pid: 42, sessionPid: 90 })], [front, me, upd, sub], ev, [front, me, upd], front)[0]!.owner?.id).toBe('o2');
+  });
+  it('이름은 워크트리 폴더 말고 프로젝트 — "exchange-secrets-ignore · exchange-setup" 이 아니라 "project-t · exchange-setup"', () => {
+    expect(askName(asking('project-t', 5, { sessionPid: 77 }), everyone)).toBe('project-t · exchange-setup');
   });
 });
 

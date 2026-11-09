@@ -27,8 +27,11 @@ import { TeamCal } from './TeamCal';
 import { CalBlock } from './CalBlock';
 import { TeamRail, addMenu, teamListMenu } from './TeamRail';
 import { TeamSettings, teamMenu } from './TeamSettings';
+import { pro } from '@pro/index';
 import { TeamSpace as TeamSpaceView } from './TeamSpace';
 import { TeamStart } from './TeamStart';
+import { ClosedLine, TeamIntro } from './TeamLock';
+import { closedLine, contactOf, showIntro } from '../../domain/teamLock';
 import { MeCell } from './MyProfile';
 import { ContextMenu } from '../OrchDialogs';
 import { onTeamDock, useTeam } from './useTeam';
@@ -46,6 +49,12 @@ const stored = (k: string) => { try { return localStorage.getItem(k); } catch { 
 const keep = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* 이번 실행만 */ } };
 
 /** 스페이스가 팀 모드에 그리는 것 — file = 스페이스 파일 화면(filePage), craft = 팀에서 연 참모 앱 칸(k:<앱>), dropCraft = 꺼짐·숨김 */
+/** 공식 설치 파일에만 있는 칸 — 공개 빌드는 null(src/pro-stub) */
+const { MemoryTab, AgentChat } = pro;
+
+/** 맨 위 줄(대화 열쇠와 안 겹친다) */
+const MINE_KEY = 'mine:team-agent';
+
 export type TeamSpace = { name: string;
   /** 보던 탭(홈·보관함·파일 경로·k:<앱>) — 스페이스 탭 확대가 이 탭을 본다(10-30) */
   cur: string;
@@ -77,7 +86,7 @@ export function useTeamMode(o: { handoff: () => Handoff | undefined; wide: boole
   useEffect(() => keep(foldKey(alone), fold ? '1' : '0'), [fold, alone]);
   // 겹창(TeamDialog, 창 가운데) — room = 팀챗 만들기(roomId 없음)·바꾸기(roomId), 없으면 팀 만들기·들어오기
   // make·join = 레일 + ·칩 ▾ 메뉴의 새 팀 만들기·초대 링크로 들어가기(11-02 팀 여러 개 — 팀이 있어도 연다)
-  const [pop, setPop] = useState<{ kind?: 'start' | 'link' | 'settings' | 'room' | 'make' | 'join'; roomId?: string } | null>(null);
+  const [pop, setPop] = useState<{ kind?: 'start' | 'link' | 'settings' | 'room' | 'make' | 'join' | 'intro'; roomId?: string } | null>(null);
   // 메뉴는 누른 자리에 — team = 지금 팀 칸 오른쪽 누르기, add = 레일 맨 아래 +, chip = 목록 머리 팀 이름 ▾
   const [menu, setMenu] = useState<{ x: number; y: number; kind: 'team' | 'add' | 'chip' } | null>(null);
   // 링크(chammo://join)로 받은 초대 — 팝업을 화면 가운데 위에 코드 채운 채로(ADR 0015)
@@ -134,7 +143,7 @@ export function useTeamMode(o: { handoff: () => Handoff | undefined; wide: boole
     take();
     return () => { delete w.__teamInvite; };
   }, [alone]);
-  // 팝업이 떠 있는 동안은 자주 다시 읽는다 — 앞을 덮은 로그인 화면(LoginGate)에서 로그인하면 팝업이 바로 다음 칸으로
+  // 팝업이 떠 있는 동안은 자주 다시 읽는다 — 로그인을 마치면 팝업이 바로 다음 칸으로
   const popOpen = pop !== null;
   const { refresh } = data;
   useEffect(() => {
@@ -156,13 +165,14 @@ export function useTeamMode(o: { handoff: () => Handoff | undefined; wide: boole
   }, [alone, view, refresh]);
   // 팀에서 빠지거나 팀이 없어지면 팀 모드도 끝
   const team = view?.joined ? view.team : null;
+  const closed = !!closedLine(view); // 읽기만 팀 — 비공개 칸(탭·줄)을 안 그린다(11-06 사용자)
   useEffect(() => { if (!team) setOn(false); }, [team]);
   // 내 팀 줄(레일·칩 ▾) — 서버 순서 그대로, 안 읽은 수는 지금 팀이면 이 목록 합, 다른 팀은 그 팀 방들
   const stack = teamStack(view);
   const unreadOf = (id: string) => (id === view?.teamId ? unreadTotal(cs) : view ? teamUnread(view.rooms, feed?.items ?? [], data.read, id) : 0);
   // 팀 바꾸기 — 고른 대화는 앞 팀 것이라 비운다(탭은 팀마다 tabsBy, 프로필·보관함·캘린더·홈은 teamId 로 다시 읽는다)
   const pickTeam = (id: string) => void teamUse(id).then(() => { setSel(null); setOn(true); data.refresh(); }, () => {});
-  const makeTeam = () => setPop({ kind: 'make' });
+  const makeTeam = () => { data.refresh(); setPop({ kind: 'make' }); }; // 다시 읽기 — 막 로그인한 직후 화면 상태가 늦어도 문의 창으로 맞게
   const joinTeam = () => setPop({ kind: 'join' });
 
   // 이 창에서 누른 파일(팀 대화 풍선·팀 보관함) — 리더 창 대신 이 창 오른쪽 팀 탭에(openChatFile 이 먼저 본다)
@@ -231,7 +241,7 @@ export function useTeamMode(o: { handoff: () => Handoff | undefined; wide: boole
       <ProfilesCtx.Provider value={profiles}><TeamRail icon={profiles.board?.teamIcon || undefined} color={tint} chats={cs.length} on={on} wide={o.wide}
         stack={stack} unreadOf={unreadOf} onTeam={() => setOn(true)}
         onMenu={(e) => setMenu({ x: e.clientX, y: e.clientY, kind: 'team' })}
-        onPickTeam={pickTeam} onAdd={(at) => setMenu({ ...at, kind: 'add' })} /></ProfilesCtx.Provider>
+        onPickTeam={pickTeam} onAdd={(at) => setMenu({ ...at, kind: 'add' })} onIntro={showIntro(view) ? () => { data.refresh(); setPop({ kind: 'intro' }); } : undefined} /></ProfilesCtx.Provider>
     ),
     // 팀 만들기·초대 — 참모 띠 + 메뉴에서(띠 RA '+ 하나', 2026-10-24 사용자)
     // 초대할 수 없는 팀원은 '+' 가 팀챗 만들기만(11-01 QA M2 — 팀 초대를 누르면 막다른 창이었다)
@@ -252,13 +262,14 @@ export function useTeamMode(o: { handoff: () => Handoff | undefined; wide: boole
               {alone ? <IconButton label={tr('앱에 붙이기', 'Dock into the app')} onClick={() => void teamWindowClose('all')}><IconDockIn /></IconButton>
                 : canDetach && <IconButton label={tr('메신저 따로 창으로', 'Open the messenger in its own window')} onClick={() => toWindow()}><IconWindowOut /></IconButton>}
             </div>
-            <div className="tmx-list"><TeamList convos={shownDms(people, roomMenu.hidden)} rooms={rooms} sel={cur?.key ?? null} onPick={pick} onMenu={roomMenu.open}
+            {closedLine(view) && <ClosedLine owner={closedLine(view)!.owner} contact={contactOf(view.plan)} />}
+            <div className="tmx-list"><TeamList convos={shownDms(people, roomMenu.hidden)} rooms={rooms} sel={sel === MINE_KEY ? MINE_KEY : cur?.key ?? null} onPick={pick} onMenu={roomMenu.open} mine={AgentChat && !closed ? { on: sel === MINE_KEY, onPick: () => setSel(MINE_KEY), ...pro.mineRow() } : undefined}
               onInvite={canDo(view, 'invite') ? () => setPop({ kind: 'link' }) : undefined} onNewRoom={() => setPop({ kind: 'room' })}
               roomsHint={allRoomPending(view) ? tr("팀장 앱이 켜지면 '전체' 팀챗이 생겨요", "The 'Everyone' team chat appears once the owner's app is on.") : undefined} /></div>
             <MeCell me={lookOf(profiles.board, meId, view.me)} rosterName={view.me} sub={`${team} · ${view.role === 'owner' ? tr('팀장', 'owner') : tr('팀원', 'member')}`} onSaved={profiles.reload} />
           </div>
           <div className="tmc-main">
-            {cur ? <TeamConvo key={`${cur.key}:${seed?.n ?? 0}`} seed={seed?.text} onSeeded={() => setSeed((s) => (s?.text ? { ...s, text: '' } : s))} convo={cur} items={feed.items} team={view.team} myName={view.me} handed={data.handed} focused={focused} safety={feed.safety} held={feed.held}
+            {sel === MINE_KEY && AgentChat && !closed ? <AgentChat key={view.teamId} teamId={view.teamId} /> : cur ? <TeamConvo key={`${cur.key}:${seed?.n ?? 0}`} seed={seed?.text} onSeeded={() => setSeed((s) => (s?.text ? { ...s, text: '' } : s))} convo={cur} items={feed.items} team={view.team} myName={view.me} handed={data.handed} focused={focused} safety={feed.safety} held={feed.held}
               onRead={data.markRoom} onHanded={data.markHanded} onSent={data.refresh} handoff={handoff} people={names} teamId={view.teamId} members={view.members} reads={feed.reads}
               onEditRoom={cur.kind === 'group' ? () => setPop({ kind: 'room', roomId: cur.room }) : undefined}
               detach={canDetach && !alone ? () => toWindow(cur.room) : undefined}
@@ -281,6 +292,8 @@ export function useTeamMode(o: { handoff: () => Handoff | undefined; wide: boole
             roomName={(r) => cs.find((c) => c.room === r)?.name ?? tr('대화', 'Chat')}
             roomFiles={(r) => <TeamLocker key={`room:${r}`} teamId={view.teamId} team={team} people={view.members.length} follow onFollow={() => {}} canFiles={canDo(view, 'files')} room={{ id: r, name: cs.find((c) => c.room === r)?.name ?? tr('대화', 'Chat') }} />}
             cal={<TeamCal key={view.teamId} teamId={view.teamId} members={view.members} />}
+            memory={MemoryTab && !closed ? <MemoryTab key={view.teamId} teamId={view.teamId} members={view.members} roomName={(r) => cs.find((c) => c.room === r)?.name ?? tr('팀챗', 'Team chat')} /> : undefined}
+            memoryLabel={pro.tabLabel()}
             home={<TeamHomeDesktop key={view.teamId} teamId={view.teamId} team={team} members={view.members} icon={profiles.board?.teamIcon || undefined}
               calBlock={(b, editing) => <CalBlock key={view.teamId} teamId={view.teamId} wide={b.w === 'full'} editing={editing} onOpen={() => setTabs((t) => pickTeamTab(t, 'cal'))} />}
               onTalk={(text) => { const c = rooms[0] ?? cur; if (!c) return; setSel(c.key); showChat(); setSeed((s) => ({ text, n: (s?.n ?? 0) + 1 })); }} />}
@@ -293,12 +306,14 @@ export function useTeamMode(o: { handoff: () => Handoff | undefined; wide: boole
       <ProfilesCtx.Provider value={profiles}>
         {pop && (
           <TeamDialog label={popLabel(pop, !!team)} onClose={() => { setPop(null); setInvite(''); }}>
-            {pop.kind === 'room' && view?.joined
+            {pop.kind === 'intro' && showIntro(view)
+              ? <TeamIntro contact={contactOf(view?.plan)} onJoin={() => setPop({ kind: 'join' })} />
+              : pop.kind === 'room' && view?.joined
               ? <RoomCreate team={view.teamId} members={view.members} room={pop.roomId ? roomOf(view.rooms, pop.roomId) : undefined}
                   onCancel={() => setPop(null)} onDone={(room) => { setPop(null); setOn(true); showChat(); setSel(`room:${room}`); data.refresh(); }} />
               : pop.kind === 'settings' && view?.joined
               ? <TeamSettings view={view} onClose={() => setPop(null)} onChanged={data.refresh} />
-              : <TeamStart key={invite} view={view} invite={invite} makeNow={pop.kind === 'link'} want={pop.kind === 'make' || pop.kind === 'join' ? pop.kind : undefined} onDone={() => { setPop(null); setInvite(''); data.refresh(); }} onChanged={data.refresh} />}
+              : <TeamStart key={invite} view={view} invite={invite} makeNow={pop.kind === 'link'} want={pop.kind === 'make' || pop.kind === 'join' ? pop.kind : pop.kind === 'intro' ? 'make' : undefined} onDone={() => { setPop(null); setInvite(''); data.refresh(); }} onChanged={data.refresh} />}
           </TeamDialog>
         )}
         {roomMenu.node}
@@ -321,7 +336,8 @@ export const roomOf = (rooms: { id: string; name?: string; with?: string; member
 
 /** 겹창 이름(읽기 도구) */
 const popLabel = (p: { kind?: string; roomId?: string }, joined: boolean) =>
-  p.kind === 'room' ? (p.roomId ? tr('팀챗 바꾸기', 'Edit team chat') : tr('팀챗 만들기', 'New team chat'))
+  p.kind === 'intro' ? tr('팀', 'Team')
+    : p.kind === 'room' ? (p.roomId ? tr('팀챗 바꾸기', 'Edit team chat') : tr('팀챗 만들기', 'New team chat'))
     : p.kind === 'make' ? tr('새 팀 만들기', 'Create a team')
     : p.kind === 'join' ? tr('초대 링크로 들어가기', 'Join with an invite link')
     : p.kind === 'settings' ? tr('팀 설정', 'Team settings')

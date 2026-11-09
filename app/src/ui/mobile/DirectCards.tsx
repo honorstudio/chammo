@@ -70,7 +70,7 @@ export function PeerCards() {
 export function PhoneAskCards({ asks, sessions, focus }: { asks: AskPlaced[]; sessions: Session[]; focus?: string }) {
   if (!asks.length) return null;
   return (
-    <div className="m-direct">
+    <div className={asks.length > 1 ? 'm-direct m-bask-list m-many' : 'm-direct m-bask-list'}>
       {asks.map(({ live: l }) => {
         const k = askCardKey(l);
         return (

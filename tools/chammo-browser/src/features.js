@@ -26,12 +26,35 @@ function featureArgs(platform = process.platform) {
 // signin.interception_enabled 가 false 면 이 버블·프로필 전환 버블을 다 그만둔다(기능 스위치·명령줄 인자는 없다 — 설정 파일뿐).
 // signin.allowed·--allow-browser-signin=false 는 쓰지 않는다: 크롬에 로그인돼 있던 프로필(이 맥 11개)을 켤 때 로그아웃시킨다.
 // 크롬은 끌 때 자기 값으로 Preferences 를 덮으니 그 프로필 크롬이 꺼져 있을 때(띄우기 직전)만 쓴다
+//
+// 같은 자리에서 알림 권한 기본값도 '차단'(2) — 세션 크롬은 알림을 쓸 일이 없는데 거래소 같은 사이트가 열자마자 알림을 물어
+// 크롬 자체 권한 풍선(320x178)이 떴다. 칸 입력은 CDP 로 페이지에만 가서 그 풍선은 안 눌렸다(2026-11-08 실측 — 풍선 '차단' 자리를 눌러도 prompt 그대로).
+// 기본값 차단이면 requestPermission 이 바로 denied, 풍선 없음(크롬·크롬 베타, 새 프로필·쓰던 프로필 다 실측). --deny-permission-prompts 는 위치·카메라까지 다 막아 안 쓴다.
+// 사람이 크롬 설정에서 고른 기본값(허용 1·차단 2)과 사이트별 예외는 그대로 둔다
+//
+// 또 https 균형 모드('항상 보안 연결 사용') 끄기 — 크롬 베타 158 은 이게 기본으로 켜져, http 주소를 https 로 올려 보다 안 되면
+// 경고 화면을 띄우고 페이지 이동은 net::ERR_BLOCKED_BY_CLIENT 로 끝난다(2026-11-09 윈도우 PC 홈페이지 수집 10건 연속 실패, 맥 베타 158 재현).
+// 플레이라이트가 끄는 HttpsUpgrades 와는 다른 길이고, 158 에선 기능 스위치(HttpsFirstBalancedModeAutoEnable)가 바이너리에서 빠져 실행 인자로는 못 끈다.
+// 설정 칸 https_first_balanced_mode_enabled=false 하나로 풀린다(맥 베타 158 실측 — 정식 156 은 원래 안 막음). 정식도 158 이 되면 같은 일이라 채널과 상관없이 넣는다.
+// 사람이 크롬 설정에서 켠 것(균형 true·엄격 https_only_mode_enabled true)은 그대로
 const fs = require('fs');
 const path = require('path');
 
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 
-/** profileDir/Default/Preferences 에 signin.interception_enabled=false — 'set'·'already'·'running'(안 씀)·'bad'(깨진 파일, 안 씀)·'error'. 던지지 않는다 */
+const BLOCK = 2;
+const ALLOW = 1;
+
+/** 알림 기본값을 차단으로 둘 자리인가 — 비었거나 물어봄(3)이면. 사람이 고른 허용·차단은 그대로 */
+const notifyUnset = (prefs) => {
+  const v = isObj(prefs.profile) && isObj(prefs.profile.default_content_setting_values) ? prefs.profile.default_content_setting_values.notifications : undefined;
+  return v !== BLOCK && v !== ALLOW;
+};
+
+/** https 균형 모드를 끌 자리인가 — 사람이 아직 안 고른 프로필(칸 없음)이고 엄격 모드도 안 켰으면 */
+const httpsUnset = (prefs) => typeof prefs.https_first_balanced_mode_enabled !== 'boolean' && prefs.https_only_mode_enabled !== true;
+
+/** profileDir/Default/Preferences 에 signin.interception_enabled=false + 알림 기본 차단 + https 균형 모드 끔 — 'set'·'already'·'running'(안 씀)·'bad'(깨진 파일, 안 씀)·'error'. 던지지 않는다 */
 function quietSignin(profileDir, { running = false } = {}) {
   if (running) return 'running';
   const file = path.join(profileDir, 'Default', 'Preferences');
@@ -43,8 +66,15 @@ function quietSignin(profileDir, { running = false } = {}) {
       try { prefs = JSON.parse(text); } catch { return 'bad'; }
       if (!isObj(prefs)) return 'bad';
     }
-    if (isObj(prefs.signin) && prefs.signin.interception_enabled === false) return 'already';
+    const signinOff = isObj(prefs.signin) && prefs.signin.interception_enabled === false;
+    if (signinOff && !notifyUnset(prefs) && !httpsUnset(prefs)) return 'already';
+    if (httpsUnset(prefs)) prefs.https_first_balanced_mode_enabled = false;
     prefs.signin = { ...(isObj(prefs.signin) ? prefs.signin : {}), interception_enabled: false };
+    if (notifyUnset(prefs)) {
+      const prof = isObj(prefs.profile) ? prefs.profile : {};
+      const defs = isObj(prof.default_content_setting_values) ? prof.default_content_setting_values : {};
+      prefs.profile = { ...prof, default_content_setting_values: { ...defs, notifications: BLOCK } };
+    }
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const tmp = `${file}.chammo-${process.pid}`;
     try {

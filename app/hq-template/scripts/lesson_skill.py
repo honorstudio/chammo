@@ -229,6 +229,14 @@ def skill_lines(env, project):
     return [skills_line(env.T, os.path.dirname(os.path.dirname(live[0][1]['path'])), [skill_entry(n, s['desc']) for n, s in live])]
 
 
+def pointer_lines(env, project):
+    """CLAUDE.local.md·공통 교훈 파일 머리에 남길 줄 — 이름만. 설명은 스킬 목록에 이미 실려 겹쳤다(매 세션 ~2,500자, 2026-11-06)"""
+    live = [(n, s) for n, s in active_skills(env, project).items() if os.path.exists(s['path'])]
+    if not live:
+        return []
+    return [skills_line(env.T, os.path.dirname(os.path.dirname(live[0][1]['path'])), [', '.join(n for n, _ in live)])]
+
+
 def _skill_dir(env, project, name):
     if project in GLOBAL:
         # 전역 폴더엔 남의 스킬이 많다 — 이름 앞자리가 맞는 것만 우리 자리
@@ -357,7 +365,7 @@ def _sync_pointer(env, project):
     if project in GLOBAL:
         path = os.path.join(env.lessons, f'{project}.md')
         body = _read(path)
-        live = skill_lines(env, project)
+        live = pointer_lines(env, project)
         nxt = with_file_pointer(body, live[0] if live else None)
         if nxt != body:
             _write(path, nxt)
@@ -366,7 +374,7 @@ def _sync_pointer(env, project):
     body = _read(path)
     if not body:
         return
-    live = skill_lines(env, project)
+    live = pointer_lines(env, project)
     nxt = with_pointer(body, '- ' + live[0] if live else None)
     if nxt is not None and nxt != body:
         _write(path, nxt)

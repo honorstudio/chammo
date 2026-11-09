@@ -5,7 +5,7 @@ import layers from './layers.css?raw';
 // 원인 — 고른 탭이 바깥 링(box-shadow 0 0 0 1px)으로 테두리를 그렸는데, 탭이 가로 스크롤 줄(.lk-tabs-scroll, overflow) 맨 앞·맨 끝에
 // 오면 칸 밖 1px 가 스크롤 칸 가장자리에서 잘렸다. 앱을 훑어 같은 모양(overflow 칸 안 바깥 링) 두 곳을 더 찾았다 — 보낼 것 빈 동그라미(.sfab, overflow hidden)
 // 와 도구 화면 기준 프로젝트 포커스 링(.cv-titles p, 줄임표 줄), 폰 참모 프로필 이름 칸(.m-prof-form, 스크롤 칸). 고치는 법은 하나: 그런 자리의 획은 안쪽(inset)으로 — layers.css --hair-in·--ring-in.
-const sheets = import.meta.glob('/src/ui/**/*.css', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+const sheets = import.meta.glob(['/src/ui/**/*.css', '../../../pro/web/**/*.css'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
 const noComments = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, '');
 
 type Rule = { file: string; sel: string; body: string };

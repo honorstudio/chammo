@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
-import { curZoomCmd, fromFrame, reviewEscCloses } from '../../domain/curation';
+import { curationOutgoing, curZoomCmd, fromFrame, reviewEscCloses } from '../../domain/curation';
 import { orchVars } from '../../domain/orchTheme';
 import { docUrl } from '../../domain/reader';
 import { tr } from '../../i18n';
@@ -8,6 +8,7 @@ import { IconCheck, IconClose, IconMaximize, IconRestore, IconSend, IconZoomIn, 
 import { IconButton } from '../kit/IconButton';
 import { stepZoom, zoomLabel } from '../../domain/readerZoom';
 import { HtmlFrame } from '../reader/Reader';
+import { Confirm } from '../OrchDialogs';
 
 export type CurState = {
   title: string;
@@ -109,11 +110,14 @@ export function CurationMode({ path, onClose, onSend, sendTo, color, big = false
   const pct = total ? Math.round((done / total) * 100) : 0;
   // 보내기 전에 덧붙일 말 — 버튼에 올리면 펼쳐지는 칸(2026-10-01 사용자)
   const [extra, setExtra] = useState('');
-  const send = async () => {
-    if (!st || !onSend) return;
+  // 보내기 — 글 전체를 보여 주고 사람이 눌러야 간다(C-1). 누른 순간 글을 고정한다: 창이 떠 있는 동안 칸이 cur-state 로 글을 바꿔도 보이는 글이 곧 보내는 글
+  const [ask, setAsk] = useState<string | null>(null);
+  const send = () => { if (st && onSend) setAsk(curationOutgoing(st.text, extra)); };
+  const sendNow = async (out: string) => {
+    if (!onSend) return;
+    setAsk(null);
     setSent('sending');
-    const more = extra.trim();
-    try { await onSend(more ? `${st.text}\n\n${tr('덧붙이는 말', 'Additional note')}: ${more}` : st.text); setSent('sent'); setExtra(''); void invoke('space_log_append', { line: JSON.stringify({ ts: new Date().toISOString(), who: 'user', kind: 'review', path }) }).catch(() => {}); } catch { setSent('fail'); }
+    try { await onSend(out); setSent('sent'); setExtra(''); void invoke('space_log_append', { line: JSON.stringify({ ts: new Date().toISOString(), who: 'user', kind: 'review', path }) }).catch(() => {}); } catch { setSent('fail'); }
   };
   const goto = (i: number) => { setDeckAt(i); cmd({ cmd: 'goto', deck: i }); };
   // 펼친 카드 — 시안에서 고른 블록을 따라간다(J·K·블록 누르기). 펼친 카드를 다시 누르면 접는다
@@ -152,15 +156,16 @@ export function CurationMode({ path, onClose, onSend, sendTo, color, big = false
         </div>
         {/* 오른쪽 표시 목록은 뺐다 — 블록을 누르면 그 자리에 고르는 창이 떠서, 목록까지 마우스를 옮기지 않는다(2026-10-01 사용자). 시안 자리도 넓어진다 */}
       </div>
+      {ask !== null && <Confirm title={tr(`${sendTo}에게 보낼까? (${[...ask].length}자)`, `Send to ${sendTo}? (${[...ask].length} chars)`)} body={ask} ok={tr('보내기', 'Send')} onCancel={() => setAsk(null)} onOk={() => void sendNow(ask)} />}
       {onSend && (
         <div className={`cur-send-wrap ${extra.trim() ? 'has' : ''}`} style={color ? orchVars(color) as React.CSSProperties : undefined}>
         <div className="cur-send-card">
           <label htmlFor="cur-extra">{tr(`${sendTo}에게 같이 보낼 말`, `Note for ${sendTo}`)}</label>
           <textarea id="cur-extra" value={extra} rows={3} placeholder={tr('선택 — 비워 둬도 돼요. ⌘Enter 보내기', 'Optional — ⌘Enter to send')}
             onChange={(e) => setExtra(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } e.stopPropagation(); }} />
+            onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } e.stopPropagation(); }} />
         </div>
-        <button className={`cur-send ${full ? 'full' : ''} ${sent}`} onClick={() => void send()} disabled={sent === 'sending'}
+        <button className={`cur-send ${full ? 'full' : ''} ${sent}`} onClick={send} disabled={sent === 'sending'}
           aria-label={tr(`${sendTo}에게 결과 보내기`, `Send results to ${sendTo}`)}
           title={sent === 'sent' ? tr('보냈어', 'Sent') : sent === 'fail' ? tr('못 보냄 — 다시 누르기', 'Failed — press again') : tr(`${sendTo}에게 보내기 · ${done}/${total} 표시 — 다 안 봐도 보낼 수 있어`, `Send to ${sendTo} · ${done}/${total} marked`)}>
           {/* 글자 없이: 고리가 표시한 만큼 차고, 가운데 종이비행기, 개수는 작은 배지(2026-09-30 사용자 "텍스트 말고 아이콘") */}

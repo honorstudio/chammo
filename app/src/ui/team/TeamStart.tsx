@@ -9,6 +9,8 @@ import { teamClipInvite, teamCreate, teamInvite, teamJoin, teamLogin, type TeamV
 import { DEFAULT_RELAY } from '../../domain/teamAccount';
 import { needStart, startScreen } from '../../domain/teamStart';
 import { defaultMe, sameTeamName } from '../../domain/teamAdd';
+import { contactOf, createLock, planErr, type CreateLock } from '../../domain/teamLock';
+import { LockBox } from './TeamLock';
 import { tr } from '../../i18n';
 import { gateErrText } from '../../domain/loginGate';
 import { IconBack, IconCopy } from '../Icons';
@@ -32,6 +34,8 @@ export function TeamStart({ view: given, invite = '', makeNow = false, want, onD
   const [link, setLink] = useState<{ link: string; expiresAt: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  /** 만들기를 서버가 402 로 거절함(옛 /v0/me·경합) — 오류 줄 대신 문의 창(chammo-relay ADR 0015) */
+  const [lockErr, setLockErr] = useState<CreateLock | null>(null);
   const [copied, setCopied] = useState(false);
   useEffect(() => { if (invite) { setCode(invite); setFromClip(false); } }, [invite]);
   const screen = startScreen(view, { invite, wantJoin, wantMake: want === 'make' });
@@ -54,7 +58,12 @@ export function TeamStart({ view: given, invite = '', makeNow = false, want, onD
   const run = (p: Promise<unknown>) => {
     setBusy(true);
     setErr(null);
-    void p.catch((e: unknown) => { if (!loginCancelled(e)) setErr(gateErrText(String(e))); }).finally(() => setBusy(false));
+    void p.catch((e: unknown) => {
+      if (loginCancelled(e)) return;
+      const l = planErr(String(e));
+      if (l) setLockErr(l);
+      else setErr(gateErrText(String(e)));
+    }).finally(() => setBusy(false));
   };
   const got = (v: TeamView) => { setFresh(v); onChanged?.(); };
   // 같은 이름은 막지 않고 경고 한 줄(만들기 전 내 팀 목록 기준)
@@ -115,6 +124,9 @@ export function TeamStart({ view: given, invite = '', makeNow = false, want, onD
       </div>
     );
   }
+  // 새 팀은 권한 받은 계정만(chammo-relay ADR 0015) — 만들기 칸 대신 문의 창. 들어가기는 그대로
+  const lock = screen === 'make' && !made ? (lockErr ?? createLock(view?.plan)) : null;
+  if (lock) return <LockBox lock={lock} contact={contactOf(view?.plan)} onJoin={openJoin} />;
   if (screen === 'make') {
     return (
       <div className="tmx-start">

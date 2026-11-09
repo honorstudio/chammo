@@ -225,7 +225,7 @@ fn blocked(path: &str, peer: bool) -> bool {
 
 /// 표(ticket)가 열쇠인 길 — iframe·소리·내려받기. 표는 이 폰이 자기 토큰으로 받은 것
 fn ticket_path(path: &str) -> bool {
-    path == "/api/html" || path.starts_with("/api/html/") || path == "/api/dl" || path == "/api/media"
+    path == "/api/html" || path.starts_with("/api/html/") || path == "/api/dl" || path == "/api/media" || path == "/api/media-sprite"
 }
 
 /// 터널 요청 → 폰 서버 요청. Host·Origin 은 이쪽이 정하고, 같은 문(head_check)과 '토큰 기기 = 세션 기기'를 본다

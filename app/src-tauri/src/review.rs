@@ -2,7 +2,7 @@
 //! 파싱·판정(사용자 확인 조건)은 프론트 domain/review*.ts. 여기는 명령만 부르고 원문을 돌려준다.
 //! gh 는 한 번에 0.6~1초라 전부 spawn_blocking — 화면 스레드를 안 막는다(실측: 검색 둘 + 상세 8개 병렬 ≈ 2.6초)
 
-use crate::claude::{gh_bin, git};
+use crate::claude::gh_bin;
 use serde::Deserialize;
 
 fn gh(args: &[&str]) -> Result<String, String> {
@@ -34,7 +34,7 @@ pub async fn repo_map(dev_root: String) -> Result<String, String> {
         Ok(crate::project::dirs_now(&dev_root)
             .into_iter()
             .filter(|(_, d)| d.join(".git").exists())
-            .map(|(name, d)| format!("{name}\t{}", git(&d, &["remote", "get-url", "origin"])))
+            .map(|(name, d)| format!("{name}\t{}", crate::claude::origin_url(&d)))
             .collect::<Vec<_>>()
             .join("\n"))
     })

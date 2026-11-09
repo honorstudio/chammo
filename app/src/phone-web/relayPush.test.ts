@@ -2,7 +2,7 @@
 import { expect, it, vi } from 'vitest';
 
 const sent: unknown[] = [];
-vi.mock('./keys', () => ({ phoneKeys: async () => ({}) }));
+vi.mock('./keys', () => ({ linkedKeys: async () => ({}) }));
 vi.mock('./relayClient', () => ({ call: async (_r: string, _k: unknown, _d: string, _m: string, _p: string, body: unknown) => { sent.push(body); return { status: 200, json: {} }; } }));
 
 it('중계 구독엔 endpoint 만 싣는다', async () => {

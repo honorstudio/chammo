@@ -178,8 +178,14 @@ fn forget(account: &str) {
     MEMO.lock().unwrap_or_else(|e| e.into_inner()).remove(&memo_key(account));
 }
 
+/// 시험 전용 — 메모리 셈을 재는 동안 다른 시험의 로그아웃(forget_all)이 끼지 않게
+#[cfg(test)]
+pub(crate) static FORGET_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// 기억한 열쇠를 다 버린다 — 로그아웃·이 기기 잊기
 pub fn forget_all() {
+    #[cfg(test)]
+    let _held = FORGET_GATE.lock().unwrap_or_else(|e| e.into_inner());
     MEMO.lock().unwrap_or_else(|e| e.into_inner()).clear();
 }
 

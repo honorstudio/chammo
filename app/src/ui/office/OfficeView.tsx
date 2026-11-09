@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { bossReaction, catWalk, cellAt, coffeeWalk, furnitureAt, type BossReact, type Delivery, type Room } from '../../domain/office';
-import { ItemIcon } from '../gacha/GachaPage';
+import { ARRIVE_MS, arrival, bossReaction, catWalk, coffeeWalk, type BossReact, type Delivery, type Room } from '../../domain/office';
 import { titleText } from '../gacha/icons';
 import type { ActivityStatus } from '../../domain/status';
-import { drawRoom, POOF_MS, roomSize, type Deco, type Poof, type Spot } from './draw';
+import { drawRoom, POOF_MS, roomSize, type Brush, type Deco, type Poof, type Spot } from './draw';
 import { skinOf } from './skins';
-import { fewTags } from './tags';
+import { allTags, fewTags } from './tags';
 import { tr } from '../../i18n';
 import { isAttended } from '../attention';
 import './room.css';
@@ -19,13 +18,6 @@ const FRAME_MS = 120; // 도트 느낌 — 초당 8장쯤(펑이 너무 뚝뚝 �
 /** bossIn = 반장 반응 재료(참모 상태·마지막 답·음성 모드·코인 들어온 때) — 프레임마다 bossReaction 으로 계산한다 */
 export type BossIn = { status: ActivityStatus; reply: { text: string; ts: number } | null; voice: boolean; cheerAt: number | null };
 
-/**
- * edit = 가구 놓기(심즈처럼) — 아래 트레이나 방에 놓인 가구를 끌어서 옮긴다. 끄는 동안 그 자리에 반투명 미리보기,
- * 칸은 놓을 수 있으면 초록·없으면 빨강. drag = 지금 끄는 가구 id(App 이 들고 있다 — 트레이에서도 집으니까).
- * onPick = 방에 놓인 가구를 집음, onDrop = 놓음(cell = 방 위 칸, 방 밖이면 null — 트레이 위면 창고는 App 이 판단)
- */
-export type EditMode = { drag: string | null; ok: (cell: [number, number]) => boolean; onPick: (id: string) => void; onDrop: (cell: [number, number] | null, e: PointerEvent) => void };
-
 /** 'width' = 칸 폭에 꽉(소수 배율), 'box' = 칸 폭·높이 둘 다에 맞춰(소수 배율 — 폰 사무실, 반 시트가 열려 칸이 낮아지면 방이 준다), 'int' = 정수 배율(도트가 안 번지게, 데스크톱) */
 export type Fit = 'int' | 'width' | 'box';
 export function fitScale(fit: Fit, cw: number, ch: number, W: number, H: number, bottom: number): number {
@@ -34,17 +26,13 @@ export function fitScale(fit: Fit, cw: number, ch: number, W: number, H: number,
   return Math.max(1, Math.floor(Math.min((cw - 24) / W, (ch - 24 - bottom) / H)));
 }
 
-export function OfficeView({ room, skin, menu, bottom = 0, edit, deliver, onOpen, coins, gain, onGacha, bossIn, deco, peek, dim, fit = 'int', picked, tags = 'all' }: { room: Room; /** 'few' = 폰 방 — 사람 필요·물어봄·고른 것만 이름표, 겹치면 비키거나 +N, 하는 일 한 줄 없음(ui/office/tags) */ tags?: 'all' | 'few'; skin?: string; /** 배율 — Fit 참고 */ fit?: Fit; /** 고른 세션 — 그 캐릭터에 고리(폰: 누르면 고르고 아래 카드로 대화) */ picked?: string | null; /** 이름표를 옅게 할 세션(채팅 뷰: 지금 채팅 탭 참모가 시킨 것만 진하게) */ dim?: (id: string) => boolean; /** 아래에 덮이는 높이(가구 트레이) — 방을 그만큼 위로 올려 가리지 않게 */ bottom?: number; /** 왼쪽 위 메뉴 */ menu?: ReactNode; /** 이름표에 마우스를 올리면 띄울 미니 터미널(읽기 전용, 머리줄에 지금 하는 일). null 이면 안 띄움 */ peek?: (id: string, doing?: string) => ReactNode; edit?: EditMode; deliver?: (now: number) => Delivery | null; onOpen: (id: string) => void; /** 가챠 코인(오른쪽 위) — 누르면 뽑기 페이지 */ coins?: number; gain?: { n: number; at: number } | null; onGacha?: () => void; bossIn?: BossIn; /** 뽑기로 얻어 장착한 것 — 모자·창밖·펑 대신·춤. cat·coffee 는 펫 친구·커피 액션 */ deco?: Deco & { hasCat?: boolean; coffee?: boolean; /** 반장 이름표 앞 칭호(뽑기) */ title?: string; /** 고양이 말고 가진 펫 친구 id(팩) — 고양이와 시차를 두고 같은 길을 걷는다 */ palIds?: string[] } }) {
+export function OfficeView({ room, roomId = 0, overlay, skin, menu, bottom = 0, deliver, onOpen, coins, gain, onGacha, bossIn, deco, peek, dim, fit = 'int', picked, tags = 'all', dot }: { /** 작은 점을 달 책상 — 이 사무실을 연 참모가 캐릭터를 안 정했을 때(누르면 고르기 창) */ dot?: string | null; room: Room; /** 사무실 번호 — 넘기면 출근 연출을 처음부터 안 한다 */ roomId?: number; /** 넓어질 자리 등 바닥 위 덧칠 */ overlay?: (b: Brush, P: (x: number, y: number, z?: number) => [number, number]) => void; /** 'few' = 폰 방 — 사람 필요·물어봄·고른 것만 이름표, 겹치면 비키거나 +N, 하는 일 한 줄 없음(ui/office/tags) */ tags?: 'all' | 'few'; skin?: string; /** 배율 — Fit 참고 */ fit?: Fit; /** 고른 세션 — 그 캐릭터에 고리(폰: 누르면 고르고 아래 카드로 대화) */ picked?: string | null; /** 이름표를 옅게 할 세션(채팅 뷰: 지금 채팅 탭 참모가 시킨 것만 진하게) */ dim?: (id: string) => boolean; /** 아래에 덮이는 높이(가구 트레이) — 방을 그만큼 위로 올려 가리지 않게 */ bottom?: number; /** 왼쪽 위 메뉴 */ menu?: ReactNode; /** 이름표에 마우스를 올리면 띄울 미니 터미널(읽기 전용, 머리줄에 지금 하는 일). null 이면 안 띄움 */ peek?: (id: string, doing?: string) => ReactNode; deliver?: (now: number) => Delivery | null; onOpen: (id: string) => void; /** 가챠 코인(오른쪽 위) — 누르면 뽑기 페이지 */ coins?: number; gain?: { n: number; at: number } | null; onGacha?: () => void; bossIn?: BossIn; /** 뽑기로 얻어 장착한 것 — 모자·창밖·펑 대신·춤. cat·coffee 는 펫 친구·커피 액션 */ deco?: Deco & { hasCat?: boolean; coffee?: boolean; /** 반장 이름표 앞 칭호(뽑기) */ title?: string; /** 고양이 말고 가진 펫 친구 id(팩) — 고양이와 시차를 두고 같은 길을 걷는다 */ palIds?: string[] } }) {
   const wrap = useRef<HTMLDivElement>(null);
   const cv = useRef<HTMLCanvasElement>(null);
   const [scale, setScale] = useState(3);
   const [spots, setSpots] = useState<Spot[]>([]);
-  // 하는 일은 늘 띄우면 화면을 가린다 — 도구가 바뀐 순간 2.5초만(사용자 2026-09-27)
-  const [flash, setFlash] = useState<Record<string, string>>({});
-  const lastDoing = useRef<Record<string, string>>({});
   const [react, setReact] = useState<BossReact | null>(null);
   const sk = skinOf(skin);
-  const [hover, setHover] = useState<[number, number] | null>(null);
   // 미니 터미널 — 한 번에 하나. 올리고 0.35초 뒤 뜨고, 이름표·창에서 벗어나고 0.25초 뒤 닫힌다(창으로 옮겨 가는 사이 안 꺼지게)
   const [peekId, setPeekId] = useState<string | null>(null);
   const peekTimer = useRef<number>(0);
@@ -63,28 +51,8 @@ export function OfficeView({ room, skin, menu, bottom = 0, edit, deliver, onOpen
   }, [W, H, bottom, fit]);
 
   // 그리는 데 필요한 건 ref 로 — 세션 목록이 3초마다 바뀌어도 타이머를 다시 만들지 않는다
-  const latest = useRef({ room, sk, deliver, bossIn, deco, edit, hover });
-  latest.current = { room, sk, deliver, bossIn, deco, edit, hover };
-  // 끄는 중엔 창 전체에서 포인터를 따라간다(트레이 → 방으로 건너올 때도). 방 밖이면 커서 옆에 작은 아이콘
-  const [float, setFloat] = useState<[number, number] | null>(null);
-  const dragging = edit?.drag ?? null;
-  useEffect(() => {
-    if (!dragging) { setFloat(null); return; }
-    const at = (e: PointerEvent): [number, number] | null => {
-      const r = cv.current?.getBoundingClientRect();
-      if (!r) return null;
-      const { room: rm } = latest.current;
-      const { ox, oy } = roomSize(rm);
-      const sc = r.width / roomSize(rm).W;
-      return cellAt(rm, ox, oy, (e.clientX - r.left) / sc, (e.clientY - r.top) / sc);
-    };
-    const move = (e: PointerEvent) => { const c = at(e); setHover((h) => (h?.[0] === c?.[0] && h?.[1] === c?.[1] ? h : c)); setFloat(c ? null : [e.clientX, e.clientY]); };
-    const up = (e: PointerEvent) => { latest.current.edit?.onDrop(at(e), e); setHover(null); };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-    document.body.classList.add('furn-dragging');
-    return () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); document.body.classList.remove('furn-dragging'); };
-  }, [dragging]);
+  const latest = useRef({ room, roomId, sk, deliver, bossIn, deco, overlay });
+  latest.current = { room, roomId, sk, deliver, bossIn, deco, overlay };
   useEffect(() => {
     const c = cv.current;
     const ctx = c?.getContext('2d');
@@ -92,59 +60,47 @@ export function OfficeView({ room, skin, menu, bottom = 0, edit, deliver, onOpen
     let t = 0;
     let lastKey = '';
     let lastReact = '';
-    // 펑: 책상 주인이 바뀌는 순간(새로 앉음·나감)을 잡는다. 첫 프레임은 원래 있던 거라 안 터뜨린다
+    // 출근·퇴근: 책상 주인이 바뀌는 순간을 잡는다 — 새로 앉으면 문에서 걸어 들어오고, 나가면 펑. 첫 프레임·사무실을 넘긴 직후는 원래 있던 거라 안 한다
     let seen: Map<string, [number, number]> | null = null;
     let poofs: (Poof & { t0: number })[] = [];
+    let coming: { id: string; t0: number }[] = [];
+    let lastRoom = latest.current.roomId;
     let drawn = false;
     const frame = () => {
       // 사람이 안 보면(ui/attention — 다른 앱이 앞·입력 2분 없음·덮개) 그리지 않는다. 첫 장은 그린다(빈 캔버스로 두지 않게)
       if (drawn && !isAttended()) return;
       drawn = true;
-      const { room: r, sk: s, deliver: dv, bossIn: bi, deco: dc, edit: ed, hover: hv } = latest.current;
+      const { room: r, roomId: ri, sk: s, deliver: dv, bossIn: bi, deco: dc, overlay: ov } = latest.current;
       const { W: w0, H: h0 } = roomSize(r);
       if (c.width !== w0 || c.height !== h0) { c.width = w0; c.height = h0; }
       const now = Date.now();
-      const cur = new Map(r.desks.filter((d) => !d.empty && !d.boss).map((d) => [d.id, [d.gx + d.w / 2, d.gy + 0.35] as [number, number]]));
+      if (ri !== lastRoom) { lastRoom = ri; seen = null; poofs = []; coming = []; }
+      const cur = new Map(r.desks.filter((d) => !d.empty && !d.stand).map((d) => [d.id, [d.gx + d.w / 2, d.gy + 0.35] as [number, number]]));
       if (seen) {
-        for (const [id, at] of cur) if (!seen.has(id)) poofs.push({ id, gx: at[0], gy: at[1], age: 0, t0: now });
+        for (const id of cur.keys()) if (!seen.has(id)) coming.push({ id, t0: now });
         for (const [id, at] of seen) if (!cur.has(id)) poofs.push({ id: '', gx: at[0], gy: at[1], age: 0, t0: now });
       }
       seen = cur;
       poofs = poofs.filter((p) => now - p.t0 < POOF_MS).map((p) => ({ ...p, age: now - p.t0 }));
+      coming = coming.filter((a) => now - a.t0 < ARRIVE_MS);
+      const arrivals = coming.flatMap((a) => { const w = arrival(r, a.id, now - a.t0); return w ? [w] : []; });
       const br = bi ? bossReaction({ ...bi, now }) : null;
       const rk = br ? `${br.mode}:${br.text ?? ''}` : '';
       if (rk !== lastReact) { lastReact = rk; setReact(br); }
       // 배달이 없고 반장이 한가하면 커피 액션(장착했을 때)
       const walker = dv?.(now) ?? (dc?.coffee && !br ? coffeeWalk(r, now) : null);
-      const sp = drawRoom(ctx, r, s, t++, { walker, poofs, boss: br, deco: { ...dc, cat: dc?.hasCat ? catWalk(r, now) : null, pals: dc?.palIds?.map((id, k) => ({ id, ...catWalk(r, now + (k + 1) * 6_000) })) }, edit: ed ? { hover: hv, ok: hv ? ed.ok(hv) : false, ghost: ed.drag } : undefined });
+      const sp = drawRoom(ctx, r, s, t++, { walker, arrivals, poofs, boss: br, deco: { ...dc, cat: dc?.hasCat ? catWalk(r, now) : null, pals: dc?.palIds?.map((id, k) => ({ id, ...catWalk(r, now + (k + 1) * 6_000) })) }, ...(ov ? { edit: { under: ov } } : {}) });
       // 이름표는 자리가 바뀔 때만 다시 그린다(매 프레임 setState 하면 화면 전체가 다시 그려진다)
       const key = sp.map((x) => `${x.id}:${x.x}:${x.y}:${x.st}:${x.label}:${x.doing ?? ''}:${x.human ?? '-'}`).join('|');
-      if (key !== lastKey) {
-        lastKey = key; setSpots(sp);
-        for (const x of sp) {
-          if (x.doing && x.doing !== lastDoing.current[x.id]) {
-            const text = x.doing;
-            setFlash((f) => ({ ...f, [x.id]: text }));
-            window.setTimeout(() => setFlash((f) => { if (f[x.id] !== text) return f; const n = { ...f }; delete n[x.id]; return n; }), 2500);
-          }
-          lastDoing.current[x.id] = x.doing ?? '';
-        }
-      }
+      // 하는 일 한 줄은 이름표에 안 띄운다 — 2.5초씩 이름표가 길어져 이웃을 덮었다(11-09). 현황판·미니 터미널 머리줄이 늘 보여 준다
+      if (key !== lastKey) { lastKey = key; setSpots(sp); }
     };
     frame();
     const id = setInterval(frame, FRAME_MS);
     return () => clearInterval(id);
   }, []);
 
-  const [grab, setGrab] = useState(false);
-  const furnAt = (e: React.MouseEvent) => {
-    const r = cv.current?.getBoundingClientRect();
-    if (!r) return null;
-    const { ox, oy } = roomSize(room);
-    return furnitureAt(room, ox, oy, (e.clientX - r.left) / scale, (e.clientY - r.top) / scale);
-  };
   const click = (e: React.MouseEvent) => {
-    if (edit) return;
     const r = cv.current?.getBoundingClientRect();
     if (!r) return;
     const x = (e.clientX - r.left) / scale, y = (e.clientY - r.top) / scale;
@@ -154,7 +110,7 @@ export function OfficeView({ room, skin, menu, bottom = 0, edit, deliver, onOpen
   };
 
   return (
-    <div className={`office ${edit ? 'editing' : ''}`} ref={wrap} style={{ background: sk.bg, paddingBottom: bottom }}>
+    <div className="office" ref={wrap} style={{ background: sk.bg, paddingBottom: bottom }}>
       {onGacha && (
         <button className={`office-coin ${gain && Date.now() - gain.at < 4000 ? 'gain' : ''}`} onClick={onGacha} aria-label={tr(`뽑기 — 코인 ${(coins ?? 0).toLocaleString()}`, `Gacha — ${(coins ?? 0).toLocaleString()} coins`)} title={tr('뽑기 — 머지·시킨 일·커밋으로 코인이 쌓인다', 'Gacha — merges, finished tasks and commits earn coins')}>
           <i />{(coins ?? 0).toLocaleString()}
@@ -162,12 +118,8 @@ export function OfficeView({ room, skin, menu, bottom = 0, edit, deliver, onOpen
         </button>
       )}
       {menu && <div className="office-menu-slot">{menu}</div>}
-      {dragging && float && <div className="furn-float" style={{ left: float[0], top: float[1] }}><ItemIcon id={dragging} big /></div>}
       <div className="office-room" style={{ width: W * scale, height: H * scale }}>
-        <canvas ref={cv} className="office-cv" style={{ width: W * scale, height: H * scale }} onClick={click}
-          onPointerDown={edit ? (e) => { const id = furnAt(e); if (id) { e.preventDefault(); edit.onPick(id); } } : undefined}
-          onMouseMove={edit && !edit.drag ? (e) => setGrab(!!furnAt(e)) : undefined} onMouseLeave={() => { if (!edit?.drag) setHover(null); setGrab(false); }}
-          data-grab={edit && (grab || edit.drag) ? (edit.drag ? 'on' : 'can') : undefined} />
+        <canvas ref={cv} className="office-cv" style={{ width: W * scale, height: H * scale }} onClick={click} />
         {react?.text && (() => {
           const bs = spots.find((s) => room.desks.some((d) => d.boss && d.id === s.id));
           return bs ? <div className={`office-say ${react.mode}`} style={{ left: bs.hx * scale, top: (bs.hy - 22) * scale }}>{react.text}</div> : null;
@@ -177,7 +129,7 @@ export function OfficeView({ room, skin, menu, bottom = 0, edit, deliver, onOpen
           const s = spots.find((x) => x.id === picked);
           return s ? <span className="office-ring" style={{ left: s.hx * scale, top: s.hy * scale }} /> : null;
         })()}
-        {tags === 'few' && fewTags(spots, picked, scale, W * scale).map((t) => {
+        {tags === 'few' && fewTags(spots.filter((x) => !x.off), picked, scale, W * scale).map((t) => {
           const s = spots.find((x) => x.id === t.id)!;
           return (
             <button key={s.id} className={`office-tag ${sk.label} ${s.human !== undefined ? 'human' : s.st === 'asks' ? 'hot' : ''}`} style={{ left: t.cx, top: t.top }}
@@ -186,21 +138,35 @@ export function OfficeView({ room, skin, menu, bottom = 0, edit, deliver, onOpen
             </button>
           );
         })}
-        {tags === 'all' && spots.map((s) => (
-          <button
-            key={s.id}
-            className={`office-tag ${sk.label} ${s.human !== undefined ? 'human' : s.st === 'asks' ? 'hot' : ''} ${s.human === undefined && dim?.(s.id) ? 'st-dim' : ''}`}
-            style={{ left: s.x * scale, top: s.y * scale }}
-            title={s.human !== undefined ? tr(`${s.label} — 사람 필요${s.human ? `: ${s.human}` : ''} · 눌러서 브라우저 열기`, `${s.label} — needs you${s.human ? `: ${s.human}` : ''} · click to open the browser`) : tr(`${s.label} — 눌러서 그 세션으로`, `${s.label} — click to open the session`)}
-            onClick={() => onOpen(s.id)}
-            onMouseEnter={peek && !edit ? () => peekOn(s.id) : undefined}
-            onMouseLeave={peek && !edit ? peekOff : undefined}
-          >
-            {deco?.title && room.desks.some((d) => d.boss && d.id === s.id) && <span className="office-title">{titleText(deco.title)}</span>}
-            {s.label}
-            {flash[s.id] && <span className="office-doing">{flash[s.id]}</span>}
-          </button>
-        ))}
+        {tags === 'all' && (() => {
+          // 이름표는 서로 안 겹치게 비키고, 자리가 없으면 +N(ui/office/tags allTags) — 반장 칭호도 폭에 넣는다
+          const bossId = room.desks.find((d) => d.boss)?.id;
+          const title = deco?.title ? titleText(deco.title) : '';
+          const sized = spots.map((x) => (title && x.id === bossId ? { ...x, label: `${title} ${x.label}` } : x));
+          return allTags(sized, picked, scale, W * scale, dim).map((t) => {
+            const s = spots.find((x) => x.id === t.id)!, more = t.more + (s.more ?? 0);
+            return (
+              <button
+                key={s.id}
+                className={`office-tag ${sk.label} ${s.off ? 'v-off' : s.human !== undefined ? 'human' : s.st === 'asks' ? 'hot' : ''} ${s.human === undefined && dim?.(s.id) ? 'st-dim' : ''}`}
+                style={{ left: t.cx, top: t.top }}
+                title={s.off ? tr(`${s.label} — 꺼져 있어 · 눌러서 깨우기`, `${s.label} — off · click to wake`) : s.human !== undefined ? tr(`${s.label} — 사람 필요${s.human ? `: ${s.human}` : ''} · 눌러서 브라우저 열기`, `${s.label} — needs you${s.human ? `: ${s.human}` : ''} · click to open the browser`) : tr(`${s.label} — 눌러서 열기`, `${s.label} — click to open`)}
+                aria-label={more ? tr(`${s.label} 외 ${more}`, `${s.label} and ${more} more`) : s.label}
+                onClick={() => onOpen(s.id)}
+                onMouseEnter={peek && !s.off ? () => peekOn(s.id) : undefined}
+                onMouseLeave={peek && !s.off ? peekOff : undefined}
+              >
+                {title && s.id === bossId && <span className="office-title">{title}</span>}
+                {s.label}
+                {more > 0 && <span className="office-more">+{more}</span>}
+              </button>
+            );
+          });
+        })()}
+        {dot && (() => {
+          const s = spots.find((x) => x.id === dot);
+          return s ? <span className="office-dot" aria-hidden style={{ left: (s.hx + 7) * scale, top: (s.hy - 14) * scale }} /> : null;
+        })()}
         {peek && peekId && (() => {
           const s = spots.find((x) => x.id === peekId);
           const body = s ? peek(peekId, s.doing) : null;

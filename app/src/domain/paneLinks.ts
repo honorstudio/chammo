@@ -8,7 +8,10 @@ export const LINK_WAIT = 80_000;
 export const HOLD_MAX = 10 * 60_000;
 
 export function paneLinks<T>() {
-  const apis = new Map<string, T>();
+  // 세션마다 살아 있는 칸들 — 같은 세션 칸이 격자 여러 벌에 뜰 수 있어 주인별로 든다. 맨 뒤(나중에 붙은 칸)에 친다.
+  // 한 칸만 들던 때는 다른 격자 칸이 내려가면 남은 칸까지 지워져, 남은 칸은 live 인데 말이 80초 기다리다 실패했다 — 앱을 껐다 켜야 풀렸다(2026-11-05 개발 담당)
+  const apis = new Map<string, { who: unknown; api: T }[]>();
+  const top = (id: string): T | undefined => apis.get(id)?.at(-1)?.api;
   type Waiter = { ok: (api: T) => void; no: () => void };
   const waiters = new Map<string, Waiter[]>();
   const remove = (id: string, w: Waiter) => {
@@ -16,18 +19,20 @@ export function paneLinks<T>() {
     if (list.length) waiters.set(id, list); else waiters.delete(id);
   };
   return {
-    /** 붙음(api)·끊김(null) */
-    set(id: string, api: T | null) {
-      if (api == null) { apis.delete(id); return; }
-      apis.set(id, api);
+    /** 붙음(api)·끊김(null). who = 그 칸의 주인(격자) — 끊김은 그 주인 칸만 뺀다 */
+    set(id: string, api: T | null, who?: unknown) {
+      const rest = (apis.get(id) ?? []).filter((e) => e.who !== who);
+      const next = api == null ? rest : [...rest, { who, api }];
+      if (next.length) apis.set(id, next); else apis.delete(id);
+      if (api == null) return;
       const w = waiters.get(id);
       waiters.delete(id);
       w?.forEach((f) => f.ok(api));
     },
-    get: (id: string): T | undefined => apis.get(id),
+    get: top,
     /** 붙어 있으면 바로, 아니면 붙을 때까지 ms 만큼 — 넘기면 실패. hold 가 참이면(아직 붙는 중·맥이 바빠 목록을 못 읽음) 한 번 더 ms 만큼 */
     wait(id: string, ms: number, hold?: () => boolean): Promise<T> {
-      const now = apis.get(id);
+      const now = top(id);
       if (now !== undefined) return Promise.resolve(now);
       return new Promise<T>((resolve, reject) => {
         let t: ReturnType<typeof setTimeout> | undefined;

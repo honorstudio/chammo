@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CATALOG, EVENTS } from '../../../domain/gacha';
+import { SPR } from '../../tama/sprites';
+import { ART_SPR } from './artSprites.gen';
 import { PACK, PACKS } from '.';
 
 // 옛 그림(icons.ts·draw.ts 안)에 있는 이름 — 이것 말고는 전부 팩에 그리는 법이 있어야 한다
@@ -15,6 +17,8 @@ describe('그림 팩', () => {
     for (const c of CATALOG.filter((x) => x.kind !== 'skin')) {
       const name = c.id.slice(c.id.indexOf('.') + 1);
       if (OLD[c.kind]?.includes(name)) continue;
+      if (c.kind === 'chr') { expect(SPR[name] ?? ART_SPR[name], c.id).toBeDefined(); continue; }
+      if (ART_SPR[`${c.kind}:${name}`]) continue;
       expect((PACK as Record<string, Record<string, unknown>>)[c.kind]?.[name], c.id).toBeDefined();
     }
   });

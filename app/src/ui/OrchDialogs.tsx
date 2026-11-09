@@ -9,7 +9,8 @@ import { AvatarPicker } from './avatar/AvatarPicker';
 import { RoleField } from './orchRoleStore';
 
 /** 작은 확인 창 — Enter 확인, Esc 취소. 앱 창 가운데 */
-export function Confirm({ title, body, ok, danger, onOk, onCancel }: { title: string; body?: string; ok: string; danger?: boolean; onOk: () => void; onCancel: () => void }) {
+/** focusCancel — 사람이 띄운 창이 아닐 때(시안 칸이 띄운 확인 등): 초점을 취소에 둬서 그 순간 치던 Enter·스페이스가 그대로 '확인'이 되지 않게 */
+export function Confirm({ title, body, ok, danger, focusCancel, onOk, onCancel }: { title: string; body?: string; ok: string; danger?: boolean; focusCancel?: boolean; onOk: () => void; onCancel: () => void }) {
   const btn = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     btn.current?.focus();
@@ -23,8 +24,8 @@ export function Confirm({ title, body, ok, danger, onOk, onCancel }: { title: st
         <b>{title}</b>
         {body && <p style={{ whiteSpace: 'pre-line' }}>{body}</p>}
         <div className="od-foot">
-          <button onClick={onCancel}>{tr('취소', 'Cancel')}</button>
-          <button ref={btn} className={danger ? 'danger' : 'pri'} onClick={onOk}>{ok}</button>
+          <button ref={focusCancel ? btn : undefined} onClick={onCancel}>{tr('취소', 'Cancel')}</button>
+          <button ref={focusCancel ? undefined : btn} className={danger ? 'danger' : 'pri'} onClick={onOk}>{ok}</button>
         </div>
       </div>
     </div>,

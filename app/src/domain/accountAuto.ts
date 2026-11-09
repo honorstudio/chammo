@@ -409,9 +409,16 @@ export function clearTerms(s: AutoState, now: number, only?: string): AutoState 
 export function changedKeys(before: AutoState, after: AutoState): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const k of Object.keys(after) as (keyof AutoState)[]) {
-    if (JSON.stringify(before[k]) !== JSON.stringify(after[k])) out[k] = after[k] ?? null;
+    if (sameShape(before[k]) !== sameShape(after[k])) out[k] = after[k] ?? null;
   }
   return out;
+}
+
+/** 키 순서를 뺀 비교용 글 — readAuto 와 칸 쓰기의 키 순서가 달라, 그대로 비교하면 값이 같아도 '바뀜'이라 저장·화면 신호가 끝없이 돌았다(2026-11-06 초당 7번) */
+function sameShape(v: unknown): string {
+  return JSON.stringify(v, (_k, x: unknown) => (x && typeof x === 'object' && !Array.isArray(x)
+    ? Object.fromEntries(Object.entries(x as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+    : x));
 }
 
 /** 한도 오류로 멈춘 백그라운드 세션 — 일하는 중이면 아니다('계속해'를 일하는 세션에 보내지 않게). 대화형(터미널)은 사람 몫 */

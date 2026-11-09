@@ -22,6 +22,13 @@ export type CalItem = { id: string; rev: number; data: CalData; by: string; at: 
 export type CalSnap = { team: string; rev: number; ver: number; items: CalItem[]; me: string; cached: boolean };
 export type CalWrite = { snap: CalSnap; rev: number; lost: string[]; by: string; gone: boolean };
 
+/** 참모가 넣은 일정 꼬리표 — guess = 날짜를 짐작함. 공개 빌드도 팀원이 넣은 걸 보여 준다 */
+export const agentOf = (d: CalData): { guess: boolean } | null => {
+  const a = d.agent as { guess?: unknown } | undefined;
+  return a && typeof a === 'object' ? { guess: a.guess === true } : null;
+};
+export const agentLabel = (d: CalData) => (agentOf(d)?.guess ? tr('참모 추정', "Assistant's guess") : tr('참모가 넣음', 'Added by assistant'));
+
 export const TITLE_MAX = 200;
 export const NOTE_MAX = 2000;
 const PLACE_MAX = 200;
@@ -43,6 +50,15 @@ export const addDays = (s: string, n: number) => {
 const hm = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 
 /** 월 칸 — 일요일 시작, 그 달을 다 담는 5주 또는 6주 */
+/** 달력 칸에 일정을 몇 개 보여 줄까 — 칸 높이로 잰다(11-05: 칸이 넓은데 3개에서 잘렸다). 넘칠 때만 더보기 줄 자리를 뺀다. 재기 전(0)엔 3개.
+ *  수는 teamCal.css 와 맞춘다: 칸 위아래 여백·선 7, 날짜 줄 18, 일정 19 + 간격 2, 더보기 줄 15 + 간격 2 */
+export function monthFit(cellH: number, n: number): { show: number; more: number } {
+  const cap = cellH > 0 ? Math.floor((cellH - 25) / 21) : 3;
+  if (n <= Math.max(cap, 1)) return { show: n, more: 0 };
+  const show = cellH > 0 ? Math.max(1, Math.floor((cellH - 42) / 21)) : 3;
+  return { show, more: n - show };
+}
+
 export function monthCells(year: number, month0: number): string[] {
   const first = new Date(year, month0, 1);
   const start = addDays(ymd(first), -first.getDay());

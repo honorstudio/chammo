@@ -63,14 +63,24 @@ pub fn with_profile_name(rec: &Record, aka: &std::collections::BTreeMap<String, 
     Record { person: p, ..rec.clone() }
 }
 
-/// 알릴 말일 때만 그 방 팀의 프로필 이름을 읽는다(키체인 — 말마다 읽지 않게)
-fn profile_names(dir: &Path, room: &str) -> std::collections::BTreeMap<String, String> {
+/// 팀챗(단톡방) 알림 제목 = "<팀챗 이름> · <보낸 사람>" — 폰 잠금 화면에서도 어느 대화인지 보이게(11-04 사용자). DM·이름 없는 방은 보낸 사람만.
+/// 방 이름은 서버 목록 값이라 이름표 흉내·빈 이름은 안 붙이고 24자에서 자른다(제목 80자 안에 보낸 사람이 남게)
+pub fn with_room(a: Alert, group: Option<&str>) -> Alert {
+    let Some(name) = group.map(crate::team_relay_inbox::safe_name).filter(|n| n != "?") else { return a };
+    let name = if name.chars().count() > 24 { format!("{}…", name.chars().take(24).collect::<String>()) } else { name };
+    Alert { title: format!("{name} · {}", a.title), ..a }
+}
+
+/// 알릴 말일 때만 그 방 팀의 프로필 이름(키체인 — 말마다 읽지 않게)과 단톡방이면 그 이름을 읽는다
+fn room_names(dir: &Path, room: &str, want_names: bool) -> (std::collections::BTreeMap<String, String>, Option<String>) {
     let st = crate::team_relay::load_state(dir);
-    let team = st.rooms.iter().find(|r| r.id == room).map(|r| r.team.clone()).filter(|t| !t.is_empty()).unwrap_or_else(|| st.team_id.clone());
-    if team.is_empty() {
-        return Default::default();
+    let r = st.rooms.iter().find(|r| r.id == room);
+    let group = r.filter(|r| r.kind == "group").map(|r| r.name.clone());
+    let team = r.map(|r| r.team.clone()).filter(|t| !t.is_empty()).unwrap_or_else(|| st.team_id.clone());
+    if team.is_empty() || !want_names {
+        return (Default::default(), group);
     }
-    crate::team_profile::cached_names(dir, &crate::team_relay_keys::store(), &team)
+    (crate::team_profile::cached_names(dir, &crate::team_relay_keys::store(), &team), group)
 }
 
 /// 이 말에 알릴까 — 남이 보낸 새 말(참모에게 넘긴 것 = delivered, 참모를 안 부른 사람 말 = human)만. 내 다른 기기가 보낸 것·막은 말·옛 말·내 기기끼리 방은 아니다.
@@ -171,8 +181,9 @@ pub fn init<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         let set = load(crate::config::data_dir());
         match decide(rec, &vs, &set) {
             Some(a) => {
-                let named = if rec.member.is_empty() { rec.clone() } else { with_profile_name(rec, &profile_names(crate::config::data_dir(), &rec.room)) };
-                fire(&decide(&named, &vs, &set).unwrap_or(a), &named)
+                let (aka, group) = room_names(crate::config::data_dir(), &rec.room, !rec.member.is_empty());
+                let named = if rec.member.is_empty() { rec.clone() } else { with_profile_name(rec, &aka) };
+                fire(&with_room(decide(&named, &vs, &set).unwrap_or(a), group.as_deref()), &named)
             }
             // 보고 있는 대화라 안 울림 — 기록에 한 줄(왜 안 울렸는지 나중에 볼 수 있게, 본문 없이)
             None if alerting(&rec.note) && rec.kind != "self" => crate::claude::log_out("notify", &format!("팀 새 말 {} #{} — 보는 중이라 안 울림", rec.room.chars().take(8).collect::<String>(), rec.seq)),

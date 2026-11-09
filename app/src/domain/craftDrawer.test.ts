@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { craftErr, DRAWER_MEMO_KEY, drawerMemo, drawerView, mergeRows, NO_PYTHON, prefetchingAny, licenseLine, licenseRows, parseNotices, sizeText, splitRows, tileCorner, tileIcon, tileLetter, tileLoading, tileTitle, tileUnavailable, usedLine, usedTotal, type DrawerRow } from './craftDrawer';
+import { craftErr, DRAWER_MEMO_KEY, drawerMemo, drawerView, mergeRows, NO_PYTHON, prefetchingAny, licenseLine, licenseRows, parseNotices, termsBody, sizeText, splitRows, tileCorner, tileIcon, tileLetter, tileLoading, tileTitle, tileUnavailable, usedLine, usedTotal, type DrawerRow } from './craftDrawer';
 import { setLang } from '../i18n';
 
 const row = (o: Partial<DrawerRow> = {}): DrawerRow => ({ app: 'gridcraft', name: 'GridCraft', what: 'spreadsheets / 표 계산', installed: null, mine: false, size: 0, used: null, latest: '0.7.0', dmgSize: 24580153, icon: '', origName: 'GridCraft', repo: 'github.com/storytold/gridcraft', basedOn: null, chammo: false, ...o });
@@ -90,6 +90,18 @@ describe('서랍 먼저 보이기(v8 A2) · 라이선스 창(B1)', () => {
       { name: 'Univer (spreadsheet)', license: 'Apache License 2.0', body: 'Copyright X' },
       { name: 'zip (Rust crate)', license: 'MIT', body: 'The MIT License' },
     ]);
+  });
+  it('고지 원문 들여쓰기(코드 칸)는 벗겨 보여 준다 — 원문 속 ## 줄은 절이 아니다', () => {
+    const md = '# T\n\n## MIT (2 packages) — MIT\n\n- `a` 1 · Rust\n\n    ## not a heading\n    text\n\n## B — ISC\n\nx\n';
+    const secs = parseNotices(md);
+    expect(secs.map((s) => s.license)).toEqual(['MIT', 'ISC']);
+    expect(secs[0]!.body).toBe('- `a` 1 · Rust\n\n## not a heading\ntext');
+  });
+  it('사용 조건 파일 — 머리 줄 # 로 시작할 때만, 없는 파일에 오는 index.html 은 없는 것으로', () => {
+    expect(termsBody('# 사용 조건 / Terms of use\n\n본문 줄\n')).toBe('본문 줄');
+    expect(termsBody('<!doctype html>\n<html></html>')).toBeNull();
+    expect(termsBody('')).toBeNull();
+    expect(termsBody('# 사용 조건 / Terms of use\n\n')).toBeNull();
   });
 });
 

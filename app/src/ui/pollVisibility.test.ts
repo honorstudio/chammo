@@ -2,8 +2,6 @@
 import { describe, expect, it } from 'vitest';
 import locker from './team/TeamLocker.tsx?raw';
 import cal from './team/useTeamCal.ts?raw';
-import tama from './tama/useTama.ts?raw';
-import app from '../App.tsx?raw';
 
 describe('폴링은 보임을 따른다', () => {
   // 로그인 문은 '사람을 부르는 길'이라 늦추지 않는다(ui/poll.ts 머리, 10-11) — 여기서 뺀다
@@ -12,9 +10,5 @@ describe('폴링은 보임을 따른다', () => {
       expect(src, name).not.toMatch(/setInterval\(/);
       expect(src, name).toMatch(/every\(/);
     }
-  });
-  it('다마고치를 끄면 위젯 폴링(초당 둘)을 안 한다', () => {
-    expect(tama).toMatch(/if \(!widget\) return;/);
-    expect(app).toMatch(/useTama\(.*, features\.tama\);/);
   });
 });

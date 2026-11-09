@@ -12,6 +12,7 @@ __doc__ = """Open files in the app — chat view: the space (Markdown as an edit
   scripts/show <file> --line 264[-270] | --find "text" | --page 3 | --box x,y,w,h
   scripts/show <file>:264[-270]
   scripts/show http://localhost:3000   — an http(s) address opens in the in-app preview (reload, back, open in Chrome)
+  scripts/show <video>                 — a video opens in the review view (notes at times, sent to you; phone too). --plain = just play it
 
 Point at a spot / 짚어 보여 주기 — options apply to the file right before them. The app scrolls there
 (PDF·slides: that page) and flashes it for a few seconds. --find works for any kind and beats --line.
@@ -109,6 +110,10 @@ def parse_args(argv):
     i = 0
     while i < len(argv):
         a = argv[i]
+        if a == '--plain' and out:
+            out[-1] = (out[-1][0], {**(out[-1][1] or {}), 'plain': True})
+            i += 1
+            continue
         if a in ('--line', '--find', '--page', '--box') and out and i + 1 < len(argv):
             v = argv[i + 1]
             at = out[-1][1] or {}
@@ -156,6 +161,10 @@ def record(real, env, cwd, ts, at=None):
     return r
 
 
+def is_video(p):
+    return not web_url(p) and os.path.splitext(p)[1].lower() in ('.mp4', '.mov', '.m4v', '.webm')
+
+
 def shown_where(ddir):
     """Where it will appear — the app writes its current view to view.json"""
     try:
@@ -178,6 +187,9 @@ def main(argv):
         with open(LOG, 'a', encoding='utf-8') as f:
             f.write(json.dumps(record(real, os.environ, os.getcwd(), datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'), at), ensure_ascii=False) + '\n')
         print(f'{shown_where(os.path.dirname(LOG))}: {real}' + (f'  (spot / 짚음: {json.dumps(at, ensure_ascii=False)})' if at else ''))
+        if is_video(real) and not (at or {}).get('plain'):
+            print('opens as a video review — the notes the user leaves at times come to your chat, record in <data folder>/curation/ · --plain to just play / '
+                  '영상 검토 화면으로 뜸 — 사람이 시각마다 남긴 말이 채팅으로 온다, 기록은 <데이터>/curation/ · 그냥 재생은 --plain')
         hint = craft_hint(real)
         if hint:
             print(hint, file=sys.stderr)

@@ -71,14 +71,28 @@ pub fn team_locker_dismiss(window: tauri::WebviewWindow, local: String) -> Resul
     Ok(())
 }
 
+/// 화면이 알아듣는 '먼저 물어봐' 답 — 뒤에 진짜 파일 이름(domain/teamLocker runAskName)
+pub const RUN_ASK: &str = "needs-run-ok:";
+
+/// 기본 앱으로 열기 전 관문(보안 점검 H-1) — 실행될 수 있는 형식은 사람이 글자 확인을 누른 뒤(run_ok)에만. 화면이 아니라 여기서 푼 파일의 진짜 이름으로 본다 —
+/// 긴 이름은 safe_name 이 잘라 화면이 본 확장자와 디스크 확장자가 다를 수 있다
+fn run_gate(p: &Path, run_ok: bool) -> Result<(), String> {
+    let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    if !run_ok && crate::platform::runnable_name(&name) {
+        return Err(format!("{RUN_ASK}{name}"));
+    }
+    Ok(())
+}
+
 /// 열기 — 데이터 폴더 자리(team-locker-peek)에 풀고 그 경로. 화면이 스페이스(show 길)로 연다.
 /// external = 스페이스가 못 그리는 형식·'다른 앱으로 열기' — 그때만 맥 기본 앱으로도 연다(10-26 사용자)
 #[tauri::command]
-pub async fn team_locker_open(window: tauri::WebviewWindow, team: String, id: String, external: Option<bool>) -> Result<String, String> {
+pub async fn team_locker_open(window: tauri::WebviewWindow, team: String, id: String, external: Option<bool>, run_ok: Option<bool>) -> Result<String, String> {
     ui_only(&window)?;
     human_job(move |d, kc, h| {
         let p = crate::team_down::track(&team, &id, "open", |tick| app::view_with(d, kc, h, &team, &id, tick))?;
         if external.unwrap_or(false) {
+            run_gate(&p, run_ok.unwrap_or(false))?;
             crate::platform::open_path(&p.to_string_lossy()).map_err(|e| format!("못 열었어: {e}"))?;
         }
         Ok(p.to_string_lossy().into_owned())
@@ -225,10 +239,13 @@ pub fn team_down_stop(window: tauri::WebviewWindow, team: String, id: String) ->
 
 /// 다 받은 파일 — how = open(기본 앱으로 열기) | reveal(폴더에서 보기). 경로는 받기 기록에서만(화면이 경로를 못 고른다)
 #[tauri::command]
-pub async fn team_down_show(window: tauri::WebviewWindow, team: String, id: String, how: String) -> Result<(), String> {
+pub async fn team_down_show(window: tauri::WebviewWindow, team: String, id: String, how: String, run_ok: Option<bool>) -> Result<(), String> {
     ui_only(&window)?;
     tauri::async_runtime::spawn_blocking(move || {
         let p = crate::team_down::saved(&team, &id).ok_or("받은 파일이 없어요 — 다시 받아 주세요")?;
+        if how != "reveal" {
+            run_gate(&p, run_ok.unwrap_or(false))?;
+        }
         let r = if how == "reveal" { crate::platform::reveal(&p) } else { crate::platform::open_path(&p.to_string_lossy()) };
         r.map_err(|e| e.to_string())
     })
@@ -315,11 +332,41 @@ pub async fn team_file_attach(window: tauri::WebviewWindow, team: String, room: 
 
 /// 받은 파일 열기(대화 파일 풍선) — 보관함 열기와 같은 길
 #[tauri::command]
-pub async fn team_file_open(window: tauri::WebviewWindow, team: String, id: String, external: Option<bool>) -> Result<String, String> {
-    team_locker_open(window, team, id, external).await
+pub async fn team_file_open(window: tauri::WebviewWindow, team: String, id: String, external: Option<bool>, run_ok: Option<bool>) -> Result<String, String> {
+    team_locker_open(window, team, id, external, run_ok).await
 }
 
 #[tauri::command]
 pub async fn team_file_save(window: tauri::WebviewWindow, team: String, id: String) -> Result<String, String> {
     team_locker_save(window, team, id).await
+}
+
+#[cfg(test)]
+mod run_gate_tests {
+    use super::*;
+
+    #[test]
+    fn 실행될_수_있는_파일은_확인_없이_기본_앱으로_안_간다() {
+        let e = run_gate(Path::new("/d/peek/t/계약서.exe"), false).unwrap_err();
+        assert_eq!(e, format!("{RUN_ASK}계약서.exe"));
+        assert!(run_gate(Path::new("/d/peek/t/계약서.exe"), true).is_ok(), "사람이 글자 확인을 누른 뒤");
+        assert!(run_gate(Path::new("/d/peek/t/계약서.pdf"), false).is_ok());
+    }
+
+    // 화면이 본 이름과 디스크 이름은 다를 수 있다 — 긴 이름은 잘려 끝 확장자가 바뀐다. 그래서 푼 뒤 진짜 이름으로 본다
+    #[test]
+    fn 이름이_잘려_확장자가_바뀌어도_걸린다() {
+        let long = format!("{}.exe.zzz", "x".repeat(116));
+        let on_disk = crate::locker_fs::safe_name_for(&long, "_", false);
+        assert!(on_disk.ends_with(".exe"), "{on_disk}");
+        assert!(run_gate(&Path::new("/d/peek").join(&on_disk), false).is_err());
+    }
+
+    #[test]
+    fn 기본_앱으로_여는_두_길_모두_관문을_지난다() {
+        let src = include_str!("team_locker_cmd.rs");
+        let body = src.split("#[cfg(test)]").next().unwrap();
+        assert_eq!(body.matches("crate::platform::open_path(").count(), 2);
+        assert_eq!(body.matches("run_gate(&p, run_ok.unwrap_or(false))").count(), 2);
+    }
 }

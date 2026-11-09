@@ -40,15 +40,13 @@ describe('기능 켜기', () => {
     // 코드 프로젝트에 git 쓰기 — 설정을 못 읽은 동안은 끔(개발자 화면이 잠깐 덜 보일 뿐), 실제 값은 Rust 가 채운다(ADR 0024)
     expect(featuresOf(null).git).toBe(false);
     expect(featuresOf({ features: { git: true } }).git).toBe(true);
-    expect(featuresOf({ features: { tama: false } })).toEqual({ ...ALL_ON, tama: false });
+    expect(featuresOf({ features: { gacha: false } })).toEqual({ ...ALL_ON, gacha: false });
   });
 
   it('꺼 둔 기능의 단축키는 막는다', () => {
-    const off = { office: false, tama: false, gacha: false, review: false, voice: false, autoRevive: false, autoTidy: false, agentView: false, computerUse: false, usagePing: false, craftBasics: false, bubble: false, bubbleDesk: false, git: false, animation: 'auto' as const };
+    const off = { office: false, gacha: false, review: false, voice: false, autoRevive: false, autoTidy: false, agentView: false, computerUse: false, usagePing: false, craftBasics: false, bubble: false, bubbleDesk: false, git: false, animation: 'auto' as const };
     expect(allowed({ type: 'goto', to: 'office' }, off)).toBe(false);
-    expect(allowed({ type: 'goto', to: 'tama' }, off)).toBe(false);
     expect(allowed({ type: 'goto', to: 'review' }, off)).toBe(false);
-    expect(allowed({ type: 'widget' }, off)).toBe(false);
     expect(allowed({ type: 'goto', to: 'all' }, off)).toBe(true);
     expect(allowed({ type: 'goto', to: 'review' }, ALL_ON)).toBe(true);
   });
@@ -58,7 +56,7 @@ describe('기능 켜기', () => {
 describe('애니메이션 설정', () => {
   it('기본은 자동, 옛 설정(칸 없음)도 자동', () => {
     expect(ALL_ON.animation).toBe('auto');
-    expect(featuresOf({ features: { tama: false } }).animation).toBe('auto');
+    expect(featuresOf({ features: { gacha: false } }).animation).toBe('auto');
   });
   it('고른 값은 그대로, 모르는 값은 자동으로', () => {
     expect(featuresOf({ features: { animation: 'reduce' } }).animation).toBe('reduce');
@@ -75,7 +73,7 @@ describe('쓰는 기능(inUse)', () => {
     expect(inUse({ ...ALL_ON, git: true, review: false }).review).toBe(false);
   });
   it('다른 칸은 그대로', () => {
-    const f = { ...ALL_ON, git: false, tama: false };
+    const f = { ...ALL_ON, git: false };
     expect({ ...inUse(f), review: f.review }).toEqual(f);
   });
 });

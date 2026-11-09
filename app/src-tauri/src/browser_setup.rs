@@ -57,11 +57,19 @@ pub fn overall(steps: &[Step], i: usize, frac: Option<f64>) -> Option<u8> {
     Some(((done as f64 + cur) * 100.0 / total.max(1) as f64).round() as u8)
 }
 
+/// PATH 에서 한 폴더만 뺀다
+fn path_without(path: &str, dir: &str) -> String {
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    path.split(sep).filter(|d| d.trim_end_matches(['/', '\\']) != dir.trim_end_matches(['/', '\\'])).collect::<Vec<_>>().join(&sep.to_string())
+}
+
 /// 시스템 node(PATH·brew 자리) — (경로, 판, 큰 판). 셸 임시 경로(fnm)면 실제 경로로, brew 버전 폴더면 opt 로
 pub fn system_node(data: &Path) -> Option<(String, String, u32)> {
     let home = crate::config::home();
-    let p = crate::setup::pick_bin("node", &home, &std::env::var("PATH").unwrap_or_default(), |p| Path::new(p).is_file())?;
-    // 우리 링크·우리 node 는 시스템 것이 아니다
+    // 우리 링크·우리 node 는 시스템 것이 아니다 — tools/bin 은 건너뛰고 찾는다. 명령줄 도구 없는 맥은 그 폴더가 PATH 맨 앞이라(ADR 0027)
+    // 링크가 시스템 node 를 가려 설치를 마치자마자 'node 없음'이 됐다(11-05 실측)
+    let path = path_without(&std::env::var("PATH").unwrap_or_default(), &data.join("tools/bin").to_string_lossy());
+    let p = crate::setup::pick_bin("node", &home, &path, |p| Path::new(p).is_file())?;
     if Path::new(&p).starts_with(data.join("tools")) {
         return None;
     }
@@ -304,6 +312,14 @@ pub fn browser_setup_state() -> SetupState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn 앱_도구_폴더는_path_에서_빼고_찾는다() {
+        assert_eq!(path_without("/d/tools/bin:/usr/bin:/bin", "/d/tools/bin"), "/usr/bin:/bin");
+        assert_eq!(path_without("/usr/bin:/d/tools/bin/", "/d/tools/bin"), "/usr/bin");
+        assert_eq!(path_without("/usr/bin", "/d/tools/bin"), "/usr/bin");
+    }
 
     // 마지막 정리(.mcp.json 고치기)가 맥 권한 창 답을 기다리며 멈춰도 설치 끝 표시를 막지 않는다(2026-10-05 아이맥 QA)
     #[test]

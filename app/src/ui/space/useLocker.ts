@@ -1,9 +1,13 @@
 // 파일 보관함 v4 읽기·고치기 — 참모마다 진짜 폴더(Rust locker_fs). 고친 뒤엔 LOCKER_CHANGED 로 모든 보관함 화면이 다시 읽는다
+import { keepSame } from '../../domain/keepSame';
+import { every as everyShown } from '../poll';
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 import { EMPTY_TREE, type LkTree } from '../../domain/lockerTree';
 import type { Shot } from '../../domain/lockerShots';
 import type { TrashPlan } from '../../domain/lockerTrash';
+import { EMPTY_LINKS, type LinksStore, type LockerLink } from '../../domain/lockerLinks';
+import { every } from '../poll';
 
 /** 보관함이 바뀌었다 — 다시 읽기 */
 export const LOCKER_CHANGED = 'locker-changed';
@@ -33,11 +37,12 @@ export function useLockerTree(owner: LockerOwner | null, pollMs = 5000, open = f
   useEffect(() => {
     if (!id) { setV(EMPTY_TREE); return; }
     let alive = true;
-    const read = () => void invoke<LkTree>('locker_tree', { id, name, open }).then((x) => { if (alive) setV(x); }, () => {});
+    // 값이 그대로면 옛 참조 그대로 — 5초마다 새 객체를 넣어 스페이스 전체가 다시 그려졌다(11-07). 앱이 뒤면 5배 느리게
+    const read = () => void invoke<LkTree>('locker_tree', { id, name, open }).then((x) => { if (alive) setV((o) => keepSame(o, x)); }, () => {});
     read();
-    const t = window.setInterval(read, every);
+    const stop = everyShown(read, every);
     window.addEventListener(LOCKER_CHANGED, read);
-    return () => { alive = false; window.clearInterval(t); window.removeEventListener(LOCKER_CHANGED, read); };
+    return () => { alive = false; stop(); window.removeEventListener(LOCKER_CHANGED, read); };
   }, [id, name, every, open]);
   return v;
 }
@@ -84,6 +89,33 @@ export function useTrashUndo(ms = 10000): { last: TrashLast | null; toast: numbe
   }, [ms]);
   return { last, toast, hide: () => setToast(null) };
 }
+
+/** 링크 칸이 바뀌었다(넣기·빼기·되돌리기) — 다시 읽기 */
+export const LOCKER_LINKS_CHANGED = 'locker-links-changed';
+const linksChanged = <T,>(x: T) => { window.dispatchEvent(new Event(LOCKER_LINKS_CHANGED)); return x; };
+
+/** 보관함 링크 칸(시안 locker-links v1 B) — 그 참모 대화 기록을 이어 읽은 목록(Rust locker_links). on = 보관함 맨 위를 보는 동안만 5초마다(앱 창이 안 보이면 every 가 5배 늦춘다) */
+export function useLockerLinks(owner: { id: string; session?: string } | null, on: boolean, pollMs = 5000): LinksStore {
+  const [v, setV] = useState<LinksStore>(EMPTY_LINKS);
+  const id = owner?.id ?? '';
+  const session = owner?.session ?? null;
+  useEffect(() => {
+    if (!id || !on) return;
+    let alive = true;
+    const read = () => void invoke<LinksStore>('locker_links', { id, session }).then((x) => { if (alive) setV(x); }, () => {});
+    read();
+    const stop = every(read, pollMs);
+    window.addEventListener(LOCKER_LINKS_CHANGED, read);
+    return () => { alive = false; stop(); window.removeEventListener(LOCKER_LINKS_CHANGED, read); };
+  }, [id, session, on, pollMs]);
+  useEffect(() => setV(EMPTY_LINKS), [id]);
+  return v;
+}
+
+export const linksApi = {
+  linkAdd: (id: string, url: string) => invoke<LockerLink>('locker_link_add', { id, url }).then(linksChanged),
+  linkHide: (id: string, link: string, hide: boolean) => invoke('locker_link_hide', { id, link, hide }).then(linksChanged),
+};
 
 type AddResult = { added: { path: string; link: boolean }[]; errors: string[] };
 export type Ver = { n: number; path: string; size: number; mtime?: number | null };

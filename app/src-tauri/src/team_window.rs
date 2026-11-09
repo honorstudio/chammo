@@ -105,7 +105,7 @@ pub fn place(saved: Option<&Spot>, screens: &[Screen], main_at: (i32, i32)) -> (
     }
 }
 
-fn screens_of<R: Runtime>(app: &tauri::AppHandle<R>) -> Vec<Screen> {
+pub(crate) fn screens_of<R: Runtime>(app: &tauri::AppHandle<R>) -> Vec<Screen> {
     app.available_monitors()
         .unwrap_or_default()
         .iter()

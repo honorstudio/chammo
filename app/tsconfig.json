@@ -10,7 +10,11 @@
     "noEmit": true,
     "skipLibCheck": true,
     "isolatedModules": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "paths": {
+      "@pro/*": ["../pro/web/*", "./src/pro-stub/*"],
+      "*": ["./node_modules/@types/*", "./node_modules/*"]
+    }
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "../pro/web", "vite.config.ts"]
 }

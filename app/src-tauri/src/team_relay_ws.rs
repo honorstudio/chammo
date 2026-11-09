@@ -85,6 +85,8 @@ pub fn self_live() -> bool {
 
 /// 서버가 team_changed(합류·나감·새 방·방 바뀜)를 밀었다 — 다음 방 찾기에서 사람·명부 이름도 5분을 안 기다리고 다시 받는다
 static NAMES_NOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// 팀 권한이 바뀌었다(team_changed 의 plan 표시, relay ADR 0015) — 다음 방 찾기가 /v0/me 도 다시 받아 '읽기만' 줄·문의 창을 바로 맞춘다
+static PLAN_NOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// 보내고 서버 답(sent·error)을 기다리는 말 — 끊기면 다시 붙어 같은 cid 로 다시 싣는다(서버가 기기·cid 로 한 번만 저장)
 struct Pending {
@@ -406,6 +408,9 @@ impl Loop {
                 self.changed_at.get_or_insert_with(Instant::now);
                 // 사람이 들고 났다 — 보관함 받는 사람·서명 기기를 다음 목록에서 새로
                 crate::team_locker_app::forget_people(v["team"].as_str().unwrap_or(""));
+                if plan_changed(v) {
+                    PLAN_NOW.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
             }
             "msg" => {
                 if let Some(r) = self.conns.get_mut(room).and_then(|c| c.refill.as_mut()) {
@@ -505,7 +510,11 @@ impl Loop {
                     crate::team_alert::on_record(&rec);
                     let _ = tx.send(Ok(seq));
                 } else {
-                    let _ = tx.send(Err(format!("중계 서버 거절: {}", v["code"].as_str().unwrap_or("?"))));
+                    let _ = tx.send(Err(match v["code"].as_str().unwrap_or("?") {
+                        // 팀 권한이 끝난 팀(relay ADR 0015) — 읽기만 된다. 화면이 앞에 '못 보냈어요 — ' 를 붙이니 까닭만
+                        "payment_required" => "팀 권한이 끝났어요".to_string(),
+                        c => format!("중계 서버 거절: {c}"),
+                    }));
                 }
             }
             _ => {}
@@ -641,7 +650,7 @@ pub fn ensure(dir: &Path) {
         }
         let teams: Vec<String> = st.teams.iter().map(|t| t.id.clone()).collect();
         let (refresh, me) = refresh_plan(&teams, &changed, &new_rooms, due);
-        let me = me && st.account.is_some();
+        let me = (me || PLAN_NOW.swap(false, std::sync::atomic::Ordering::SeqCst)) && st.account.is_some();
         // 내 계정 먼저 — 모르던 팀이 생겨야 그 팀 명부를 받는다
         if me {
             let _ = crate::team_account::refresh_me(&dd, &kc, &team_relay::Curl);
@@ -668,6 +677,11 @@ pub fn ensure(dir: &Path) {
     });
     std::thread::spawn(move || Loop::new(d, keys, sink, rx).with_discover(discover).run());
     *g = Some(tx);
+}
+
+/// 팀 바뀜 알림이 권한 변경인가 — 보통 바뀜은 명부만 다시 받지만(10-31) 권한은 /v0/me 에 있다
+pub(crate) fn plan_changed(v: &Value) -> bool {
+    v["plan"] == true
 }
 
 /// 무엇을 다시 받나 — (명부를 다시 받을 팀, 내 계정·기기·사슬도). 5분 주기(due) = 모든 팀 + 내 계정.

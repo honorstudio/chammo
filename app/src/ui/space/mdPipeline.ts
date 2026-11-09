@@ -9,6 +9,7 @@ import { dropBreakSpace, keepBreaks, keepItemLines } from '../../domain/mdBreaks
 import { keepMarkers, keepNumbers } from '../../domain/mdMarkers';
 import { codeLinkText, keepCodeLinks, keepFences, keepLinkTitles, keepMarkedCode, keepSpanBreaks, mergeAroundCode, mergeInStrike, mergeSplitLinks, mergeSplitMarks } from '../../domain/mdInline';
 import { toPageBlocks } from './PageBlock';
+import { summaryHtml, toggleMd } from '../../domain/mdToggle';
 
 type Ed = BlockNoteEditor;
 type Blocks = Ed['document'];
@@ -75,7 +76,7 @@ function mappingFor(ed: Ed, st: State, text: string): Promise<Mapping> {
   return m;
 }
 
-const LIST_TYPES = new Set(['bulletListItem', 'numberedListItem', 'checkListItem', 'toggleListItem']);
+const LIST_TYPES = new Set(['bulletListItem', 'numberedListItem', 'checkListItem']); // 접는 목록은 <details> 라 목록 줄이 아니다
 const isList = (b: Blocks[number]) => LIST_TYPES.has(b.type);
 
 /** 블록들 → md(고친 블록) — BlockNote 는 목록 항목 아래 하위 문단을 최상위로 꺼내 써서(다시 읽으면 형제) 하위 블록은 우리가 들여 쓴다(nestChildren).
@@ -84,8 +85,16 @@ async function blocksToMd(ed: Ed, blocks: Blocks): Promise<string> {
   let out = '';
   for (let k = 0; k < blocks.length; k++) {
     const b = blocks[k]!;
-    const head = (await ed.blocksToMarkdownLossy([{ ...b, children: [] }])).replace(/\s+$/, '');
-    const text = b.children.length ? nestChildren(head, await blocksToMd(ed, b.children), isList(b.children[0]!)) : head;
+    let text: string;
+    const level = b.type === 'heading' && (b.props as { isToggleable?: boolean }).isToggleable ? (b.props as { level: number }).level : null;
+    if (b.type === 'toggleListItem' || level) {
+      // 접는 목록·접는 제목 — md 엔 접기가 없어 <details> 로(domain/mdToggle). 글은 편집기가 쓴 HTML(껍질·링크 내부 속성은 벗김)
+      const html = summaryHtml(await ed.blocksToHTMLLossy([{ type: 'paragraph', content: b.content, children: [] } as never]));
+      text = toggleMd(html, level, b.children.length ? await blocksToMd(ed, b.children) : '');
+    } else {
+      const head = (await ed.blocksToMarkdownLossy([{ ...b, children: [] }])).replace(/\s+$/, '');
+      text = b.children.length ? nestChildren(head, await blocksToMd(ed, b.children), isList(b.children[0]!)) : head;
+    }
     const prev = blocks[k - 1];
     if (k) out += prev && isList(prev) && isList(b) && prev.type === b.type ? '\n' : '\n\n';
     out += text;
@@ -103,7 +112,8 @@ export async function writeMd(editor: Ed, base: string): Promise<string> {
   try {
     out = await preserve(editor, b);
   } catch {
-    out = fixWritten(b, await editor.blocksToMarkdownLossy(editor.document));
+    // 우리 블록 쓰기(하위 블록 들여쓰기·접는 블록)부터, 그것도 안 되면 BlockNote 출력 그대로
+    out = fixWritten(b, await blocksToMd(editor, editor.document).catch(() => editor.blocksToMarkdownLossy(editor.document)));
   }
   return crlf ? out.replace(/\r?\n/g, '\r\n') : out;
 }

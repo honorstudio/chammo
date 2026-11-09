@@ -3,6 +3,9 @@
 // 권한 창 맨 위는 Deny 일 수 있다(computer-use) — Enter = 맨 위 가정 금지. 비밀번호·2FA·결제·과금 창은 사람 몫.
 // 민감한 낱말은 창이 묻는 말에서만 찾는다 — 명령 본문·위쪽 대화 기록은 빼고(2026-09-28 project-b: 커밋 메시지의 "인증번호" 로 10분 멈춤)
 import { tr } from '../i18n';
+import { sentBy } from './forwardQuestion';
+import type { Session } from './session';
+import type { TaskEvent } from './tasks';
 const SENSITIVE = /password|비밀번호|2fa|otp|인증\s*번호|결제|payment|billing|과금|credit card|카드/i;
 const ALLOW = /\b(allow|yes|approve|continue|use|deliver)\b|허용|승인|전달/i;
 const NOT = /deny|don't|do not|without|reject|cancel|거절|거부|다시 묻지/i;
@@ -20,13 +23,55 @@ const ATTACHING = /session is starting|waiting for session to redraw|starting ba
 
 const SENSITIVE_SKIP = (): AllowPick => ({ skip: tr('민감한 창(비밀번호·인증·결제) — 직접 골라줘', 'Sensitive prompt (password, verification, payment) — choose it yourself'), hold: true });
 
+const RULE = /─{4,}/;
+
+/** 선택지 커서 줄 — 아래에서부터 찾는다. 창의 커서(❯ 1. Yes · ❯ Deny …)는 늘 한 칸 넘게 들여 쓴다 —
+ *  맨 앞 칸의 ❯ 는 대화 기록의 '내 말'이나 입력칸이라 커서가 아니다. 찾는 길에 입력칸(구분선 바로 아래 맨 앞 ❯)을 먼저 만나면
+ *  창이 아직 안 그려진 화면 — 그 위는 대화 기록이라 거기 인용된 "❯ 1. Yes" 를 커서로 잡지 않는다.
+ *  창 아래에 세션 이름 구분선('──── ci-runner ─')·상태줄·작업 목록이 붙어도 찾는다(2026-11-05 — 마지막 구분선 아래만 보다가 135번 건너뜀) */
+function cursorAt(all: string[]): number {
+  for (let i = all.length - 1; i >= 0; i--) {
+    if (/^❯(\s|$)/.test(all[i]!) && i > 0 && RULE.test(all[i - 1]!)) return -1;
+    if (/^\s+❯\s/.test(all[i]!)) return openBelow(all, i) ? -1 : i;
+  }
+  return -1;
+}
+
+/** 세션 이름 구분선('──── ci-runner ─') — 창 아래에 붙는다 */
+const NAMED_RULE = /─{4,}\s+\S.*─\s*$/;
+/** 창 아래 붙는 것(상태줄·작업 목록) */
+const FOOTER = /^\s*$|⏵⏵|shift\+tab|bypass permissions|auto mode|· (Opus|Sonnet|Haiku|Fable)\b|^\s*\d+ tasks? \(|^\s*[◻◼✔]/;
+/** 커서 아래 이름 없는 구분선 뒤에 상태줄·작업 목록 말고 다른 게 있다 = 그 구분선이 새 창의 윗줄(덜 그려짐) — 커서는 그 위 대화 기록이다.
+ *  모르는 모양이면 '못 찾음'(안 누름)으로 기운다 */
+function openBelow(all: string[], cur: number): boolean {
+  for (let i = cur + 1; i < all.length; i++) {
+    if (!RULE.test(all[i]!) || NAMED_RULE.test(all[i]!)) continue;
+    let j = i + 1;
+    while (j < all.length && !RULE.test(all[j]!) && FOOTER.test(all[j]!)) j++;
+    if (j < all.length && !RULE.test(all[j]!)) return true;
+  }
+  return false;
+}
+
+/** 창이 시작하는 줄 — 커서 위 마지막 구분선 다음 줄(커서가 없으면 마지막 구분선 다음 줄) */
+function windowFrom(all: string[], cur: number): number {
+  let from = 0;
+  all.forEach((l, i) => { if ((cur < 0 || i < cur) && RULE.test(l)) from = i + 1; });
+  return from;
+}
+
+/** 건너뛴 창 기록용 — 창 첫 12줄(300자). 왜 건너뛰었는지 나중에 보려고 */
+export function promptTail(screen: string): string {
+  const all = screen.split('\n');
+  return all.slice(windowFrom(all, cursorAt(all))).map((l) => l.trim()).filter(Boolean).slice(0, 12).join(' / ').slice(0, 300);
+}
+
 export function pickAllow(screen: string): AllowPick {
   const all = screen.split('\n');
-  // 대화 기록의 "❯ 내가 친 말" 과 헷갈리지 않게 마지막 구분선 아래만 본다
-  let from = 0;
-  all.forEach((l, i) => { if (/─{4,}/.test(l)) from = i + 1; });
-  const lines = all.slice(from);
-  const cur = lines.findIndex((l) => /^\s*❯\s/.test(l));
+  // 커서 줄을 먼저 찾고 그 위 마지막 구분선부터가 창 — 위쪽 대화 기록("❯ 내가 친 말")은 안 본다
+  const at = cursorAt(all);
+  const lines = all.slice(windowFrom(all, at));
+  const cur = at < 0 ? -1 : at - (all.length - lines.length);
   if (cur < 0 && ATTACHING.test(screen)) return { skip: tr('세션 화면이 아직 안 떴어', 'Session screen not ready yet'), soon: true };
   if (cur < 0) return SENSITIVE.test(lines.join('\n')) ? SENSITIVE_SKIP() : { skip: tr('선택지 커서를 못 찾았어', "Couldn't find the option cursor") };
   // 선택지 = 커서 줄과 글자 시작 칸이 같은, 이어진 줄들
@@ -78,6 +123,20 @@ export function leftWindow(held: Iterable<string>, sessions: { id: string; waiti
   const waiting = new Set(sessions.filter((s) => auto.includes(s.waitingFor ?? '')).map((s) => s.id));
   return [...held].filter((id) => !waiting.has(id));
 }
+
+/** 권한 창에서 멈춘 세션을 알릴 참모 — 일 기록으로 그 세션에 일을 맡긴(넘겨받았으면 새 주인) 참모만. 없으면 undefined(사용자 알림만, 예전처럼).
+ *  참모가 확인창에 걸려 있으면 넣지 않는다 — 그 입력칸에 글자 + Enter 를 넣으면 참모 창의 선택지를 골라 버린다 */
+export function permStuckTo(sub: Session, events: TaskEvent[], orchs: Session[], sessions: Session[]): Session | undefined {
+  const to = sentBy(sub, events, orchs, sessions);
+  return to && to.id !== sub.id && to.state !== 'blocked' ? to : undefined;
+}
+
+/** 맡긴 참모 입력칸에 들어갈 한 줄(Enter 로 보내져서 줄바꿈 없이) — 선택지 창 30초 줄(forwardQuestion forwardText)과 같은 모양 */
+export const permStuckText = (s: Session, why: string) => {
+  const where = [s.project, s.workspace, s.name && s.name !== s.project ? s.name : null].filter(Boolean).join(' / ');
+  const w = why.replace(/\s+/g, ' ').trim();
+  return tr(`[앱] ${where} 세션(${s.id})이 권한 창에서 멈췄어 — ${w}`, `[app] ${where} session (${s.id}) is stuck on a permission prompt — ${w}`);
+};
 
 export type AllowLog = { ts: string; where: string; option?: string; result: string };
 

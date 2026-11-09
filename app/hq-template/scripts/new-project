@@ -74,10 +74,14 @@ def swap_in(tmp, cj):
 
 
 def git_ok():
-    """이 기기에서 git 을 불러도 되나 — 맥은 명령줄 도구가 없으면 /usr/bin/git 이 설치 창을 띄운다"""
-    if not shutil.which('git'):
+    """이 기기에서 git 을 불러도 되나 — 맥은 명령줄 도구가 없으면 /usr/bin/git 이 설치 창을 띄운다.
+    앱이 PATH 앞에 둔 대리(<데이터>/tools/bin/git, ADR 0027)면 괜찮다 — 처음 쓸 때 git 을 받아서 잇는다"""
+    found = shutil.which('git')
+    if not found:
         return False
     if sys.platform == 'darwin':
+        if found.endswith('/tools/bin/git'):
+            return True
         try:
             return subprocess.run(['xcode-select', '-p'], capture_output=True, timeout=5).returncode == 0
         except (OSError, subprocess.TimeoutExpired):

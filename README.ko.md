@@ -239,7 +239,7 @@ Chammo 계정·메신저 자세한 내용: [개인정보 처리방침](https://c
 
 [AGPL-3.0](LICENSE) © 2026 Honor Studio
 
-0.4.9 설치 파일의 사용 조건은 앱 안 '오픈소스 라이선스'에 있습니다.
+이 저장소에는 Chammo 앱 소스가 있고, 위 AGPL-3.0 을 따릅니다. 공식 설치 파일(Releases 의 DMG·setup.exe)에는 이 저장소에 없는 팀 기능 두 가지, 팀 메모리와 내 팀 참모가 더 들어 있습니다. 이 소스로 빌드하면 그 둘은 없습니다. 공식 설치 파일 전체의 사용 조건은 앱 안 '오픈소스 라이선스'에 있습니다.
 
 제3자: 터미널 한글 글꼴 `app/public/fonts/ChammoHangul.woff2` 는 네이버 [D2Coding](https://github.com/naver/d2codingfont)을 한글만 남겨 고친 것으로, SIL Open Font License 1.1 에 따라 이름을 바꿨습니다 — [`app/public/fonts/OFL.txt`](app/public/fonts/OFL.txt) 참고. 선택 기능인 Supertonic 음성은 고를 때만 맥에 받습니다: `supertonic` 패키지(MIT)와 [OpenRAIL-M 라이선스](https://huggingface.co/Supertone/supertonic-3)의 Supertone 모델(사용 제한 있음). 스페이스의 엑셀 표는 [Univer](https://github.com/dream-num/univer) 오픈소스 판(Apache-2.0)을 씁니다 — 고지는 [`app/public/licenses/THIRD_PARTY_NOTICES.md`](app/public/licenses/THIRD_PARTY_NOTICES.md). 라이브러리(Tauri, React, xterm.js, BlockNote, pdf.js, Playwright MCP 등)는 각자의 라이선스(MIT / Apache-2.0 / MPL-2.0 / BSD-3-Clause — `ed25519-dalek`·`x25519-dalek`, `webpki-roots` 의 루트 인증서 데이터는 CDLA-Permissive-2.0)를 따릅니다.
 

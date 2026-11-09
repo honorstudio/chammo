@@ -1,15 +1,17 @@
 // 폰 입구 (ADR 0013) — 공개 주소의 첫 화면. 하는 일은 셋: Chammo 계정(구글) 로그인 → 내 컴퓨터 숫자 확인(ADR 0014), 컴퓨터 화면 받아 두고 열기,
 // 옛 QR 짝짓기(두드리기 — 아이폰 사파리에선 안 함: 홈 화면 앱엔 안 남는다)
 // 컴퓨터 화면(참모 채팅·카드·대기함·세션)은 여기 없다 — 터널로 그 컴퓨터에서 받아 서비스 워커가 / 에 내준다
-import { OfflineError, tunnelFor } from './hub';
+import { OfflineError, TrustError, tunnelFor } from './hub';
 import { isIos, loginPlace } from './homeFirst';
 import { forgetKeys, phoneKeys } from './keys';
 import { knockPair } from './knock';
 import { keyShape, knockLink, type Computer } from './linkKnock';
+import { clearMail, knockCode, mailNote, MailCodeError, readMail, saveMail } from './mailLink';
 import { homeUrl, readLink, saveLink, type RelayLink } from './link';
 import { planPair } from './pairPlan';
 import { call } from './relayClient';
-import { dropShell, fetchShell } from './shell';
+import { unlinkPhone, wipeAll } from './reset';
+import { fetchShell } from './shell';
 
 const TOKEN_KEY = 'chammo.token'; // data/web.ts 와 같은 칸
 const ACCOUNT_KEY = 'chammo.account';
@@ -114,6 +116,12 @@ async function open(link: RelayLink) {
     await fetchShell(tunnelFor(link), link.relay);
     location.replace(homeUrl(location.search));
   } catch (e) {
+    if (e instanceof TrustError) {
+      return screen('이 폰 연결이 풀렸어요', '다시 로그인하면 바로 이어져요.', [
+        { label: '다시 잇기', primary: true, run: () => void unlinkPhone().finally(() => location.replace('/pair')) },
+        { label: '다시 해 보기', run: () => void open(link) },
+      ]);
+    }
     const off = e instanceof OfflineError;
     // 글은 소넷(11-04) — 망 오류(TypeError)는 속 글 대신 한 줄, 그 밖(서비스 워커 없음 등)은 할 일이 담긴 글 그대로
     screen(off ? '아직 꺼져 있어요' : '연결하지 못했어요', off ? `${link.macName ?? '컴퓨터'}에서 Chammo 를 켜면 저절로 이어져요` : e instanceof TypeError ? '연결이 잠깐 끊겼어요. 다시 눌러 주세요' : (e as Error).message, [{ label: '다시', primary: true, run: () => void open(link) }]);
@@ -126,14 +134,6 @@ const BAD: Record<string, string> = {
   relay: '이 QR 은 이 입구의 중계 서버를 쓰지 않아요 — 내 컴퓨터 Chammo 에서 만든 QR 인지 봐 주세요.',
   config: '입구 설정(중계 주소)이 없어요 — 관리자에게 알려 주세요.',
 };
-
-/** 받아 둔 화면·열쇠·토큰·계정 표시를 다 지운다 — 다른 컴퓨터로 바꿀 때(보안 검토 A) */
-async function wipeAll() {
-  await dropShell().catch(() => {});
-  store.set(TOKEN_KEY, null);
-  store.set(ACCOUNT_KEY, null);
-  saveLink(null);
-}
 
 /** 짝짓기 링크 — 다른 컴퓨터로 바꾸면 먼저 묻고, 짝지을 때마다 새 열쇠(보안 검토 A·D) */
 async function pairNow(hash: string, relay: string | undefined, confirmed = false) {
@@ -180,8 +180,8 @@ async function mine(relay: string, acc: Account) {
     // 같은 폰의 다른 브라우저(아이폰 사파리 ↔ 홈 화면 앱) 로그인이 계정에 따로 있다 — 중계가 대기 폰에만 알려 준다
     const twin = pending && r.json.samePhone === true ? ' 하루 사이에 같은 종류 폰이 계정에 또 들어왔어요 — 이 폰 사파리 로그인이었다면 컴퓨터 기기 관리에서 빼 주세요.' : '';
     const text = pending
-      ? `내 컴퓨터를 고르면 양쪽 화면에 같은 숫자가 떠요 — 같으면 컴퓨터에서 허용을 눌러요. 다른 기기 카드에서 허용해도 돼요.${auto}${twin}`
-      : pcs.length ? '고르면 양쪽 화면에 같은 숫자가 떠요 — 같으면 컴퓨터에서 허용을 눌러요.' : '컴퓨터 Chammo 에서 같은 Chammo 계정으로 로그인하면 여기 나와요.';
+      ? `내 컴퓨터를 고르면 확인을 시작해요. 다른 기기 카드에서 허용하면 계정에만 들어오고, 컴퓨터를 열려면 이 확인이 한 번 더 필요해요.${auto}${twin}`
+      : pcs.length ? '고르면 확인을 시작해요.' : '컴퓨터 Chammo 에서 같은 Chammo 계정으로 로그인하면 여기 나와요.';
     // online 은 허용된 폰에만 온다(대기 중이면 null — 모름)
     const first = pcs.find((c) => c.online !== false);
     screen(title, text, [
@@ -197,23 +197,67 @@ async function mine(relay: string, acc: Account) {
 let linkRun = 0;
 
 /** 숫자 확인 — 숫자가 뜨면 컴퓨터에서 사람이 허용할 때까지 기다린다 */
-async function linkTo(relay: string, acc: Account, c: Computer) {
+async function linkTo(relay: string, acc: Account, c: Computer, again = false) {
   const me = ++linkRun;
-  screen('컴퓨터에 묻는 중', `${c.name} 에 숫자 확인을 보내고 있어요.`, [], true);
+  screen('컴퓨터에 묻는 중', `${c.name} 에 확인을 보내고 있어요.`, [], true);
   try {
-    const { token, link } = await knockLink(relay, acc.device, c,
-      (sas) => me === linkRun && screen(sas, `${c.name} 화면에 같은 숫자가 떴으면 거기서 허용을 눌러요. 숫자가 다르면 거절해요 — 누군가 가운데 끼어든 거예요.`, [], true),
+    const r = await knockLink(relay, acc.device, c,
+      // 메일이 안 나가면 컴퓨터가 숫자 확인으로 내려간다 — 돌아와도 코드 화면으로 안 가게
+      (sas) => { clearMail(store); return me === linkRun && screen(sas, `${c.name} 화면에 같은 숫자가 떴으면 거기서 허용을 눌러요. 숫자가 다르면 거절해요 — 누군가 가운데 끼어든 거예요.`, [], true); },
       // 컴퓨터가 허용했다 — 이 폰에서도 사람이 한 번 더(양쪽 확인)
       (sas) => new Promise<boolean>((ok) => screen(`${sas}`, `컴퓨터 화면에 이 숫자가 떴었나요? 같았으면 '같았어요', 아니면 '달랐어요'를 눌러요.`, [
         { label: '같았어요', primary: true, run: () => ok(true) },
         { label: '달랐어요', run: () => ok(false) },
       ])));
-    store.set(TOKEN_KEY, token);
-    saveLink(link);
-    if (store.get(TOKEN_KEY) !== token) throw new Error('이 브라우저가 저장을 막아요(개인 정보 보호 모드?) — 일반 창에서 다시 해 주세요');
-    await open(link);
+    if ('mail' in r) {
+      if (me !== linkRun) return;
+      if (r.locked) { clearMail(store); return screen('코드를 5번 틀렸어요', `${Math.ceil(r.locked / 60)}분 뒤 새 코드를 받아 주세요.`, [{ label: '처음으로', primary: true, run: () => void mine(relay, acc) }]); }
+      saveMail(store, acc.device, c, Date.now());
+      return mailScreen(relay, acc, c, r.sent ? (again ? '메일을 다시 보냈어요.' : '') : `메일을 방금 보냈어요. ${r.wait}초 뒤 다시 받을 수 있어요.`);
+    }
+    await finishLink(r);
   } catch (e) {
     if (me === linkRun) screen('못 열었어요', (e as Error).message, [{ label: '다시', primary: true, run: () => void mine(relay, acc) }]);
+  }
+}
+
+/** 받은 토큰·링크를 저장하고 연다 */
+async function finishLink({ token, link }: { token: string; link: RelayLink }) {
+  clearMail(store);
+  store.set(TOKEN_KEY, token);
+  saveLink(link);
+  if (store.get(TOKEN_KEY) !== token) throw new Error('이 브라우저가 저장을 막아요(개인 정보 보호 모드?) — 일반 창에서 다시 해 주세요');
+  await open(link);
+}
+
+/** 메일 코드 화면 — 소켓이 없으니 메일 앱에 다녀와도 그대로, 새로 열어도 저장소에서 여기로 돌아온다(main) */
+function mailScreen(relay: string, acc: Account, c: Computer, note = '') {
+  const input = document.createElement('input');
+  input.className = 'pw-code';
+  input.inputMode = 'numeric';
+  input.autocomplete = 'one-time-code';
+  input.maxLength = 6;
+  input.setAttribute('aria-label', '메일로 온 6자리 코드');
+  const submit = () => {
+    const code = input.value.replace(/\D/g, '');
+    if (code.length !== 6) return mailScreen(relay, acc, c, '6자리 숫자를 넣어 주세요.');
+    void checkCode(relay, acc, c, code);
+  };
+  input.onkeydown = (e) => { if (e.key === 'Enter') submit(); };
+  screen('메일로 온 코드를 넣어 주세요', `${acc.email ?? 'Chammo 계정 메일'} 로 보냈어요. ${note}`.trim(), [
+    { label: '확인', primary: true, run: submit },
+    { label: '메일 다시 받기', run: () => void linkTo(relay, acc, c, true) },
+    { label: '처음으로', run: () => { clearMail(store); void mine(relay, acc); } },
+  ], false, input);
+}
+
+async function checkCode(relay: string, acc: Account, c: Computer, code: string) {
+  screen('확인하는 중', `${c.name} 에 코드를 보내고 있어요.`, [], true);
+  try {
+    await finishLink(await knockCode(relay, acc.device, c, code));
+  } catch (e) {
+    if (e instanceof MailCodeError && e.kind === 'off') { clearMail(store); return screen('못 열었어요', mailNote(e), [{ label: '처음으로', primary: true, run: () => void mine(relay, acc) }]); }
+    mailScreen(relay, acc, c, mailNote(e));
   }
 }
 
@@ -269,7 +313,11 @@ async function main() {
   if (link && store.get(TOKEN_KEY) && location.pathname !== '/pair') return open(link);
   const acc = account();
   // 로그인한 폰은 QR 없이 — 내 계정 컴퓨터를 골라 숫자 확인(ADR 0014)
-  if (relay && acc?.device && !(link && store.get(TOKEN_KEY)) && location.pathname !== '/pair-qr') return mine(relay, acc);
+  if (relay && acc?.device && !(link && store.get(TOKEN_KEY)) && location.pathname !== '/pair-qr') {
+    // 메일 코드를 기다리던 중이면(메일 앱에 다녀옴·새로고침) 코드 화면으로
+    const waiting = readMail(store, acc.device, Date.now());
+    return waiting ? mailScreen(relay, acc, waiting.mac) : mine(relay, acc);
+  }
   // 아이폰 사파리에서 아무것도 없이 열면 — 여기서 로그인·짝짓기하면 홈 화면 앱엔 안 남으니 홈 화면부터
   if (!acc && !link && homeFirst()) return addHomeFirst();
   onStart = () => start(relay, link, acc);

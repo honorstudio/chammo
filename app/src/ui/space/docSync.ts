@@ -17,9 +17,9 @@ const EVERY = 1500;
 type Ed = BlockNoteEditor;
 type Blocks = Ed['document'];
 
-export function useDocSync(editor: Ed, path: string, md: string) {
+export function useDocSync(editor: Ed, path: string, md: string, personal = false) {
   const s = useRef<DocSession>(null as unknown as DocSession);
-  if (!s.current) s.current = newSession(path, md);
+  if (!s.current) s.current = newSession(path, md, personal);
   const ready = useRef(false);
   const busy = useRef(false);
   /** 편집기가 스스로 바꾸는 중 — 그 바뀜 알림은 사람이 친 게 아니다(저장·보낼 것에 안 넣는다) */
@@ -72,7 +72,7 @@ export function useDocSync(editor: Ed, path: string, md: string) {
     setBase(ses, text, stamp);
     // 쓸 글은 기준을 바깥 판으로 바꾼 뒤에 — 들어온 블록이 바깥 판 원래 글 그대로 남는다(먼저 만들면 BlockNote 모양으로 다시 써졌다)
     const out = await normalize();
-    absorbOutside(path, before, out);
+    if (!personal) absorbOutside(path, before, out);
     if (mine) saveSoon(ses, out); // 합친 판(내 것 + 바깥 것)을 바깥 판 기준으로 쓴다
     else lastSaved.set(path, out); // 바깥 판만 들어왔다 — 다시 쓰지 않는다(파일 모양을 편집기 모양으로 바꾸지 않게)
     setState('ok');
@@ -154,7 +154,7 @@ export function useDocSync(editor: Ed, path: string, md: string) {
       setBase(ses, t.text, t.stamp);
       const out = await normalize(); // 바깥 판 기준으로 — 바깥 판 글 그대로
       lastSaved.set(path, out);
-      absorbOutside(path, mine, out);
+      if (!personal) absorbOutside(path, mine, out);
       ses.blocked = false;
       theirs.current = null;
       setState('ok');

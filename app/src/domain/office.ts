@@ -1,8 +1,11 @@
 // 픽셀 사무실 — 세션을 책상에 앉힌다. 순수 TS(그리기는 ui/office). 시안: docs/design-drafts/pixel-office
-// 방(아늑한 방): 가로 8칸. 맨 뒤(gy 1.1) 가운데 = 참모 반장 책상, 양옆 = 참모-2·3. 그 앞으로 하위 세션이 한 줄에 셋씩
+// 방 한 칸은 planOffice — 모양·규칙은 domain/officeRoom, 맨 뒤(gy 1.1) 가운데 = 반장 책상, 양옆 = 다음 참모, 그 앞이 직원 자리
 
 import type { ActivityStatus } from './status';
 import type { WorkAct } from './activity';
+import { ART_ITEMS } from './catalog/art.gen';
+import type { OrchSeat } from './gacha';
+import { LEVELS, roomDims, seatsOf, type FloorItem, type OfficeRoom, type WallItem } from './officeRoom';
 
 /** 사무실에서 하는 짓 — 작업 중(들썩) · 답 필요(말풍선) · 끝남(머그) · 대기(가만히) · 쉼(z) */
 export type OfficeState = 'working' | 'asks' | 'done' | 'wait' | 'sleep';
@@ -19,8 +22,11 @@ export function officeState(s: ActivityStatus): OfficeState {
   }
 }
 
-/** 하위 세션 캐릭터 후보 — 도감의 성숙기 28종 */
-const ROSTER = ['fire', 'wave', 'leaf', 'star'].flatMap((f) => ['cG', 'cD', 'cA', 'cT', 'cM', 'cS', 'cN'].map((s) => `${f}_${s}`));
+/** 하위 세션 캐릭터 후보 — 도감의 성숙기 28종 + 새 캐릭터(전설 빼고). 가졌는지와 상관없다(사용자 11-06 '지금처럼 랜덤') */
+const ROSTER = [
+  ...['fire', 'wave', 'leaf', 'star'].flatMap((f) => ['cG', 'cD', 'cA', 'cT', 'cM', 'cS', 'cN'].map((s) => `${f}_${s}`)),
+  ...ART_ITEMS.filter((c) => c.kind === 'chr' && c.rarity !== '전설').map((c) => c.id.slice(4)),
+];
 
 const hash = (s: string) => [...s].reduce((h, c) => (h * 33 + c.charCodeAt(0)) >>> 0, 5381);
 
@@ -31,60 +37,117 @@ export const colorFor = (key: string) => hash(key + '#c');
 
 /** act = 작업 중일 때 도구로 정한 행동, doing = 머리 위 한 줄('Edit ambassador.ts'), human = 세션 브라우저가 사람을 부른 이유(browser_ask_human) */
 export type Seat = { id: string; label: string; project: string; status: ActivityStatus; startedAt: number; act?: WorkAct; doing?: string; human?: string };
-/** empty = 세션이 나간 자리(빈 책상) — 다른 세션이 밀려 앉지 않게 남겨 둔다 */
-export type Desk = { id: string; label: string; gx: number; gy: number; w: number; boss?: boolean; empty?: boolean; spr: string; st: OfficeState; color: number; act?: WorkAct; doing?: string;
+/** empty = 세션이 나간 자리(빈 책상) — 다른 세션이 밀려 앉지 않게 남겨 둔다. off = 꺼진 참모 자리(이름표는 남는다). stand = 자리가 없어 문 앞에 선 직원(책상 없음).
+ *  tuck = 문 앞도 꽉 차 방엔 안 그리는 직원(현황판엔 남는다), more = 이 사람 이름표에 접힌 사람 수 */
+export type Desk = { id: string; label: string; gx: number; gy: number; w: number; boss?: boolean; empty?: boolean; off?: boolean; stand?: boolean; tuck?: boolean; more?: number; spr: string; st: OfficeState; color: number; act?: WorkAct; doing?: string;
   /** 원래 상태 — 말(statusWord)은 이걸로, 짓(st)은 물어봄·확인창을 하나로 */ status?: ActivityStatus; human?: string };
-/** pushed = 놓아 둔 칸을 새 책상이 덮어서 휴게실로 비켜 있음(자리가 비면 돌아간다) */
-export type Placed = { id: string; gx: number; gy: number; pushed?: boolean };
-/** furniture = 휴게실에 놓인 가구(withLounge) */
-export type Room = { cols: number; rows: number; desks: Desk[]; furniture?: Placed[] };
+export type Placed = { id: string; gx: number; gy: number };
+/** furniture = 놓인 가구. door·floor·wall·zone·short·used 는 사무실 v2(planOffice) — short = 자리가 없어 선 직원 수, used = 직원 자리를 쓰는 사람 수(선 사람 포함, 뒷줄 제자리 참모는 빼고) */
+export type Room = { cols: number; rows: number; desks: Desk[]; furniture?: Placed[]; door?: boolean; floor?: FloorItem[]; wall?: WallItem[]; zone?: [number, number]; lv?: number; short?: number; used?: number };
 
-const COLS = 8;
 const BACK_Y = 1.1;
-const FRONT_X = [0.5, 3.2, 5.9];
 const ROW0 = 3.2;
-const ROW_GAP = 2.1;
-
-/** 뒷줄 책상 자리(반장·옆자리 둘) — 참모가 아직 없어도 가구는 못 놓는다(나중에 앉으면 덮이니까) */
+/** 뒷줄 책상 자리(반장·옆자리 둘) */
 const BACK_SEATS: [number, number][] = [[2.8, 2.4], [0.6, 1.6], [5.6, 1.6]];
-const DESK_D = 1.2;
-const covers = (x: number, y: number, w: number, [cx, cy]: [number, number]) => cx < x + w && cx + 1 > x && cy < y + DESK_D && cy + 1 > y;
 
-/** 놓인 가구 칸(창고·안 놓은 건 빼고) — planRoom 의 furniture 로 넘겨 책상이 피하게 */
-export function placedCells(ids: string[], placed: Record<string, [number, number] | null> = {}): [number, number][] {
-  return ids.flatMap((id) => (placed[id] ? [placed[id]!] : []));
-}
+/** 참모 — name 은 gacha.json 의 chars·orchSeats 칸. spr = 고른 캐릭터(없으면 이름으로 랜덤), off = 지금 꺼짐(출근 전) */
+export type OrchIn = Seat & { name: string; spr?: string; off?: boolean };
+const BACK_W = 1.6, BOSS_W = 2.4;
+const STAND_X = 0.5;
+/** 문 앞에 서는 건 둘까지, 한 칸 간격 — 더 세우면 0.8칸마다 겹겹이 쌓여 누가 누군지 안 보였다(11-09 사용자). 나머지는 마지막 사람 이름표에 +N */
+const STAND_MAX = 2, STAND_GAP = 1;
 
 /**
- * orchestrators = 참모들(처음이 반장), workers = 하위 세션. boss = 반장 자리 캐릭터(지금 키우는 다마고치).
- * 옆자리는 둘까지, 그 뒤 참모는 하위 세션 줄에 섞는다. slots = 앞줄 자리표(seatSlots) — 주면 그 자리에, null 은 빈 책상.
- * furniture = 놓인 가구 칸 — 가구가 먼저다: 앞줄 책상은 가구 칸을 건너뛰고 다음 빈 자리에 앉는다.
- * 세션이 늘면 책상이 가구 칸을 덮어 가구를 휴게실로 밀어냈다 — 다시 켜면 옮긴 자리에 없었다(2026-10-10 사용자)
+ * 자리를 안 정한 참모의 기본 자리 — 첫 사무실 뒷줄. 반장(첫째)은 가운데 큰 책상, 나머지는 옆자리 둘, 다 찼으면 없음(직원 자리에 앉는다).
+ * 이미 누가 정해 앉은 자리는 건너뛴다
  */
-export function planRoom(orchestrators: Seat[], workers: Seat[], boss: string, slots?: (string | null)[], furniture: [number, number][] = []): Room {
+export function defaultSeats(orchs: { name: string; off?: boolean }[], seats: Record<string, OrchSeat> = {}): Map<string, { x: number; y: number; w: number }> {
+  const out = new Map<string, { x: number; y: number; w: number }>();
+  const taken = Object.values(seats).filter((s) => s.office === 0).map((s) => s.x);
+  const free = BACK_SEATS.slice(1).filter(([x]) => !taken.includes(x));
+  orchs.forEach((o, i) => {
+    if (seats[o.name]) return;
+    if (i === 0 && !taken.includes(BACK_SEATS[0]![0])) { out.set(o.name, { x: BACK_SEATS[0]![0], y: BACK_Y, w: BOSS_W }); return; }
+    const k = free.shift();
+    if (k) out.set(o.name, { x: k[0], y: BACK_Y, w: BACK_W });
+  });
+  return out;
+}
+/** 켜졌는데 뒷줄 자리가 없어 직원 자리에 앉는 참모 — 자리표(seatSlots)에 같이 넣는다 */
+export const poolOrchs = <O extends { name: string; off?: boolean }>(orchs: O[], seats: Record<string, OrchSeat> = {}): O[] => {
+  const auto = defaultSeats(orchs, seats);
+  return orchs.filter((o) => !seats[o.name] && !auto.has(o.name) && !o.off);
+};
+
+/**
+ * 사무실 한 칸 → 그릴 재료(사용자 11-06 ⑤⑥). 참모 책상은 정한 자리에(안 정했으면 첫 사무실 뒷줄 차례로, 넷째부터 직원 자리),
+ * 직원은 자리표대로 앉고 남으면 문 앞에 선다. 직원 자리는 비어 있어도 늘 책상이 있다
+ */
+export function planOffice(x: { room: OfficeRoom; index: number; orchs: OrchIn[]; workers: Seat[]; slots?: (string | null)[]; seats?: Record<string, OrchSeat> }): Room & { furniture: Placed[] } {
+  const { room, index, orchs, seats = {} } = x;
+  const [cols, rows] = roomDims(room.lv);
   const desks: Desk[] = [];
-  const mk = (s: Seat, gx: number, gy: number, spr: string, w = 1.6, isBoss = false): Desk => ({
-    id: s.id, label: s.label, gx, gy, w, spr, st: officeState(s.status), status: s.status, color: colorFor(s.project + s.label), ...(isBoss ? { boss: true } : {}),
+  const mk = (s: Seat, gx: number, gy: number, spr: string, w: number, isBoss = false): Desk => ({
+    id: s.id, label: s.label, gx, gy, w, spr, st: officeState(s.status), status: s.status, color: colorFor(spr), ...(isBoss ? { boss: true } : {}),
     ...(s.act ? { act: s.act } : {}), ...(s.doing ? { doing: s.doing } : {}), ...(s.human !== undefined ? { human: s.human } : {}),
   });
-  const [head, ...rest] = orchestrators;
-  if (head) desks.push(mk(head, 2.8, BACK_Y, boss, 2.4, true));
-  rest.slice(0, 2).forEach((s, i) => desks.push(mk(s, i === 0 ? 0.6 : 5.6, BACK_Y, speciesFor(s.label))));
-  const pool = [...rest.slice(2), ...[...workers].sort((a, b) => a.project.localeCompare(b.project) || a.startedAt - b.startedAt)];
-  const byId = new Map(pool.map((s) => [s.id, s]));
-  const front: (Seat | null)[] = slots ? slots.map((id) => (id ? byId.get(id) ?? null : null)) : pool;
-  if (slots) for (const s of pool) if (!slots.includes(s.id)) front.push(s); // 자리표에 아직 없는 세션(방금 뜸)
-  const EMPTY: Seat = { id: '', label: '', project: '', status: 'idle', startedAt: 0 };
-  const r1 = (x: number) => Math.round(x * 10) / 10; // 3.2 + 2.1 = 5.300…01 방지
-  let k = 0; // 앞줄 자리 번호 — 가구가 덮은 자리는 건너뛴다
-  front.forEach((s) => {
-    let gx = 0, gy = 0;
-    do { gx = FRONT_X[k % 3]!; gy = r1(ROW0 + ROW_GAP * Math.floor(k / 3)); k++; } while (furniture.some((c) => covers(gx, gy, 1.6, c)));
-    const d = mk(s ?? EMPTY, gx, gy, s ? speciesFor(s.project) : '');
-    desks.push(s ? d : { ...d, empty: true });
+  const pool: (Seat & { spr?: string })[] = [];
+  const auto = defaultSeats(orchs, seats);
+  orchs.forEach((o, i) => {
+    const isBoss = i === 0, spr = o.spr ?? speciesFor(o.name), own = seats[o.name], def = auto.get(o.name);
+    let at: [number, number] | null = null, w = isBoss ? BOSS_W : BACK_W;
+    if (own) { if (own.office === index) { at = [own.x, own.y]; w = own.w ?? w; } }
+    else if (index === 0) {
+      if (def) { at = [def.x, def.y]; w = def.w; }
+      else if (!o.off) pool.push({ ...o, spr });
+    }
+    if (!at) return;
+    const d = mk(o, at[0], at[1], spr, w, isBoss);
+    desks.push(o.off ? { ...d, empty: true, off: true, st: 'wait' } : d);
   });
-  const lines = Math.max(2, Math.ceil(k / 3));
-  return { cols: COLS, rows: Math.ceil(ROW0 + ROW_GAP * (lines - 1) + 1.8), desks };
+  pool.push(...[...x.workers].sort((a, b) => a.project.localeCompare(b.project) || a.startedAt - b.startedAt));
+  const byId = new Map(pool.map((s) => [s.id, s]));
+  const order: ((Seat & { spr?: string }) | null)[] = x.slots ? x.slots.map((id) => (id ? byId.get(id) ?? null : null)) : [...pool];
+  if (x.slots) for (const s of pool) if (!x.slots.includes(s.id)) order.push(s);
+  const spots = seatsOf(room);
+  const sit = order.slice(0, spots.length);
+  const waiting = order.slice(spots.length).filter((s): s is Seat & { spr?: string } => !!s);
+  // 빈 자리가 있으면 서 있던 직원부터 앉는다
+  for (let k = 0; k < spots.length && waiting.length; k++) if (!sit[k]) sit[k] = waiting.shift()!;
+  spots.forEach(([cx, cy], k) => {
+    const s = sit[k];
+    if (s) desks.push(mk(s, cx + 0.2, cy, s.spr ?? speciesFor(s.project), BACK_W));
+    else desks.push({ id: `seat-${index}-${k}`, label: '', gx: cx + 0.2, gy: cy, w: BACK_W, spr: '', st: 'wait', color: 0, empty: true });
+  });
+  const fold = waiting.length > STAND_MAX ? waiting.length - STAND_MAX : 0;
+  waiting.forEach((s, k) => {
+    const shown = k < STAND_MAX, last = k === STAND_MAX - 1 && fold > 0;
+    desks.push({ ...mk(s, STAND_X, rows - 0.45 - Math.min(k, STAND_MAX - 1) * STAND_GAP, s.spr ?? speciesFor(s.project), 0), stand: true, ...(shown ? {} : { tuck: true }), ...(last ? { more: fold } : {}) });
+  });
+  return {
+    cols, rows, desks, door: true, lv: room.lv, zone: room.zone, short: waiting.length, used: sit.filter(Boolean).length + waiting.length,
+    floor: room.floor, wall: room.wall,
+    furniture: Object.entries(room.furn).map(([id, c]) => ({ id, gx: c[0], gy: c[1] })),
+  };
+}
+
+export const ARRIVE_MS = 3000;
+/** 출근 — 문을 열고 들어와 왼쪽 통로를 지나 자기 책상 앞까지. 다 걸었으면 null(그 뒤론 책상에 앉아 있다) */
+export function arrival(room: Room, id: string, age: number): Delivery | null {
+  const d = room.desks.find((x) => x.id === id && !x.empty && !x.stand);
+  if (!d || age < 0 || age >= ARRIVE_MS) return null;
+  const doorY = room.rows - 1.55, tx = d.gx + d.w / 2, ty = d.gy + 1.45;
+  const { at, dir } = along([[0.15, doorY], [STAND_X, doorY], [STAND_X, ty], [tx, ty]], age / ARRIVE_MS);
+  return { spr: d.spr, at, flip: dir[0] - dir[1] < 0, awayId: id, back: true };
+}
+
+/** 캔버스 점(논리 좌표) → 벽 칸. side R = 뒤 벽, L = 왼 벽 */
+export function wallAt(room: Pick<Room, 'cols' | 'rows'>, ox: number, oy: number, x: number, y: number): { side: 'L' | 'R'; at: number } | null {
+  const gx = (x - ox) / 12, zr = oy + gx * 6 - y;
+  if (gx >= 0 && gx < room.cols && zr >= 0 && zr <= 46) return { side: 'R', at: Math.floor(gx) };
+  const gy = (ox - x) / 12, zl = oy + gy * 6 - y;
+  if (gy >= 0 && gy < room.rows && zl >= 0 && zl <= 46) return { side: 'L', at: Math.floor(gy) };
+  return null;
 }
 
 /** 현황판 순서 — 사람 필요 → 지금 탭 참모가 시킨 것(dim 아님) → 나머지. 같은 칸 안에선 원래 순서 */
@@ -98,8 +161,12 @@ export type Delivery = { spr: string; at: [number, number]; flip: boolean; awayI
 
 const WALK_MS = 4000;
 const HOLD_MS = 1200; // 도착해서 잠깐 서 있다가 같은 길로 걸어서 돌아온다
-const AISLE_Y = 2.7; // 뒷줄과 앞줄 사이 통로
-const GAPS_X = [0.2, 2.65, 5.35, 7.75]; // 앞줄 책상 사이 세로 통로
+const AISLE_Y = 2.7; // 뒷줄과 앞줄 사이 통로(옛 배치)
+const GAPS_X = [0.2, 2.65, 5.35, 7.75]; // 앞줄 책상 사이 세로 통로(옛 배치)
+/** 묶음 위 가로 통로 — 묶음을 옮기면 따라간다 */
+const aisleOf = (room: Room) => (room.zone ? Math.max(0.3, room.zone[1] - 0.3) : AISLE_Y);
+/** 직원 책상 사이 세로 통로(한 자리 3칸 중 셋째 칸) */
+const gapsOf = (room: Room) => (room.zone && room.lv !== undefined ? [STAND_X, ...Array.from({ length: LEVELS[room.lv]!.zone[0] }, (_, k) => room.zone![0] + 2.5 + k * 3), room.cols - 0.4] : GAPS_X);
 
 type Pt = [number, number];
 function along(path: Pt[], f: number): { at: Pt; dir: Pt } {
@@ -134,10 +201,11 @@ export function delivery(events: { ts: string; type: string; task?: string; targ
   if (!to) return null;
   const reply = last.type === 'reply';
   const bx = boss.gx + boss.w / 2, tx = to.gx + to.w / 2, ty = to.gy + 1.45;
-  const gap = GAPS_X.reduce((a, b) => (Math.abs(b - tx) < Math.abs(a - tx) ? b : a));
+  const aisle = aisleOf(room);
+  const gap = gapsOf(room).reduce((a, b) => (Math.abs(b - tx) < Math.abs(a - tx) ? b : a));
   const path: Pt[] = to.gy === boss.gy
     ? [[bx, boss.gy + 1.45], [tx, ty]]
-    : [[bx, boss.gy + 1.45], [bx, AISLE_Y], [gap, AISLE_Y], [gap, ty], [tx, ty]];
+    : [[bx, boss.gy + 1.45], [bx, aisle], [gap, aisle], [gap, ty], [tx, ty]];
   const go = reply ? [...path].reverse() : path;
   const back = age > WALK_MS + HOLD_MS;
   const { at, dir } = back ? along([...go].reverse(), (age - WALK_MS - HOLD_MS) / WALK_MS) : along(go, Math.min(1, age / WALK_MS));
@@ -219,38 +287,6 @@ export function bossReaction(x: { status: ActivityStatus; reply: { text: string;
   return null;
 }
 
-/** 휴게실 자동 자리 수 — 가구가 25개를 넘으면서(2026-10-21) 다 놓으면 방이 깊어져 사무실이 작아졌다. 넘는 건 창고(트레이에서 끌어 놓으면 나온다) */
-export const LOUNGE_MAX = 8;
-/** 가구가 생기면 방 오른쪽에 휴게실 두 칸 — 가구를 두 줄로 놓는다. 끌어다 놓기(가구 놓기) 전까지의 자동 자리(LOUNGE_MAX 까지) */
-export function withLounge(room: Room, ids: string[], placed: Record<string, [number, number] | null> = {}): Room & { furniture: Placed[] } {
-  if (!ids.length) return { ...room, furniture: [] };
-  let auto = 0, lounged = 0;
-  const furniture: Placed[] = [];
-  const covered = (p: [number, number]) => room.desks.some((d) => p[0] < d.gx + d.w && p[0] + 1 > d.gx && p[1] < d.gy + 1.2 && p[1] + 1 > d.gy);
-  // 놓인 가구 칸 — 자동 자리가 그 위에 겹쳐 그려지지 않게 먼저 모은다
-  const taken = ids.flatMap((id) => { const p = placed[id]; return p && !covered(p) ? [p] : []; });
-  const spot = (k: number): [number, number] => [room.cols + 0.2 + (k % 2), Math.round((0.5 + Math.floor(k / 2) * 1.6) * 10) / 10];
-  const free = ([x, y]: [number, number]) => !taken.some(([px, py]) => Math.abs(px - x) < 1 && Math.abs(py - y) < 1);
-  for (const id of ids) {
-    const p = placed[id];
-    if (p === null) continue; // 창고
-    // 옛 자리가 책상(뒷줄 옆자리)과 겹치면 휴게실로 비켜 있다 — 앞줄 책상은 planRoom 이 가구를 피한다
-    const pushed = !!p && covered(p);
-    if (p && !pushed) { furniture.push({ id, gx: p[0], gy: p[1] }); continue; }
-    if (lounged >= LOUNGE_MAX) continue; // 휴게실이 찼다 — 창고
-    lounged++;
-    while (!free(spot(auto))) auto++;
-    const [gx, gy] = spot(auto);
-    furniture.push({ id, gx, gy, ...(pushed ? { pushed: true } : {}) });
-    auto++;
-  }
-  // 방 크기는 놓은 자리와 무관하게 — 가진 가구가 다 휴게실에 있을 때의 깊이로 정한다.
-  // 놓은 가구에 +1.2 를 주면 맨 아래 줄에 놓을 때마다 방이 한 줄씩 커지고 배율이 뚝 떨어졌다(사용자 2026-09-27)
-  const lounge = Math.ceil(0.5 + Math.floor((Math.min(ids.length, LOUNGE_MAX) - 1) / 2) * 1.6 + 1.2);
-  const deepest = Math.max(0, ...furniture.filter((f) => !placed[f.id] || f.pushed).map((f) => Math.ceil(f.gy + 1.2)), ...furniture.filter((f) => placed[f.id] && !f.pushed).map((f) => f.gy + 1));
-  return { ...room, cols: room.cols + 2, rows: Math.max(room.rows, lounge, deepest), furniture };
-}
-
 const HALF_W = 12; // 타일 2:1 — ui/office/draw TW/2, TH/2
 const HALF_H = 6;
 /** 캔버스 점(논리 좌표) → 바닥 칸. (ox, oy) = 방 원점. 방 밖이면 null */
@@ -276,16 +312,6 @@ export function furnitureAt(room: Room, ox: number, oy: number, x: number, y: nu
   return best?.id ?? null;
 }
 
-/** 그 칸에 가구를 놓을 수 있나 — 방 안이고 책상(뒷줄은 빈 자리까지)·책장과 안 겹칠 때 */
-export function canPlace(room: Room, [cx, cy]: [number, number]): boolean {
-  if (cx < 0 || cy < 0 || cx >= room.cols || cy >= room.rows) return false;
-  const hit = (x0: number, y0: number, x1: number, y1: number) => cx < x1 && cx + 1 > x0 && cy < y1 && cy + 1 > y0;
-  if (room.desks.some((d) => hit(d.gx, d.gy, d.gx + d.w, d.gy + 1.2))) return false;
-  if (BACK_SEATS.some(([x, w]) => covers(x, BACK_Y, w, [cx, cy]))) return false;
-  if (hit(4.9, 0, 7.3, 0.45)) return false; // 책장
-  return true;
-}
-
 const COFFEE_EVERY = 60_000;
 /** 커피 액션: 1분마다 반장이 정수기(오른쪽 벽)까지 걸어갔다 온다. 반장 반응·배달이 없을 때만 부른다 */
 export function coffeeWalk(room: Room, now: number): Delivery | null {
@@ -294,7 +320,7 @@ export function coffeeWalk(room: Room, now: number): Delivery | null {
   const age = now % COFFEE_EVERY;
   if (age > WALK_MS * 2 + HOLD_MS) return null;
   const bx = boss.gx + boss.w / 2, cx = room.cols - 0.4;
-  const path: Pt[] = [[bx, boss.gy + 1.45], [bx, AISLE_Y], [cx, AISLE_Y], [cx, 2.3]];
+  const path: Pt[] = [[bx, boss.gy + 1.45], [bx, aisleOf(room)], [cx, aisleOf(room)], [cx, 2.3]];
   const back = age > WALK_MS + HOLD_MS;
   const { at, dir } = back ? along([...path].reverse(), (age - WALK_MS - HOLD_MS) / WALK_MS) : along(path, Math.min(1, age / WALK_MS));
   // back = 서류 없이 걷기. 갈 땐 빈손, 돌아올 땐 컵(흰 네모)을 든다
@@ -303,10 +329,10 @@ export function coffeeWalk(room: Room, now: number): Delivery | null {
 
 /** 사무실 고양이: 가운데 통로 → 오른쪽 세로 통로 → 맨 앞 통로 → 왼쪽 세로 통로를 30초에 한 바퀴 */
 export function catWalk(room: Room, now: number): { at: [number, number]; flip: boolean } {
-  const front = room.desks.filter((d) => !d.boss && d.gy > BACK_Y);
-  const lastY = front.length ? Math.max(...front.map((d) => d.gy)) + 1.45 : ROW0 + 1.45;
-  const right = Math.min(7.75, room.cols - 0.25);
-  const path: Pt[] = [[0.2, AISLE_Y], [right, AISLE_Y], [right, lastY], [0.2, lastY], [0.2, AISLE_Y]];
+  const front = room.desks.filter((d) => !d.boss && !d.stand && d.gy > BACK_Y);
+  const lastY = Math.min(room.rows - 0.3, front.length ? Math.max(...front.map((d) => d.gy)) + 1.45 : ROW0 + 1.45);
+  const right = room.zone ? room.cols - 0.4 : Math.min(7.75, room.cols - 0.25), aisle = aisleOf(room);
+  const path: Pt[] = [[0.2, aisle], [right, aisle], [right, lastY], [0.2, lastY], [0.2, aisle]];
   const { at, dir } = along(path, (now % 30_000) / 30_000);
   return { at, flip: dir[0] - dir[1] < 0 };
 }

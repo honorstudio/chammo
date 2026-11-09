@@ -1,5 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import './ui/webBeat';
 import { pickLang, setAssistant, setLang } from './i18n';
 import './ui/layers.css';
 import './ui/styles.css';

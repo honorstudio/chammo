@@ -1124,3 +1124,42 @@ fn windows_names_are_cleaned_only_on_windows() {
     assert_eq!(safe_name_for("사진?.png", "파일", false), "사진?.png");
     assert_eq!(safe_name_for("CON.txt", "파일", false), "CON.txt");
 }
+
+// ── 오늘 넣은 파일 수 ──
+
+#[test]
+fn today_files_counts_new_files_only_once_started() {
+    let w = W::new("today_files");
+    let owner = w.root.join("참모");
+    put(&owner.join("a.md"), "x");
+    put(&owner.join("자료/b.md"), "x");
+    put(&owner.join(".판/a.md/1"), "x");
+    put(&owner.join(".chammo"), "id");
+    #[cfg(unix)]
+    {
+        let outside = w.home.join("밖");
+        put(&outside.join("c.md"), "x");
+        std::os::unix::fs::symlink(&outside, owner.join("바로가기")).unwrap();
+    }
+    // 시작 전엔 문서 폴더를 건드리지 않는다
+    assert_eq!(today_files(&w.data, &w.root, 0), 0);
+    std::fs::write(w.data.join(OPENED_MARK), "1").unwrap();
+    // 점 폴더는 빼고, 바로가기는 하나로(안으로 안 들어간다)
+    let link = usize::from(cfg!(unix));
+    assert_eq!(today_files(&w.data, &w.root, 0), 2 + link);
+    // 그때보다 뒤에 만든 것만
+    let later = ms(std::time::SystemTime::now()).unwrap() + 60_000;
+    assert_eq!(today_files(&w.data, &w.root, later), 0);
+}
+
+// 보안 점검 H-1 — U+202E(글자 방향 뒤집기)가 남아 진짜 확장자가 .exe 인 파일이 .pdf 처럼 보였다
+#[test]
+fn 이름의_보이지_않는_글자를_뺀다() {
+    use super::safe_name_for;
+    for win in [false, true] {
+        assert_eq!(safe_name_for("계약서\u{202e}fdp.exe", "_", win), "계약서fdp.exe");
+        assert_eq!(safe_name_for("a\u{200b}b\u{2066}c\u{feff}.pdf", "_", win), "abc.pdf");
+        assert_eq!(safe_name_for("\u{202e}", "빈", win), "빈", "다 빠지면 대신 이름");
+        assert_eq!(safe_name_for("회의록 v2.final.pdf", "_", win), "회의록 v2.final.pdf");
+    }
+}

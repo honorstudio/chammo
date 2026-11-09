@@ -35,6 +35,15 @@ class SkillHint(unittest.TestCase):
         for p in ['포토크래프트 열어 줘', 'PhotoCraft 로 대비 올려', '표 편집기 띄워 줘', 'crop this photo and export a png']:
             self.assertIn('`hq-craft`', hint(p), p)
 
+    def test_다른_기기_참모_팀_메신저면_hq_team(self):
+        # 새 스킬은 설명만으론 잘 안 열린다(harness-placement 실측) — 그 일의 낱말로 환기(2026-11-06)
+        for p in ['아이맥 참모한테 물어봐 줘', 'scripts/peer 로 윈도우 참모에게 보내', 'self-say 로 집 맥에 전해', '팀챗에 올려 줘',
+                  '팀 보관함에 이 파일 넣어', '새 기기 허용 어떻게 해?', '다른 기기 참모가 보낸 거 봐 줘', 'send it to my other device assistant',
+                  'put it in the team locker']:
+            self.assertIn('`hq-team`', hint(p), p)
+        for p in ['PR peer review 해 줘', '팀원 연봉 표 정리해']:
+            self.assertNotIn('`hq-team`', hint(p), p)
+
     def test_상관없는_말엔_아무것도_안_붙인다(self):
         for p in ['PR 512 머지해 줘', 'project-x 세션 회신: 테스트 다 통과했어', '']:
             self.assertEqual(hint(p).strip(), '', p)

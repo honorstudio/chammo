@@ -1,7 +1,18 @@
 #!/bin/sh
 ''':'
 # sh 로 읽으면 맞는 파이썬을 골라 다시 실행한다 — 윈도우의 python3 는 스토어 대리 실행기(종료 49)라 py -3 → python 중 도는 것
-[ "$OS" = Windows_NT ] || exec python3 "$0" "$@"
+if [ "$OS" != Windows_NT ]; then
+  # pyenv 심은 한 번에 bash 20개·1초다 — 상태줄은 바쁜 세션마다 초에 몇 번 돈다(11-07). PATH 에서 심을 빼고 찾고, 없으면 심으로. 사용자 명령엔 원래 PATH 를 돌려준다
+  case ":$PATH:" in
+    *"/shims:"*)
+      CHAMMO_SL_PATH=$PATH; export CHAMMO_SL_PATH
+      p=; o=$IFS; IFS=:
+      for d in $PATH; do case "$d" in */shims) ;; *) p="$p${p:+:}$d" ;; esac; done
+      IFS=$o
+      PATH=$p; command -v python3 >/dev/null 2>&1 || PATH=$CHAMMO_SL_PATH ;;
+  esac
+  exec python3 -S "$0" "$@"
+fi
 for p in "py -3" python; do $p -c '' >/dev/null 2>&1 && exec $p "$0" "$@"; done
 echo "python not found — install Python 3 (winget install Python.Python.3.12)" >&2; exit 127
 ':'''
@@ -13,7 +24,7 @@ Writes <data>/statusline.json (5-hour / weekly usage for the top bar) and <data>
 ~/.claude/settings.json, it runs that with the same input and prints its output — so nothing changes on
 screen. Otherwise it prints "branch · model · effort · 42%".
 """
-import json, os, subprocess, sys, time
+import json, os, sys, time
 for _io in (sys.stdin, sys.stdout, sys.stderr):  # 윈도우 파이썬 기본은 cp949 — PYTHONUTF8 없이 떠도(데몬 env 세션·작업 스케줄러) 한글·'—' 를 UTF-8 로(2026-11-01 win-text H1)
     if _io and hasattr(_io, 'reconfigure') and (_io.encoding or '').lower().replace('-', '') != 'utf8':
         _io.reconfigure(encoding='utf-8', errors='replace')
@@ -82,6 +93,7 @@ def plain(line):
 
 def branch(cwd):
     """git 가지 — 고친 게 있으면 *, 올려 둔 게 있으면 +. 저장소가 아니거나 git 이 없으면 ''"""
+    import subprocess  # 시작 비용의 큰 몫 — 돌릴 때만 읽는다
     def git(*a):
         return subprocess.run(['git', '-C', cwd, '--no-optional-locks', *a], capture_output=True, text=True, timeout=2)
     try:
@@ -115,21 +127,67 @@ def fallback(d, branch_of=branch):
     return f'{DIM} · {RESET}'.join(parts)
 
 
+LINE_EVERY = 10  # 초 — 사람이 볼 줄을 세션마다 이만큼에 한 번만 새로 만든다(사용자 상태줄은 프로세스 수십 개다, 11-07 맥 전체 새 프로세스 초당 75개의 대부분). 앱이 읽는 파일(record)은 늘 새로
+
+
+def line_for(raw, data, make, now=None):
+    """make() 로 줄을 만들되 그 세션의 지난 줄이 LINE_EVERY 안이면 그것 — 세션을 모르면 늘 만든다"""
+    now = time.time() if now is None else now
+    try:
+        sid = (json.loads(raw) or {}).get('session_id') or ''
+    except (ValueError, AttributeError):
+        sid = ''
+    if not sid or not all(c.isalnum() or c == '-' for c in sid):
+        return make()
+    path = os.path.join(data, 'tmp', 'statusline', sid + '.txt')
+    try:
+        if now - os.stat(path).st_mtime < LINE_EVERY:
+            with open(path, encoding='utf-8') as f:
+                return f.read()
+    except OSError:
+        pass
+    line = make()
+    try:
+        _write(path, line)
+        os.utime(path, (now, now))
+        if int(now) % 64 == 0:  # 가끔 — 끝난 세션 줄이 쌓이지 않게
+            for e in os.scandir(os.path.dirname(path)):
+                if now - e.stat().st_mtime > 86400:
+                    os.remove(e.path)
+    except OSError:
+        pass
+    return line
+
+
+def run_user(cmd, raw):
+    import subprocess
+    env = dict(os.environ)
+    keep = env.pop('CHAMMO_SL_PATH', None)
+    if keep:
+        env['PATH'] = keep
+    return subprocess.run(cmd, shell=True, input=raw, capture_output=True, text=True, env=env).stdout
+
+
+def user_line(cmd, raw, data, run=run_user, now=None):
+    return line_for(raw, data, lambda: run(cmd, raw), now)
+
+
 def main():
     raw = sys.stdin.read()
+    data = data_dir()
     try:
-        record(raw, data_dir())
+        record(raw, data)
     except OSError:
         pass
     cmd = user_command()
     if cmd:
-        r = subprocess.run(cmd, shell=True, input=raw, capture_output=True, text=True)
-        sys.stdout.write(r.stdout)
+        sys.stdout.write(user_line(cmd, raw, data))
         return 0
     try:
-        sys.stdout.write(fallback(json.loads(raw)))
+        parsed = json.loads(raw)
     except ValueError:
-        pass
+        return 0
+    sys.stdout.write(line_for(raw, data, lambda: fallback(parsed)))
     return 0
 
 

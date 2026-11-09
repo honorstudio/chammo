@@ -46,7 +46,7 @@ export type TaskEvent = {
   retry?: number;
 };
 
-export type Effort = 'high' | 'medium' | 'low';
+export type Effort = 'high' | 'medium' | 'low' | 'design';
 
 export type TaskStatus = 'sent' | 'working' | 'needsInput' | 'replied' | 'done' | 'gone';
 

@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { readTranscriptBefore, sendStatus, sendTextToSession } from '../../data/web';
 import { chatStart } from '../space/useChatItems';
 import type { ChatItem } from '../../domain/chat';
-import { addOut, applyStatus, beforeTail, dueForCheck, findEarlier, markOut, newOut, readOutbox, settleOut, writeOutbox, type OutMsg, type Store } from '../../domain/mobileOutbox';
+import { addOut, applyStatus, beforeTail, dueForCheck, findEarlier, markOut, newOut, readOutbox, retryOut, settleOut, writeOutbox, type OutMsg, type Store } from '../../domain/mobileOutbox';
 import { tr } from '../../i18n';
 
 export const storage = (): Store | null => { try { return localStorage; } catch { return null; } };
@@ -48,18 +48,29 @@ async function deliver(id: string, again = false): Promise<{ ok: boolean; error?
   }
 }
 
+const newId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+/** 다시 보내기 — 보낼 id 를 돌려준다(입력칸에 남았던 말은 새 id, domain retryOut) */
+function resend(id: string): string {
+  const r = retryOut(list, id, newId(), Date.now());
+  set(r.list);
+  return r.id;
+}
+
 /** 채팅 화면 밖에서 보내기(폰 시안 검토 보내기) — 같은 보낼 함이라 채팅에 '보내는 중' 말풍선이 바로 뜨고, 결과를 돌려준다.
  *  retryId 를 주면 그 말을 같은 id 로 다시(맥이 이미 쳤으면 두 번 안 친다) */
 export function sendOut(session: string, text: string, retryId?: string): Promise<{ id: string; ok: boolean; error?: string }> {
   let id = retryId && list.some((m) => m.id === retryId) ? retryId : '';
-  if (id) set(markOut(list, id, 'sending'));
+  if (id) id = resend(id);
   else {
-    id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    id = newId();
     set(addOut(list, newOut({ id, session, text }, [], Date.now())));
   }
   const at = id;
   return deliver(at).then((r) => ({ id: at, ...r }));
 }
+
+/** 세션별 쉬기 시작한 때 — 쉬는 동안만(일하는 중이면 지운다). 쳤다는 말이 기록에 끝내 없나 가를 때(applyStatus) */
+const idleFrom = new Map<string, number>();
 
 /** 늦은 말 확인 — 15초마다, 보낸 지 60초 넘게 기록에 안 뜬 말을 맥에 묻는다 */
 let checking = false;
@@ -70,7 +81,7 @@ async function checkLate() {
     for (const m of list.filter((x) => dueForCheck(x, Date.now()))) {
       try {
         const s = await sendStatus(m.id);
-        set(applyStatus(list, m.id, s.state, s.error, Date.now(), looked.has(m.id)));
+        set(applyStatus(list, m.id, s.state, s.error, Date.now(), looked.has(m.id), idleFrom.get(m.session)));
       } catch { /* 연결이 또 끊김 — 다음 차례에 */ }
     }
   } finally {
@@ -105,26 +116,30 @@ function lookBack(session: string, sid: string, items: ChatItem[]) {
     .catch(() => want.forEach((m) => lookedBack.set(key(m), Date.now() + 30_000)));
 }
 
-/** 그 세션의 보내는 중·실패 말 — items(대화 기록)가 바뀔 때마다 들어온 말을 뺀다. sid = 대화 기록 번호(꼬리 앞을 거슬러 읽을 때) */
-export function useOutbox(session: string, items: ChatItem[], sid?: string) {
+/** 그 세션의 보내는 중·실패 말 — items(대화 기록)가 바뀔 때마다 들어온 말을 뺀다. sid = 대화 기록 번호(꼬리 앞을 거슬러 읽을 때), idle = 세션이 쉬는 중 */
+export function useOutbox(session: string, items: ChatItem[], sid?: string, idle = false) {
   const all = useSyncExternalStore(subscribe, snapshot);
+  useEffect(() => {
+    if (!idle) return;
+    idleFrom.set(session, Date.now());
+    return () => { idleFrom.delete(session); }; // 일을 시작했거나 그 세션 채팅을 나갔다 — 안 보는 동안의 상태는 모른다
+  }, [session, idle]);
+  const mine = all.filter((m) => m.session === session);
+  // 보낼 함이 바뀔 때도 — 말이 사라지면 기록이 안 바뀌어 새 말·다시 보낸 말의 '기록을 다 봤음'이 영영 안 켜졌다(11-07)
+  const ids = mine.map((m) => m.id).join();
   useEffect(() => {
     set(settleOut(list, session, items, Date.now()));
     if (sid) lookBack(session, sid, items);
-  }, [session, sid, items]);
+  }, [session, sid, items, ids]);
   const itemsRef = useRef(items);
   itemsRef.current = items;
-  const mine = all.filter((m) => m.session === session);
   const send = useCallback((text: string) => {
-    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const id = newId();
     set(addOut(list, newOut({ id, session, text }, itemsRef.current, Date.now())));
     void deliver(id);
   }, [session]);
   // 다시 보내기 — 같은 말 id 라 맥이 이미 쳤으면 두 번 안 친다. 보낸 때도 그대로(먼저 들어간 기록과 맞춰지게)
-  const retry = useCallback((id: string) => {
-    set(markOut(list, id, 'sending'));
-    void deliver(id);
-  }, []);
+  const retry = useCallback((id: string) => void deliver(resend(id)), []);
   const drop = useCallback((id: string) => set(list.filter((m) => m.id !== id)), []);
   return { mine, send, retry, drop };
 }

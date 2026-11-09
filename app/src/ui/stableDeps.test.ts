@@ -2,7 +2,7 @@
 // 10-31 실측: TeamConvo 기본값 agentsApi = { … } 가 useEffect 의존성이라 팀챗을 열면 team_agents 를 초당 10번씩 끝없이 다시 불렀다(30초 298번)
 import { describe, expect, it } from 'vitest';
 
-const files = import.meta.glob(['./**/*.tsx', '!./**/*.test.tsx'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+const files = import.meta.glob(['./**/*.tsx', '!./**/*.test.tsx', '../../../pro/web/**/*.tsx'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
 
 /** 주석·글자를 빈칸으로(괄호 세기가 글자 안 괄호에 안 속게) */
 function strip(s: string): string {

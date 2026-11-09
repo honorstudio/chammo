@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 /// 사용자 경로를 읽는 동기 명령 — 블로킹 풀
 pub const READ: &[&str] = &[
     // reader — 데스크톱·문서·devRoot 문서 읽기
-    "first_existing", "read_doc_text", "doc_stamp", "list_md", "list_dir", "read_doc_bytes", "list_md_deep", "read_show_log", "moved_paths",
+    "video_review_prep", "first_existing", "read_doc_text", "doc_stamp", "list_md", "list_dir", "read_doc_bytes", "list_md_deep", "read_show_log", "moved_paths",
     "reader_open",
     // hq·project·도구·교훈
     "folder_status", "harness_project", "memory_files_for",
@@ -21,7 +21,7 @@ pub const READ: &[&str] = &[
     // 보여 준 파일 끌기 — show 기록·보관함을 읽어 거른 뒤 끌기 세션만 메인 스레드로(shown_share)
     "drag_native",
     // ~/.claude·~/.claude.json(링크면 어디로든)
-    "accounts_view", "daemon_started_at", "daemon_stopped_recently", "claude_defaults_snapshot", "bypass_consent", "daemon_env_check",
+    "accounts_view", "daemon_started_at", "daemon_stopped_recently", "daemon_stopped_ever", "claude_folder_prompt", "claude_defaults_snapshot", "bypass_consent", "daemon_env_check",
     // 화면이 넘긴 아무 경로·설정에 적힌 경로
     "open_target", "sheet_open", "tts_warm", "agent_drop_files", "read_memos",
     // portable-pty 가 부르는 스레드에서 cwd(devRoot 프로젝트)를 is_dir 로 본다

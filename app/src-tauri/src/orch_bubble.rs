@@ -18,6 +18,8 @@ static HAS_FACE: AtomicBool = AtomicBool::new(true);
 static HOT: Mutex<Vec<[f64; 4]>> = Mutex::new(Vec::new());
 /// 올리면 부채가 펴지는 자리 — 비활성 패널은 앱이 안 깨어 있으면 웹뷰에 마우스 올림 사건이 안 와서(그래서 누를 때 부채가 떴다) 전역 마우스 자리로 본다
 static HOVER: Mutex<Vec<[f64; 4]>> = Mutex::new(Vec::new());
+/// 맥: 누른 채 끄는 동안 창이 커서를 따라가는 중(bubble_drag → follow) — 그동안 옮김 사건을 화면에 안 넘기고(놓은 뒤 한 번) 클릭도 바탕으로 안 흘린다
+static FOLLOWING: AtomicBool = AtomicBool::new(false);
 
 /// 참모 세션 id 모양 — 메인 창에 eval 로 넘기기 전에 거른다(이름·경로·따옴표가 끼면 버린다)
 pub fn orch_id_ok(id: &str) -> bool {
@@ -168,12 +170,61 @@ pub fn bubble_wanted(window: tauri::WebviewWindow) -> bool {
     window.label() == LABEL && WANTED.load(Ordering::SeqCst)
 }
 
-/// 배지 끌기 — 테두리 없는 창이라 맥·윈도우 창 끌기를 그대로(놓으면 Moved 사건 → 화면이 자리를 기억)
+/// 배지 끌기 — 놓으면 Moved 사건 → 화면이 자리를 기억. 윈도우는 창 끌기 그대로.
+/// 맥은 누른 채로 있는 동안 커서를 따라 창을 직접 옮긴다 — 맥 창 끌기(performDrag)는 창 위쪽을 메뉴줄 밑에서 멈추는데(constrainFrameRect 를 꺼도),
+/// 배지 창(한 판)은 열릴 대화창 자리까지 품어 배지보다 한참 위로 뻗어서 그대로면 배지를 화면 위쪽으로 못 끈다(11-05 아이맥 실측)
 #[tauri::command]
-pub fn bubble_drag(window: tauri::WebviewWindow) {
-    if window.label() == LABEL {
-        let _ = window.start_dragging();
+pub fn bubble_drag(app_handle: tauri::AppHandle, window: tauri::WebviewWindow) {
+    // 시험(디버그 빌드만): 메인 창 주입 JS 가 부르면 배지 창을 끈다 — 가짜 마우스(CHAMMO_BUBBLE_FAKE_MOUSE "x,y,1")로 끌기 실측
+    let w = if window.label() == LABEL { Some(window) } else if cfg!(debug_assertions) && window.label() == "main" { app_handle.get_webview_window(LABEL) } else { None };
+    let Some(w) = w else { return };
+    #[cfg(target_os = "macos")]
+    follow(w);
+    #[cfg(not(target_os = "macos"))]
+    let _ = w.start_dragging();
+}
+
+/// 맥: 왼쪽 단추를 누르고 있는 동안 창 = 처음 창 자리 + 커서가 움직인 만큼(8ms 마다), 놓으면 옮김 한 번
+#[cfg(target_os = "macos")]
+fn follow(w: tauri::WebviewWindow) {
+    if FOLLOWING.swap(true, Ordering::SeqCst) {
+        return;
     }
+    std::thread::spawn(move || {
+        if let (Some(win), Some(m0)) = (rect_of(&w), mouse(1.0)) {
+            let mut last = m0;
+            while button_down() {
+                if let Some(m) = mouse(1.0).filter(|m| *m != last) {
+                    last = m;
+                    let _ = w.set_position(tauri::LogicalPosition::new(win.x + m.0 - m0.0, win.y + m.1 - m0.1));
+                }
+                std::thread::sleep(Duration::from_millis(8));
+            }
+        }
+        FOLLOWING.store(false, Ordering::SeqCst);
+        moved(w.app_handle());
+    });
+}
+
+/// 왼쪽 단추가 눌려 있나 — 디버그 빌드는 가짜 마우스 파일 셋째 칸("x,y,1")으로 대신
+#[cfg(target_os = "macos")]
+fn button_down() -> bool {
+    if cfg!(debug_assertions) {
+        if let Ok(f) = std::env::var("CHAMMO_BUBBLE_FAKE_MOUSE") {
+            return std::fs::read_to_string(f).is_ok_and(|t| fake_down(&t));
+        }
+    }
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGEventSourceButtonState(state: i32, button: u32) -> bool;
+    }
+    // kCGEventSourceStateHIDSystemState(1), kCGMouseButtonLeft(0)
+    unsafe { CGEventSourceButtonState(1, 0) }
+}
+
+/// 가짜 마우스 파일 "x,y[,1]" — 셋째 칸이 1 이면 누름
+pub fn fake_down(t: &str) -> bool {
+    t.trim().split(',').nth(2).is_some_and(|b| b.trim() == "1")
 }
 
 /// 받는 자리·올림 자리를 바꾼다(창 기준 논리 px) — 화면이 배치를 바꿀 때마다
@@ -201,12 +252,31 @@ pub fn hit(p: (f64, f64), rects: &[[f64; 4]]) -> bool {
     rects.iter().any(|r| p.0 >= r[0] && p.1 >= r[1] && p.0 < r[0] + r[2] && p.1 < r[1] + r[3])
 }
 
+/// 이번 차례에 창을 물어볼까 — 창 보임·자리·배율은 하나마다 메인 스레드를 깨운다(40ms 마다 3번, 11-07 앱 깨어남 365/초).
+/// 마우스·받는 자리가 그대로면 답도 그대로라 0.5초에 한 번만 본다(창이 저절로 옮겨지거나 숨은 걸 놓치지 않게)
+pub fn track_due(mouse_same: bool, marks_same: bool, since_full: Duration) -> bool {
+    !mouse_same || !marks_same || since_full >= TRACK_FULL_EVERY
+}
+const TRACK_FULL_EVERY: Duration = Duration::from_millis(500);
+
 /// 마우스 따라가기(40ms) — 받는 자리 밖이면 클릭을 바탕으로 넘기고, 올림 자리에 들고 나면 화면에 __bubbleHover
 fn track(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         let (mut through, mut over, mut at) = (false, false, None::<(i32, i32)>);
+        let mut last_mouse = None::<(f64, f64)>;
+        let mut last_marks = (Vec::<[f64; 4]>::new(), Vec::<[f64; 4]>::new());
+        let mut full_at = std::time::Instant::now() - TRACK_FULL_EVERY;
         loop {
             std::thread::sleep(Duration::from_millis(40));
+            // 커서·받는 자리는 메인 스레드를 안 깨우고 읽는다. 끌기 중엔 늘 본다
+            let m_now = mouse(1.0);
+            let marks = (HOT.lock().unwrap_or_else(|e| e.into_inner()).clone(), HOVER.lock().unwrap_or_else(|e| e.into_inner()).clone());
+            if !FOLLOWING.load(Ordering::SeqCst) && !track_due(m_now == last_mouse, marks == last_marks, full_at.elapsed()) {
+                continue;
+            }
+            last_mouse = m_now;
+            last_marks = marks;
+            full_at = std::time::Instant::now();
             let Some(w) = app.get_webview_window(LABEL) else { continue };
             if !w.is_visible().unwrap_or(false) {
                 std::thread::sleep(Duration::from_millis(300));
@@ -216,7 +286,7 @@ fn track(app: tauri::AppHandle) {
             let Some(m) = mouse(k) else { continue };
             let p = local(m, &win);
             let hot = HOT.lock().unwrap_or_else(|e| e.into_inner()).clone();
-            let pass = !p.is_some_and(|p| hot.is_empty() || hit(p, &hot));
+            let pass = !FOLLOWING.load(Ordering::SeqCst) && !p.is_some_and(|p| hot.is_empty() || hit(p, &hot));
             if pass != through {
                 through = pass;
                 let _ = w.set_ignore_cursor_events(pass);
@@ -248,8 +318,8 @@ fn mouse(k: f64) -> Option<(f64, f64)> {
     if cfg!(debug_assertions) {
         if let Ok(f) = std::env::var("CHAMMO_BUBBLE_FAKE_MOUSE") {
             let t = std::fs::read_to_string(f).ok()?;
-            let (x, y) = t.trim().split_once(',')?;
-            return Some((x.trim().parse().ok()?, y.trim().parse().ok()?));
+            let mut it = t.trim().split(',');
+            return Some((it.next()?.trim().parse().ok()?, it.next()?.trim().parse().ok()?));
         }
     }
     // 맥: CGEvent 자리가 이미 논리 점
@@ -370,13 +440,39 @@ pub fn is_hq_session(sessions_json: &str, id: &str, hq: &str) -> bool {
     v.as_array().and_then(|l| l.iter().find(|a| a["id"] == id)).and_then(|a| a["cwd"].as_str()).is_some_and(|cwd| crate::platform::same_dir(cwd, hq))
 }
 
-/// 설정·메인 창을 지켜보다 띄울 때면 바탕 배지를, 아니면 거둔다(0.7초마다 — 창 사건만으론 ⌘H·창 닫기·최소화를 다 못 잡는다)
+/// 사람이 자리를 비웠나 — 입력 2분 없음(ui attention 과 같은 길이)·화면 잠김. 맥 밖은 모름(None) → 안 비운 것으로
+pub fn away_now(idle: Option<f64>, locked: bool) -> bool {
+    locked || idle.is_some_and(|s| s >= 120.0)
+}
+
+static AWAY: AtomicBool = AtomicBool::new(false);
+
+fn push_away(w: &tauri::WebviewWindow, away: bool) {
+    let _ = w.eval(format!("document.documentElement.classList.toggle('obd-away', {away})"));
+}
+
+/// 배지 페이지가 (다시) 뜰 때 — 앞서 알린 값이 새 페이지엔 없다
+pub fn on_page_load<R: tauri::Runtime>(wv: &tauri::Webview<R>) {
+    if wv.label() == LABEL {
+        let _ = wv.eval(format!("document.documentElement.classList.toggle('obd-away', {})", AWAY.load(Ordering::Relaxed)));
+    }
+}
+
+/// 설정·메인 창을 지켜보다 띄울 때면 바탕 배지를, 아니면 거둔다(0.7초마다 — 창 사건만으론 ⌘H·창 닫기·최소화를 다 못 잡는다).
+/// 자리 비움도 같이 본다 — 바탕 배지는 다른 앱을 쓰는 중에도 물어봄을 알려야 해서 창 포커스로 못 멈추고, 아무도 안 볼 때만 물결을 멈춘다(obd-away)
 pub fn watch(app: &tauri::AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         let mut was = false;
         loop {
             std::thread::sleep(Duration::from_millis(700));
+            let idle = crate::away::now();
+            let away = away_now(idle.idle, idle.locked);
+            if AWAY.swap(away, Ordering::Relaxed) != away {
+                if let Some(w) = app.get_webview_window(LABEL) {
+                    push_away(&w, away);
+                }
+            }
             let f = crate::config::current().features;
             let Some(main) = app.get_webview_window("main") else { continue };
             let seen = main.is_visible().unwrap_or(true) && !main.is_minimized().unwrap_or(false);
@@ -398,6 +494,9 @@ pub fn watch(app: &tauri::AppHandle) {
 
 /// 바탕 배지를 끌어 옮겼다 — 화면이 모니터·비율로 기억한다(domain/orchBubble screenSave)
 pub fn moved(app: &tauri::AppHandle) {
+    if FOLLOWING.load(Ordering::SeqCst) {
+        return; // 끄는 중 — 놓은 뒤 follow 가 한 번 부른다
+    }
     if let Some(w) = app.get_webview_window(LABEL) {
         let _ = w.eval("window.__bubbleMoved && window.__bubbleMoved()");
     }
@@ -452,6 +551,8 @@ fn reveal(w: &tauri::WebviewWindow) {
 /// 웹뷰 글칸을 눌러도 키 창이 안 된다(WKWebView 가 needsPanelToBecomeKey 를 안 켬). 배지로 돌아가면 키를 내려놓아 하던 앱이 다시 받는다
 #[cfg(target_os = "macos")]
 fn keyable(w: &tauri::WebviewWindow, key: bool) {
+    // 시험(디버그 빌드만): CHAMMO_BUBBLE_NO_KEY 면 키 창으로 안 만든다 — 사람이 맥을 쓰는 동안 시험 대화창이 사람 키보드를 빼앗지 않게
+    let key = key && !(cfg!(debug_assertions) && std::env::var_os("CHAMMO_BUBBLE_NO_KEY").is_some());
     let Ok(p) = w.ns_window() else { return };
     let p = p as usize;
     let _ = w.run_on_main_thread(move || unsafe {
@@ -515,10 +616,16 @@ fn panelize(app: &tauri::AppHandle, w: &tauri::WebviewWindow) {
         extern "C" fn no(_: *mut AnyObject, _: Sel) -> Bool {
             Bool::NO
         }
+        // 앱이 창을 옮길 때(끌기 따라가기 follow·set_position) 맥이 창 위쪽을 메뉴줄 밑으로 당기지 않게 — 창(한 판, DeskBubble deskFrame)은 열릴 대화창 자리까지
+        // 품어 배지보다 한참 위로 뻗는다. 테두리 없는 패널도 setFrameTopLeftPoint 가 위쪽을 메뉴줄 밑으로 당기고, 이걸 끄면 안 당긴다(11-05 아이맥 실측 — 맥 창 끌기 performDrag 는 꺼도 당긴다)
+        extern "C" fn free(_: *mut AnyObject, _: Sel, r: objc2_foundation::NSRect, _: *mut AnyObject) -> objc2_foundation::NSRect {
+            r
+        }
         let cls = *CLS.get_or_init(|| {
             let mut b = ClassBuilder::new(c"ChammoBubblePanel", class!(NSPanel)).expect("panel class");
             b.add_method(sel!(canBecomeKeyWindow), can_key as extern "C" fn(_, _) -> _);
             b.add_method(sel!(canBecomeMainWindow), no as extern "C" fn(_, _) -> _);
+            b.add_method(sel!(constrainFrameRect:toScreen:), free as extern "C" fn(_, _, _, _) -> _);
             b.register() as *const AnyClass as usize
         });
         let win = p as *mut AnyObject;
@@ -557,6 +664,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn 마우스가_그대로면_창을_0점5초에_한_번만_묻는다() {
+        let d = |ms| Duration::from_millis(ms);
+        assert!(!track_due(true, true, d(40)), "가만히 — 메인 스레드를 안 깨운다");
+        assert!(!track_due(true, true, d(480)));
+        assert!(track_due(true, true, d(500)), "창이 저절로 옮겨지거나 숨은 걸 놓치지 않게");
+        assert!(track_due(false, true, d(40)), "마우스가 움직이면 바로 — 클릭 넘기기·올림이 그대로");
+        assert!(track_due(true, false, d(40)), "받는 자리가 바뀌면 바로");
+    }
+
+    #[test]
+    fn 자리_비움은_입력_2분_없음이나_잠김() {
+        assert!(!away_now(Some(119.0), false));
+        assert!(away_now(Some(120.0), false));
+        assert!(away_now(Some(1.0), true), "잠김은 입력과 상관없이");
+        assert!(!away_now(None, false), "맥 밖은 모름 — 안 비운 것으로(물결이 안 멈출 뿐)");
+    }
+
+    #[test]
     fn 마우스_자리는_창_안_점으로_바꾸고_밖이면_none() {
         let w = Screen { id: String::new(), x: 100.0, y: 200.0, w: 108.0, h: 108.0 };
         assert_eq!(local((110.0, 250.0), &w), Some((10.0, 50.0)));
@@ -581,6 +706,15 @@ mod tests {
         assert!(hit((5.0, 5.0), &hot));
         assert!(!hit((15.0, 15.0), &hot)); // 배지 원 밖 투명 여백
         assert!(!hit((30.0, 30.0), &[]));
+    }
+
+    #[test]
+    fn 가짜_마우스_셋째_칸이_1_이면_누름() {
+        assert!(fake_down("-1536,2082,1"));
+        assert!(fake_down(" 1, 2 , 1 \n"));
+        assert!(!fake_down("-1536,2082"));
+        assert!(!fake_down("-1536,2082,0"));
+        assert!(!fake_down(""));
     }
 
     #[test]

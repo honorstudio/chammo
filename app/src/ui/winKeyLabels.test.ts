@@ -2,7 +2,7 @@
 // JSX 사이에 날것으로 적은 ⌘(예: <span>⌘B</span>)는 윈도우에서도 ⌘ 로 보인다(2026-10-05 0.2.5 윈도우 QA ②)
 import { describe, expect, it } from 'vitest';
 
-const files = import.meta.glob(['./**/*.tsx', '../App.tsx'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+const files = import.meta.glob(['./**/*.tsx', '../App.tsx', '../../../pro/web/**/*.tsx'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
 
 /** 주석을 뺀 JSX 텍스트 조각(> … < 사이, 중괄호 밖) 중 ⌘ 가 든 것 */
 export function rawCmdText(src: string): string[] {

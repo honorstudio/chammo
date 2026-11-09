@@ -3,20 +3,11 @@
 // 5px 안 움직이면 그냥 클릭(블록 메뉴가 열린다)
 import type { BlockNoteEditor } from '@blocknote/core';
 import { moveSlot } from '../../domain/docBlocks';
-
-const HANDLE = '.bn-side-menu [draggable="true"]';
-
-/** 손잡이를 누른 줄의 블록 — 손잡이는 그 블록 첫 줄 옆에 뜬다. 자식은 빼고 블록 자기 줄(.bn-block-content)로 잰다 */
-function blockAtY(root: HTMLElement, y: number): HTMLElement | null {
-  const hits = [...root.querySelectorAll<HTMLElement>('.bn-block-outer[data-id]')].filter((b) => {
-    const c = b.querySelector(':scope > .bn-block > .bn-block-content')?.getBoundingClientRect();
-    return c && y >= c.top - 4 && y <= c.bottom + 4;
-  });
-  return hits[hits.length - 1] ?? null; // 겹치면 안쪽(나중) 것
-}
+import { blockAtY, HANDLE, type BlockPick } from './blockPick';
 
 /** 편집기 상자에 손잡이 끌기를 단다. line(y|null) = 놓일 자리 가로줄(상자 기준) */
-export function installBlockDrag(root: HTMLElement, editor: BlockNoteEditor, line: (y: number | null) => void): () => void {
+/** pick = 블록 고르기 — 잡은 손잡이 블록이 고른 블록이면 고른 블록 전부 옮긴다(노션처럼) */
+export function installBlockDrag(root: HTMLElement, editor: BlockNoteEditor, line: (y: number | null) => void, pick?: BlockPick): () => void {
   // 손잡이는 편집기 밖(떠 있는 층)에 그려질 수 있어 문서에서 듣고, 블록은 이 편집기 안에서만 찾는다
   const doc = root.ownerDocument;
   // 웹 끌기는 시작부터 막는다 — BlockNote 까지 안 가게(가면 끌기 미리보기 복제본이 문서에 남는다). 브라우저(시험)에서도 앱과 같은 길로
@@ -26,7 +17,12 @@ export function installBlockDrag(root: HTMLElement, editor: BlockNoteEditor, lin
     const outer = blockAtY(root, e.clientY);
     const id = outer?.dataset.id;
     if (!outer || !id) return;
-    const own = [id, ...[...outer.querySelectorAll<HTMLElement>('.bn-block-outer[data-id]')].map((b) => b.dataset.id!)];
+    const picked = pick?.ids() ?? [];
+    const moving = picked.includes(id) ? picked : [id];
+    const own = moving.flatMap((m) => {
+      const el = root.querySelector<HTMLElement>(`.bn-block-outer[data-id="${CSS.escape(m)}"]`);
+      return [m, ...[...(el?.querySelectorAll<HTMLElement>('.bn-block-outer[data-id]') ?? [])].map((b) => b.dataset.id!)];
+    });
     const x0 = e.clientX, y0 = e.clientY;
     let dragging = false;
     // 잡은 블록 흐리게 — 블록 칸의 class 는 편집기가 다시 그리며 지워서, 번호로 거는 스타일을 따로 둔다
@@ -40,7 +36,7 @@ export function installBlockDrag(root: HTMLElement, editor: BlockNoteEditor, lin
       if (!dragging) {
         if (Math.hypot(m.clientX - x0, m.clientY - y0) < 5) return;
         dragging = true;
-        lift.textContent = `.space-editor .bn-block-outer[data-id="${CSS.escape(id)}"] { opacity: .35; }`;
+        lift.textContent = `${moving.map((m) => `.space-editor .bn-block-outer[data-id="${CSS.escape(m)}"]`).join(', ')} { opacity: .35; }`;
         doc.head.appendChild(lift);
         document.documentElement.classList.add('cv-block-dragging');
       }
@@ -58,13 +54,14 @@ export function installBlockDrag(root: HTMLElement, editor: BlockNoteEditor, lin
       const swallow = (c: MouseEvent) => { c.stopPropagation(); c.preventDefault(); };
       window.addEventListener('click', swallow, { capture: true, once: true });
       window.setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), 0);
-      const block = editor.getBlock(id);
-      if (!slot || !block || !editor.getBlock(slot.id)) return;
+      const blocks = moving.map((m) => editor.getBlock(m)).filter((b) => b !== undefined);
+      if (!slot || blocks.length !== moving.length || !editor.getBlock(slot.id)) return;
       const to = slot;
       editor.transact(() => {
-        editor.removeBlocks([id]);
-        editor.insertBlocks([block], to.id, to.place);
+        editor.removeBlocks(moving);
+        editor.insertBlocks(blocks, to.id, to.place);
       });
+      if (picked.includes(id)) pick?.pickIds(moving); // 고른 블록을 옮겼으면 옮긴 뒤에도 고른 채로(번호는 그대로다)
     };
     window.addEventListener('pointermove', move, true);
     window.addEventListener('pointerup', up, true);

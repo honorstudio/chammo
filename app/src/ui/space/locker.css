@@ -203,8 +203,8 @@
 .lk-tabs-scroll.fade-r { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent); }
 .lk-tabs-scroll.fade-l.fade-r { -webkit-mask-image: linear-gradient(90deg, transparent, #000 24px, #000 calc(100% - 24px), transparent); mask-image: linear-gradient(90deg, transparent, #000 24px, #000 calc(100% - 24px), transparent); }
 .lk-tab { all: unset; box-sizing: border-box; cursor: pointer; height: 31px; display: flex; align-items: center; gap: 6px; padding: 0 4px 0 12px; border-radius: 8px 8px 0 0; font-size: 12.5px; color: var(--text-2); white-space: nowrap; max-width: 220px; }
-.lk-tab.home, .lk-tab.folder, .lk-tab.cal { position: relative; flex: none; padding: 0 11px; }
-.lk-tab.home.on svg, .lk-tab.folder.on svg, .lk-tab.cal.on svg { color: var(--text); }
+.lk-tab.home, .lk-tab.folder, .lk-tab.cal, .lk-tab.memory { position: relative; flex: none; padding: 0 11px; }
+.lk-tab.home.on svg, .lk-tab.folder.on svg, .lk-tab.cal.on svg, .lk-tab.memory.on svg { color: var(--text); }
 .lk-tab .lk-newdot { position: absolute; top: 6px; right: 6px; }
 /* Craft 독 — 앱 아이콘 하나씩(글자 없이), 모서리 점 = 상태 */
 .lk-tab.dock { position: relative; flex: none; padding: 0 8px; }
@@ -410,3 +410,26 @@
 .rail-pop-row kbd { margin-left: auto; font: inherit; font-size: 11px; color: var(--text-3); }
 /* 경로 칸에 끌어 놓기 — 참모 보관함·팀 보관함 같은 빛(dragPath drop-hot) */
 .lk-crumb button.drop-hot { box-shadow: inset 0 0 0 var(--ring-w) var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+/* ── 링크 칸(시안 locker-links v1 B, 2026-11-06) — 머리 '파일 · 링크', 늘 열린 붙여넣기 칸, 두 층 줄(제목 / 사이트 · 누가). 왼쪽 띠 없이 ── */
+.lkl-switch .lk-count { margin: 0 8px 0 -2px; }
+.lkl-switch button:not(.cur) { cursor: pointer; }
+.lkl-paste { flex: none; display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px; border-radius: 10px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
+.lkl-paste:focus-within { box-shadow: inset 0 0 0 1px var(--line-strong); }
+.lkl-paste.bad { box-shadow: inset 0 0 0 1px var(--danger-ink); }
+.lkl-paste input { all: unset; flex: 1; min-width: 0; font-size: 13px; color: var(--text); }
+.lkl-paste input::placeholder { color: var(--text-3); }
+.lkl-key { flex: none; display: inline-flex; color: var(--text-3); }
+.lkl-key svg { width: 14px; height: 14px; }
+.lkl-bad { margin: -8px 2px 0; font-size: 12px; color: var(--danger-ink); }
+.lkl-list { display: flex; flex-direction: column; }
+.lkl-row { position: relative; display: flex; align-items: center; gap: 12px; min-height: 54px; padding: 0 8px; border-bottom: 1px solid var(--line); cursor: pointer; outline: none; }
+.lkl-row:hover, .lkl-row:focus-visible { background: var(--hover); }
+.lkl-mid { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.lkl-mid b { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lkl-path { font-weight: 400; color: var(--text-3); }
+.lkl-sub { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lkl-time { flex: none; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--text-3); }
+.lkl-acts { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); display: none; gap: 2px; }
+.lkl-row:hover .lkl-acts, .lkl-row:focus-within .lkl-acts { display: flex; }
+.lkl-row:hover .lkl-time, .lkl-row:focus-within .lkl-time { visibility: hidden; }
+.lkl-row.picked, .lkl-row.picked:hover { background: color-mix(in srgb, var(--accent) 9%, transparent); box-shadow: inset 0 0 0 var(--ring-w) color-mix(in srgb, var(--accent) 55%, transparent); border-radius: 6px; }

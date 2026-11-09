@@ -116,6 +116,7 @@ const own = extra.some((a) => a === '--browser' || a.startsWith('--browser=') ||
 // 프로필이 만들어진 채널을 기억해 맞춘다(src/channel.js) — 정품으로 만든 프로필을 베타로 열면 판이 올라가 정품 스크립트가 못 연다(아이맥 project-x)
 const pick = own ? null : channelMod.pickChannel({ profileDir: userDataDir });
 if (pick && pick.warn) console.error(`[chammo-browser-mcp] ${pick.warn}`);
+if (pick && pick.note) console.error(`[chammo-browser-mcp] ${pick.note}`);
 const picked = own ? chromeLaunch() : sessionChrome(chromeLaunch(pick && pick.channel ? { env: { ...process.env, CHAMMO_BROWSER_CHANNEL: pick.channel } } : {}));
 if (!own && picked.found) channelMod.remember(userDataDir, picked.channel || 'chrome');
 if (!own && picked.channel) configArgs.push('--browser', picked.channel);

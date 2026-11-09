@@ -14,7 +14,7 @@ const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 const LIST = /^ {0,3}([-*+]|\d{1,9}[.)])(\s|$)/;
 const HEADING = /^ {0,3}#{1,6}(\s|$)/;
 const blank = (l: string) => !l.trim();
-const HTML_OPEN = /^ {0,3}(?:(<!--)|<(script|pre|style|textarea)(?=[\s>]|$))/i;
+const HTML_OPEN = /^ {0,3}(?:(<!--)|<(script|pre|style|textarea|details)(?=[\s>]|$))/i;
 const LINK_LINE = /^\s*\[[^\]\n]*\]\([^)\n]*\)\s*$/;
 
 /** md 블록 경계로 조각 — 빈 줄, 최상위 목록 항목, 제목 줄(앞뒤), 코드 펜스(통째로). 들여 쓴 줄은 앞 조각에(목록 안쪽·이어진 문단·목록 안 펜스) */
@@ -24,6 +24,8 @@ export function splitChunks(md: string): Piece[] {
   let fence: { ch: string; len: number } | null = null;
   /** HTML 블록(주석·script·pre·style·textarea) — 닫는 표시가 나올 때까지 빈 줄이 있어도 한 조각(가운데서 자르면 닫히지 않은 주석이 뒤를 먹는다) */
   let html: string | null = null;
+  let depth = 0;
+  const count = (l: string, tag: string) => l.toLowerCase().split(tag).length - 1;
   let afterBlank = true;
   let headingDone = false;
   let at = 0;
@@ -39,7 +41,9 @@ export function splitChunks(md: string): Piece[] {
     }
     if (html) {
       cur!.end = end;
-      if (line.toLowerCase().includes(html)) { html = null; close(); afterBlank = false; }
+      // 접는 블록 안 접는 블록 — 바깥 </details> 까지(mdToggle)
+      if (html === '</details>') depth += count(line, '<details') - count(line, '</details>');
+      if (html === '</details>' ? depth <= 0 : line.toLowerCase().includes(html)) { html = null; close(); afterBlank = false; }
       continue;
     }
     if (blank(line)) { afterBlank = true; continue; }
@@ -49,7 +53,8 @@ export function splitChunks(md: string): Piece[] {
       cur = { start, end };
       const endTag = h[1] ? '-->' : `</${h[2]!.toLowerCase()}>`;
       // 같은 줄에서 닫히면 그 줄만
-      if (line.toLowerCase().indexOf(endTag, h[0].length) >= 0) { close(); afterBlank = false; } else html = endTag;
+      depth = endTag === '</details>' ? count(line, '<details') - count(line, '</details>') : 0;
+      if (endTag === '</details>' ? depth <= 0 : line.toLowerCase().indexOf(endTag, h[0].length) >= 0) { close(); afterBlank = false; } else html = endTag;
       continue;
     }
     const indented = /^\s/.test(line);
@@ -220,7 +225,16 @@ export function joinChunks(md: string, chunks: Chunk[], segs: Seg[], fresh: (seg
         // 같은 종류 목록 항목끼리면 그 목록의 촘촘함(이웃 항목 사이 글) — 목록 끝 빈 줄을 따라가지 않게
         const pk = kindOf(lastTopLine(p.text)) ?? kindOf(firstLine(p.text)), ok = kindOf(firstLine(o.text));
         // (원문 조각 뒤에 끼워 넣은 새 항목만 — 원래 다음 조각이 남아 있으면 끼워 넣은 것, 없으면 그 자리를 고친 것이라 원래 사이 글)
-        if (pk && pk === ok && p.keep !== undefined && o.keep === undefined && kept.has(p.keep + 1)) {
+        // 옮긴 원문 조각(손잡이 끌기) — 원래 자리 앞뒤 사이 글을 들고 가면 목록이 둘로 갈리고 문단에 목록이 붙었다(2026-11-09).
+        // 둘 다 원문인데 순서가 바뀌었거나 사이 원문 조각이 다른 자리로 갔으면: 같은 종류 목록끼리는 그 목록의 항목 사이 글, 아니면 빈 줄
+        const moved = p.keep !== undefined && o.keep !== undefined && (o.keep < p.keep || kept.has(p.keep + 1));
+        if (moved) {
+          const sibGap = (j: number) => (j > 0 && kindOf(firstLine(chunkText(j - 1))) === kindOf(firstLine(chunkText(j))) ? gapBefore(j) : null);
+          g = pk && pk === ok ? sibGap(p.keep!) ?? sibGap(o.keep!) ?? sibGap(p.keep! + 1 < chunks.length ? p.keep! + 1 : p.keep!) ?? '\n' : loose(g) ? g : '\n\n';
+        } else if (p.keep !== undefined && o.keep !== undefined && pk !== ok && !loose(g) && loose(gapAfter(p.keep))) {
+          // 지운 자리 양쪽이 다른 종류(문단 ↔ 목록) — 앞 조각 원래 뒤 사이 글이 넉넉하면 그것(목록이 문단에 붙지 않게, 2026-11-09)
+          g = gapAfter(p.keep);
+        } else if (pk && pk === ok && p.keep !== undefined && o.keep === undefined && kept.has(p.keep + 1)) {
           const sib = p.keep > 0 && kindOf(firstLine(chunkText(p.keep - 1))) === pk ? gapBefore(p.keep) : null;
           g = sib ?? (loose(gapAfter(p.keep)) ? '\n' : gapAfter(p.keep));
         } else if (pk && pk === ok && p.keep === undefined && o.keep !== undefined && (o.keep === 0 || kept.has(o.keep - 1))) {

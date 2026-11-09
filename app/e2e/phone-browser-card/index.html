@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+  <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" /><title>phone browser card e2e</title>
+  <script>
+    // 폰 data/web 은 열쇠가 없으면 요청을 안 낸다 — 가짜 열쇠. 화면 그림만 가짜로 준다(8바이트 순번 + JPEG, 진짜 /api/browser-frame 모양)
+    localStorage.setItem('chammo.token', 'e2e');
+    window.__calls = [];
+    const realFetch = window.fetch.bind(window);
+    const frame = () => new Promise((done) => {
+      const c = document.createElement('canvas');
+      c.width = 1280; c.height = 720;
+      const g = c.getContext('2d');
+      g.fillStyle = '#eef2f9'; g.fillRect(0, 0, 1280, 720);
+      g.fillStyle = '#fff'; g.fillRect(190, 140, 900, 370);
+      g.fillStyle = '#1f1f1f'; g.font = '34px sans-serif'; g.fillText('시작하기', 230, 270);
+      g.font = '18px sans-serif'; g.fillText('본인 확인 중...', 680, 262);
+      c.toBlob(async (b) => {
+        const jpeg = new Uint8Array(await b.arrayBuffer());
+        const out = new Uint8Array(jpeg.length + 8);
+        new DataView(out.buffer).setUint32(0, 7, true);
+        out.set(jpeg, 8);
+        done(out);
+      }, 'image/jpeg', .8);
+    });
+    window.fetch = async (u, init) => {
+      const url = String(u.url ?? u);
+      if (!url.includes('/api/')) return realFetch(u, init);
+      window.__calls.push(url);
+      if (url.includes('/api/browser-frame')) return url.includes('since=7') ? new Response(new Uint8Array(0)) : new Response(await frame());
+      return new Response('{}', { headers: { 'content-type': 'application/json' } });
+    };
+  </script></head>
+  <body style="margin:0"><div id="root"></div><script type="module" src="./main.tsx"></script></body>
+</html>

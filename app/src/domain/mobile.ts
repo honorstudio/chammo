@@ -416,6 +416,10 @@ export const subStatus = (s: Session, tails: Readonly<Record<string, string>>, n
 /** 대화 목록 바닥 근처를 보고 있나 — 남은 거리가 slack 안이면 */
 export const nearBottom = (scrollHeight: number, scrollTop: number, clientHeight: number, slack = 80) => scrollHeight - scrollTop - clientHeight <= slack;
 
+/** 스크롤 사건 뒤 '바닥에 붙어 있나' — 바닥 근처면 붙음, 사람이 막(1초 안) 움직여 벗어났으면 떨어짐, 그 밖(배치가 바꾼 스크롤 — 입력칸이 커져
+ *  목록이 깎임·그림이 늦게 그려짐)은 그대로. 배치 탓 스크롤로 떨어지면 다음 크기 변화에 바닥으로 안 돌아와 마지막 말이 입력칸에 가렸다(11-08 사용자 폰, 팀챗 TeamConvo 와 같은 규칙) */
+export const nearAfterScroll = (o: { was: boolean; nearNow: boolean; handMs: number }) => o.nearNow || (o.handMs < 1000 ? false : o.was);
+
 /** 목록이 줄거나(키보드) 말풍선이 늘 때 바닥에 붙일까 — 바닥 근처를 보던 중이었거나 내가 막 보냈으면. 옛 글을 보는 중이면 그대로(2026-10-03 사용자) */
 export const stickBottom = (o: { wasNear: boolean; sentMine: boolean }) => o.wasNear || o.sentMine;
 

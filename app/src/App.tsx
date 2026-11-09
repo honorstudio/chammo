@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { appRoots, closableByShortcut, groupByProject, isOrchestratorName, legacyAssistants, nextOrchestratorName, orchView, parseAgents, projectDir, seenName, sessionsToStop, toolsWay, withinRoots, type Session } from './domain/session';
 import { moveInOrder, orchSort, stepTarget } from './domain/orchOrder';
 import { askNotice, askPlaced, askTarget, popupNotice, popupTarget, readAskCardKey } from './domain/agentAsk';
 import { samePath } from './domain/paths';
 import { EMPTY_LAYOUT, gridKeyOf, layoutReducer, maxTarget, revealPane, type LayoutAction, type PaneLayout } from './domain/paneLayout';
 import { accountsApi, commitLog, readUsage, setOrchLegacy, sendTextToSession } from './data/tauri';
-import { parseDayCommits, repoToday, type RepoToday } from './domain/replay';
+import { codeToday, NO_CODE, parseDayCommits, type CodeToday } from './domain/replay';
 import { ACCOUNTS_CHANGED, topLabel, usageOf, type AccountsView } from './domain/accounts';
 import { useAccountAuto } from './ui/useAccountAuto';
 import { useLogin } from './ui/useLogin';
@@ -29,9 +29,7 @@ import { RoutinePage } from './ui/RoutinePage';
 import { isCloud, parseRoutines, routineItem, routineState, type Routine } from './domain/routine';
 import { shouldShowTour, tourVisible } from './domain/tour';
 import type { Gate } from './domain/loginGate';
-import { useTama } from './ui/tama/useTama';
-import { PetView } from './ui/tama/PetView';
-import { PetModal } from './ui/tama/PetModal';
+import { useWorkFeed } from './ui/gacha/useWorkFeed';
 import { orchColor } from './domain/avatar';
 import { ReplayPage } from './ui/ReplayPage';
 import { LoadFloat } from './ui/LoadFloat';
@@ -47,6 +45,7 @@ import { AccessBanners } from './ui/AccessBanners';
 import { OPEN_SETUP, SPACE_NAV, spaceCmd } from './ui/space/navSignal';
 import type { SetupStart } from './domain/settingsTabs';
 import { LoginGate } from './ui/LoginGate';
+import { FirstRun } from './ui/FirstRun';
 import { picking } from './ui/chat/modelPickRun';
 import { appUpdateInstall, appUpdateLeftover, openTarget as openLink } from './data/tauri';
 import { afterLeftover, installNote, leftoverNote, runInstall, type Phase as InstallPhase } from './domain/appInstall';
@@ -80,7 +79,8 @@ import { OrchActionsProvider, useOrchActions } from './ui/orchActions';
 import { orchDisplay, orchLabel, orchLabelsNow, setOrchLabel, setOrchRoster, useOrchLabels } from './ui/orchLabels';
 import { Confirm, NameNew } from './ui/OrchDialogs';
 import { consentBeforeSpawn, isDisclaimerError } from './domain/bypassConsent';
-import { dupRenames, labelRenames, nickProblem, renamesToSend, withNick, type RenameSent } from './domain/orchLabel';
+import { FIRST_SPAWN_KEY, firstSpawnDue } from './domain/firstRun';
+import { dupRenames, labelRenames, nickProblem, renamesToSend, splitOrchName, withNick, type RenameSent } from './domain/orchLabel';
 import { orchIntro } from './domain/orchIntro';
 import { markReader, ReaderPanel, readerFocused } from './ui/reader/ReaderPanel';
 import { selectAllHere } from './ui/selectAll';
@@ -106,6 +106,10 @@ import { MemoPanel } from './ui/MemoPanel';
 import { useLessons } from './ui/useLessons';
 import { groupRequest } from './domain/lessons';
 import { useMemos } from './ui/useMemos';
+import { useNotesPlace } from './ui/notes/useNotesPlace';
+import { notesShareDone } from './data/tauri';
+import { attachToChat, textToTerminal } from './ui/fileDrop';
+import { askRef } from './ui/refBus';
 import { TerminalPane } from './ui/TerminalPane';
 import { StoppedStrip } from './ui/StoppedStrip';
 import { isRemoteTarget } from './domain/orphans';
@@ -119,6 +123,7 @@ import { autoRestore, parseSnap, stepSnapshot, type LiveSnap, type SnapSession }
 import { useLostTriage } from './ui/useLostTriage';
 import { useAutoTidy } from './ui/useAutoTidy';
 import { useGoalStall } from './ui/useGoalStall';
+import { useFolderPrompt } from './ui/useFolderPrompt';
 import { useOrchRevive } from './ui/useOrchRevive';
 import { useRoutineStalls } from './ui/useRoutineStalls';
 import { isHqOrch } from './domain/lostTriage';
@@ -133,15 +138,19 @@ import { OfficeDock } from './ui/office/OfficeDock';
 import { noteOf } from './domain/dock';
 import { skinOf } from './ui/office/skins';
 import { Shop } from './ui/gacha/Shop';
-import { FurnitureTray } from './ui/office/FurniturePanel';
+import { CharGate } from './ui/office/CharPicker';
+import { OfficeEdit } from './ui/office/OfficeEdit';
+import { OfficeRooms, type RosterRow } from './ui/office/OfficeRooms';
 import { OfficeModal, OfficeTools, type OfficeTab } from './ui/office/OfficeMenu';
 import { useGacha } from './ui/gacha/useGacha';
 import { gachaBridge } from './ui/gacha/phoneBridge';
-import { EMPTY_GACHA, ownedOf, ownedSkins, skinOfFile } from './domain/gacha';
+import { EMPTY_GACHA, moveOrchToOffice, officeOf, officeOfProject, officesOf, ownedSkins, skinOfRoom, sprOfOrch } from './domain/gacha';
+import { charDot, deskAction } from './domain/spaceOffice';
 import { gachaDeco, officeShape } from './domain/phoneOffice';
 import { workAct } from './domain/activity';
-import { canPlace, delivery, deliveryTail, placedCells, planRoom, seatSlots, stampSeen, withLounge, type Seat } from './domain/office';
-import { spriteOf } from './ui/tama/lcd';
+import { delivery, deliveryTail, planOffice, poolOrchs, seatSlots, speciesFor, stampSeen, type OrchIn, type Room, type Seat } from './domain/office';
+import type { Brush } from './ui/office/draw';
+import { MAX_OFFICES, type OfficeRoom } from './domain/officeRoom';
 import { Grip } from './ui/TaskPanel';
 import { IconClose, IconDownload, IconStack, IconTabs, IconUpdate } from './ui/Icons';
 import { RemoteChat, REMOTE_CHAT_EVENT, type RemoteChatTarget } from './ui/chat/RemoteChat';
@@ -157,7 +166,7 @@ import type { TaskCard } from './domain/tasks';
 import { sessionOrigins } from './data/tauri';
 import { BUSY_POLL, listErrorText } from './domain/busyGate';
 import { busyNow } from './ui/busyNow';
-import { appendTaskEvent, removeSession, daemonStartedAt, readOrchPins, setOrchPin, readOrchOrder, setOrchOrder, readOrchRoles, readLiveSnap, resumeSession, writeLiveSnap, newSession, readAutoAllow, readCtx, sendToSession, setBadge, stopSession, tamaWidget, writeClipboard } from './data/tauri';
+import { appendTaskEvent, removeSession, daemonStartedAt, readOrchPins, setOrchPin, readOrchOrder, setOrchOrder, readOrchRoles, readLiveSnap, resumeSession, writeLiveSnap, newSession, readAutoAllow, readCtx, sendToSession, setBadge, stopSession, writeClipboard } from './data/tauri';
 import { parseAllowLog, type AllowLog } from './domain/autoAllow';
 import { useAutoAllow } from './ui/useAutoAllow';
 import { useOrgPolicy } from './ui/useOrgPolicy';
@@ -169,8 +178,10 @@ import { useCraftHandback } from './ui/useCraftHandback';
 import { bornAfter, buildInbox, decideNote, findTarget, freshItems, popoverOpen, replyBlocked, type InboxItem } from './domain/inbox';
 import { replyInbox } from './domain/inboxReply';
 import { foldTails } from './domain/tailFold';
-import { InboxPopover, InboxRow } from './ui/Inbox';
-import { ctxAlerts, parseCtx, type Ctx } from './domain/ctx';
+import { InboxCard, InboxPopover, InboxRow, type InboxPage } from './ui/Inbox';
+import { directRank, itemRank } from './domain/inboxDeck';
+import { ctxAlerts, ctxIds, parseCtx, type Ctx } from './domain/ctx';
+import { keepSame } from './domain/keepSame';
 import { useReview } from './ui/useReview';
 import { ReviewPage } from './ui/ReviewPage';
 import { ReviewStrip } from './ui/ReviewStrip';
@@ -186,6 +197,8 @@ import { usePerfAlerts } from './ui/usePerfAlerts';
 const APP_STARTED = Date.now();
 
 const POLL_MS = 3000;
+/** 켠 뒤 저장소 스캔·오늘 커밋을 이만큼 미룬다 — 저장소마다 git 이라 켤 때 몰림에 얹지 않게 */
+const BOOT_GIT_DELAY_MS = 15_000;
 
 // 사용자 설정은 이 컴퓨터에만 — 없거나 막혀 있으면 기본값
 const load = <T,>(k: string, d: T): T => {
@@ -238,12 +251,15 @@ export default function App() {
   useEffect(() => { if (config) setAvatarTts(config.ttsCommand); }, [config]);
   // 프로필은 폰에서도 바꾼다(/api/avatar) — 10초마다 다시 읽어 따라온다(안 바뀌면 저장소가 새 값을 안 내 다시 안 그린다)
   useEffect(() => every(() => void refreshAvatars(), 10_000), []);
+  // 시간 글자('3분 전')·시각으로 판단하는 계산은 앱이 다시 그려질 때 따라온다 — 폴링 값이 그대로면 안 그리니 15초에 한 번은 그린다(앱이 뒤면 5배 느리게)
+  const [, beat] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => every(beat, 15_000), []);
   const features = inUse(featuresOf(config));
   const gitOn = features.git;
   const featuresRef = useRef(features);
   // 설정 > 기능 > 애니메이션(자동·줄이기·끄기) — 문서 맨 위 class 로(ui/calm)
   useEffect(() => { setAnimation(features.animation); }, [features.animation]);
-  // 첫 실행(설정 파일에 setupDone 없음)이면 설정 화면이 안내를 겸한다. 메뉴 설정…(⌘,)으로 언제든 연다
+  // 첫 실행(설정 파일에 setupDone 없음)이면 첫 설치 창(ui/FirstRun). 메뉴 설정…(⌘,)은 다 마친 뒤부터
   const firstRun = config?.setupDone === false;
   // 둘러보기 — 마법사를 끝낸 뒤 한 번, 그다음은 ⌘/ · Chammo 메뉴 > 둘러보기
   // 세션 브라우저 상태(사람 부름 감지용) — 스페이스 밖 화면에서도
@@ -318,7 +334,7 @@ export default function App() {
   // 루틴 — 루틴 세션은 데이터 폴더에서 돌아 위 목록(프로젝트·HQ 안만)에서 빠지므로, 거르기 전 전체 목록을 따로 들고 있는다
   const [allSessions, setAllSessions] = useState<Session[]>([]);
   const [routines, setRoutines] = useState<Routine[]>([]);
-  const pullRoutines = useCallback(() => void routinesList().then((t) => setRoutines(parseRoutines(t))).catch(() => {}), []);
+  const pullRoutines = useCallback(() => void routinesList().then((t) => { const next = parseRoutines(t); setRoutines((o) => keepSame(o, next)); }).catch(() => {}), []);
   useEffect(() => {
     pullRoutines();
     return every(pullRoutines, 5000);
@@ -355,9 +371,16 @@ export default function App() {
   useEffect(() => save('officeMode', office), [office]);
   // 사무실 칸이 보여 주는 화면(메뉴) — 참모 열·작업 패널은 그대로
   const [officeTab, setOfficeTab] = useState<OfficeTab>('office');
-  const [furnPick, setFurnPick] = useState<string | null>(null);
-  // 사무실 앞줄 자리표 — 한 번 앉은 세션은 그 자리 그대로(domain/office seatSlots)
-  const [seats, setSeats] = useState<(string | null)[]>(() => load('officeSeats', []));
+  const [editLayer, setEditLayer] = useState<'furn' | 'floor' | 'wall'>('floor');
+  const [charsOpen, setCharsOpen] = useState(false);
+  /** 방에서 누른 참모 — 캐릭터 고르기 창이 그 참모부터(11-09) */
+  const [charsFor, setCharsFor] = useState<string | undefined>();
+  /** 접힌 현황판 높이 — 사무실 방을 그만큼 위로 */
+  const [dockH, setDockH] = useState(0);
+  // 지금 보는 사무실 번호(넘기기) — 켤 때마다 첫 사무실부터(안 산 사무실 값 보기에서 멈춘 채 켜지지 않게)
+  const [officeCur, setOfficeCur] = useState(0);
+  // 사무실마다 직원 자리표 — 한 번 앉은 세션은 그 자리 그대로(domain/office seatSlots). 옛 판은 자리표 하나만 저장했다
+  const [seats, setSeats] = useState<(string | null)[][]>(() => { const v = load<unknown[]>('officeSeats', []); return Array.isArray(v[0]) ? v as (string | null)[][] : [v as (string | null)[]]; });
   useEffect(() => save('officeSeats', seats), [seats]);
   const seenSends = useRef(new Map<string, number>()); // 배달 연출: send 를 처음 본 시각(domain/office stampSeen)
   // 스페이스 모드: 참모 화면 = [리더][참모 채팅 — 쌓기/탭] (2026-09-30 사용자, Chammo 0.2.0 방향)
@@ -398,6 +421,20 @@ export default function App() {
   voiceRef.current = voice && features.voice;
   // 상단 바 스피커 버튼·참모 scripts/app 이 같이 쓴다 — 켤 때 한마디
   const turnVoice = (on: boolean) => setVoice((v) => { if (!on) voiceHeld.current = {}; if (on && !v) void speak(tr(`음성 모드 켰어. ${assistant()}가 답하면 읽어줄게`, `Voice mode on. I will read ${assistant()}'s replies aloud`)).catch(() => {}); return on; });
+  const notes = useNotesPlace(space);
+  // 내 메모 따로 창의 '보여 주기' — 입력칸은 이 창에 있다. 지금 칸에 파일 참조를 넣고 창에 답한다(사람이 ⋯ 를 눌렀을 때만 온다)
+  useEffect(() => {
+    const w = window as unknown as { __notesShare?: (path: string) => void; __notesPaste?: (text: string) => void };
+    w.__notesShare = (path) => { const id = focused.current; void notesShareDone(!!id && attachToChat(id, [path])); };
+    // 보내기 아이콘 — 메모 글 통째. 채팅 입력칸이 있으면 거기, 터미널 뷰면 터미널 입력칸에 붙여넣기(Enter 는 사람이)
+    w.__notesPaste = (text) => {
+      const id = focused.current;
+      void notesShareDone(!!id && (askRef(id, { kind: 'chat', who: tr('내 메모', 'My notes'), text, plain: true }, false) || textToTerminal(id, text)));
+    };
+    return () => { delete w.__notesShare; delete w.__notesPaste; };
+  }, []);
+  const notesRef = useRef(notes);
+  notesRef.current = notes;
   const [memoOpen, setMemoOpen] = useState<string | null>(null); // 메모판을 띄운 창(세션 id)
   const prevInbox = useRef<Set<string> | null>(null);
   const [taskEvents, setTaskEvents] = useState<TaskEvent[]>([]);
@@ -411,6 +448,8 @@ export default function App() {
   const [stoppedReady, setStoppedReady] = useState(false);
   // 살아 있는 세션 기록(live.json) — undefined = 아직 파일을 안 읽음. 관리 프로그램 재시작으로 꺼진 세션을 찾는다(domain/revive)
   const snapRef = useRef<LiveSnap | null | undefined>(undefined);
+  // 앱을 켜고 처음 읽은 기록 — 앱이 꺼져 있거나 멈춘 사이 꺼진 참모를 찾는다(useOrchRevive seedRevive)
+  const bootSnap = useRef<LiveSnap | null | undefined>(undefined);
   // 세션마다 사이드바 판정 — live.json state 로 같이 쓴다(기본 모드 '참모 상태'가 읽는다, domain/revive liveState). 그릴 때마다 최신으로
   const statesRef = useRef<Record<string, ActivityStatus>>({});
   const [lost, setLost] = useState<SnapSession[]>([]);
@@ -418,7 +457,7 @@ export default function App() {
   const [snapReady, setSnapReady] = useState(false);
   const [usage, setUsage] = useState<Usage>({});
   const [accounts, setAccounts] = useState<AccountsView | null>(null);
-  const [today, setToday] = useState<RepoToday[]>([]);
+  const [today, setToday] = useState<CodeToday>(NO_CODE);
   const [ctx, setCtx] = useState<Record<string, Ctx>>({});
   const [allowLog, setAllowLog] = useState<AllowLog[]>([]);
   const loadAllowLog = useCallback(() => void readAutoAllow().then((t) => setAllowLog(parseAllowLog(t, 5))).catch(() => {}), []);
@@ -519,7 +558,6 @@ export default function App() {
     if (!allowed(sc, featuresRef.current)) return; // 꺼 둔 기능(사무실·다마고치·리뷰)의 입구
     // ⌘1 = 참모 터미널 격자(사무실 끔) · ⌘4 = 사무실 뷰(사무실 켬) · ⌘3 = 리뷰 (2026-09-27 사용자)
     if (sc.type === 'goto') {
-      if (sc.to === 'tama') { openPetRef.current(); return; } // 도감·보관함 = 돌보는 참모 대시보드의 펫 탭
       // 채팅 뷰면 스페이스 칸에 사무실(지금 탭) — 터미널 뷰로 넘어가지 않는다(2026-10-03 사용자 A)
       if (sc.to === 'office' && spaceShownRef.current) { setOfficeTab('office'); setOfficeReq('open'); }
       else if (sc.to === 'office') { setOffice(true); setOfficeTab('office'); setSelected({ kind: 'orchestrator' }); }
@@ -586,7 +624,7 @@ export default function App() {
     // ⌘`(⌘₩) — 홈 대시보드 켜기·보던 화면으로(2026-10-25 사용자). 터미널 뷰엔 대시보드가 없어 open home 과 같이 참모 화면
     else if (sc.type === 'homeToggle') { if (spaceShownRef.current) spaceCmd(sc.open ? 'dash' : 'dashToggle'); else runRef.current({ type: 'goto', to: 'orchestrator' }); }
     else if (sc.type === 'goLocker') spaceCmd('locker'); // ⌘⇧L — 보관함 고정 탭
-    else if (sc.type === 'widget') widgetToggleRef.current();
+    else if (sc.type === 'notes') notesRef.current.toggle();
     else if (sc.type === 'memo') {
       const id = focused.current;
       if (id) setMemoOpen((o) => (o === id ? null : id));
@@ -634,7 +672,6 @@ export default function App() {
     window.addEventListener('message', onFrame);
     return () => { window.removeEventListener('keydown', onKey, true); window.removeEventListener('pointerdown', onPointer, true); window.removeEventListener('message', onFrame); delete w.__menu; delete w.__dockQuit; };
   }, []);
-  const widgetToggleRef = useRef<() => void>(() => {});
   // 화면(프로젝트 이름 / 'all')마다 따로 기억한다 — 프로젝트를 오가도 크게·접기가 유지되게
   const [layouts, setLayouts] = useState<Record<string, PaneLayout>>({});
   const layoutOf = (key: string) => layouts[key] ?? EMPTY_LAYOUT;
@@ -651,7 +688,10 @@ export default function App() {
   const origins = useRef(new Map<number, { unattended: boolean; via: string }>());
   // 꺼진 세션 목록(agents --all)은 15초에 한 번 — 사람이 부른 새로 고침·살아 있던 세션이 사라진 때만 바로(domain/pollGate)
   const allAt = useRef(0);
+  const allRaw = useRef('');
+  const offOrchRef = useRef<{ sessionId?: string }[]>([]);
   const prevLive = useRef<string[]>([]);
+  const [sessionsSeen, setSessionsSeen] = useState(false); // 세션 목록을 한 번이라도 받았나 — 첫 참모 띄우기가 '없다'를 믿으려고
   const refreshOnce = useCallback(async (force: boolean) => {
     if (!env) return;
     try {
@@ -661,19 +701,21 @@ export default function App() {
       const ask = parsed.filter((x) => x.kind === 'interactive' && x.pid != null && !origins.current.has(x.pid)).map((x) => x.pid!);
       if (ask.length) for (const [pid, o] of Object.entries(await sessionOrigins(ask).catch(() => ({})))) origins.current.set(Number(pid), o);
       const everyone = parsed.map((x) => (x.kind === 'interactive' && x.pid != null && origins.current.has(x.pid) ? { ...x, origin: origins.current.get(x.pid) } : x));
-      setAllSessions(everyone);
+      // 값이 그대로면 옛 참조 그대로(domain/keepSame) — 3초마다 새 배열을 넣어 값이 같아도 앱 전체가 다시 그려졌다(11-07)
+      setAllSessions((o) => keepSame(o, everyone));
       const live = withinRoots(everyone, appRoots(env.devRoot, env.orchestratorCwd, env.extraProjects));
-      setSessions(live);
+      setSessions((o) => keepSame(o, live));
+      setSessionsSeen(true);
       listAt.current = Date.now();
       // 재시작 감지가 실패해도 세션 목록은 살린다 — 따로 잡는다
       try {
-        if (snapRef.current === undefined) snapRef.current = parseSnap(await readLiveSnap());
+        if (snapRef.current === undefined) bootSnap.current = snapRef.current = parseSnap(await readLiveSnap());
         // 시작 시각을 먼저 받고 기록을 읽는다 — 기다리는 사이 꺼진 세션 처리(useLostTriage)가 지운 걸 옛 기록으로 되살리지 않게
         const daemon = await daemonStartedAt();
         const snap = stepSnapshot(snapRef.current, daemon, live, Date.now(), statesRef.current, orchLabelsNow());
         if (snap && JSON.stringify(snap) !== JSON.stringify(snapRef.current)) void writeLiveSnap(JSON.stringify(snap)).catch(() => {});
         snapRef.current = snap;
-        setLost(snap?.lost ?? []);
+        setLost((o) => keepSame(o, snap?.lost ?? []));
         setSnapReady(true);
       } catch {
         // 다음 폴링에서 다시
@@ -681,12 +723,20 @@ export default function App() {
       setTaskEvents(await taskLog());
       const liveIds = live.map((x) => x.sessionId ?? x.id);
       if (allDue({ lastAt: allAt.current, now: Date.now(), force, prevLive: prevLive.current, live: liveIds })) {
-        setStopped(withinRoots(parseStopped(await listSessionsAllRaw(), env.devRoot, env.extraProjects), appRoots(env.devRoot, env.orchestratorCwd, env.extraProjects)));
+        // 꺼진 세션까지면 수백 KB — 글이 그대로면 풀지도 않는다
+        const rawAll = await listSessionsAllRaw();
+        if (rawAll !== allRaw.current) {
+          allRaw.current = rawAll;
+          const next = withinRoots(parseStopped(rawAll, env.devRoot, env.extraProjects), appRoots(env.devRoot, env.orchestratorCwd, env.extraProjects));
+          setStopped((o) => keepSame(o, next));
+        }
         allAt.current = Date.now();
         setStoppedReady(true);
       }
       prevLive.current = liveIds;
-      setCtx(parseCtx(await readCtx()));
+      // 지금 보이는 세션 + 꺼진 참모(홈 줄) 것만 읽는다 — ctx 폴더엔 끝난 세션 파일이 수천 개다
+      const nextCtx = parseCtx(await readCtx(ctxIds(live, offOrchRef.current)));
+      setCtx((o) => keepSame(o, nextCtx));
       listFails.current = 0;
       if (listFailed.current) { listFailed.current = false; setError(null); }
     } catch (e: unknown) {
@@ -751,25 +801,28 @@ export default function App() {
   // 프로젝트 문서 상태: git 을 30번 넘게 부르니 5분마다
   useEffect(() => {
     if (!env) return;
-    const scan = () => projectScan(env.devRoot).then(setDocs).catch(() => {});
-    void scan();
-    return every(scan, 5 * 60_000);
+    const scan = () => projectScan(env.devRoot).then((d) => setDocs((o) => keepSame(o, d))).catch(() => {});
+    // 켤 때 몰림을 편다 — 세션·웹뷰가 뜨는 동안 git 을 저장소마다 더 얹지 않는다(11-07 켠 직후 부하 122)
+    const first = setTimeout(() => void scan(), BOOT_GIT_DELAY_MS);
+    const stop = every(scan, 5 * 60_000);
+    return () => { clearTimeout(first); stop(); };
   }, [env]);
 
   // 상단 바: 사용 한도는 상태줄이 갱신할 때마다 바뀌니 15초, 오늘 커밋은 git 을 저장소마다 부르니 5분(TODAY_COMMITS_MS)
   useEffect(() => {
     if (!env) return;
     // 지금 계정은 ~/.claude.json 만 읽어서 싸다 — 사용량과 같이, 설정에서 바꾸면 바로
-    const a = () => accountsApi.view().then(setAccounts).catch(() => setAccounts(null));
-    const u = () => { void a(); return readUsage().then((j) => setUsage(parseUsage(j, Date.now()))).catch(() => {}); };
+    const a = () => accountsApi.view().then((v) => setAccounts((o) => keepSame(o, v))).catch(() => setAccounts(null));
+    const u = () => { void a(); return readUsage().then((j) => { const next = parseUsage(j, Date.now()); setUsage((o) => keepSame(o, next)); }).catch(() => {}); };
     // git 을 끈 사람은 오늘 커밋을 안 센다(ADR 0024) — 저장소마다 git 을 부르지 않게
-    const c = () => (gitOn ? commitLog(env.devRoot, env.gitEmail, dayStart(new Date())).then((raw) => setToday(repoToday(parseDayCommits(raw)))).catch(() => {}) : Promise.resolve(setToday([])));
+    const c = () => (gitOn ? commitLog(env.devRoot, env.gitEmail, dayStart(new Date())).then((raw) => setToday(codeToday(parseDayCommits(raw)))).catch(() => {}) : Promise.resolve(setToday(NO_CODE)));
     void u();
-    void c();
+    const firstC = setTimeout(() => void c(), BOOT_GIT_DELAY_MS);
     const stopU = every(u, 15_000);
     const stopC = every(c, TODAY_COMMITS_MS);
     window.addEventListener(ACCOUNTS_CHANGED, a);
     return () => {
+      clearTimeout(firstC);
       stopU();
       stopC();
       window.removeEventListener(ACCOUNTS_CHANGED, a);
@@ -827,6 +880,7 @@ export default function App() {
   // 만드는 중인 새 참모(진짜 이름) — 사이드바에 '켜는 중' 줄로 두고, 목록에 뜨면 그 참모로 옮긴다(domain/orchRows arrivedOrch)
   const [creating, setCreating] = useState<string | null>(null);
   const offOrchList = useMemo(() => stoppedOrchs(resumable(stopped, sessions), env?.orchestratorCwd ?? '', navOrchs), [stopped, sessions, env, navOrchs]);
+  offOrchRef.current = offOrchList;
   // 참모 맡은 일 — 폰·이름표 훅과 같은 <데이터>/orch-roles.json, 5초마다(폰에서 고쳐도 따라오게). 사람이 안 적었으면 최근 7일 기록으로 "주로 a·b"(domain/orchRoles)
   const [orchRoles, setOrchRoles] = useState<RoleMap>({});
   useEffect(() => {
@@ -886,30 +940,31 @@ export default function App() {
   const spawningRef = useRef(false);
   /** bypass 동의 카드 — 누르면 할 일(참모 다시 띄우기) */
   const [consentAsk, setConsentAsk] = useState<(() => void) | null>(null);
+  // 첫 설치 '시작하기' 뒤 첫 참모를 한 번 저절로 — 끝 장이 '참모에게 …'라고 하는데 빈 화면이던 것(0.4.9). 참모가 이미 있으면 표시만 지운다. 동의 카드는 그대로 사람이 누른다
+  useEffect(() => {
+    let wanted = false;
+    try { wanted = !!localStorage.getItem(FIRST_SPAWN_KEY); } catch { return; }
+    if (!wanted || !sessionsSeen) return;
+    const orchs = navOrchs.length + offOrchList.length;
+    if (firstSpawnDue({ wanted, setupDone: config?.setupDone === true, seen: sessionsSeen, hasEnv: !!env, orchs })) {
+      localStorage.removeItem(FIRST_SPAWN_KEY); void spawnOrchestrator();
+    } else if (orchs > 0) localStorage.removeItem(FIRST_SPAWN_KEY);
+  }, [sessionsSeen, config?.setupDone, env, navOrchs.length, offOrchList.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 다마고치: 1분마다 작업 기록을 먹여 tama.json 에 쓴다(위젯 창은 읽기만)
-  const openPetRef = useRef(() => {});
-  const [petModal, setPetModal] = useState(false);
-  const tama = useTama(env, sessions, taskEvents, routines, navOrchs, (k) => { if (k === 'dex' || k === 'pet') openPetRef.current(); }, review.scannedAt ? review.open : null, features.tama);
-  // 펫 = 참모가 키운다(시안 tama-v2 B) — 더보기·도감은 돌보는 참모(마지막으로 먹인 참모) 대시보드의 펫 탭
-  const petWho = (id: string) => { const o = navOrchs.find((x) => x.id === id); return o ? { name: o.name, color: orchColor(o.name) } : null; };
-  // 펫 탭 코인 = 사무실과 같은 상점 창(뽑기·도감·스킨) — 펫 탭에서 뽑아도 뽑은 걸 바로 본다
-  // 방 스킨은 gacha.json 장착 칸 하나 — 도감·스킨 화면·사무실이 같은 걸 본다. 옛 판은 이 컴퓨터(localStorage officeSkin)에만 뒀다 — 처음 한 번 옮긴다
-  const petNode = (who: typeof petWho) => <PetView file={tama.file} apply={tama.apply} feed={tama.feed} who={who} coins={features.gacha ? gacha.file?.coins ?? 0 : undefined}
-    shop={features.gacha ? (view, onView, close) => <Shop view={view} onView={onView} file={gacha.file} draw={gacha.draw} equip={(id) => void gacha.equip(id)} setSkin={(n) => void gacha.setSkin(n)} see={(id) => void gacha.see(id)} onClose={close} /> : undefined} />;
-  const gacha = useGacha(env, tama.feed);
+  // 코인 재료: 1분마다 작업 기록을 모아 뽑기 코인으로(다마고치는 11-06 없앰)
+  const lastTalks = useRef<{ id: string; ts?: string }[]>([]); // 아래 allActs 를 읽은 뒤 채운다
+  const workFeed = useWorkFeed(env, sessions, taskEvents, routines, lastTalks);
+  const gacha = useGacha(env, workFeed);
+  // 옛 판은 방 스킨을 이 컴퓨터(localStorage officeSkin)에만 뒀다 — 처음 한 번 옮긴다
   useEffect(() => {
     const old = load<string>('officeSkin', '');
     if (!gacha.file || !old) return;
     try { localStorage.removeItem('officeSkin'); } catch { /* 못 지워도 장착 칸이 있으면 다시 안 옮긴다 */ }
-    if (old !== 'wood' && !gacha.file.equip.skin) void gacha.setSkin(old);
+    if (old !== 'wood' && !gacha.file.equip.skin) void gacha.setSkin(0, old);
   }, [gacha.file]); // eslint-disable-line react-hooks/exhaustive-deps
-  widgetToggleRef.current = () => (tama.widgetShown ? void tamaWidget(false) : tama.showWidget());
-  // 꺼 둔 기능: 떠 있던 다마고치 위젯은 숨기고, 그 화면을 보고 있었으면 비서 화면으로
-  useEffect(() => { if (!features.tama && tama.widgetShown) void tamaWidget(false).catch(() => {}); }, [features.tama, tama.widgetShown]);
   useEffect(() => {
-    if ((selected.kind === 'review' && !features.review) || (selected.kind === 'tama' && !features.tama)) setSelected({ kind: 'orchestrator' });
-  }, [selected.kind, features.review, features.tama]);
+    if (selected.kind === 'review' && !features.review) setSelected({ kind: 'orchestrator' });
+  }, [selected.kind, features.review]);
 
   const bin = env?.claudeBin ?? 'claude';
   const cards = useMemo(() => foldTasks(taskEvents, sessions), [taskEvents, sessions]);
@@ -945,11 +1000,12 @@ export default function App() {
     return { session: s, activity: a ?? {}, status: activityStatus(s.state, a, now, listAt.current) };
   });
   statesRef.current = Object.fromEntries([...allActs, ...sideActs].filter((x) => x.session.sessionId).map((x) => [x.session.sessionId!, x.status]));
+  lastTalks.current = [...allActs, ...sideActs].map((x) => ({ id: x.session.id, ...(x.activity.human ? { ts: x.activity.human.ts } : {}) }));
   // 계정 자동 전환 — 계정 보기가 15초마다 새로 올 때 한 번씩(한도로 멈춘 세션은 참모·하위·도우미 다)
   useAccountAuto(accounts, [...allActs, ...sideActs], voice && features.voice);
   // 로그인 풀림 — 멈춘 세션들 + 맥 로그인을 '로그인 필요' 하나로, 고쳐진 걸 본 뒤 이어서(domain/login). 카드는 결정 대기함 맨 위
   const routineActs: SessionActivity[] = routineStalls(routineSess, activity).map(({ session: s, activity: a }) => ({ session: s, activity: a, status: activityStatus(s.state, a, now) }));
-  const login = useLogin([...allActs, ...sideActs, ...routineActs], accounts, voice && features.voice);
+  const login = useLogin([...allActs, ...sideActs, ...routineActs], accounts, voice && features.voice, config?.setupDone === true);
   missingRef.current = login.missing;
   // claude 가 다시 보이면(다시 설치) 앱 환경을 새로 읽는다 — 터미널 칸·로그인 카드가 옛 claude 자리를 쥐고 있지 않게, 목록도 바로
   const wasMissing = useRef(false);
@@ -1140,7 +1196,7 @@ export default function App() {
 
   // 도구 권한 창은 앱이 이름으로 Allow 를 찾아 자동 허용 (결정 대기함엔 선택지 질문·민감한 창만 남는다)
   const orgPol = useOrgPolicy(sessions); // 회사 정책이면 권한 창을 사람 카드로(ADR 0023)
-  useAutoAllow(sessions, env?.devRoot, loadAllowLog, orgPol.blocked);
+  useAutoAllow(sessions, env?.devRoot, loadAllowLog, orgPol.blocked, taskEvents, groups.orchestrators);
   // 하위 세션 선택지 창은 참모에게 넘긴다 — 참모가 골라 답하거나 사용자에게 묻는다. 사용자가 그 화면을 보고 있으면 안 넘긴다
   const subSessions = useMemo(() => [...groups.helpers, ...groups.loose, ...groups.projects.flatMap((p) => p.sessions)], [groups]);
   // 보고 없이 멈춘 예약(scripts/routine tick 의 stall) — 예약 세션은 세션 목록 밖이라 맨 앞 참모에게 한 줄
@@ -1211,6 +1267,7 @@ export default function App() {
   const prevTerms = useRef('');
   /** 로그인 카드 + 약관 카드(계정마다) */
   const loginCount = (login.need ? 1 : 0) + (login.missing ? 1 : 0) + login.terms.length;
+  const closeInbox = useCallback(() => setInboxOpen(false), []);
   const prevBrowser = useRef('');
   useEffect(() => {
     const prev = prevInbox.current;
@@ -1224,7 +1281,7 @@ export default function App() {
     prevDirect.current = new Set(directWait);
     prevLogin.current = login.need?.since ?? null;
     // 결정 항목이 0이어도 카드가 남아 있으면 펼친 걸 닫지 않는다(popoverOpen 은 항목 0이면 닫는다)
-    setInboxOpen((o) => newDirect || popoverOpen(o, prev, inbox, { hold: settingsOpen || firstRun, askInView: spaceShownRef.current }) || (o && (direct.inboxCards.length + remote.cards.length + loginCount > 0 || browserCount > 0)));
+    setInboxOpen((o) => newDirect || popoverOpen(o, prev, inbox, { hold: settingsOpen || firstRun }) || (o && (direct.inboxCards.length + remote.cards.length + loginCount > 0 || browserCount > 0)));
     prevInbox.current = new Set(inbox.map((i) => i.key));
     if (fresh.length) {
       // 참모 물어봄·확인창은 위에서 따로 알린다 — 여기선 결정(task ask)만. 로그인 풀림은 useLogin 이 한 번에 묶어서
@@ -1318,8 +1375,10 @@ export default function App() {
   // 보고 있던 참모였으면 홈에서 깨울 때처럼 뜨면 그 채팅으로 돌아간다
   const lastFront = useRef<{ id?: string; prev?: string }>({});
   if (groups.orchestrator?.id !== lastFront.current.id) lastFront.current = { id: groups.orchestrator?.id, prev: lastFront.current.id };
+  useFolderPrompt();
   const reviving = useOrchRevive({
     orchs: navOrchs, all: sessions, ready: snapReady && !!env, refresh,
+    bootSnap: () => bootSnap.current, isOrch: isLostOrch,
     revive: async (s) => {
       markPending(s.sessionId);
       markResuming(s.sessionId);
@@ -1334,8 +1393,6 @@ export default function App() {
   const revivingX = reviving[0];
   const wakeNote = wakeName ? <WakeNotice name={wakeName} label={wakeX ? orchDisplay(wakeX) || wakeName : seenName(wakeName)} waking={!!wakeX} />
     : revivingX ? <WakeNotice name={revivingX.name} label={orchDisplay(revivingX) || revivingX.name} waking text={tr(`${orchDisplay(revivingX) || revivingX.name} — 꺼져서 다시 켜는 중`, `${orchDisplay(revivingX) || revivingX.name} stopped — restarting it`)} /* 이름이 '참모'면 '참모 참모가'로 겹쳤다(10/21 시험 앱) */ /> : undefined;
-  // 위젯 '더보기'·단축키 — 화면을 옮기지 않고 지금 화면 위 모달로(같은 PetView). 전엔 채팅 뷰면 스페이스 펫 탭으로 넘어갔다(2026-10-10 사용자)
-  openPetRef.current = () => setPetModal(true);
   useEffect(() => {
     if (!creating) return;
     const id = arrivedOrch(creating, groups.orchestrators);
@@ -1398,6 +1455,15 @@ export default function App() {
     focused.current = s.id;
     setFocusReq((r) => ({ key, id: s.id, n: (r?.n ?? 0) + 1 }));
   };
+  // 결정 대기함 한 장씩(시안 inbox-today v2) — 로그인·브라우저 카드는 한 장씩 묶고, 사람 승인 카드·원격 카드·물음은 한 장에 하나 — 처리기(replyItem·dismissItem·openTarget) 선언 뒤에 둔다: .map 안 JSX 속성은 렌더 중 바로 읽혀서 위에 두면 TDZ 로 메인 창이 멈춘다(11-05, renderOrderTdz.test)
+  const inboxPages: InboxPage[] = [
+    ...(loginCount ? [{ key: 'login', rank: 1 as const, who: 'Claude', node: <>{login.missing && <ClaudeMissingCard fontSize={fontSize} />}{login.need && <LoginCard need={login.need} claude={bin} fontSize={fontSize} />}<TermsCards cards={login.terms} onRetry={login.retryTerms} onClose={login.closeTerms} /></> }] : []),
+    ...(browserNeeds.node || popupCards.length || askList.length ? [{ key: 'browser', rank: 1 as const, who: tr('브라우저', 'Browser'), node: <>{browserNeeds.node}<AskCards asks={askList} nameOf={(l) => askName(l, allSessions)} /><PopupCards lives={popupCards} nameOf={(l) => askName(l, allSessions)} /></> }] : []),
+    ...direct.inboxCards.map((c) => ({ key: `d:${c.id}`, rank: directRank(c.kind), who: direct.nameOf(c), node: direct.cardNode(c, 'inbox') })),
+    ...remote.cards.map((x) => ({ key: `r:${remote.key(x)}`, rank: directRank(x.card.kind), who: x.name, node: remote.cardNode(x) })),
+    ...inbox.map((i) => ({ key: `i:${i.key}`, rank: itemRank(i), who: i.project, node: <InboxCard item={i} blockedWhy={(it) => replyBlocked(it, sessions)} onReply={replyItem} onOpen={openTarget} onDismiss={dismissItem} /> })),
+  ];
+  const inboxHot = inboxPages.some((p) => p.rank < 2);
   // macOS 알림을 누르면 Rust(notify_mac)가 창을 앞으로 가져오고 window.__notifyClick('<갈 곳>') 을 부른다
   const noteClickRef = useRef<(t: string) => void>(() => {});
   const teamOpenRef = useRef<(room: string) => void>(() => {});
@@ -1518,9 +1584,6 @@ export default function App() {
       else setSelected({ kind: 'project', name: plan.project });
     } else if (it.kind === 'reload') {
       void reloadConfig().then((c) => { mirrorConfig(c); configRef.current = c; setConfig(c); }).catch(() => {});
-    } else if (it.kind === 'pet') {
-      if (!it.show) void tamaWidget(false).catch(() => {});
-      else if (featuresRef.current.tama && !tama.widgetShown) tama.showWidget();
     }
   };
   useEffect(() => {
@@ -1558,13 +1621,26 @@ export default function App() {
     </div>
   );
 
-  // 앞줄에 앉는 세션: 옆자리(둘) 다음 참모들 + 하위 세션. 자리표는 목록이 바뀔 때만 갱신
-  const officeSlots = seatSlots(seats, [...groups.orchestrators.slice(3).map((s) => s.id), ...activities.map((a) => a.session.id)]);
-  const slotsKey = JSON.stringify(officeSlots);
-  useEffect(() => { if (slotsKey !== JSON.stringify(seats)) setSeats(JSON.parse(slotsKey)); }, [slotsKey]); // eslint-disable-line react-hooks/exhaustive-deps
-  // 폰 사무실 모양(폰 서버 /api/office) — 자리표·반장·스킨·가구·장식이 바뀔 때만 office.json 에(domain/phoneOffice)
-  const tamaPet = tama.file?.pet;
-  const officeJson = gacha.file ? JSON.stringify(officeShape({ slots: officeSlots, boss: tamaPet ? spriteOf(tamaPet.egg, tamaPet.slot) : 'bear', skin: skinOfFile(gacha.file), furn: ownedOf(gacha.file, 'furn'), placed: gacha.file.placed ?? {}, deco: gachaDeco(gacha.file) })) : '';
+  // 사무실마다 앉는 세션: 뒷줄 자리가 없는 참모 + 그 사무실 프로젝트 세션. 자리표는 목록이 바뀔 때만 갱신
+  const g0 = gacha.file ?? EMPTY_GACHA;
+  const officeShapes = officesOf(g0);
+  const liveOrchKeys = groups.orchestrators.map((s) => ({ id: s.id, name: splitOrchName(s.name).base }));
+  const officeTables = officeShapes.map((_, i) => seatSlots(seats[i] ?? [], [...(i === 0 ? poolOrchs(liveOrchKeys, g0.orchSeats).map((o) => o.id) : []), ...activities.filter((a) => officeOfProject(g0, a.session.project) === i).map((a) => a.session.id)]));
+  const slotsKey = JSON.stringify(officeTables);
+  // 뽑기 파일을 읽기 전엔 사무실이 하나로 보인다 — 그때 저장하면 둘째·셋째 사무실 자리표가 날아간다
+  useEffect(() => { if (gacha.file && slotsKey !== JSON.stringify(seats)) setSeats(JSON.parse(slotsKey)); }, [slotsKey, !!gacha.file]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 켜진 참모에게 자리를 적어 둔다 — 꺼져도 그 책상이 빈자리로 남게(사용자 11-06)
+  const liveOrchNames = liveOrchKeys.map((o) => o.name).join('\n');
+  const gachaReady = !!gacha.file;
+  const ensureSeats = gacha.ensureSeats;
+  useEffect(() => { if (gachaReady && liveOrchNames) void ensureSeats(liveOrchNames.split('\n')).catch(() => {}); }, [gachaReady, liveOrchNames, ensureSeats]);
+  const offOrchSeats = offOrchList.flatMap((x) => { const name = splitOrchName(x.name).base; return g0.orchSeats?.[name] && !liveOrchKeys.some((o) => o.name === name) ? [{ x, name }] : []; });
+  // 폰 사무실 모양(폰 서버 /api/office) — 사무실·자리표·스킨·장식이 바뀔 때만 office.json 에(domain/phoneOffice)
+  const officeJson = gacha.file ? JSON.stringify(officeShape({
+    offices: officeShapes, slots: officeTables, skins: officeShapes.map((_, i) => skinOfRoom(g0, i)), seats: g0.orchSeats ?? {}, assign: g0.assign ?? {},
+    sprs: Object.fromEntries([...liveOrchKeys.map((o) => o.name), ...offOrchSeats.map((o) => o.name)].flatMap((n) => { const spr = sprOfOrch(g0, n); return spr ? [[n, spr]] : []; })),
+    off: offOrchSeats.map(({ x, name }) => ({ id: x.id, name, label: orchDisplay(x) || name })), deco: gachaDeco(g0),
+  })) : '';
   useEffect(() => { if (officeJson) writeOffice(officeJson).catch(() => { /* 폰 사무실만 옛 모양 — 다음 바뀜에 다시 */ }); }, [officeJson]);
   // 폰 뽑기·스킨(폰 서버 POST /api/gacha → phone_gacha.rs eval) — 굴리기·장착은 여기 useGacha 한 줄에서, 답은 대기표로 돌려준다
   const gachaPhone = gacha.phone;
@@ -1616,7 +1692,8 @@ export default function App() {
   const filesBy = useMemo(() => new Map<string, ChatFile[]>(), [showLog, fileOwner]); // 기록이 바뀔 때만 다시 읽는다(앱은 자주 다시 그린다)
   const subName = (id: string) => sessions.find((x) => x.id === id)?.name ?? id;
   const fileExtra = (s: Session) => (filesBy.get(s.id) ?? filesBy.set(s.id, chatFiles(showLog, s.id, fileOwner)).get(s.id)!).map((f) => ({ ts: f.ts, key: f.key, clip: true, node: <ChatFileCard f={f.from ? { ...f, who: subName(f.from) } : f} by={s.id} /> }));
-  const officeCol = (open: (id: string) => void, dim?: (id: string) => boolean) => {
+  /** me = 이 사무실을 연 참모(채팅 뷰: 지금 채팅 탭) — 캐릭터를 안 정했으면 그 캐릭터에 점 */
+  const officeCol = (open: (id: string) => void, dim?: (id: string) => boolean, me?: string) => {
     // 사람 필요 책상·카드를 누르면 그 세션 브라우저 모달(지금 것) — 나머지는 부르는 쪽 길(채팅 뷰 = 사무실 위 창)
     const onOpen = (id: string) => {
       const s = sessions.find((x) => x.id === id);
@@ -1636,15 +1713,17 @@ export default function App() {
         ...(status === 'working' ? { act: workAct(tool), ...(tool ? { doing: `${name} ${tool.target}`.trim() } : {}) } : {}),
       };
     };
-    const pet = tama.file?.pet;
-    const g = gacha.file ?? EMPTY_GACHA;
-    const room = withLounge(planRoom(
-      orchActs.map((a) => ({ ...seat(a), label: orchDisplay(a.session) || assistant() })),
-      activities.map(seat),
-      pet ? spriteOf(pet.egg, pet.slot) : 'bear',
-      officeSlots,
-      placedCells(ownedOf(g, 'furn'), g.placed), // 가구가 먼저 — 책상이 놓인 가구 칸을 건너뛴다
-    ), ownedOf(g, 'furn'), g.placed);
+    const g = g0;
+    const rooms = officeShapes;
+    // 안 산 사무실로 넘겨 봐도(값 보기) 편집·꾸미기는 열린 사무실에서만
+    const cur = Math.min(officeCur, MAX_OFFICES - 1), shown = Math.min(cur, rooms.length - 1);
+    const liveOrchs: OrchIn[] = orchActs.map((a) => { const name = splitOrchName(a.session.name).base; return { ...seat(a), label: orchDisplay(a.session) || assistant(), name, spr: sprOfOrch(g, name) }; });
+    const offOrchs: OrchIn[] = offOrchSeats.map(({ x, name }) => ({ id: x.id, name, label: orchDisplay(x) || name, project: name, status: 'idle', startedAt: 0, spr: sprOfOrch(g, name), off: true }));
+    const allOrchs = [...liveOrchs, ...offOrchs];
+    const workersOf = (i: number) => activities.filter((a) => officeOfProject(g, a.session.project) === i).map(seat);
+    const planOf = (i: number, shape: OfficeRoom = rooms[i]!, seatsNow = g.orchSeats) => planOffice({ room: shape, index: i, orchs: allOrchs, workers: workersOf(i), slots: officeTables[i], seats: seatsNow });
+    const plans = rooms.map((_, i) => planOf(i));
+    const room = plans[cur] ?? plans[shown]!;
     const deco = gachaDeco(g);
     // 반장 반응 재료 — 참모의 마지막 턴 끝 답(중간 멘트 제외), 머지만큼(10코인 이상) 들어오면 만세
     const head = orchActs[0];
@@ -1656,34 +1735,52 @@ export default function App() {
       cheerAt: gacha.gain && gacha.gain.n >= 10 ? gacha.gain.at : null,
     } : undefined;
     const skins = ownedSkins(g);
-    const skin = skinOfFile(g);
+    const skin = skinOfRoom(g, shown);
     const editing = officeTab === 'furniture';
     const closeModal = () => setOfficeTab('office');
     const modal = officeTab === 'gacha' || officeTab === 'dex' || officeTab === 'deco'
-      ? <Shop view={officeTab} onView={setOfficeTab} file={gacha.file} draw={gacha.draw} equip={(id) => void gacha.equip(id)} setSkin={(n) => void gacha.setSkin(n)} see={(id) => void gacha.see(id)} onPlace={() => setOfficeTab('furniture')} onClose={closeModal} />
+      ? <Shop view={officeTab} onView={setOfficeTab} file={gacha.file} draw={gacha.draw} equip={(id) => void gacha.equip(id)} setSkin={(n) => void gacha.setSkin(shown, n)} see={(id) => void gacha.see(id)} office={shown} onChars={() => { closeModal(); setCharsFor(undefined); setCharsOpen(true); }} onPlace={(k) => { setEditLayer(k); setOfficeTab('furniture'); }} onClose={closeModal} />
       : null;
-    // 가구 끌어 놓기: 방 칸이면 거기(못 놓는 칸이면 제자리), 트레이 위에서 놓으면 창고
-    const drop = (cell: [number, number] | null, e: PointerEvent) => {
-      const id = furnPick;
-      setFurnPick(null);
-      if (!id) return;
-      if (cell && canPlace(room, cell)) void gacha.placeItem(id, cell);
-      else if (!cell && (document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null)?.closest('.furn-tray')) void gacha.placeItem(id, null);
+    const chars = features.gacha && !!gacha.file;
+    const dot = chars ? charDot(me, liveOrchs, (n) => !!sprOfOrch(g, n)) : null;
+    // 현황판(한 줄)이 방 바닥을 가리지 않게 — 아래 사무실 칸(bottom)이 있으면 그 위 8px, 없으면 아래 12px 에 현황판이 뜬다(styles·office2.css)
+    const dockRoom = dockH ? dockH + (features.gacha ? 8 : 20) : 0;
+    const officeView = (roomNow: Room, roomId: number, overlay: ((b: Brush, P: (x: number, y: number, z?: number) => [number, number]) => void) | undefined, bottom: number) => (
+      <OfficeView dot={dot} dim={dim} room={roomNow} roomId={roomId} overlay={overlay} skin={skinOfRoom(g, Math.min(roomId, rooms.length - 1))} menu={features.gacha ? <OfficeTools tab={officeTab} onTab={setOfficeTab} dot={{ dex: !!g.fresh?.length }} /> : undefined} bottom={bottom + (editing ? 0 : dockRoom)} coins={g.coins} gain={gacha.gain} onGacha={!features.gacha ? undefined : () => setOfficeTab('gacha')} bossIn={bossIn} deco={deco}
+        peek={(id, doing) => {
+          const ss = sessions.find((x) => x.id === id);
+          if (!ss || orchIds.has(id) || ss.kind !== 'background') return null;
+          return <TerminalPane command={attachCommand(bin, id)} title={ss.workspace ? `${ss.project} / ${ss.workspace}` : ss.project} subtitle={doing ?? ss.name} fontSize={Math.max(9, fontSize - 2)} readOnly linkBase={ss.cwd} home={env?.home} />;
+        }}
+        deliver={(t) => delivery(stampSeen(sendTail, seenSends.current, t), roomNow, (target) => findTarget(sessions, target)?.id, t)} onOpen={openDesk} />
+    );
+    const offIds = new Map(offOrchSeats.map(({ x }) => [x.id, x]));
+    // 꺼진 참모 자리 = 깨우기, 켜진 참모 = 그 참모 캐릭터 고르기(11-09 사용자 "캐릭터 선택 어떻게 하는 거임?"), 나머지 = 부르는 쪽 길
+    const openDesk = (id: string) => {
+      const act = deskAction(id, { orchIds: liveOrchs.map((o) => o.id), offIds: [...offIds.keys()], chars });
+      if (act === 'wake') resumeFromHome(offIds.get(id)!);
+      else if (act === 'char') { setCharsFor(liveOrchs.find((o) => o.id === id)!.name); setCharsOpen(true); setOfficeTab('office'); }
+      else onOpen(id);
     };
+    const projects = [...new Set(activities.map((a) => a.session.project))];
+    const roster: RosterRow[] = [
+      ...allOrchs.map((o): RosterRow => ({ key: `o:${o.name}`, label: o.label, spr: o.spr ?? speciesFor(o.name), office: officeOf(g, o.name), set: (k) => void gacha.change((f) => moveOrchToOffice(f, o.name, k)) })),
+      ...projects.map((p): RosterRow => ({ key: `p:${p}`, label: p, spr: speciesFor(p), office: officeOfProject(g, p), set: (k) => void gacha.assign(p, k) })),
+    ];
+    const pickOrchs = allOrchs.map((o) => ({ name: o.name, label: o.label, role: orchRoles[o.name]?.role ?? inferredRoles[o.name]?.join(' · ') }));
     const left = (
       <div className="office-col">
-        <OfficeView dim={dim} room={room} skin={skin} menu={features.gacha ? <OfficeTools tab={officeTab} onTab={setOfficeTab} dot={{ dex: !!g.fresh?.length }} /> : undefined} bottom={editing ? 190 : 0} coins={g.coins} gain={gacha.gain} onGacha={editing || !features.gacha ? undefined : () => setOfficeTab('gacha')} bossIn={bossIn} deco={deco}
-          edit={editing ? { drag: furnPick, ok: (c) => canPlace(room, c), onPick: setFurnPick, onDrop: drop } : undefined}
-          peek={(id, doing) => {
-            const ss = sessions.find((x) => x.id === id);
-            if (!ss || orchIds.has(id) || ss.kind !== 'background') return null;
-            return <TerminalPane command={attachCommand(bin, id)} title={ss.workspace ? `${ss.project} / ${ss.workspace}` : ss.project} subtitle={doing ?? ss.name} fontSize={Math.max(9, fontSize - 2)} readOnly linkBase={ss.cwd} home={env?.home} />;
-          }}
-          deliver={(t) => delivery(stampSeen(sendTail, seenSends.current, t), room, (target) => findTarget(sessions, target)?.id, t)} onOpen={onOpen} />
-        {editing
-          ? <FurnitureTray file={gacha.file} drag={furnPick} onGrab={setFurnPick} onDone={closeModal} pushed={room.furniture.filter((f) => f.pushed).map((f) => f.id)} inRoom={room.furniture.map((f) => f.id)} />
-          : <OfficeDock dim={dim} desks={room.desks.filter((d) => !d.boss && !d.empty)} sk={skinOf(skin)} notes={Object.fromEntries(allActs.map(({ session: s, activity: a }) => [s.id, a.reply?.ask?.q || noteOf(a.reply?.say ?? a.reply?.text)]))} onOpen={onOpen} />}
+        {editing && gacha.file
+          ? <OfficeEdit file={gacha.file} index={shown} skin={skin} deco={deco} layer0={editLayer} change={gacha.change} onDone={closeModal}
+              plan={(shape, seatsNow) => planOf(shown, shape, seatsNow)} orchs={allOrchs.map((o) => ({ name: o.name, label: o.label, spr: o.spr ?? speciesFor(o.name) }))} />
+          : features.gacha
+            ? <OfficeRooms cur={cur} onCur={setOfficeCur} rooms={plans} lv={rooms.map((r) => r.lv)} skins={rooms.map((_, i) => skinOfRoom(g, i))} coins={g.coins} deco={deco} roster={roster}
+                onExpand={() => void gacha.expand(shown)} onOpen={() => void gacha.openOffice()}
+                view={({ room: roomNow, roomId, overlay, bottom }) => officeView(roomNow, roomId, overlay, bottom)} />
+            : officeView(room, 0, undefined, 0)}
+        {!editing && <OfficeDock onHeight={setDockH} dim={dim} desks={plans.flatMap((p) => p.desks).filter((d) => !d.boss && !d.empty)} sk={skinOf(skin)} notes={Object.fromEntries(allActs.map(({ session: s, activity: a }) => [s.id, a.reply?.ask?.q || noteOf(a.reply?.say ?? a.reply?.text)]))} onOpen={onOpen} />}
         {modal && <OfficeModal onClose={closeModal}>{modal}</OfficeModal>}
+        {features.gacha && gacha.file && officeTab === 'office' && <CharGate file={gacha.file} orchs={pickOrchs} open={charsOpen} first={charsFor} onClose={() => { setCharsOpen(false); setCharsFor(undefined); }} onPick={(n, id) => void gacha.pickChar(n, id)} />}
       </div>
     );
     return left;
@@ -1780,12 +1877,12 @@ export default function App() {
         {farMode.pop}
         <div className="office-mode space-mode">
           {/* 왼쪽 = 스페이스: 문서 + 지금 채팅 탭 참모가 잡고 있는 세션(터미널·보여 준 파일) — 2026-09-30 사용자, 리더는 터미널 뷰의 레거시 */}
-          <SpaceView chat={chatCol} bubble={features.bubble ? { onHide: () => saveFeature('bubble', false) } : null} railTop={farMode.railTop} far={farMode.farView} team={{ rail: teamMode.rail, railOn: teamMode.railOn, on: teamMode.on, color: teamMode.color, onLeave: teamMode.leave, space: teamMode.space, add: teamMode.add, fold: teamMode.fold }} pet={features.tama ? petNode : undefined} office={features.office ? officeCol : undefined} officeReq={officeReq} onOfficeReq={() => setOfficeReq(null)} onOfficeShown={setSpaceOffice}
+          <SpaceView notes={{ open: notes.panel, onClose: notes.closePanel, onToWindow: notes.toWindow }} chat={chatCol} bubble={features.bubble ? { onHide: () => saveFeature('bubble', false) } : null} railTop={farMode.railTop} far={farMode.farView} team={{ rail: teamMode.rail, railOn: teamMode.railOn, on: teamMode.on, color: teamMode.color, onLeave: teamMode.leave, space: teamMode.space, add: teamMode.add, fold: teamMode.fold }} office={features.office ? officeCol : undefined} officeReq={officeReq} onOfficeReq={() => setOfficeReq(null)} onOfficeShown={setSpaceOffice}
             harnitorReq={harnitorReq} onHarnitorReq={() => setHarnitorReq(null)} onHarnitorShown={setHarnitorOpen}
             onHarnitorClosed={() => { if (harnitorSwitched.current) { harnitorSwitched.current = false; setSpace(false); } }}
             toolsReq={toolsReq} onToolsReq={() => setToolsReq(null)} onToolsShown={setToolsOpen}
             reviewReq={reviewReq} onReviewReq={() => setReviewReq(null)} onReviewShown={setReviewOpen}
-            replayReq={replayReq} onReplayReq={() => setReplayReq(null)} onReplayShown={setReplayOpen} replayPage={env ? () => <ReplayPage devRoot={env.devRoot} author={env.gitEmail} tasks={taskEvents} tama={tama.file} /> : undefined} computerUse={{ all: features.computerUse, setAll: (on) => saveFeature('computerUse', on) }}
+            replayReq={replayReq} onReplayReq={() => setReplayReq(null)} onReplayShown={setReplayOpen} replayPage={env ? () => <ReplayPage devRoot={env.devRoot} author={env.gitEmail} tasks={taskEvents} /> : undefined} computerUse={{ all: features.computerUse, setAll: (on) => saveFeature('computerUse', on) }}
             onToolsClosed={() => { if (toolsSwitched.current) { toolsSwitched.current = false; setSpace(false); } }} orch={spaceOrch} orchs={navOrchs} orchPins={orchPins} onReorderOrch={reorderOrchPanes} fns={(() => {
               // 기록·음성·도구·하니터·리뷰 — 채팅 뷰는 위 막대 대신 왼쪽 참모 패널(2026-10-11 사용자 180.png). 켜짐 판단은 위 막대와 같다(스페이스가 떠 있을 때 값)
               const fp: FeatureProps = { voice, onVoice: () => turnVoice(!voice), replayOn: replayOpen, onReplay: () => replayRef.current('toggle'), tools: toolsOpen, onTools: () => toolsRef.current('toggle'),
@@ -1843,8 +1940,6 @@ export default function App() {
     } else if (showHome({ live: groups.orchestrators.length, picked: false })) {
       main = <div className="orch">{homeNode(goHere)}</div>;
     }
-  } else if (selected.kind === 'tama') {
-    main = <div className="pv-page">{petNode(petWho)}</div>;
   } else if (selected.kind === 'routine') {
     main = routinePage(selected.name, () => setSelected({ kind: 'orchestrator' }));
   } else if (selected.kind === 'review') {
@@ -1862,7 +1957,7 @@ export default function App() {
       <div className="empty"><b>{tr('프로젝트 밖 세션이 없어요', 'No sessions outside projects')}</b></div>
     );
   } else if (selected.kind === 'replay') {
-    main = env ? <ReplayPage devRoot={env.devRoot} author={env.gitEmail} tasks={taskEvents} tama={tama.file} /> : null;
+    main = env ? <ReplayPage devRoot={env.devRoot} author={env.gitEmail} tasks={taskEvents} /> : null;
   } else if (selected.kind === 'external') {
     // 예약 작업이 아무도 안 보는 곳에서 띄운 대화형 세션 — 앱에서 화면을 붙일 수 없다(대화형은 attach 가 안 된다). 무엇인지만 보여 준다
     const x = groups.external.find((e) => e.id === selected.id);
@@ -1976,10 +2071,10 @@ export default function App() {
     else { setSelected(reviewBefore.current ?? { kind: 'orchestrator' }); reviewBefore.current = null; }
   };
 
-  const setup = config && (firstRun || settingsOpen) && (
-    <Setup key={settingsStart ?? ''} config={config} firstRun={firstRun} fontSize={fontSize} start={settingsStart} tab={settingsTab} onClose={() => { setSettingsOpen(false); setSettingsStart(undefined); setSettingsTab(undefined); void getAppEnv().then(setEnv).catch(() => {}); /* 업데이트했으면 새 버전 번호로 */ }} />
+  const setup = config && settingsOpen && (
+    <Setup key={settingsStart ?? ''} config={config} fontSize={fontSize} start={settingsStart} tab={settingsTab} onClose={() => { setSettingsOpen(false); setSettingsStart(undefined); setSettingsTab(undefined); void getAppEnv().then(setEnv).catch(() => {}); /* 업데이트했으면 새 버전 번호로 */ }} />
   );
-  if (firstRun) return setup;
+  if (firstRun && config) return <FirstRun config={config} />;
 
   return (
     <OrchActionsProvider pins={orchPins} onPin={pinOrch} onNick={wantNick} onStop={(s, why) => closeSession(s, why)} onRemove={(id) => { markPending(stopped.find((x) => x.id === id)?.sessionId ?? id); void removeSession(id, `menu ${stopped.find((x) => x.id === id)?.name ?? ''}`).then(() => refresh(), (e: unknown) => setError(tr(`지우기 실패: ${String(e)}`, `Remove failed: ${String(e)}`))); }}>
@@ -1998,8 +2093,7 @@ export default function App() {
     {/* 팀 만들기·초대 팝업 — 띠 + 메뉴, 그리고 초대 링크(chammo://join)로 앱이 열렸을 때 어느 화면에서든(ADR 0015). 로그인 화면이 덮으면 그 뒤에 */}
     {teamMode.pop}
     {config && !settingsOpen && <LoginGate onGate={setLoginGate} />}
-    {tourVisible(tourOpen, loginGate) && <Tour none={navOrchs.length + offOrchList.length === 0} onClose={closeTour} />}
-    {petModal && features.tama && <PetModal onClose={() => setPetModal(false)}>{petNode(petWho)}</PetModal>}
+    {tourVisible(tourOpen && !consentAsk, loginGate) && <Tour none={navOrchs.length + offOrchList.length === 0} onClose={closeTour} />}
     {/* 세션 브라우저가 사람을 부르면(browser_ask_human) 어느 화면에서든 크게 띄우고 알린다 */}
     <AgentAskHost lives={agentLives} nameOf={(l) => askName(l, allSessions)} notify={(profile, reason, name, l) => {
       // 갈 곳 = 맡긴 참모 채팅의 그 부름 카드 — 예전엔 session:<프로필> 이라 폰에서 눌러도 못 갔다(2026-10-24 트레이더)
@@ -2023,8 +2117,8 @@ export default function App() {
         }} />
       );
     })()}
-    <TopBar fresh={navOrchs.length + offOrchList.length === 0} claude={bin} fontSize={fontSize} load={loadMon.sys ? { sys: loadMon.sys, report: loadMon.report, detailOn: !!loadAt, onDetail: (a) => setLoadAt(loadAt ? null : a), onHover: setLoadHover, onOpenSession: openTarget,
-      onClean: async (text) => { const o = groups.orchestrators.find((x) => x.id === focusedBy.current.get('orch-col')) ?? groups.orchestrators[0]; if (!o) throw new Error(tr(`${assistant()} 세션이 없어`, `No ${assistant()} session`)); await sayTo(o.id, text); } } : undefined} features={features} usage={barUsage} usageAge={acctUsage?.age ?? null} account={topLabel(accounts)} accounts={accounts} onSettings={() => setSettingsOpen(true)} today={today} tama={{ file: tama.file, widgetShown: tama.widgetShown, onToggle: () => widgetToggleRef.current() }} replayOn={spaceShown ? replayOpen : selected.kind === 'replay'} onReplay={() => replayRef.current('toggle')} reader={readerOpen} onReader={() => setReaderOpen((o) => !o)} office={space ? spaceOffice : office} onOffice={() => { if (space) { setSelected({ kind: 'orchestrator' }); setOfficeReq(spaceShown ? 'toggle' : 'open'); return; } setOffice(!office); setSelected({ kind: 'orchestrator' }); }} space={space} onView={(chat) => { setSpace(chat); setSelected({ kind: 'orchestrator' }); }} inboxCount={inbox.length + direct.inboxCards.length + remote.cards.length + loginCount + browserCount} onInbox={() => setInboxOpen((o) => !o)} harnitor={harnitorFloat || (spaceShown && harnitorOpen)} onHarnitor={() => harnitorRef.current('toggle')} tools={spaceShown ? toolsOpen : toolsFloat} onTools={() => toolsRef.current('toggle')} review={{ on: spaceShown ? reviewOpen : selected.kind === 'review', confirm: reviewConfirm }} onReview={() => reviewRef.current('toggle')} voice={voice} onVoice={() => turnVoice(!voice)} />
+    <TopBar notesOn={notes.on} onNotes={notes.toggle} fresh={navOrchs.length + offOrchList.length === 0} claude={bin} fontSize={fontSize} load={loadMon.sys ? { sys: loadMon.sys, report: loadMon.report, detailOn: !!loadAt, onDetail: (a) => setLoadAt(loadAt ? null : a), onHover: setLoadHover, onOpenSession: openTarget,
+      onClean: async (text) => { const o = groups.orchestrators.find((x) => x.id === focusedBy.current.get('orch-col')) ?? groups.orchestrators[0]; if (!o) throw new Error(tr(`${assistant()} 세션이 없어`, `No ${assistant()} session`)); await sayTo(o.id, text); } } : undefined} features={features} usage={barUsage} usageAge={acctUsage?.age ?? null} account={topLabel(accounts)} accounts={accounts} onSettings={() => setSettingsOpen(true)} today={today} tasks={taskEvents} onToday={() => replayRef.current('open')} replayOn={spaceShown ? replayOpen : selected.kind === 'replay'} onReplay={() => replayRef.current('toggle')} reader={readerOpen} onReader={() => setReaderOpen((o) => !o)} office={space ? spaceOffice : office} onOffice={() => { if (space) { setSelected({ kind: 'orchestrator' }); setOfficeReq(spaceShown ? 'toggle' : 'open'); return; } setOffice(!office); setSelected({ kind: 'orchestrator' }); }} space={space} onView={(chat) => { setSpace(chat); setSelected({ kind: 'orchestrator' }); }} inboxCount={inbox.length + direct.inboxCards.length + remote.cards.length + loginCount + browserCount} inboxHot={inboxHot} onInbox={() => setInboxOpen((o) => !o)} harnitor={harnitorFloat || (spaceShown && harnitorOpen)} onHarnitor={() => harnitorRef.current('toggle')} tools={spaceShown ? toolsOpen : toolsFloat} onTools={() => toolsRef.current('toggle')} review={{ on: spaceShown ? reviewOpen : selected.kind === 'review', confirm: reviewConfirm }} onReview={() => reviewRef.current('toggle')} voice={voice} onVoice={() => turnVoice(!voice)} />
     <div className="app">
       {/* 채팅 뷰에선 세션 사이드바 대신 스페이스 메뉴(오케스트레이터·프로젝트 세션)가 ⌘B 자리 — 2026-09-30 사용자 */}
       {sidebarOpen && !spaceShown && <Sidebar
@@ -2141,7 +2235,7 @@ export default function App() {
       return <ToolsFloat root={groups.orchestrators[0]?.cwd || env?.orchestratorCwd || roots[0]?.root || ''} roots={roots} sessions={sessions}
         computerUse={{ all: features.computerUse, setAll: (on) => saveFeature('computerUse', on) }} onClose={() => setToolsFloat(false)} />;
     })()}
-    <InboxPopover open={inboxOpen} onClose={() => setInboxOpen(false)} items={inbox} direct={direct.inboxNode || remote.node ? <>{direct.inboxNode}{remote.node}</> : null} directCount={direct.inboxCards.length + remote.cards.length} blockedWhy={(it) => replyBlocked(it, sessions)} onReply={replyItem} onOpen={openTarget} onDismiss={dismissItem} login={loginCount ? <>{login.missing && <ClaudeMissingCard fontSize={fontSize} />}{login.need && <LoginCard need={login.need} claude={bin} fontSize={fontSize} />}<TermsCards cards={login.terms} onRetry={login.retryTerms} onClose={login.closeTerms} /></> : undefined} loginCount={loginCount} browser={browserNeeds.node || popupCards.length || askList.length ? <>{browserNeeds.node}<AskCards asks={askList} nameOf={(l) => askName(l, allSessions)} /><PopupCards lives={popupCards} nameOf={(l) => askName(l, allSessions)} /></> : undefined} browserCount={browserCount} />
+    <InboxPopover open={inboxOpen} onClose={closeInbox} pages={inboxPages} />
     </div>
     </OrchActionsProvider>
   );

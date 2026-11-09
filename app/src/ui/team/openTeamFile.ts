@@ -3,18 +3,20 @@
 // 스페이스가 그리는 형식이면 scripts/show 와 같은 길(openChatFile — 채팅 뷰는 스페이스 탭, 따로 창은 리더), 못 그리는 형식·'다른 앱으로 열기'면 Rust 가 맥 기본 앱으로
 import { craftFirst, craftFor } from '../../domain/craftOpen';
 import { markTeamCraft } from '../../domain/teamCraft';
-import { opensInSpace } from '../../domain/teamLocker';
+import { opensInSpace, withRunAsk } from '../../domain/teamLocker';
 import { openChatFile } from '../chat/openChatFile';
 import { openInCraft } from '../craft/openInCraft';
+import { confirmRunnable } from './confirmRunnable';
 
 /** how: false = 알아서(기본), true = 맥 기본 앱, 'preview' = 스페이스 미리보기, 'craft' = 참모 앱 */
 export type TeamOpenHow = boolean | 'preview' | 'craft';
 
-/** open(external) = 풀기 명령(external 이면 Rust 가 기본 앱으로도 연다) — 푼 경로 */
-export async function openTeamFile(open: (external: boolean) => Promise<string>, name: string, how: TeamOpenHow = false): Promise<void> {
+/** open(external, runOk) = 풀기 명령(external 이면 Rust 가 기본 앱으로도 연다) — 푼 경로. 실행될 수 있는 파일은 Rust 가 먼저 막고(H-1) 글자 확인 뒤 runOk 로 다시 부른다 */
+export async function openTeamFile(open: (external: boolean, runOk?: boolean) => Promise<string>, name: string, how: TeamOpenHow = false, ask: (name: string) => Promise<boolean> = confirmRunnable): Promise<void> {
   const craft = how === 'craft' || (how === false && craftFirst(name));
   const external = how === true || (how === false && !craft && !opensInSpace(name));
-  const path = await open(external);
+  const path = await withRunAsk((runOk) => open(external, runOk), ask);
+  if (path === undefined) return; // 사람이 취소
   if (craft) { markTeamCraft(craftFor(name) ?? '', path); await openInCraft(path); } // 표시 = 칸을 팀 화면에(domain/teamCraft)
   else if (!external) await openChatFile(path, '', undefined, true);
 }

@@ -8,6 +8,21 @@ use std::path::{Path, PathBuf};
 pub const PART: usize = 4 * 1024 * 1024;
 /// 폰에서 올리는 파일 하나 상한 — 넘으면 폰이 '데스크톱에서 올려 줘' 한 줄
 pub const MAX_TOTAL: u64 = 1024 * 1024 * 1024;
+/// 대화 첨부(방에 붙이기) 결과 — 다 올리면 `{file: 참조}`, 못 올리면 `{error}`. 폰이 /api/team-file-ref 로 묻는다(하루 뒤 sweep 이 지운다)
+fn ref_path(root: &Path, up: &str) -> PathBuf {
+    root.join(format!("{up}.ref"))
+}
+pub fn keep_ref(root: &Path, up: &str, v: &serde_json::Value) {
+    if up_id_ok(up) && std::fs::create_dir_all(root).is_ok() {
+        let _ = std::fs::write(ref_path(root, up), v.to_string());
+    }
+}
+pub fn read_ref(root: &Path, up: &str) -> Option<serde_json::Value> {
+    if !up_id_ok(up) {
+        return None;
+    }
+    serde_json::from_str(&std::fs::read_to_string(ref_path(root, up)).ok()?).ok()
+}
 /// 끝내지 못한 조각 파일(폰이 꺼짐·끊김)은 하루 뒤 지운다
 const STALE: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
 
@@ -153,5 +168,14 @@ mod tests {
         assert_eq!(add_part(&r, "up-0004abcd", 0, true, b""), Ok(0));
         assert!(take_done(&r, "up-0004abcd").is_some());
         let _ = std::fs::remove_dir_all(&r);
+    }
+
+    #[test]
+    fn 대화_첨부_참조는_올림마다_남고_모양이_틀린_id_는_안_읽는다() {
+        let r = tmp("ref");
+        assert_eq!(read_ref(&r, "up-0005abcd"), None);
+        keep_ref(&r, "up-0005abcd", &serde_json::json!({ "file": { "id": "F1" } }));
+        assert_eq!(read_ref(&r, "up-0005abcd").unwrap()["file"]["id"], "F1");
+        assert_eq!(read_ref(&r, "../x"), None);
     }
 }

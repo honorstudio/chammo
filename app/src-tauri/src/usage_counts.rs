@@ -16,7 +16,7 @@ pub const CRASH_KINDS: [&str; 4] = ["panic", "webview", "pty", "updater"];
 /// 업데이트 실패 단계
 pub const UPD_STAGES: [&str; 3] = ["download", "unpack", "restart"];
 /// 켜 둔 기능 스위치 — 설정 이름(camelCase) 그대로, usagePing 은 넣지 않는다
-pub const ON_KEYS: [&str; 9] = ["office", "tama", "gacha", "review", "voice", "autoRevive", "autoTidy", "agentView", "computerUse"];
+pub const ON_KEYS: [&str; 8] = ["office", "gacha", "review", "voice", "autoRevive", "autoTidy", "agentView", "computerUse"];
 const USE_MAX: u32 = 999;
 const STARTED_MAX: u32 = 999;
 const PEAK_MAX: u32 = 99;
@@ -131,7 +131,7 @@ pub fn up_band(secs: u64) -> &'static str {
 
 /// 켜 둔 기능 스위치 이름 — 설정 순서 그대로, 켜진 것만
 pub fn on_list(f: &crate::config::Features) -> Vec<&'static str> {
-    let flags = [f.office, f.tama, f.gacha, f.review, f.voice, f.auto_revive, f.auto_tidy, f.agent_view, f.computer_use];
+    let flags = [f.office, f.gacha, f.review, f.voice, f.auto_revive, f.auto_tidy, f.agent_view, f.computer_use];
     ON_KEYS.iter().zip(flags).filter(|(_, on)| *on).map(|(k, _)| *k).collect()
 }
 
@@ -330,7 +330,7 @@ mod tests {
 
     #[test]
     fn 켜_둔_기능은_스위치_이름만_usage_ping_빼고() {
-        let f = crate::config::Features { office: true, voice: true, usage_ping: true, tama: false, gacha: false, review: false, auto_revive: false, auto_tidy: false, agent_view: true, computer_use: false, craft_basics: true, bubble: true, bubble_desk: true, git: None, animation: "auto".into() };
+        let f = crate::config::Features { office: true, voice: true, usage_ping: true, gacha: false, review: false, auto_revive: false, auto_tidy: false, agent_view: true, computer_use: false, craft_basics: true, bubble: true, bubble_desk: true, git: None, animation: "auto".into() };
         assert_eq!(on_list(&f), vec!["office", "voice", "agentView"]);
     }
 

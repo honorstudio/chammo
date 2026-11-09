@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { envFromCache, firstThumbs, PRELOAD_GRACE, splashDeadline, splashDone, SPLASH_MAX } from './boot';
+import { bootDiag, envFromCache, failWord, firstThumbs, PRELOAD_GRACE, splashDeadline, splashDone, SPLASH_MAX } from './boot';
 
 describe('폰 첫 화면 스플래시 — 글자 화면 없이 모찌 한 장으로(2026-10-04 사용자 LTE "불러오는 중…")', () => {
   const at = (o: Partial<Parameters<typeof splashDone>[0]>) => splashDone({ base: 'wait', preloaded: false, now: 0, readyAt: 0, ...o });
@@ -70,5 +70,23 @@ describe('firstThumbs 순서 — 화면 카드(보낸 시각 최근 순)와 같�
   it('기록 줄 순서가 아니라 ts 최근 순', () => {
     const log = [{ ts: '9', path: '/u/new.png', from: 'o1' }, { ts: '1', path: '/u/old.png', from: 'o1' }].map((r) => JSON.stringify(r)).join('\n');
     expect(firstThumbs(log, 'o1').map((x) => x.path)).toEqual(['/u/new.png', '/u/old.png']);
+  });
+});
+
+describe('맥 기록에 남길 첫 받기 소식(11-07 사용자 — 폰 글은 맥 기록에 안 남았다)', () => {
+  it('3초 안에 한 번에 받았으면 안 남긴다, 늦거나 실패가 있었으면 한 줄', () => {
+    expect(bootDiag({ ms: 800, fails: 0, why: '' })).toBeNull();
+    expect(bootDiag({ ms: 12400.6, fails: 2, why: 'late' })).toBe('ms=12401 fails=2 why=late');
+    expect(bootDiag({ ms: 3500, fails: 0, why: '' })).toBe('ms=3500 fails=0 why=none');
+  });
+  it('이유는 낱말만 — 서버 진단 줄 규칙(키=값 낱말)을 지킨다', () => {
+    expect(failWord(new Error('아무 말'), true)).toBe('late');
+    expect(failWord(new Error('HTTP 502'), false)).toBe('http502');
+    expect(failWord(new Error('busy'), false)).toBe('busy');
+    expect(failWord(new TypeError('Load failed'), false)).toBe('net');
+    expect(failWord(new DOMException('x', 'AbortError'), false)).toBe('abort');
+    const off = new Error('x'); off.name = 'OfflineError';
+    expect(failWord(off, false)).toBe('offline');
+    expect(failWord(new Error('경로 /Users/me 포함 글'), false)).toBe('other');
   });
 });

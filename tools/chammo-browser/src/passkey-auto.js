@@ -1,9 +1,11 @@
 // 패스키 자동 판단(2026-10-29) — 감시(src/passkey.js)가 알린 신호로 구글 크롬↔ad-hoc 사본을 바꾼다(src/winshow.js request).
-// 페이지가 패스키를 부르면(ask) 세션 도구가 끝난 뒤 구글 크롬으로, 성공(ok) 뒤 주소가 바뀌고 잠잠해지면·30초가 지나면·사람이 '다 했어'면 돌아온다
+// 페이지가 패스키를 부르면(ask) 세션 도구가 끝난 뒤 구글 크롬으로, 성공(ok) 뒤 주소가 바뀌고 잠잠해지면·30초가 지나면·사람이 '다 했어'면 돌아온다.
+// 성공 전 '다 했어'는 세션 부름의 답일 뿐이라 안 돌아온다(11-09 거래소 — 42초 만에 되돌려 패스키 창이 뜰 틈이 없었다). 성공 없이 10분이면 돌아온다
 const SETTLE_MS = 1500; // 성공 뒤 주소가 바뀌고 이만큼 잠잠하면 돌아온다(로그인 뒤 넘겨주기가 끝나게)
 const OK_MAX_MS = 30_000; // 성공했는데 주소가 안 바뀌는 사이트 — 이만큼 뒤엔 돌아온다
 const AGAIN_MS = 60_000; // 돌아온 뒤 이만큼은 저절로 다시 안 바꾼다 — 돌아온 페이지가 또 패스키를 부르면 끝없이 돈다
 const IDLE_MAX_MS = 4000; // 세션 도구가 끝나길 기다리는 끝 — 패스키를 부른 click 이 끝나기 전에 닫으면 그 click 이 오류로 끝났다(실측)
+const AUTO_MAX_MS = 10 * 60_000; // 성공 신호 없이 이만큼 지나면 돌아온다 — 사람이 패스키를 그만뒀다(그 전엔 사람 '돌아오기'만)
 
 /**
  * 자동 바꾸기 판단 — 감시 신호(ask·ok)와 1초 tick, 사람 '다 했어'. 사람이 직접 고른 구글 크롬(winshow.auto() false)은 저절로 안 되돌린다
@@ -12,6 +14,7 @@ const IDLE_MAX_MS = 4000; // 세션 도구가 끝나길 기다리는 끝 — 패
  */
 function createPasskeyAuto({ winshow, url, canSwitch, idle = () => true, wait = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now, log = () => {} }) {
   let ok = null; // 성공을 본 때 { target, url, last, changedAt, at }
+  let switchedAt = null; // 패스키 때문에 스스로 바꾼 때
   let backAt = null; // 마지막으로 돌아온 때(저절로든 사람 '돌아오기'든)
   let wasShown = false; // 지난번에 본 갈래 — 구글 크롬이었다가 사본이면 누가 되돌렸든 돌아온 것
   // 사람이 칸 '돌아오기'(앱 .signed off)로 되돌리면 이 판단을 안 거친다 — 그것도 돌아온 것으로 센다(10-29 실측: 다시 열린 페이지가 또 불러 곧바로 또 바꿨다)
@@ -23,6 +26,7 @@ function createPasskeyAuto({ winshow, url, canSwitch, idle = () => true, wait = 
 
   async function back(why) {
     ok = null;
+    switchedAt = null;
     backAt = now();
     log(`[chammo-browser-mcp] 패스키 끝(${why}) — 참모 브라우저로 돌아감`);
     await winshow.request(false);
@@ -42,6 +46,7 @@ function createPasskeyAuto({ winshow, url, canSwitch, idle = () => true, wait = 
         log('[chammo-browser-mcp] 페이지가 패스키를 불러 구글 크롬으로 바꿈');
         await winshow.request(true, { auto: true });
         wasShown = winshow.shown();
+        switchedAt = now();
         return;
       }
       if (phase === 'ok' && winshow.shown() && winshow.auto()) {
@@ -51,9 +56,12 @@ function createPasskeyAuto({ winshow, url, canSwitch, idle = () => true, wait = 
     },
     async tick() {
       seen();
-      if (!ok) return;
-      if (!winshow.shown() || !winshow.auto()) { ok = null; return; }
+      if (!winshow.shown() || !winshow.auto()) { ok = null; switchedAt = null; return; }
       const t = now();
+      if (!ok) {
+        if (switchedAt != null && t - switchedAt >= AUTO_MAX_MS) return back('성공 없이 10분');
+        return;
+      }
       const u = url(ok.target);
       if (u !== ok.last) { ok.last = u; ok.changedAt = t; }
       if (ok.last !== ok.url && t - ok.changedAt >= SETTLE_MS) return back('로그인 뒤 주소 바뀜');
@@ -64,9 +72,9 @@ function createPasskeyAuto({ winshow, url, canSwitch, idle = () => true, wait = 
       seen();
       return !winshow.shown() && !(backAt != null && now() - backAt < AGAIN_MS) && !!canSwitch();
     },
-    /** 사람이 칸에서 '다 했어'를 눌렀다(browser_ask_human 끝) */
+    /** 사람이 칸에서 '다 했어'를 눌렀다(browser_ask_human 끝) — 패스키 성공을 본 뒤에만 돌아온다 */
     async humanDone() {
-      if (winshow.shown() && winshow.auto()) await back('사람이 다 했어');
+      if (ok && winshow.shown() && winshow.auto()) await back('사람이 다 했어');
     },
   };
 }

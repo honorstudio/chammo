@@ -111,6 +111,6 @@ describe(`업무 몫 — 끝낸 일·일한 시간은 하루 ${BIZ_DAY}까지, �
     expect(dayCoins([...prs, ...tasks(40, at(7))])).toBe(200 + BIZ_FLOOR);
   });
   it('장애 몬스터 처치는 업무 몫 밖', () => {
-    expect(dayCoins([...tasks(40, at(6)), { t: at(22), type: 'slay', kind: 'slime', lv: 1 }])).toBe(BIZ_DAY + 5);
+    expect(dayCoins([...tasks(40, at(6)), { t: at(22), type: 'slay', kind: 'slime', lv: 1 }])).toBe(BIZ_DAY); // 몬스터 코인 없앰
   });
 });

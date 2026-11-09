@@ -1,0 +1,83 @@
+/* 영상 검토 작업면 — T2 편집기(11-04 사용자). 앱 테마와 상관없이 어둡다: 영상 명암 판단 + 앱에 이미 영상 바탕 #000 선례.
+   토큰 밖 회색은 이 안의 변수로만, 탭·레일·채팅은 앱 테마 그대로. 강조는 참모 색 하나. docs/design-drafts/video-curation/README.md */
+.vr {
+  --vr-s0: #232326; --vr-s1: #2b2b2e; --vr-s2: #39393d; --vr-ln: #141416; --vr-ln2: #47474c; --vr-field: #161618;
+  --vr-t: #e7e7ea; --vr-t2: #c4c4c9; --vr-t3: #94949a; --vr-r: 2px;
+  --vr-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+  --vr-accent: var(--orch-text-dark, var(--orch, #f2a65a));
+  flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; background: var(--vr-s0); color: var(--vr-t); color-scheme: dark; font-size: 13px; line-height: 1.35;
+}
+.vr *, .vr-top * { box-sizing: border-box; }
+.vr svg, .vr-top svg { width: 16px; height: 16px; flex: none; }
+.vr.phone svg, .vr-phone-svg svg { width: 20px; height: 20px; }
+:where(.vr button) { all: unset; box-sizing: border-box; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.vr button:disabled { cursor: default; opacity: .45; }
+.vr button:focus-visible { outline: 2px solid var(--vr-accent); outline-offset: -2px; }
+
+/* 영상 — 모서리·여백 0, 남는 자리는 검정 */
+.vr-pic { position: relative; flex: 1 1 auto; min-height: 120px; background: #000; display: flex; justify-content: center; overflow: hidden; }
+.vr-pic video { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; }
+.vr.phone .vr-pic { flex: none; max-height: 38vh; aspect-ratio: 16 / 9; }
+.vr-veil { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 10px; align-items: center; justify-content: center; text-align: center; padding: 12px; background: rgba(0, 0, 0, .62); color: #fff; font-size: 14px; font-weight: 600; }
+.vr-thumb { position: absolute; bottom: 6px; z-index: calc(var(--z-base) + 3); background-repeat: no-repeat; box-shadow: 0 0 0 1px #000, 0 0 0 2px #6a6a72, 0 10px 28px rgba(0, 0, 0, .6); }
+.vr-thumb b { position: absolute; left: 0; right: 0; bottom: 0; padding: 3px 6px; background: rgba(0, 0, 0, .72); color: #fff; font: 600 12px/1.2 var(--vr-mono); text-align: center; }
+
+/* 눈금 — 영상과 같은 폭. 손가락이 안 미끄러지게 스크롤을 막는다 */
+.vr-rul { position: relative; flex: none; height: 34px; background: var(--vr-s1); border-top: 1px solid var(--vr-ln); border-bottom: 1px solid var(--vr-ln); overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; cursor: ew-resize; }
+.vr.phone .vr-rul { height: 44px; }
+.vr-rul.zoom { background: var(--vr-s2); }
+.vr-tk { position: absolute; bottom: 0; width: 1px; height: 4px; background: var(--vr-ln2); pointer-events: none; }
+.vr-tk.big { height: 12px; background: var(--vr-t3); }
+.vr-tl { position: absolute; top: 4px; transform: translateX(3px); font: 11px/1 var(--vr-mono); color: var(--vr-t3); white-space: nowrap; pointer-events: none; }
+.vr-mk { position: absolute; top: 14px; width: 8px; height: 11px; margin-left: -4px; background: var(--vr-accent); clip-path: polygon(0 0, 100% 0, 100% 62%, 50% 100%, 0 62%); pointer-events: none; z-index: calc(var(--z-base) + 2); }
+.vr.phone .vr-mk { top: 18px; }
+.vr-mk.on { width: 10px; height: 13px; margin-left: -5px; }
+.vr-ph { position: absolute; top: 0; bottom: 0; width: 1px; background: #fff; z-index: calc(var(--z-base) + 3); pointer-events: none; }
+.vr-ph::before { content: ""; position: absolute; top: 0; left: -5px; width: 11px; height: 9px; background: #fff; clip-path: polygon(0 0, 100% 0, 100% 45%, 50% 100%, 0 45%); }
+
+/* 명령 줄 */
+.vr-cmd { flex: none; display: flex; align-items: center; gap: 8px; height: 44px; padding: 4px 8px 4px 2px; background: var(--vr-s1); border-bottom: 1px solid var(--vr-ln); }
+.vr.phone .vr-cmd { height: 56px; padding: 6px 2px; gap: 4px; }
+.vr-play { flex: none; width: 44px; height: 36px; color: var(--vr-t); }
+.vr.phone .vr-play { height: 44px; }
+.vr-tc { flex: none; font: 600 14px/1 var(--vr-mono); font-variant-numeric: tabular-nums; color: #fff; }
+.vr.phone .vr-tc { font-size: 15px; padding-right: 4px; }
+.vr-field { flex: 1; min-width: 0; align-self: stretch; border: 0; outline: 0; background: var(--vr-field); color: var(--vr-t); font: inherit; font-size: 13px; padding: 0 8px; border-radius: var(--vr-r); box-shadow: inset 0 0 0 1px #0b0b0c, inset 0 0 0 2px #303034; }
+.vr.phone .vr-field { font-size: 16px; /* 작으면 아이폰이 확대 */ }
+.vr-field:focus { box-shadow: inset 0 0 0 1px var(--vr-accent); }
+.vr-field::placeholder { color: var(--vr-t3); }
+.vr-add { flex: none; width: 36px; height: 36px; color: var(--vr-t3); }
+.vr.phone .vr-add { width: 44px; height: 44px; }
+.vr-add.go { color: var(--vr-accent); }
+
+.vr-warn { flex: none; padding: 6px 14px; background: #4a2424; color: #ffd9d9; font-size: 12.5px; }
+.vr-hint { flex: none; padding: 8px 14px 6px; text-align: center; font-size: 13px; color: var(--vr-t3); }
+
+/* 남긴 말 — 시각 칸 고정폭, 표 머리 */
+.vr-list { flex: 0 0 172px; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+.vr.phone .vr-list { flex: 1 1 0; }
+.vr-h { position: sticky; top: 0; z-index: calc(var(--z-base) + 1); flex: none; display: flex; gap: 12px; align-items: center; height: 22px; padding: 0 14px; font-size: 11px; color: var(--vr-t3); background: var(--vr-s1); border-bottom: 1px solid var(--vr-ln); }
+.vr-h-t { flex: none; width: 92px; }
+.vr.phone .vr-h-t { width: 56px; }
+.vr-empty { padding: 14px; color: var(--vr-t3); }
+.vr-row { flex: none; display: flex; align-items: center; gap: 12px; min-height: 29px; padding: 0 6px 0 14px; color: var(--vr-t2); border-bottom: 1px solid #1d1d1f; cursor: pointer; }
+.vr.phone .vr-row { min-height: 44px; gap: 10px; padding: 0 2px 0 14px; font-size: 14px; }
+.vr-row em { flex: none; width: 92px; font: normal 12px/1 var(--vr-mono); font-variant-numeric: tabular-nums; color: var(--vr-t3); }
+.vr.phone .vr-row em { width: 56px; font-size: 12.5px; }
+.vr-tx { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vr-row.on { background: var(--vr-s2); color: #fff; }
+.vr-row.on em { color: #fff; }
+.vr-acts { flex: none; display: flex; color: var(--vr-t2); }
+.vr-acts button { width: 28px; height: 28px; }
+.vr.phone .vr-acts button { width: 44px; height: 44px; }
+
+/* 머리 — 데스크톱 검토 탭. 보내기는 참모 색 면 28px(11-04 사용자 시안 T2) */
+.vr-top { --vr-s1: #2b2b2e; --vr-ln: #141416; --vr-t: #e7e7ea; --vr-t2: #c4c4c9; --vr-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace; height: 40px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 6px 0 14px; background: var(--vr-s1); color: var(--vr-t); border-bottom: 1px solid var(--vr-ln); font-size: 13px; color-scheme: dark; }
+.vr-top b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vr-top .sp { flex: 1; }
+:where(.vr-top button) { all: unset; box-sizing: border-box; cursor: pointer; width: 28px; height: 28px; border-radius: 2px; display: inline-flex; align-items: center; justify-content: center; color: var(--vr-t2); }
+.vr-top button:focus-visible { outline: 2px solid var(--orch-solid, #f2a65a); }
+.vr-top .vr-send { width: auto; padding: 0 9px 0 8px; gap: 7px; margin-right: 4px; background: var(--orch-solid, #f2a65a); color: var(--orch-ink, #17120b); font: 600 12px/1 var(--vr-mono); }
+.vr-top .vr-send:disabled { opacity: .45; cursor: default; }
+.vr-top .vr-send.fail { background: #d23f3f; color: #fff; }
+.vr-top .vr-st { font-size: 12px; color: var(--vr-t2); }

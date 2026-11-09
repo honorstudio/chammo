@@ -82,6 +82,10 @@ function tables(lines: string[]): Table[] {
 }
 
 const cols = (delim: string) => cellsOf(delim).length;
+// 칸 맞춤 없는 모양 — 칸 경계는 탈출 안 한 | 만, 구분 줄은 정렬 기호(:)만 지키고 ---
+const split = (l: string) => l.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '').split(/(?<!\\)\|/).map((c) => c.trim().replace(/\s+/g, ' ').replace(/<br\s*\/?>/gi, '<br>'));
+const compactRow = (l: string) => `| ${split(l).join(' | ')} |`;
+const compactDelim = (l: string) => `| ${split(l).map((c) => `${c.startsWith(':') ? ':' : ''}---${c.endsWith(':') ? ':' : ''}`).join(' | ')} |`;
 const same = (a: Table, b: Table) => a.cells.length === b.cells.length && a.cells.every((c, i) => c === b.cells[i]);
 
 /** next(편집기가 쓴 글)의 표를 original(원래 파일) 표로 — 내용이 같으면 원래 글 그대로, 고쳤으면 정렬 줄만(표 수·칸 수가 같을 때) */
@@ -90,7 +94,7 @@ export function keepTables(original: string, next: string): string {
   const nLines = next.split('\n');
   const o = tables(oLines);
   const n = tables(nLines);
-  if (!o.length || !n.length) return next;
+  if (!n.length) return next;
   const used = new Set<number>();
   const out: string[] = [];
   let at = 0;
@@ -105,7 +109,10 @@ export function keepTables(original: string, next: string): string {
       // 고친 표 — 같은 행이 가장 많은 원래 표와 짝(고친 블록만 넘어오니 표 수로 짝지으면 상관없는 표를 잡는다)
       const overlap = (x: Table) => t.cells.filter((c) => x.cells.includes(c)).length;
       const twin = o.filter((x, j) => !used.has(j) && overlap(x) > 0).sort((a, b) => overlap(b) - overlap(a))[0]; // 겹치는 행이 없으면 새 표
-      if (twin && cols(twin.delim) === cols(t.delim)) {
+      if (!twin || cols(twin.delim) !== cols(t.delim)) {
+        // 새 표(또는 칸 수가 바뀐 표) — 편집기는 칸을 10칸 폭 공백으로 채워 쓴다(2026-11-09). 칸 맞춤 없이
+        for (let k = 0; k < block.length; k++) block[k] = k === 1 ? compactDelim(block[k]!) : compactRow(block[k]!);
+      } else {
         block[1] = twin.delim;
         // 안 바뀐 행은 원래 줄, 바뀐 행은 원래 표가 칸 맞춤 없이 썼으면 그 모양으로(한 칸 고쳤다고 표 전체가 바뀌지 않게)
         const tLines = oLines.slice(twin.start, twin.end).filter((_, k) => k !== 1);
@@ -116,7 +123,7 @@ export function keepTables(original: string, next: string): string {
           const key = cellsOf(block[k]!).join('\u0001');
           const hit = free.findIndex((x) => x.key === key);
           if (hit >= 0) { block[k] = free[hit]!.l; free.splice(hit, 1); }
-          else if (compact) block[k] = `| ${cellsOf(block[k]!).join(' | ')} |`;
+          else if (compact) block[k] = compactRow(block[k]!);
         }
       }
       out.push(...block);
