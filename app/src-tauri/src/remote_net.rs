@@ -35,6 +35,8 @@ pub struct Request<'a> {
     pub body: Option<&'a [u8]>,
     /// 기기 열쇠 — 오류 글·로그 어디에도 안 남긴다
     pub token: Option<&'a str>,
+    /// 테일넷 짝 보유 증명(peer_account::LIVE_HEADER, 11-09) — 그 기기 열쇠를 지금도 가졌다
+    pub live: Option<&'a str>,
 }
 
 #[derive(Debug)]
@@ -166,6 +168,9 @@ pub fn send(route: &Route, t: &Target, req: &Request, timeout: Duration, max_bod
     );
     if let Some(tok) = req.token {
         head.push_str(&format!("Authorization: Bearer {tok}\r\n"));
+    }
+    if let Some(l) = req.live.filter(|l| l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.')) {
+        head.push_str(&format!("X-Chammo-Live: {l}\r\n"));
     }
     // 쓰기는 원격 문지기가 같은 출처 + JSON 만 받는다 — 브라우저 CSRF 막이라 손님은 원격 자기 출처를 그대로 댄다(진짜 문은 열쇠)
     if req.method != "GET" {

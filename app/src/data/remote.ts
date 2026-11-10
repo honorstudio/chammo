@@ -17,8 +17,11 @@ export type RemoteDevice = {
   id: string;
   name: string;
   os: string;
-  /** connected = 열쇠가 통함 · pair = 참모는 있는데 짝짓기 필요 · offline = 짝지은 기기가 안 닿음 */
-  status: 'connected' | 'pair' | 'offline';
+  /** connected = 열쇠가 통함 · pair = 참모는 있는데 짝짓기 필요 · offline = 짝지은 기기가 안 닿음 ·
+   *  account = 같은 Chammo 계정이 아니라 멈춤(11-09 — 로그아웃·다른 계정·계정 안 묶인 옛 짝, 다시 짝짓기) */
+  status: 'connected' | 'pair' | 'offline' | 'account';
+  /** status account 일 때 이유 — unbound(옛 짝) · other(상대 계정 바뀜·로그아웃) · nologin(이 기기 로그아웃) · unknown(확인 못 함) */
+  paused?: 'unbound' | 'other' | 'nologin' | 'unknown';
   paired: boolean;
   /** hello 를 모르는 옛판 — 보기·채팅은 되지만 그 기기 업데이트 권함 */
   old: boolean;

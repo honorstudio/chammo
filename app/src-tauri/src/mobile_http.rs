@@ -46,6 +46,34 @@ pub trait Backend: Send + Sync {
     fn direct_answer(&self, _id: &str, _pick: &crate::direct::Pick) -> Result<(), String> {
         Err("not supported".into())
     }
+    /// 다른 기기 참모 짝의 계정 판정(peer_account::check) — bound = 그 줄에 묶인 상대 Chammo 기기 id. 기본은 '확인 못 함'(막힘)
+    fn peer_verdict(&self, _bound: Option<&str>, _strict: bool) -> crate::peer_account::Verdict {
+        crate::peer_account::Verdict::Unknown
+    }
+    /// 짝지을 때 같은 계정 증명 확인(peer_account::verify_now) → 답 증명. 기본은 못 함
+    fn peer_bind_verify(&self, _b: &crate::peer_account::Bind, _ctx: &str) -> Result<String, crate::peer_account::Verdict> {
+        Err(crate::peer_account::Verdict::Unknown)
+    }
+    /// 이 기기 Chammo 기기 id(/api/hello) — 로그인해 허용된 기기만
+    fn peer_me(&self) -> Option<String> {
+        None
+    }
+    /// 폰 줄 계정 판정(peer_account::check_phone) — relay = 그 폰 줄의 중계 기기 id(직통 줄은 None). 기본은 '확인 못 함'(결제류 카드 안 보임)
+    fn phone_verdict(&self, _relay: Option<&str>, _strict: bool) -> crate::peer_account::Verdict {
+        crate::peer_account::Verdict::Unknown
+    }
+    /// 폰 입구 주소(중계로 다시 연결할 곳) — 기본 없음
+    fn phone_entry(&self) -> Option<String> {
+        None
+    }
+    /// 테일넷 짝 보유 증명 확인(peer_account::live_check) — bound = 짝에 묶인 상대 Chammo 기기 id. 기본은 못 믿음
+    fn peer_live(&self, _bound: &str, _header: &str, _method: &str, _path: &str) -> bool {
+        false
+    }
+    /// 상대 테일넷 컴퓨터가 짝을 끊었다(로그아웃 등) — 그 노드 목록 줄·열쇠·peer 줄을 지운다. 기본은 못 받음
+    fn peer_unlink_node(&self, _node: &str) -> Result<(), String> {
+        Err("not supported".into())
+    }
     /// 짝지은 다른 기기 사람이 이 기기 Chammo 계정 로그아웃을 요청 — 이 기기 사람 확인 카드(direct::ask_account_logout) → 카드 id
     fn logout_card(&self, _from: &str) -> Result<String, String> {
         Err("not supported".into())
@@ -584,6 +612,18 @@ fn task_answer_state(log: &str, task: &str, note: &str, now_ms: i64) -> AnswerSt
     }
 }
 
+/// 그 일의 마지막 물음이 결제 관문(scripts/task send 종료 코드 3 의 '결제 확인 — … 보내도 돼?')인가
+fn task_is_payment(log: &str, task: &str) -> bool {
+    let mut pay = false;
+    for line in log.lines() {
+        let Ok(e) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        if e["task"] == task && e["type"] == "ask" {
+            pay = e["note"].as_str().is_some_and(is_pay_note);
+        }
+    }
+    pay
+}
+
 /// 그 일이 지금 답을 기다리나(폰 /api/task-answer 와 같은 판단) — 데스크톱 결정 대기함이 치기 전에 본다.
 /// 폰에서 먼저 답한 결정을 갱신 전 데스크톱이 또 쳐서 같은 답이 두 번 갔다(2026-11-01 ux-daily M16)
 pub(crate) fn task_waiting_in(log: &str, task: &str) -> bool {
@@ -634,6 +674,41 @@ fn authed(req: &Req, gate: &Gate) -> bool {
 fn device_of(req: &Req, gate: &Gate) -> Option<String> {
     let now = std::time::SystemTime::now();
     req.header("authorization").and_then(|v| v.strip_prefix("Bearer ")).and_then(|t| gate.devices.check(t, now))
+}
+
+/// 이 폰 줄이 결제·운영·발송·삭제 카드를 보고 답해도 되나(11-09 2차) — 중계로 붙은 내 계정 허용 폰을 1분 안에 확인한 것만.
+/// 직통 줄(테일넷·같은 와이파이 QR — 컴퓨터 브라우저로 연 줄 포함)은 계정을 확인할 길이 없어 안 된다
+fn phone_strict(req: &Req, gate: &Gate, be: &dyn Backend) -> crate::peer_account::Verdict {
+    let relay = device_of(req, gate).and_then(|d| gate.devices.relay_of(&d));
+    be.phone_verdict(relay.as_deref(), true)
+}
+
+/// 아직 답할 수 있는 결제류 카드 수
+fn open_strict(log: &str) -> usize {
+    log.lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|r| r["type"] == "ask" && r["kind"].as_str().is_some_and(|k| crate::direct::STRICT_KINDS.contains(&k)))
+        .filter_map(|r| r["id"].as_str().map(str::to_string))
+        .filter(|id| crate::direct::check(log, id).is_ok())
+        .count()
+}
+
+/// 아직 답을 기다리는 결제 관문 물음 수(일 기록) — 직통 폰 줄은 이 답도 못 하니(task-answer 403) 숨긴 수에 같이 센다(QA 0.4.11 문제 2-1)
+fn open_pay_gates(log: &str) -> usize {
+    let mut last = std::collections::HashMap::new();
+    for line in log.lines() {
+        let Ok(e) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        if e["type"] != "send" {
+            if let Some(t) = e["task"].as_str() {
+                last.insert(t.to_string(), e);
+            }
+        }
+    }
+    last.values().filter(|e| e["type"] == "ask" && e["note"].as_str().is_some_and(is_pay_note)).count()
+}
+
+fn is_pay_note(n: &str) -> bool {
+    n.starts_with("결제 확인 — ") || n.starts_with("Payment check — ")
 }
 
 /// 열쇠가 다른 기기 참모(peer 줄)면 (기기 id, 짝지을 때 받은 이름)
@@ -761,6 +836,13 @@ fn peer_direct_answer(req: &Req, gate: &Gate, be: &dyn Backend, dev: &str, name:
         Err(r) => return r,
         Ok(false) => return Resp::text(409, "duplicate request"),
         Ok(true) => {}
+    }
+    // 결제·운영 카드 답은 1분 안에 서버로 다시 확인한 같은 계정 기기만(이중 안전, 11-09)
+    if crate::direct::is_strict(&be.direct_log(), &b.id) {
+        let v = be.peer_verdict(gate.devices.bound_of(dev).as_deref(), true);
+        if !v.strict() {
+            return Resp::text(403, &v.err());
+        }
     }
     match be.direct_answer_by(&b.id, &b.pick, &crate::peer_human::by_of(name)) {
         Ok(()) => Resp::json(&serde_json::json!({ "ok": true })),
@@ -1573,6 +1655,15 @@ fn body<'a, T: Deserialize<'a>>(req: &'a Req) -> Result<T, Resp> {
 struct LinkBody {
     req: String,
     node: String,
+    /// 같은 Chammo 계정 증명(peer_account::Bind, 11-09~) — 없으면 옛 판이라 '계정 안 묶임'으로 거절
+    #[serde(default)]
+    device: Option<String>,
+    #[serde(default)]
+    proof: Option<String>,
+}
+
+fn bind_of(device: &Option<String>, proof: &Option<String>) -> Option<crate::peer_account::Bind> {
+    Some(crate::peer_account::Bind { device: device.clone()?, proof: proof.clone()? })
 }
 
 /// /api/link-request(POST, 같은 출처 JSON) · /api/link-status?req(GET, 요청한 기기가 기다림) · /api/link-check?h(GET, 받는 쪽의 되묻기)
@@ -1584,7 +1675,11 @@ pub fn link_route(req: &Req, gate: &Gate, asks: &crate::peer_ask::Asks, env: &dy
                 return Resp::text(403, "bad origin");
             }
             let b: LinkBody = match body(req) { Ok(b) => b, Err(r) => return r };
-            match asks.request(env, &b.req, &b.node, now) {
+            let Some(bind) = bind_of(&b.device, &b.proof) else {
+                // 옛 판 요청(증명 없음) — 받는 쪽이 못 받는 기기면 그 말이 먼저
+                return if env.supported() { Resp::text(403, &crate::peer_account::Verdict::Unbound.err()) } else { Resp::text(501, "unsupported") };
+            };
+            match asks.request(env, &b.req, &b.node, &bind, now) {
                 Ok(()) => Resp::json(&serde_json::json!({ "state": "asked" })),
                 Err(AskErr::Bad) => Resp::text(400, "bad request"),
                 Err(AskErr::TooMany) => Resp::text(429, "too many link requests"),
@@ -1592,6 +1687,7 @@ pub fn link_route(req: &Req, gate: &Gate, asks: &crate::peer_ask::Asks, env: &dy
                 Err(AskErr::Unconfirmed) => Resp::text(403, "unconfirmed"),
                 Err(AskErr::Unsupported) => Resp::text(501, "unsupported"),
                 Err(AskErr::Card(_)) => Resp::text(500, "could not show the card"),
+                Err(AskErr::Account(v)) => Resp::text(403, &v.err()),
             }
         }
         ("GET", "/api/link-status") => match asks.status(env, req.param("req").unwrap_or(""), now) {
@@ -1600,7 +1696,7 @@ pub fn link_route(req: &Req, gate: &Gate, asks: &crate::peer_ask::Asks, env: &dy
             Status::No => Resp::json(&serde_json::json!({ "state": "no" })),
             Status::Expired => Resp::json(&serde_json::json!({ "state": "expired" })),
             Status::Failed(_) => Resp::json(&serde_json::json!({ "state": "failed" })),
-            Status::Yes { token, back } => Resp::json(&serde_json::json!({ "state": "yes", "token": token, "back": back })),
+            Status::Yes { token, back, proof } => Resp::json(&serde_json::json!({ "state": "yes", "token": token, "back": back, "proof": proof })),
         },
         ("GET", "/api/link-check") => {
             let h = req.param("h").unwrap_or("");
@@ -1629,6 +1725,11 @@ struct PairBody {
     peer: bool,
     #[serde(default)]
     name: Option<String>,
+    /// 다른 기기 참모 — 같은 Chammo 계정 증명(peer_account::Bind, 11-09~). peer 면 꼭 있어야 한다
+    #[serde(default)]
+    device: Option<String>,
+    #[serde(default)]
+    proof: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1809,7 +1910,7 @@ struct ModeNameBody {
 
 /// 폰 홈·보관함 v1 에 더한 쓰기 길 — 같은 출처 문지기·head_check 몸통 목록·405 가 이 목록 하나를 본다
 const PHONE_POSTS: &[&str] = &["/api/note-new", "/api/note-write", "/api/note-trash", "/api/note-meta", "/api/device-number", "/api/login-terms-retry", "/api/gacha", "/api/peer-human-say", "/api/team-say", "/api/team-read", "/api/team-invite", "/api/team-create", "/api/team-use", "/api/team-join", "/api/team-handoff", "/api/team-post", "/api/team-agent-confirm", "/api/team-agent-save", "/api/team-agent-remove", "/api/team-agent-try", "/api/team-home-save", "/api/team-home-content", "/api/team-memory-write", "/api/team-cal-put", "/api/team-locker-op", "/api/team-media", "/api/locker-alias", "/api/locker-unalias", "/api/locker-new", "/api/locker-mkdir", "/api/locker-write", "/api/locker-link-add", "/api/locker-link-hide", "/api/mode-act", "/api/mode-open", "/api/mode-close", "/api/mode-remove", "/api/mode-restore"];
-const PHONE_GETS: &[&str] = &["/api/notes", "/api/note", "/api/gacha", "/api/office", "/api/modes", "/api/mode-view", "/api/mode-card", "/api/peer-get", "/api/peer-devices", "/api/team", "/api/team-profiles", "/api/team-posts", "/api/team-home", "/api/team-memory", "/api/team-cal", "/api/team-cal-poll", "/api/team-agents", "/api/team-agent-usage", "/api/team-agent-refs", "/api/team-file-thumb", "/api/team-file-image", "/api/team-file-open", "/api/team-locker", "/api/team-locker-put", "/api/team-file-ref", "/api/locker-links"];
+const PHONE_GETS: &[&str] = &["/api/phone-account", "/api/notes", "/api/note", "/api/gacha", "/api/office", "/api/modes", "/api/mode-view", "/api/mode-card", "/api/peer-get", "/api/peer-devices", "/api/team", "/api/team-profiles", "/api/team-posts", "/api/team-home", "/api/team-memory", "/api/team-cal", "/api/team-cal-poll", "/api/team-agents", "/api/team-agent-usage", "/api/team-agent-refs", "/api/team-file-thumb", "/api/team-file-image", "/api/team-file-open", "/api/team-locker", "/api/team-locker-put", "/api/team-file-ref", "/api/locker-links"];
 /// 폰 md 글 칸 저장만 몸통을 크게(글 512KB + JSON)
 const MAX_WRITE_BODY: usize = crate::locker_fs::MAX_PHONE_MD + 64 * 1024;
 
@@ -2577,7 +2678,7 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             return Resp::text(405, "method not allowed");
         }
         // link = 연결 요청(코드 없이)을 받을 수 있나 — 0.3.7 까지 윈도우는 못 받아서, 요청하는 쪽 화면이 이걸로 '연결' 단추를 연다
-        return Resp::json(&serde_json::json!({ "app": "chammo", "proto": PROTO, "version": env!("CARGO_PKG_VERSION"), "os": std::env::consts::OS, "link": be.link_env().supported() }));
+        return Resp::json(&serde_json::json!({ "app": "chammo", "proto": PROTO, "version": env!("CARGO_PKG_VERSION"), "os": std::env::consts::OS, "link": be.link_env().supported(), "chammo": be.peer_me() }));
     }
     // 짝짓기 — 코드가 열쇠라 토큰 없이. 같은 출처 JSON 만, 토큰은 응답 몸으로(쿠키 없음) → 페이지가 localStorage 에
     if req.path == "/api/pair" {
@@ -2597,8 +2698,22 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         if gate.devices.held(&b.code, std::time::SystemTime::now()) {
             return Resp::text(403, "컴퓨터 Chammo 에 뜬 '이 폰을 연결할까요?' 카드에서 허용을 누른 뒤 이 화면을 새로 고쳐 주세요");
         }
-        let p = crate::mobile_pair::Pairing { name: &name, home: b.home && !b.peer, prev: b.prev.as_deref(), peer: b.peer };
+        // 다른 기기 참모는 같은 Chammo 계정 증명을 지나야(11-09) — 코드를 쓰기 전에 본다(틀려도 코드는 안 닳는다). ctx = 연결 코드
+        let mut proof = None;
+        let mut chammo = None;
+        if b.peer {
+            let Some(bind) = bind_of(&b.device, &b.proof) else { return Resp::text(403, &crate::peer_account::Verdict::Unbound.err()) };
+            match be.peer_bind_verify(&bind, &b.code.trim().to_ascii_lowercase()) {
+                Ok(p) => {
+                    proof = Some(p);
+                    chammo = Some(bind.device);
+                }
+                Err(v) => return Resp::text(403, &v.err()),
+            }
+        }
+        let p = crate::mobile_pair::Pairing { name: &name, home: b.home && !b.peer, prev: b.prev.as_deref(), peer: b.peer, chammo: chammo.as_deref() };
         return match gate.devices.pair_with(&b.code, &p, std::time::SystemTime::now()) {
+            Some(token) if b.peer => Resp::json(&serde_json::json!({ "token": token, "proof": proof })),
             Some(token) => Resp::json(&serde_json::json!({ "token": token })),
             None => Resp::text(401, "짝짓기 코드가 틀렸거나 10분이 지났어요 — 컴퓨터 Chammo 설정 > 기기 관리에서 QR 을 새로 만들어 주세요"),
         };
@@ -2636,6 +2751,23 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         None if peer_path => return Resp::text(403, "peer key only"),
         _ => {}
     }
+    // 같은 Chammo 계정 짝만(11-09 보안 — 로그아웃·다른 계정 PC 에 카드가 계속 떴다). 끊기(peer-unlink)는 지우기만 해서 늘 받는다
+    if let Some((dev, _)) = &peer {
+        if req.path != "/api/peer-unlink" {
+            let v = be.peer_verdict(gate.devices.bound_of(dev).as_deref(), false);
+            if !v.ok() {
+                return Resp::text(403, &v.err());
+            }
+            // 테일넷 짝 — 그 기기 열쇠를 지금도 가졌나(서버 목록에 옛 기기 id 가 '허용'으로 남아도 데이터를 지우고 다른 계정으로 간 기기는 못 만든다).
+            // 중계 짝은 허브가 기기 서명으로 같은 일을 한다
+            if gate.devices.relay_of(dev).is_none() {
+                let bound = gate.devices.bound_of(dev).unwrap_or_default();
+                if !be.peer_live(&bound, req.header(crate::peer_account::LIVE_HEADER).unwrap_or(""), &req.method, &req.path) {
+                    return Resp::text(403, "account:live");
+                }
+            }
+        }
+    }
     if let Some((dev, name)) = &peer {
         if req.path == "/api/peer-say" {
             return peer_say(req, gate, be, dev, name);
@@ -2659,7 +2791,23 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             return peer_key_back(req, gate, be, dev);
         }
         if req.path == "/api/peer-unlink" {
-            let Some(relay) = gate.devices.relay_of(dev).filter(|r| !r.is_empty()) else { return Resp::text(403, "relay peer only") };
+            if req.method != "POST" {
+                return Resp::text(405, "method not allowed");
+            }
+            // 테일넷 짝 — 그 노드 줄째(상대가 로그아웃하며 알려 온다, 11-09)
+            let Some(relay) = gate.devices.relay_of(dev).filter(|r| !r.is_empty()) else {
+                // 코드로 짝지은 줄(노드 칸 없음) — 그 줄만 지운다(이 기기엔 그쪽을 부를 열쇠가 없다)
+                let Some(node) = gate.devices.list().into_iter().find(|d| &d.id == dev).and_then(|d| d.node) else {
+                    return match gate.devices.remove(dev) {
+                        Ok(()) => Resp::json(&serde_json::json!({ "ok": true })),
+                        Err(e) => Resp::text(500, &e.to_string()),
+                    };
+                };
+                return match be.peer_unlink_node(&node) {
+                    Ok(()) => Resp::json(&serde_json::json!({ "ok": true })),
+                    Err(e) => Resp::text(500, &e),
+                };
+            };
             return match be.peer_unlink(&relay) {
                 Ok(()) => Resp::json(&serde_json::json!({ "ok": true })),
                 Err(e) => Resp::text(500, &e),
@@ -3338,9 +3486,24 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         },
         // 다른 컴퓨터(peer 열쇠)에겐 컴퓨터 연결 카드를 뺀다(못 누르는 카드 — direct::hide_peer_links)
         ("GET", "/api/direct") => match peer_of(req, gate) {
-            Some(_) => Resp::new(200, "text/plain; charset=utf-8", crate::direct::hide_peer_links(&be.direct_log())),
-            None => Resp::new(200, "text/plain; charset=utf-8", be.direct_log()),
+            Some((dev, _)) => {
+                let log = crate::direct::hide_peer_links(&be.direct_log());
+                // 결제·운영 카드는 1분 안에 서버로 다시 확인한 같은 계정 기기에만(이중 안전, 11-09)
+                let log = if be.peer_verdict(gate.devices.bound_of(&dev).as_deref(), true).strict() { log } else { crate::direct::hide_kinds(&log, crate::direct::STRICT_KINDS) };
+                Resp::new(200, "text/plain; charset=utf-8", log)
+            }
+            None => {
+                let log = be.direct_log();
+                let log = if phone_strict(req, gate, be).strict() { log } else { crate::direct::hide_kinds(&log, crate::direct::STRICT_KINDS) };
+                Resp::new(200, "text/plain; charset=utf-8", log)
+            }
         },
+        // 이 폰 줄의 계정 확인 상태(11-09 2차) — state(same·unbound·other·nologin·unknown) · 숨긴 결제류 카드 수(결제 관문 물음 포함) · 중계로 다시 연결할 입구
+        ("GET", "/api/phone-account") => {
+            let v = phone_strict(req, gate, be);
+            let hidden = if v.strict() { 0 } else { open_strict(&be.direct_log()) + open_pay_gates(&be.tasks()) };
+            Resp::json(&serde_json::json!({ "state": if v.strict() { "same" } else { v.code() }, "hidden": hidden, "entry": be.phone_entry() }))
+        }
         ("POST", "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry") => {
             #[derive(serde::Deserialize)]
             #[serde(rename_all = "camelCase")]
@@ -3532,7 +3695,20 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             }
         }
         // 짝지은 다른 기기의 카드(ADR 0011) — 폰이 이 기기를 거쳐 보고 누른다. peer 열쇠는 이 길이 허용 목록 밖이라 못 온다(403)
-        ("GET", "/api/peer-cards") => Resp::json(&be.peer_cards()),
+        ("GET", "/api/peer-cards") => {
+            let mut rows = be.peer_cards();
+            // 다른 기기의 결제류 카드도 같은 규칙(11-09 2차)
+            if !phone_strict(req, gate, be).strict() {
+                if let Some(a) = rows.as_array_mut() {
+                    for r in a.iter_mut() {
+                        if let Some(log) = r["log"].as_str() {
+                            r["log"] = crate::direct::hide_kinds(log, crate::direct::STRICT_KINDS).into();
+                        }
+                    }
+                }
+            }
+            Resp::json(&rows)
+        }
         ("POST", "/api/peer-card-answer") => {
             #[derive(serde::Deserialize)]
             #[serde(deny_unknown_fields)]
@@ -3544,6 +3720,14 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             let b: B = match body(req) { Ok(b) => b, Err(r) => return r };
             if b.id.len() != 8 || !b.id.chars().all(|c| c.is_ascii_hexdigit()) || !crate::peer_ask::valid_node(&b.dev) {
                 return Resp::text(400, "bad id");
+            }
+            let v = phone_strict(req, gate, be);
+            if !v.strict() {
+                let rows = be.peer_cards();
+                let strict = rows.as_array().is_some_and(|a| a.iter().any(|r| r["dev"] == b.dev.as_str() && r["log"].as_str().is_some_and(|l| crate::direct::is_strict(l, &b.id))));
+                if strict {
+                    return Resp::text(403, &v.err());
+                }
             }
             match be.peer_card_answer(&b.dev, &b.id, &b.pick) {
                 Ok(()) => Resp::json(&serde_json::json!({ "ok": true })),
@@ -3580,6 +3764,11 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             if b.id.len() != 8 || !b.id.chars().all(|c| c.is_ascii_hexdigit()) {
                 return Resp::text(400, "bad id");
             }
+            // 결제·운영·발송·삭제 카드는 중계로 붙은 내 계정 허용 폰만(11-09 2차) — 직통 줄은 '중계로 다시 연결'
+            let v = phone_strict(req, gate, be);
+            if !v.strict() && crate::direct::is_strict(&be.direct_log(), &b.id) {
+                return Resp::text(403, &v.err());
+            }
             match be.direct_answer(&b.id, &b.pick) {
                 Ok(()) => Resp::json(&serde_json::json!({ "ok": true })),
                 Err(e) => Resp::text(409, &e),
@@ -3605,10 +3794,18 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             if !once_per(gate, &format!("task-answer:{}", b.task), Duration::from_secs(5)) {
                 return Resp::text(429, "too soon");
             }
-            match task_answer_state(&be.tasks(), &b.task, note, crate::orch_roles::now_ms() as i64) {
+            let log = be.tasks();
+            match task_answer_state(&log, &b.task, note, crate::orch_roles::now_ms() as i64) {
                 AnswerState::Waiting => {}
                 AnswerState::Replay => return Resp::json(&serde_json::json!({ "ok": true, "again": true })),
                 AnswerState::No => return Resp::text(409, "not waiting"),
+            }
+            // 결제 관문 답도 결제 카드와 같은 규칙 — 중계로 붙은 내 계정 허용 폰만(11-09)
+            if task_is_payment(&log, &b.task) {
+                let v = phone_strict(req, gate, be);
+                if !v.strict() {
+                    return Resp::text(403, &v.err());
+                }
             }
             let row = serde_json::json!({ "ts": crate::direct::chrono_now(), "type": "answer", "task": b.task, "note": note, "by": "phone" });
             match be.append_task(&row.to_string()) {

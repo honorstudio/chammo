@@ -55,6 +55,10 @@ pub(crate) struct Device {
     /// 중계로 짝지은 폰(ADR 0013) — 중계 기기 id·폰 터널 열쇠(X25519). 이 줄이 지워지면 터널도 끝
     #[serde(default, skip_serializing_if = "Option::is_none")]
     relay: Option<Relay>,
+    /// 다른 기기 참모 줄(테일넷) — 짝지을 때 증명으로 확인한 그 기기의 Chammo 기기 id(peer_account). 없으면 계정이 안 묶인 옛 줄이라 멈춤.
+    /// 중계 줄은 relay.device 가 그 값
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    chammo: Option<String>,
 }
 
 /// 중계 묶음 — 공개 값만(비밀 없음)
@@ -91,6 +95,8 @@ pub struct DeviceView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node: Option<String>,
     pub locker: bool,
+    /// 중계로 붙은 줄(계정을 확인할 수 있다) — 직통 폰 줄은 false 라 설정에 '계정 확인 안 됨 — 중계로 다시 연결'(11-09 2차)
+    pub relay: bool,
 }
 
 /// 짝짓기 요청 — prev = 이 저장 공간에 남아 있던 옛 열쇠(있으면)
@@ -100,6 +106,8 @@ pub struct Pairing<'a> {
     pub prev: Option<&'a str>,
     /// 다른 기기 참모 — 이름은 그 앱이 보낸 것(제어 글자 빼고), 폰 묶기·바꿔 끼우기는 안 한다
     pub peer: bool,
+    /// 다른 기기 참모 — 증명으로 확인한 그 기기의 Chammo 기기 id(peer_account). 폰이면 무시
+    pub chammo: Option<&'a str>,
 }
 
 /// 정리로 빠진 줄 — notify.log 에 이유와 함께 남긴다
@@ -247,14 +255,14 @@ impl Devices {
     #[cfg(test)]
     pub fn with_token(token: &str, name: &str) -> Devices {
         let d = Devices::memory();
-        d.inner.lock().unwrap().list.push(Device { id: "test0001".into(), name: name.into(), hash: sha(token), created: ms(SystemTime::now()), last_seen: None, home: false, group: None, paired: None, peer: false, node: None, no_locker: false, relay: None });
+        d.inner.lock().unwrap().list.push(Device { id: "test0001".into(), name: name.into(), hash: sha(token), created: ms(SystemTime::now()), last_seen: None, home: false, group: None, paired: None, peer: false, node: None, no_locker: false, relay: None, chammo: None });
         d
     }
 
     /// 시험용 — 줄 하나 더(다른 기기 참모 peer 줄 등)
     #[cfg(test)]
     pub fn add_test(&self, id: &str, token: &str, name: &str, peer: bool) {
-        self.inner.lock().unwrap().list.push(Device { id: id.into(), name: name.into(), hash: sha(token), created: ms(SystemTime::now()), last_seen: None, home: false, group: None, paired: None, peer, node: None, no_locker: false, relay: None });
+        self.inner.lock().unwrap().list.push(Device { id: id.into(), name: name.into(), hash: sha(token), created: ms(SystemTime::now()), last_seen: None, home: false, group: None, paired: None, peer, node: None, no_locker: false, relay: None, chammo: None });
     }
 
     /// 시험용 — 다음 check 가 마지막 접속을 파일에 적게
@@ -372,7 +380,7 @@ impl Devices {
     /// 시험용 — 옛 모양(새 브라우저 줄)
     #[cfg(test)]
     pub fn pair(&self, code: &str, name: &str, now: SystemTime) -> Option<String> {
-        self.pair_with(code, &Pairing { name, home: false, prev: None, peer: false }, now)
+        self.pair_with(code, &Pairing { name, home: false, prev: None, peer: false, chammo: None }, now)
     }
 
     /// 코드가 살아 있으면 쓰고(한 번만) 기기 토큰(16진 64자)을 준다.
@@ -468,6 +476,37 @@ impl Devices {
         g.list.iter().find(|d| d.id == id).and_then(|d| d.relay.as_ref().map(|r| r.device.clone()))
     }
 
+    /// 줄 id → 그 다른 기기 참모의 Chammo 기기 id(계정 확인용, peer_account) — 중계 줄은 중계 기기 id, 테일넷 줄은 짝지을 때 확인한 값. 옛 줄은 None
+    pub fn bound_of(&self, id: &str) -> Option<String> {
+        let mut g = self.inner.lock().unwrap();
+        self.reload_if_changed(&mut g);
+        g.list.iter().find(|d| d.id == id && d.peer).and_then(|d| d.relay.as_ref().map(|r| r.device.clone()).or_else(|| d.chammo.clone()))
+    }
+
+    /// 로그아웃 — 계정을 확인할 길이 없는 직통 폰 줄(중계 기기 id 없음) 전부(11-09 2차). 중계 폰 줄은 서버가 같은 계정만 붙인다. 지운 줄 수
+    pub fn remove_direct_phones(&self) -> std::io::Result<usize> {
+        let mut g = self.inner.lock().unwrap();
+        let mut n = 0;
+        self.mutate(&mut g, |l| {
+            let before = l.len();
+            l.retain(|d| d.peer || d.relay.is_some());
+            n = before - l.len();
+        })?;
+        Ok(n)
+    }
+
+    /// 로그아웃 — 다른 기기 참모 줄 전부(폰 줄은 안 건드린다). 지운 줄 수
+    pub fn remove_all_peers(&self) -> std::io::Result<usize> {
+        let mut g = self.inner.lock().unwrap();
+        let mut n = 0;
+        self.mutate(&mut g, |l| {
+            let before = l.len();
+            l.retain(|d| !d.peer);
+            n = before - l.len();
+        })?;
+        Ok(n)
+    }
+
     /// code = None 은 숫자 확인으로 묶기(pair_linked) — 코드 문을 건너뛰고 떠 있는 코드도 그대로 둔다
     fn pair_inner(&self, code: Option<&str>, p: &Pairing, relay: Option<Relay>, now: SystemTime) -> Option<String> {
         let mut g = self.inner.lock().unwrap();
@@ -536,11 +575,14 @@ impl Devices {
                     if relay.is_some() {
                         d.relay = relay.clone();
                     }
+                    if p.peer {
+                        d.chammo = p.chammo.map(str::to_string);
+                    }
                     swapped = Some(format!("열쇠 바꿔 끼움 {} {}{}", short(&d.id), d.name, if d.home { HOME_SUFFIX } else { "" }));
                     d.id.clone()
                 }
                 None => {
-                    l.push(Device { id: new_id.clone(), name: name.clone(), hash: hash.clone(), created: at, last_seen: Some(at), home: p.home && !p.peer, group, paired: None, peer: p.peer, node: None, no_locker: false, relay: relay.clone() });
+                    l.push(Device { id: new_id.clone(), name: name.clone(), hash: hash.clone(), created: at, last_seen: Some(at), home: p.home && !p.peer, group, paired: None, peer: p.peer, node: None, no_locker: false, relay: relay.clone(), chammo: p.chammo.map(str::to_string).filter(|_| p.peer) });
                     new_id.clone()
                 }
             };
@@ -588,11 +630,11 @@ impl Devices {
     pub fn list(&self) -> Vec<DeviceView> {
         let mut g = self.inner.lock().unwrap();
         self.reload_if_changed(&mut g);
-        g.list.iter().map(|d| DeviceView { id: d.id.clone(), name: d.name.clone(), created: d.created, last_seen: d.last_seen, home: d.home, group: d.group.clone().unwrap_or_else(|| d.id.clone()), paired: d.paired.unwrap_or(d.created), peer: d.peer, node: d.node.clone(), locker: !d.no_locker }).collect()
+        g.list.iter().map(|d| DeviceView { id: d.id.clone(), name: d.name.clone(), created: d.created, last_seen: d.last_seen, home: d.home, group: d.group.clone().unwrap_or_else(|| d.id.clone()), paired: d.paired.unwrap_or(d.created), peer: d.peer, node: d.node.clone(), locker: !d.no_locker, relay: d.relay.is_some() }).collect()
     }
 
     /// 다른 기기 참모 줄 — 연결 요청을 사람이 허용했을 때(코드 없이, peer_ask). 같은 노드의 옛 peer 줄은 바꿔 끼운다(옛 열쇠는 그 순간 죽는다)
-    pub fn add_peer(&self, token: &str, name: &str, node: &str, now: SystemTime) -> std::io::Result<()> {
+    pub fn add_peer(&self, token: &str, name: &str, node: &str, chammo: Option<&str>, now: SystemTime) -> std::io::Result<()> {
         if token.len() != 64 || !token.chars().all(|c| c.is_ascii_hexdigit()) || node.is_empty() {
             return Err(std::io::Error::other("bad peer key"));
         }
@@ -605,7 +647,7 @@ impl Devices {
             // 사람이 꺼 둔 '보관함 보여 주기'는 다시 허용해도 이어받는다(몰래 다시 켜지지 않게)
             let no_locker = l.iter().any(|d| d.peer && d.node.as_deref() == Some(node) && d.no_locker);
             l.retain(|d| !(d.peer && d.node.as_deref() == Some(node)));
-            l.push(Device { id: id.clone(), name: name.clone(), hash, created: at, last_seen: Some(at), home: false, group: None, paired: None, peer: true, node: Some(node.to_string()), no_locker, relay: None });
+            l.push(Device { id: id.clone(), name: name.clone(), hash, created: at, last_seen: Some(at), home: false, group: None, paired: None, peer: true, node: Some(node.to_string()), no_locker, relay: None, chammo: chammo.map(str::to_string) });
             gone = prune(l, at, Some(&id));
         })?;
         drop(g);
@@ -637,7 +679,7 @@ impl Devices {
         let mut gone = Vec::new();
         self.mutate(&mut g, |l| {
             let no_locker = l.iter().any(|d| same(d) && d.no_locker);
-            l.push(Device { id: id.clone(), name: name.clone(), hash, created: at, last_seen: Some(at), home: false, group: None, paired: None, peer: true, node: None, no_locker, relay: Some(relay.clone()) });
+            l.push(Device { id: id.clone(), name: name.clone(), hash, created: at, last_seen: Some(at), home: false, group: None, paired: None, peer: true, node: None, no_locker, relay: Some(relay.clone()), chammo: None });
             gone = prune(l, at, Some(&id));
         })?;
         drop(g);

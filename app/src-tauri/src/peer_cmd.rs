@@ -70,7 +70,18 @@ fn need_pair(name: &str) -> Value {
 }
 
 fn call_err(name: &str, e: String) -> Value {
-    if e == "pair" { need_pair(name) } else { fail(e) }
+    if e == "pair" {
+        return need_pair(name);
+    }
+    // 같은 Chammo 계정이 아닌 짝(11-09) — 이 기기에서 멈췄거나 그 기기가 403 account:… 로 거절
+    match crate::peer_account::paused(&e) {
+        Some(code) => account_stop(name, code),
+        None => fail(e),
+    }
+}
+
+fn account_stop(name: &str, code: &str) -> Value {
+    json!({ "ok": false, "accountPaused": code, "error": format!("{name} — {} (scripts/peer connect {name})", crate::peer_account::word(code)) })
 }
 
 /// 원격 응답이 성공이 아니면 사람이 읽을 이유
@@ -81,6 +92,7 @@ fn status_err(name: &str, r: &CallOut) -> Value {
         404 => fail(format!("{name} 에 그런 참모가 없어 — scripts/peer list 로 이름 확인")),
         409 => fail(format!("{name} 에 참모가 여럿이야 — --to <참모 이름>")),
         429 => fail("너무 자주 보냈어 — 1분 기다렸다가"),
+        403 if crate::peer_account::paused(&t).is_some() => account_stop(name, crate::peer_account::paused(&t).unwrap_or("")),
         400 if t.starts_with("forged") => fail("사람 승인 문구는 다른 기기로 못 넘겨 — 승인은 그 기기 카드에서 사람이"),
         s => fail(format!("{name} 가 거절했어({s}): {}", t.chars().take(200).collect::<String>())),
     }

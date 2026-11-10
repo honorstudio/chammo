@@ -4,7 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { findPathsWrapped, resolveLink } from '../domain/links';
 import '@xterm/xterm/css/xterm.css';
-import { imeStep, normalizeInput, yieldsToXterm } from '../domain/imeBridge';
+import { imeBridgeOn, imeStep, normalizeInput, yieldsToXterm } from '../domain/imeBridge';
 import { macKeySequence, ctrlLetter } from '../domain/macKeys';
 import { copyKeyAction, parseOsc52, winTermKey } from '../domain/clipboard';
 import { IS_WIN } from '../domain/reader';
@@ -18,7 +18,7 @@ import { reattachEvery } from '../domain/busyGate';
 import { busyNow, turns } from './busyNow';
 import { usePttLive } from './pttLive';
 import { pendingWrites } from '../domain/ptyWrites';
-import { imeNoSwallow, imeTrace } from './imeTrace';
+import { imeMode, imeNoSwallow, imeTrace } from './imeTrace';
 import { seqShape, traceOf } from '../domain/imeGuard';
 import { currentContrast, currentTheme, darkQuery } from './termTheme';
 import { IconNote } from './Icons';
@@ -52,7 +52,7 @@ export const TERM_FONT = termFont(IS_WIN);
  *  claimPtt = 지구본 키 말하기를 이 창으로(채팅 입력칸에 포커스가 가면 터미널이 포커스를 안 받아서),
  *  screen = 지금 보이는 줄들 + 커서(칸, 줄) — 채팅 판이 입력칸 글을 읽는다 */
 /** type = 앱이 치는 글(채팅 보내기·Esc·지우기) — 다른 치기 길과 같은 자물쇠로(Rust pty_type). raw 는 사람이 친 키처럼 바로 */
-export type PaneApi = { /** 마지막 터미널 출력 뒤 ms(-1 = 아직 없음) — 칸이 멈췄나 가리는 진단 */ quiet?: () => number; write: (data: string) => void; raw: (data: string) => void; type: (keys: string[], enterMs?: number) => Promise<void>; focus: () => void; claimPtt: () => void; screen: (back?: number) => { lines: string[]; cursor: [number, number] } };
+export type PaneApi = { /** 마지막 터미널 출력 뒤 ms(-1 = 아직 없음) — 칸이 멈췄나 가리는 진단 */ quiet?: () => number; write: (data: string) => void; raw: (data: string) => void; type: (keys: string[], enterMs?: number, again?: boolean) => Promise<string | void>; /** 칸을 새로 붙인다 — 죽은 보기(attach 가 출력 없이 굳음, EOF 도 안 옴) */ reattach?: () => void; focus: () => void; claimPtt: () => void; screen: (back?: number) => { lines: string[]; cursor: [number, number] } };
 
 type Props = {
   /** pty 에서 돌릴 셸 명령. `exec '<claude>' attach <id>` 처럼 절대 경로로 */
@@ -225,11 +225,12 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
     let lastOut = 0;
     injectRef.current?.({ quiet: () => (lastOut ? Date.now() - lastOut : -1), write: (d) => { write(d); term.focus(); }, raw: write,
       // 번호를 받기 전(창이 막 열림)엔 자물쇠 길이 없다 — 모아 둔 쓰기로 넣고 Enter 시간만큼 기다린다
-      type: (keys, enterMs) => (id != null ? typePty(id, keys, enterMs) : new Promise<void>((done) => {
+      type: (keys, enterMs, again) => (id != null ? typePty(id, keys, enterMs, again) : new Promise<void>((done) => {
         keys.forEach(write);
         if (enterMs === undefined) { done(); return; }
         setTimeout(() => { write('\r'); done(); }, enterMs);
       })),
+      reattach: () => setEpoch((e) => e + 1),
       focus: () => term.focus(), claimPtt: () => { if (!readOnly && id != null) void pttTarget(id); },
       // back = 위로 밀린 줄도 그만큼 더(쓰는 중 답의 머리 '⏺' 가 화면 위로 밀려도 찾게) — cursor 는 back 이 없을 때만 줄 번호가 맞다
       screen: (back = 0) => {
@@ -268,7 +269,9 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
       return false; // keydown·keyup 둘 다 xterm 에 안 넘긴다
     });
     const offPtt = readOnly ? () => {} : onPttStop((n) => { if (n === id) voiceRef.current?.(); });
-    const detachIme = readOnly ? () => {} : installImeBridge(term, (d) => { imeTrace?.('bridge', { d: seqShape(d) }); write(d); });
+    // 한글 다리는 맥(WKWebView) 몫 — 윈도우(WebView2)는 xterm 이 조합을 처리한다(다리까지 걸면 한글이 두 번, domain/imeBridge imeBridgeOn)
+    const detachIme = readOnly ? () => {} : imeBridgeOn(IS_WIN, imeMode) ? installImeBridge(term, (d) => { imeTrace?.('bridge', { d: seqShape(d) }); write(d); }) : () => {};
+    const detachTrace = readOnly ? () => {} : installImeTrace(term);
     // 파일을 끌어다 놓으면(ui/fileDrop) 붙여넣기처럼 — Claude 가 붙여넣은 경로를 이미지로 읽는다
     const onDrop = (e: Event) => {
       term.paste((e as CustomEvent<string>).detail);
@@ -432,6 +435,7 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
       box?.removeEventListener(DROP_EVENT, onDrop);
       mq.removeEventListener('change', onScheme);
       term.textarea?.removeEventListener('focus', onTermFocus);
+      detachTrace();
       if (id != null) void closePty(id);
       TERMS.delete(el);
       term.dispose();
@@ -527,19 +531,26 @@ function installImeBridge(term: Terminal, write: (d: string) => void): () => voi
   root.addEventListener('input', onInput, true);
   root.addEventListener('keydown', onKeyDown, true);
   for (const t of COMPOSITION) root.addEventListener(t, swallow, true);
-  // 진단(ime-debug.on): 키·입력·조합 이벤트를 적는다 — 진짜 키보드는 osascript 와 다른 길로 올 수 있어서. 친 글자는 안 남긴다(종류·길이만, domain/imeGuard)
-  const TRACE = ['keydown', 'keyup', 'beforeinput', 'input', ...COMPOSITION];
+  return () => {
+    root.removeEventListener('beforeinput', onBeforeInput, true);
+    root.removeEventListener('input', onInput, true);
+    root.removeEventListener('keydown', onKeyDown, true);
+    for (const t of COMPOSITION) root.removeEventListener(t, swallow, true);
+  };
+}
+
+/** 진단(ime-debug.on): 키·입력·조합 이벤트를 적는다 — 진짜 키보드는 osascript 와 다른 길로 올 수 있어서. 친 글자는 안 남긴다(종류·길이만, domain/imeGuard).
+ *  다리를 안 거는 윈도우에서도 재려고 다리와 따로 건다(같은 조상 capture 라 다리의 stopPropagation 에도 적힌다) */
+function installImeTrace(term: Terminal): () => void {
+  const ta = term.textarea;
+  const root = term.element;
+  if (!ta || !root) return () => {};
+  const TRACE = ['keydown', 'keyup', 'beforeinput', 'input', 'compositionstart', 'compositionupdate', 'compositionend'];
   const trace = (e: Event) => {
     if (!imeTrace) return; // 진단 설정은 창이 뜬 뒤에 도착할 수 있어서 늘 걸어 두고 여기서 본다
     const k = e as KeyboardEvent & InputEvent & CompositionEvent;
     imeTrace?.(e.type, { ...traceOf({ type: e.type, key: k.key, keyCode: k.keyCode, isComposing: k.isComposing, inputType: k.inputType, data: k.data }, 'xterm', ta.value.length), rep: k.repeat });
   };
   for (const t of TRACE) root.addEventListener(t, trace, true);
-  return () => {
-    for (const t of TRACE) root.removeEventListener(t, trace, true);
-    root.removeEventListener('beforeinput', onBeforeInput, true);
-    root.removeEventListener('input', onInput, true);
-    root.removeEventListener('keydown', onKeyDown, true);
-    for (const t of COMPOSITION) root.removeEventListener(t, swallow, true);
-  };
+  return () => { for (const t of TRACE) root.removeEventListener(t, trace, true); };
 }

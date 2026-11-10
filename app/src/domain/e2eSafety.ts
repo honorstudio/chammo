@@ -19,15 +19,23 @@ export const needsRefetch = (x: { safety?: string; state?: string; refetched?: b
 /** 보안 번호 30자리 → 5자리 여섯 묶음. 모양이 틀리면 빈 목록(보여 주지 않는다) */
 export const safetyGroups = (code: string): string[] => (/^(\d{5} ){5}\d{5}$/.test(code) ? code.split(' ') : []);
 
-/** 멤버 줄 상태 글 — ok = 확인됨(초록 점) */
-export function safetyLabel(p: SafetyPerson): { text: string; ok: boolean } {
-  if (p.state === 'changed') return { text: p.blocked ? tr('보안 번호가 바뀌어 막아 뒀어요', 'Safety number changed — kept blocked') : tr('보안 번호가 바뀌었어요', 'Safety number changed'), ok: false };
-  if (p.state === 'forked') return { text: p.blocked ? tr('기기 목록이 달라 막아 뒀어요', 'Device list differs — kept blocked') : tr('기기 목록이 다르게 보여요', 'Device list looks different'), ok: false };
-  if (p.state === 'verified') {
-    const d = new Date(p.verifiedAt);
-    return { text: tr(`보안 번호 확인됨 · ${d.getMonth() + 1}/${d.getDate()}`, `Safety number verified · ${d.getMonth() + 1}/${d.getDate()}`), ok: true };
-  }
-  return { text: tr('보안 번호 아직 안 견줌', 'Safety number not compared yet'), ok: false };
+/** 저절로 받아들인 바뀜을 팀원 줄에 띄우는 기간 — 그 뒤엔 대화 회색 줄로만 남는다 */
+export const REKEY_FLAG_MS = 7 * 24 * 3600_000;
+
+/** 팀원 줄 한 줄(11-09 사용자 "너무 복잡" — 평소엔 아무것도 안 보인다). 바뀜·갈림·막아 둠, 또는 견준 뒤로 7일 안에 저절로 받아들인 바뀜만 */
+export function safetyFlag(p: SafetyPerson, now: number): string | null {
+  if (p.state === 'forked') return tr('기기 목록이 달라요', 'Device list differs');
+  if (p.state === 'changed') return p.blocked ? tr('기기가 바뀌어 막아 뒀어요', 'Device changed — blocked') : tr('기기가 바뀌었어요', 'Device changed');
+  const at = p.rekeyedAt ?? 0;
+  if (at > 0 && at > (p.state === 'verified' ? p.verifiedAt : 0) && now - at < REKEY_FLAG_MS) return tr('기기가 바뀌었어요', 'Device changed');
+  return null;
+}
+
+/** 팀원 자세히 보기 — 견줘 확인한 날짜(아니면 없음) */
+export function verifiedText(p: SafetyPerson): string | null {
+  if (p.state !== 'verified') return null;
+  const d = new Date(p.verifiedAt);
+  return tr(`확인함 · ${d.getMonth() + 1}/${d.getDate()}`, `Verified · ${d.getMonth() + 1}/${d.getDate()}`);
 }
 
 /** 대화 칸의 종단 암호 표시 — Rust 인박스 기록 note 그대로. block = 받지 않은 말, warn = 열었지만 참모에게 안 넘긴 말(본문은 보여 준다) */
@@ -62,4 +70,4 @@ export function slotNotices<T extends { rekeyedAt?: number }>(ats: number[], not
 }
 
 /** 회색 줄 글 */
-export const rekeyText = (name: string) => tr(`${name}의 보안 번호가 바뀌었어요`, `${name}'s safety number changed`);
+export const rekeyText = (name: string) => tr(`${name}의 기기가 바뀌었어요`, `${name}'s device changed`);

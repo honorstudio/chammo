@@ -12,10 +12,12 @@ struct Env<'a> {
     closed: RefCell<Vec<(String, bool, String)>>,
     commits: RefCell<Vec<String>>,
     commit_fails: bool,
+    /// 같은 Chammo 계정 증명 — 이 기기 id 만 통과(그 밖은 Other)
+    chammo_ok: &'static str,
 }
 
 fn peer(id: &str, name: &str) -> LinkPeer {
-    LinkPeer { id: id.into(), name: name.into(), os: "macOS".into(), ip: "100.64.0.20".parse().unwrap(), tailnet: "example.ts.net".into() }
+    LinkPeer { id: id.into(), name: name.into(), os: "macOS".into(), ip: "100.64.0.20".parse().unwrap(), tailnet: "example.ts.net".into(), chammo: None }
 }
 
 fn env(a: &Asks) -> Env<'_> {
@@ -29,6 +31,7 @@ fn env(a: &Asks) -> Env<'_> {
         closed: RefCell::new(Vec::new()),
         commits: RefCell::new(Vec::new()),
         commit_fails: false,
+        chammo_ok: "dev-a",
     }
 }
 
@@ -55,9 +58,17 @@ impl LinkEnv for Env<'_> {
         if self.commit_fails {
             return Err("키체인".into());
         }
-        self.commits.borrow_mut().push(peer.id.clone());
+        self.commits.borrow_mut().push(format!("{}:{}", peer.id, peer.chammo.as_deref().unwrap_or("-")));
         Ok(("a".repeat(64), "b".repeat(64)))
     }
+    fn bind(&self, b: &crate::peer_account::Bind, ctx: &str) -> Result<String, crate::peer_account::Verdict> {
+        if b.device == self.chammo_ok && b.proof == format!("p-{ctx}") { Ok(format!("r-{ctx}")) } else { Err(crate::peer_account::Verdict::Other) }
+    }
+}
+
+/// 증명 — 가짜 환경이 받는 모양
+fn bind_for(req: &str) -> crate::peer_account::Bind {
+    crate::peer_account::Bind { device: "dev-a".into(), proof: format!("p-{req}") }
 }
 
 const T0: u64 = 1_800_000_000_000;
@@ -67,14 +78,14 @@ fn pe_허용하면_열쇠_둘을_한_번만_받아_간다() {
     let (a, b) = (Asks::default(), Asks::default());
     let e = env(&a);
     let req = a.start("nB", T0).unwrap();
-    b.request(&e, &req, "nA", T0).unwrap();
+    b.request(&e, &req, "nA", &bind_for(&req), T0).unwrap();
     let (card, name, until) = e.cards.borrow()[0].clone();
     assert_eq!((name.as_str(), until), ("office-mac", T0 + TTL_MS), "카드 이름은 받는 쪽 테일넷이 아는 이름");
     assert_eq!(b.status(&e, &req, T0 + 1000), Status::Wait);
     b.decide(&card, true, T0 + 2000).unwrap();
     assert!(e.commits.borrow().is_empty(), "열쇠는 받아 갈 때 만든다");
-    assert_eq!(b.status(&e, &req, T0 + 3000), Status::Yes { token: "a".repeat(64), back: "b".repeat(64) });
-    assert_eq!(*e.commits.borrow(), ["nA"]);
+    assert_eq!(b.status(&e, &req, T0 + 3000), Status::Yes { token: "a".repeat(64), back: "b".repeat(64), proof: format!("r-{req}") });
+    assert_eq!(*e.commits.borrow(), ["nA:dev-a"], "증명한 Chammo 기기 id 가 같이 묶인다");
     assert_eq!(e.closed.borrow()[0], (card.clone(), true, "연결됨".into()));
     assert_eq!(b.status(&e, &req, T0 + 4000), Status::Unknown, "한 번 받아 가면 끝");
     assert!(b.decide(&card, true, T0 + 5000).is_err(), "끝난 카드는 다시 못 누른다");
@@ -85,7 +96,7 @@ fn pe_거절하면_아무것도_안_생긴다() {
     let (a, b) = (Asks::default(), Asks::default());
     let e = env(&a);
     let req = a.start("nB", T0).unwrap();
-    b.request(&e, &req, "nA", T0).unwrap();
+    b.request(&e, &req, "nA", &bind_for(&req), T0).unwrap();
     let card = e.cards.borrow()[0].0.clone();
     b.decide(&card, false, T0 + 1000).unwrap();
     assert!(b.decide(&card, true, T0 + 1500).is_err(), "거절한 뒤 허용으로 바꿀 수 없다(새 요청으로)");
@@ -99,7 +110,7 @@ fn pe_5분_무응답이면_끝나고_그_뒤엔_못_누른다() {
     let (a, b) = (Asks::default(), Asks::default());
     let e = env(&a);
     let req = a.start("nB", T0).unwrap();
-    b.request(&e, &req, "nA", T0).unwrap();
+    b.request(&e, &req, "nA", &bind_for(&req), T0).unwrap();
     let card = e.cards.borrow()[0].0.clone();
     assert!(b.decide(&card, true, T0 + TTL_MS + 1).is_err(), "시간이 지난 카드는 허용이 안 먹는다");
     assert_eq!(b.status(&e, &req, T0 + TTL_MS + 2), Status::Expired);
@@ -113,7 +124,7 @@ fn pe_허용했는데_1분_안에_안_받아_가면_사라진다() {
     let (a, b) = (Asks::default(), Asks::default());
     let e = env(&a);
     let req = a.start("nB", T0).unwrap();
-    b.request(&e, &req, "nA", T0).unwrap();
+    b.request(&e, &req, "nA", &bind_for(&req), T0).unwrap();
     let card = e.cards.borrow()[0].0.clone();
     b.decide(&card, true, T0 + 1000).unwrap();
     assert_eq!(b.status(&e, &req, T0 + 1000 + PICKUP_MS + 1), Status::Expired);
@@ -126,7 +137,7 @@ fn pe_받아_갈_때_못_만들면_실패로_카드도_닫는다() {
     let mut e = env(&a);
     e.commit_fails = true;
     let req = a.start("nB", T0).unwrap();
-    b.request(&e, &req, "nA", T0).unwrap();
+    b.request(&e, &req, "nA", &bind_for(&req), T0).unwrap();
     let card = e.cards.borrow()[0].0.clone();
     b.decide(&card, true, T0 + 1000).unwrap();
     assert!(matches!(b.status(&e, &req, T0 + 2000), Status::Failed(_)));
@@ -139,11 +150,11 @@ fn pe_요청한_기기가_되물음에_모른다고_하면_카드가_안_뜬다(
     let e = env(&a);
     // 남이 A 인 척 — A 는 그런 요청을 한 적이 없다
     let fake = "0123456789abcdef0123456789abcdef";
-    assert_eq!(b.request(&e, fake, "nA", T0), Err(AskErr::Unconfirmed));
+    assert_eq!(b.request(&e, fake, "nA", &bind_for(fake), T0), Err(AskErr::Unconfirmed));
     // A 가 요청을 거둔 뒤에 온 것도
     let req = a.start("nB", T0).unwrap();
     a.end(&req);
-    assert_eq!(b.request(&e, &req, "nA", T0), Err(AskErr::Unconfirmed));
+    assert_eq!(b.request(&e, &req, "nA", &bind_for(&req), T0), Err(AskErr::Unconfirmed));
     assert!(e.cards.borrow().is_empty());
 }
 
@@ -152,7 +163,7 @@ fn pe_같은_계정_기기가_아니면_되묻기도_안_하고_거절() {
     let (a, b) = (Asks::default(), Asks::default());
     let e = env(&a);
     let req = a.start("nB", T0).unwrap();
-    assert_eq!(b.request(&e, &req, "nSHARED", T0), Err(AskErr::NotMine));
+    assert_eq!(b.request(&e, &req, "nSHARED", &bind_for(&req), T0), Err(AskErr::NotMine));
     assert_eq!(e.confirms.get(), 0);
     assert!(e.cards.borrow().is_empty());
 }
@@ -163,7 +174,7 @@ fn pe_요청은_10분에_5번_기다리는_카드는_3장까지() {
     let e = env(&a);
     let ok = |node: &str, t: u64| {
         let r = a.start(&format!("to-{node}"), t).unwrap();
-        b.request(&e, &r, node, t)
+        b.request(&e, &r, node, &bind_for(&r), t)
     };
     assert!(ok("nA", T0).is_ok());
     assert!(ok("nC", T0).is_ok());
@@ -185,19 +196,19 @@ fn pe_남의_요청은_내_기기_연결_상한을_못_써_버린다() {
     let e = env(&a);
     for i in 0..10 {
         let r = a.start(&format!("spam-{i}"), T0).unwrap();
-        assert_eq!(b.request(&e, &r, "nSHARED", T0), Err(AskErr::NotMine));
+        assert_eq!(b.request(&e, &r, "nSHARED", &bind_for(&r), T0), Err(AskErr::NotMine));
     }
     let r = a.start("to-nA", T0).unwrap();
-    assert!(b.request(&e, &r, "nA", T0).is_ok());
+    assert!(b.request(&e, &r, "nA", &bind_for(&r), T0).is_ok());
     // 내 기기 id 를 대고 되묻기에 못 지나는 가짜 요청을 쏟아도 그 기기 몫은 안 준다(2026-10-22 코드 리뷰)
     let (a2, b2) = (Asks::default(), Asks::default());
     let e2 = env(&a2);
     for i in 0..10 {
         let fake = Asks::default().start(&format!("spoof-{i}"), T0).unwrap();
-        assert_eq!(b2.request(&e2, &fake, "nA", T0), Err(AskErr::Unconfirmed));
+        assert_eq!(b2.request(&e2, &fake, "nA", &bind_for(&fake), T0), Err(AskErr::Unconfirmed));
     }
     let r = a2.start("to-nA", T0).unwrap();
-    assert!(b2.request(&e2, &r, "nA", T0).is_ok());
+    assert!(b2.request(&e2, &r, "nA", &bind_for(&r), T0).is_ok());
 }
 
 #[test]
@@ -205,12 +216,12 @@ fn pe_모양이_틀리거나_못_받는_기기면_거절() {
     let (a, b) = (Asks::default(), Asks::default());
     let mut e = env(&a);
     let req = a.start("nB", T0).unwrap();
-    assert_eq!(b.request(&e, "XYZ", "nA", T0), Err(AskErr::Bad));
-    assert_eq!(b.request(&e, &req.to_uppercase(), "nA", T0), Err(AskErr::Bad));
-    assert_eq!(b.request(&e, &req, "n A\n", T0), Err(AskErr::Bad));
+    assert_eq!(b.request(&e, "XYZ", "nA", &bind_for("XYZ"), T0), Err(AskErr::Bad));
+    assert_eq!(b.request(&e, &req.to_uppercase(), "nA", &bind_for(&req), T0), Err(AskErr::Bad));
+    assert_eq!(b.request(&e, &req, "n A\n", &bind_for(&req), T0), Err(AskErr::Bad));
     assert_eq!(b.status(&e, "../etc", T0), Status::Unknown);
     e.supported = false;
-    assert_eq!(b.request(&e, &req, "nA", T0), Err(AskErr::Unsupported));
+    assert_eq!(b.request(&e, &req, "nA", &bind_for(&req), T0), Err(AskErr::Unsupported));
 }
 
 #[test]
@@ -226,4 +237,22 @@ fn pe_요청하는_쪽은_자기가_낸_요청만_맞다고_하고_같은_기기
     assert!(a.waiting(&r2, T0 + 2));
     a.end(&r2);
     assert!(!a.waiting(&r2, T0 + 3), "취소하면 기다림도 끝");
+}
+
+#[test]
+fn 계정_증명이_틀리거나_다른_계정_기기면_카드를_안_띄운다() {
+    let (a, b) = (Asks::default(), Asks::default());
+    let e = env(&a);
+    let req = a.start("nB", T0).unwrap();
+    // 다른 계정(다른 계정으로 바꾼 PC 는 새 기기 id) · 증명 틀림 · 칸 비움
+    for bad in [
+        crate::peer_account::Bind { device: "dev-other".into(), proof: format!("p-{req}") },
+        crate::peer_account::Bind { device: "dev-a".into(), proof: "p-other".into() },
+        crate::peer_account::Bind { device: String::new(), proof: String::new() },
+    ] {
+        assert_eq!(b.request(&e, &req, "nA", &bad, T0), Err(AskErr::Account(crate::peer_account::Verdict::Other)));
+    }
+    assert!(e.cards.borrow().is_empty(), "사람에게 카드도 안 간다");
+    b.request(&e, &req, "nA", &bind_for(&req), T0).unwrap();
+    assert_eq!(e.cards.borrow().len(), 1);
 }

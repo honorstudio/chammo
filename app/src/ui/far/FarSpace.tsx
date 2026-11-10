@@ -1,6 +1,7 @@
 // 다른 기기 보기(peer-panel) 오른쪽 스페이스 — 그 기기 홈(결정 대기 → 참모 → 맡긴 세션)·세션 엿보기(읽기 전용)·보관함(목록만)
 import { useMemo, useState } from 'react';
-import { remoteApi, remoteCardAnswer, type RemoteDevice } from '../../data/remote';
+import { remoteApi, remoteCardAnswer, remoteConnect, remoteConnectCancel, type RemoteDevice } from '../../data/remote';
+import { canRepair, pausedText } from '../../domain/peerDevices';
 import type { FarDot, FarSession } from '../../domain/farHome';
 import type { RemoteCard } from '../../domain/remoteCards';
 import { josa, tr } from '../../i18n';
@@ -23,8 +24,10 @@ const ext = (name: string) => (name.includes('.') ? name.split('.').pop()!.slice
 const dotCls = (d: FarDot) => `far-dot d-${d}`;
 
 /** 오른쪽 스페이스 — 그 기기 홈(결정 대기 → 참모 → 맡긴 세션) · 보관함(목록만) */
-export function FarSpace({ t, data, status, cards, onAgent, agent, fontSize }: {
+export function FarSpace({ t, data, status, paused, onRepaired, cards, onAgent, agent, fontSize }: {
   t: FarTarget; data: FarData; status: RemoteDevice | undefined; cards: RemoteCard[]; agent: string | null;
+  /** 계정 때문에 멈춘 짝이면 그 까닭(domain/peerDevices farPaused) — 다시 짝지으면 onRepaired */
+  paused?: RemoteDevice['paused'] | null; onRepaired?: () => void;
   onAgent: (a: FarSession) => void; fontSize?: number;
 }) {
   const [tab, setTab] = useState<'home' | 'locker'>('home');
@@ -46,6 +49,8 @@ export function FarSpace({ t, data, status, cards, onAgent, agent, fontSize }: {
           <div className="far-peek-head"><button className="ib" aria-label={tr('뒤로', 'Back')} title={tr('뒤로', 'Back')} onClick={() => setPeek(null)}><IconBack /></button><b>{peek.name}</b><span className="far-ro">{tr('읽기 전용', 'Read-only')}</span></div>
           <FarPeek dev={t.dev} s={peek} fontSize={fontSize} />
         </div>
+      ) : paused ? (
+        <FarPaused t={t} paused={paused} onRepaired={onRepaired} />
       ) : cut ? (
         <div className="far-empty">
           <b>{tr(`${t.name}에 안 닿아요`, `Can't reach ${t.name}`)}</b>
@@ -99,6 +104,27 @@ export function FarSpace({ t, data, status, cards, onAgent, agent, fontSize }: {
       ) : (
         <FarLockerView name={t.name} locker={locker} />
       )}
+    </div>
+  );
+}
+
+/** 계정 때문에 멈춘 짝 — 꺼진 기기('켜지면 저절로 이어져요')와 달리 기다려도 안 풀린다. 그 자리에서 다시 짝짓기(그 기기 사람이 카드에서 허용, QA 0.4.11 문제 3-2) */
+function FarPaused({ t, paused, onRepaired }: { t: FarTarget; paused: NonNullable<RemoteDevice['paused']>; onRepaired?: () => void }) {
+  const [wait, setWait] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const repair = () => {
+    setErr(null);
+    setWait(true);
+    void remoteConnect(t.dev).then(() => onRepaired?.(), (e: unknown) => { const m = String(e); if (!m.includes('취소')) setErr(m); }).finally(() => setWait(false));
+  };
+  return (
+    <div className="far-empty">
+      <b>{tr(`${josa(t.name, '과', '와')} 연결이 멈췄어요`, `The link to ${t.name} is paused`)}</b>
+      <span>{wait ? tr('그 기기에서 허용을 기다려요', 'Waiting for that device to allow') : pausedText(paused)}</span>
+      {canRepair(paused) && (wait
+        ? <button className="btn" onClick={() => void remoteConnectCancel(t.dev)}>{tr('취소', 'Cancel')}</button>
+        : <button className="btn pri" onClick={repair}>{tr('다시 짝짓기', 'Pair again')}</button>)}
+      {err && <span className="su-error">{err}</span>}
     </div>
   );
 }

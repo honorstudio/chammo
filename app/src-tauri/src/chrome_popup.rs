@@ -176,7 +176,7 @@ fn same(a: Rect, b: Rect) -> bool {
     (a.x - b.x).abs() <= SLACK && (a.y - b.y).abs() <= SLACK && (a.w - b.w).abs() <= SLACK && (a.h - b.h).abs() <= SLACK
 }
 
-fn within(inner: Rect, outer: Rect) -> bool {
+pub(crate) fn within(inner: Rect, outer: Rect) -> bool {
     inner.x >= outer.x - SLACK && inner.y >= outer.y - SLACK && inner.x + inner.w <= outer.x + outer.w + SLACK && inner.y + inner.h <= outer.y + outer.h + SLACK
 }
 

@@ -29,6 +29,8 @@ pub struct LinkPeer {
     pub os: String,
     pub ip: Ipv4Addr,
     pub tailnet: String,
+    /// 같은 Chammo 계정 증명을 지난 그 기기의 Chammo 기기 id(11-09) — lookup 은 None, request 가 증명을 확인한 뒤 채운다
+    pub chammo: Option<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -42,6 +44,8 @@ pub enum AskErr {
     /// 이 기기는 아직 받는 쪽이 못 된다(키체인이 맥 전용)
     Unsupported,
     Card(String),
+    /// 같은 Chammo 계정 증명이 안 맞는다(11-09)
+    Account(crate::peer_account::Verdict),
 }
 
 /// 받는 쪽 바깥(테일넷·되묻기·카드 기록·열쇠 저장) — 시험에선 가짜
@@ -55,6 +59,8 @@ pub trait LinkEnv {
     fn close_card(&self, card: &str, done: bool, note: &str);
     /// 열쇠 둘을 만들어 이 기기에 걸고 (그 기기가 이 기기에 쓸 열쇠, 이 기기가 그 기기에 쓸 열쇠)
     fn commit(&self, peer: &LinkPeer) -> Result<(String, String), String>;
+    /// 같은 Chammo 계정 증명 확인(peer_account::verify_now) → 답 증명. ctx = 요청 번호
+    fn bind(&self, b: &crate::peer_account::Bind, ctx: &str) -> Result<String, crate::peer_account::Verdict>;
 }
 
 /// 받는 쪽이 못 되는 곳(시험 기본·윈도우 — 키체인이 맥 전용)
@@ -77,6 +83,9 @@ impl LinkEnv for NoLink {
     fn commit(&self, _: &LinkPeer) -> Result<(String, String), String> {
         Err("unsupported".into())
     }
+    fn bind(&self, _: &crate::peer_account::Bind, _: &str) -> Result<String, crate::peer_account::Verdict> {
+        Err(crate::peer_account::Verdict::Unknown)
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -85,7 +94,8 @@ pub enum Status {
     Wait,
     No,
     Expired,
-    Yes { token: String, back: String },
+    /// proof = 이 기기 답 증명(요청한 쪽이 이 기기 Chammo 계정을 확인)
+    Yes { token: String, back: String, proof: String },
     Failed(String),
 }
 
@@ -99,6 +109,8 @@ enum Pick {
 struct Incoming {
     card: String,
     hash: String,
+    /// 답 증명(peer_account) — 열쇠와 같이 내준다
+    proof: String,
     peer: LinkPeer,
     at: u64,
     pick: Pick,
@@ -167,14 +179,14 @@ impl Asks {
     // ── 받는 쪽 ──
 
     /// /api/link-request — 되묻기(망)는 자물쇠 밖에서
-    pub fn request(&self, env: &dyn LinkEnv, req: &str, node: &str, now: u64) -> Result<(), AskErr> {
+    pub fn request(&self, env: &dyn LinkEnv, req: &str, node: &str, bind: &crate::peer_account::Bind, now: u64) -> Result<(), AskErr> {
         if !valid_req(req) || !valid_node(node) {
             return Err(AskErr::Bad);
         }
         if !env.supported() {
             return Err(AskErr::Unsupported);
         }
-        let peer = env.lookup(node).ok_or(AskErr::NotMine)?;
+        let mut peer = env.lookup(node).ok_or(AskErr::NotMine)?;
         {
             let mut g = self.lock();
             sweep(&mut g, env, now);
@@ -187,9 +199,13 @@ impl Asks {
         if !env.confirm(&peer, &hash) {
             return Err(AskErr::Unconfirmed);
         }
+        // 되묻기가 통과한 요청만 센다 — node 는 보낸 쪽이 밝히는 값이라, 확인 전에 세면 남이 내 기기 id 를 대고 그 기기 몫을 다 썼다(2026-10-22 코드 리뷰).
+        // 계정 증명보다 먼저 센다 — 틀린 증명 연타가 매번 중계 서버 묻기를 부르지 않게(11-09 공격 리뷰 2)
+        self.lock().times.push((node.to_string(), now));
+        // 같은 Chammo 계정 컴퓨터인가 — 테일스케일 같은 계정만으론 모자란다(11-09: 다른 Chammo 계정으로 바꾼 PC 에 카드가 떴다). 카드를 띄우기 전에
+        let proof = env.bind(bind, req).map_err(AskErr::Account)?;
+        peer.chammo = Some(bind.device.clone());
         let mut g = self.lock();
-        // 되묻기가 통과한 요청만 센다 — node 는 보낸 쪽이 밝히는 값이라, 확인 전에 세면 남이 내 기기 id 를 대고 그 기기 몫을 다 썼다(2026-10-22 코드 리뷰)
-        g.times.push((node.to_string(), now));
         if let Some(i) = g.incoming.iter().position(|i| i.peer.id == node && i.pick == Pick::Wait) {
             let old = g.incoming.remove(i);
             env.close_card(&old.card, false, "새 요청으로 바뀌었어요");
@@ -198,7 +214,7 @@ impl Asks {
             return Err(AskErr::TooMany);
         }
         let card = env.card(&peer, now + TTL_MS).map_err(AskErr::Card)?;
-        g.incoming.push(Incoming { card, hash, peer, at: now, pick: Pick::Wait, decided: 0 });
+        g.incoming.push(Incoming { card, hash, proof, peer, at: now, pick: Pick::Wait, decided: 0 });
         Ok(())
     }
 
@@ -241,7 +257,7 @@ impl Asks {
                 match env.commit(&i.peer) {
                     Ok((token, back)) => {
                         env.close_card(&i.card, true, "연결됨");
-                        Status::Yes { token, back }
+                        Status::Yes { token, back, proof: i.proof.clone() }
                     }
                     Err(e) => {
                         env.close_card(&i.card, false, "연결하다 실패했어요");

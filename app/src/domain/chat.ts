@@ -2,7 +2,7 @@
 // 터미널(TUI)은 뒤에 그대로 살아 있고, 이건 그 기록을 읽기 좋게 다시 그리는 보기일 뿐이다(원칙 1 — 2026-09-30 사용자).
 
 import { toolTarget } from './activity';
-import { quotePath } from './drop';
+import { ORIGIN_NOTE, quotePath } from './drop';
 import { dropSig } from './orchLabel';
 
 export type ChatTool = { name: string; target: string };
@@ -249,7 +249,7 @@ export const stripMarks = (t: string) => t.replace(MARKS, '');
 /** 이미 간 말의 붙임 표시만 입력칸에 보이면 낡은 읽기다 — 그림 칩 [Image #n](세션 안에서 번호를 다시 안 쓴다, 다음 그림은 더 큰 번호)·이름표 #file1 "경로"·#img1.
  *  크기가 다른 attach 가 같은 세션에 붙으면 Claude 가 그 크기로 다시 그려 앱 터미널 사본이 엉키고(재현) 그 토막을 입력칸 글로 읽어, 말이 간 뒤에도 입력칸 위 줄에
  *  '[Image #26]'·'#file1 "…"' 이 남았다 — 진짜 입력칸은 비어 있었다(2026-11-05 사용자 '구라', 다음 말에 안 딸려 감). 부르는 쪽은 첨부 줄이 빈 때만(붙여 두고 안 보낸 건 진짜다). 글이 섞이면 가리지 않는다 */
-const REF_ONLY = /^(?:\[Image#\d+\]|[#@](?:img|file|chat)\d+(?:"[^"]*")?)+$/;
+const REF_ONLY = /^(?:\[Image#\d+\]|[#@](?:img|file|chat)\d+(?:"[^"]*")?(?:\((?:원본|original)"[^"]*"\))?)+$/;
 export function staleRefs(termText: string, items: ChatItem[]): boolean {
   const t = termText.replace(/\s+/g, '');
   if (!t || !REF_ONLY.test(t)) return false;
@@ -454,8 +454,8 @@ export function termRest(termText: string, paths: string[]): string {
   if (!paths.length && !/\[Image #\d+\]/.test(termText)) return termText;
   let s = termText.split('\n').map((l) => l.trim()).join('');
   for (const p of paths) s = s.split(quotePath(p)).join(' ').split(p.replace(/ /g, '\\ ')).join(' ').split(p).join(' ');
-  // 칩 경로 앞 이름표(#file1 "…")도 — 첨부 줄엔 칩이 따로 보인다
-  s = s.replace(/\[Image #\d+\]/g, ' ').replace(/(?:^|(?<=\s))[#@](?:img|file)\d+(?!\d)/g, ' ');
+  // 칩 경로 앞 이름표(#file1 "…")·사본 뒤 원본 표시(원본 "…")도 — 첨부 줄엔 칩이 따로 보인다
+  s = s.replace(ORIGIN_NOTE, ' ').replace(/\[Image #\d+\]/g, ' ').replace(/(?:^|(?<=\s))[#@](?:img|file)\d+(?!\d)/g, ' ');
   return splitPaths(s).map((x) => ('text' in x ? x.text : ' ')).join('').replace(/\s+/g, ' ').trim();
 }
 

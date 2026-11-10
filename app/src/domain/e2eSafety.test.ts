@@ -1,7 +1,7 @@
 // 보안 번호 받아들이기·대화 속 종단 암호 표시(시안 e2e-safety v1, chammo-relay ADR 0007) — 화면 판단
 import { describe, expect, it } from 'vitest';
 import { cardLine, directCards } from './directAsk';
-import { e2eLine, needsRefetch, rekeyNotices, safetyGroups, safetyLabel, slotNotices, type SafetyPerson } from './e2eSafety';
+import { e2eLine, needsRefetch, REKEY_FLAG_MS, rekeyNotices, rekeyText, safetyFlag, safetyGroups, slotNotices, verifiedText, type SafetyPerson } from './e2eSafety';
 
 const p = (o: Partial<SafetyPerson> = {}): SafetyPerson => ({ account: 'a2', team: 't1', member: 'm2', name: '철수', state: 'ok', verifiedAt: 0, blocked: false, number: '48291 07733 91024 66580 13907 52268', card: '', identity: 'I1', head: 'H1', refetched: false, ...o });
 
@@ -11,12 +11,37 @@ describe('보안 번호', () => {
     expect(safetyGroups('4829 107733')).toEqual([]);
     expect(safetyGroups('')).toEqual([]);
   });
-  it('멤버 줄 — 확인됨(날짜)·아직 안 견줌·바뀜·갈림·막아 둠', () => {
-    expect(safetyLabel(p({ state: 'verified', verifiedAt: new Date(2026, 9, 24).getTime() }))).toEqual({ text: '보안 번호 확인됨 · 10/24', ok: true });
-    expect(safetyLabel(p())).toEqual({ text: '보안 번호 아직 안 견줌', ok: false });
-    expect(safetyLabel(p({ state: 'changed' })).text).toBe('보안 번호가 바뀌었어요');
-    expect(safetyLabel(p({ state: 'forked' })).text).toBe('기기 목록이 다르게 보여요');
-    expect(safetyLabel(p({ state: 'changed', blocked: true })).text).toBe('보안 번호가 바뀌어 막아 뒀어요');
+  it('팀원 줄 — 평소(안 견줌·확인됨)엔 아무것도 없다(11-09 너무 복잡하다는 말, 팀원이 잠긴 파일 이유로 오해)', () => {
+    const now = new Date(2026, 10, 9).getTime();
+    expect(safetyFlag(p(), now)).toBeNull();
+    expect(safetyFlag(p({ state: 'verified', verifiedAt: now - 1000 }), now)).toBeNull();
+  });
+  it('팀원 줄 — 바뀜·갈림·막아 둠은 짧은 한 줄', () => {
+    const now = new Date(2026, 10, 9).getTime();
+    expect(safetyFlag(p({ state: 'changed' }), now)).toBe('기기가 바뀌었어요');
+    expect(safetyFlag(p({ state: 'changed', blocked: true }), now)).toBe('기기가 바뀌어 막아 뒀어요');
+    expect(safetyFlag(p({ state: 'forked' }), now)).toBe('기기 목록이 달라요');
+    expect(safetyFlag(p({ state: 'forked', blocked: true }), now)).toBe('기기 목록이 달라요');
+  });
+  it('저절로 받아들인 바뀜(ADR 0007 10-29) — 7일 동안만, 그 뒤에 견줬으면 없음', () => {
+    const now = new Date(2026, 10, 9).getTime();
+    expect(safetyFlag(p({ rekeyedAt: now - 1000 }), now)).toBe('기기가 바뀌었어요');
+    expect(safetyFlag(p({ rekeyedAt: now - REKEY_FLAG_MS + 1 }), now)).toBe('기기가 바뀌었어요');
+    expect(safetyFlag(p({ rekeyedAt: now - REKEY_FLAG_MS }), now)).toBeNull();
+    expect(safetyFlag(p({ rekeyedAt: now - 1000, state: 'verified', verifiedAt: now - 500 }), now)).toBeNull();
+    // 견준 뒤 또 바뀜 — 다시 한 줄
+    expect(safetyFlag(p({ rekeyedAt: now - 500, state: 'verified', verifiedAt: now - 1000 }), now)).toBe('기기가 바뀌었어요');
+    expect(safetyFlag(p({ rekeyedAt: 0 }), now)).toBeNull();
+    // 시계가 뒤로 간 기기(바뀐 때가 지금보다 뒤) — 띄운다(숨기기보다 안전)
+    expect(safetyFlag(p({ rekeyedAt: now + 60_000 }), now)).toBe('기기가 바뀌었어요');
+  });
+  it('자세히 보기 — 확인한 날짜만 짧게', () => {
+    expect(verifiedText(p({ state: 'verified', verifiedAt: new Date(2026, 9, 24).getTime() }))).toBe('확인함 · 10/24');
+    expect(verifiedText(p())).toBeNull();
+    expect(verifiedText(p({ state: 'changed', verifiedAt: 5 }))).toBeNull();
+  });
+  it('대화 회색 줄 — 보안 번호 말 대신 기기', () => {
+    expect(rekeyText('철수')).toBe('철수의 기기가 바뀌었어요');
   });
   it('갈림은 다시 받기 전엔 번호 비교·받아들이기가 없다(6차 리뷰)', () => {
     expect(needsRefetch({ safety: 'forked', refetched: false })).toBe(true);

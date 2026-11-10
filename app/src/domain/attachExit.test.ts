@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { attachedId, attachPhaseWatcher, exitWatcher, KICK_WINDOW, kickedBeforeEnd, kickWatcher, listedAlive, linkStep, REATTACH_GIVE_UP, sendOnLink, UNLISTED_MAX } from './attachExit';
+import { deadPane, DEAD_PANE_MS, attachedId, attachPhaseWatcher, exitWatcher, KICK_WINDOW, kickedBeforeEnd, kickWatcher, listedAlive, linkStep, REATTACH_GIVE_UP, sendOnLink, UNLISTED_MAX } from './attachExit';
 
 // 2026-10-21 실측(Claude Code 2.1.305, 시험 세션): 붙어 있는 세션을 다른 곳에서 `claude respawn` 하면 붙은 attach 는
 // 아래 글을 찍고 끝난다 — 세션은 새 일꾼으로 계속 산다. 색·커서 코드가 문장 앞뒤에 붙어 온다
@@ -209,5 +209,22 @@ describe('sendOnLink — 채팅이 칸에 칠 때 끊김이면 어떻게', () =>
   });
   it('세션이 꺼져 굳은 끊김이면 실패 — 꺼진 세션에 붙으면 그 세션이 다시 켜진다', () => {
     expect(sendOnLink('gone', false)).toBe('fail');
+  });
+});
+
+// 2026-11-10 00:10 개발 담당: 보기 attach 의 세션 소켓이 끊겼는데('->(none)') 프로세스가 안 끝나 칸이 90분 출력 0 —
+// 앱은 그 칸을 live 로 보고 쳐서 말이 사라졌다. 일하는 세션은 스피너를 늘 그리니 오래 조용하면 죽은 보기
+describe('deadPane — 일하는 세션인데 칸이 오래 조용하면 죽은 보기', () => {
+  it('재현: 일하는 중 3분 넘게 출력 0 이면 다시 붙인다', () => {
+    expect(deadPane('working', 5_451_419)).toBe(true);
+    expect(deadPane('working', DEAD_PANE_MS + 1)).toBe(true);
+  });
+  it('쉬는 세션 화면은 몇 시간 가만할 수 있다 · 아직 출력 전(-1)·짧은 조용함은 아니다', () => {
+    expect(deadPane('idle', 5_451_419)).toBe(false);
+    expect(deadPane('blocked', 5_451_419)).toBe(false);
+    expect(deadPane('working', -1)).toBe(false);
+    expect(deadPane('working', 30_000)).toBe(false);
+    expect(deadPane('working', 90_000)).toBe(false); // 훅이 도는 동안 화면을 안 그린다
+
   });
 });

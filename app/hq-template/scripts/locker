@@ -72,6 +72,25 @@ def settled_of(home, data):
     return out
 
 
+def open_of(home, data):
+    """설정에서 사람이 연 폴더(config.json openFolders) — 앱 outside::open_roots 와 같은 규칙: 있는 폴더만,
+    홈을 품은 곳(/·C:\\·C:\\Users)·홈 안은 뺀다. 윈도우 D: 처럼 홈 밖 일 폴더(공개 이슈 #19)"""
+    try:
+        with open(os.path.join(data, 'config.json'), encoding='utf-8') as f:
+            cands = json.load(f).get('openFolders') or []
+    except (OSError, ValueError, AttributeError):
+        cands = []
+    h, out = os.path.realpath(home), []
+    for c in cands:
+        if not isinstance(c, str) or not c.strip():
+            continue
+        c = c.strip()
+        r = os.path.realpath(home if c == '~' else os.path.join(home, c[2:]) if c.startswith('~/') else c)
+        if os.path.isdir(r) and not within(h, r) and not within(r, h) and r not in out:
+            out.append(r)
+    return out
+
+
 def safe_name(name, fallback):
     s = ''.join('-' if c in '/\\:' else c for c in name if ord(c) >= 32 and c != '\x7f')
     s = s.strip().lstrip('.').strip()[:120]
@@ -134,19 +153,23 @@ def owner_dir(root, oid, name):
 
 
 def within(p, base):
-    p, base = os.path.realpath(p), os.path.realpath(base)
-    return p == base or p.startswith(base + os.sep)
+    """p 가 base 안(또는 base 자체)인가 — 윈도우는 대소문자를 안 가린다(normcase), 드라이브 맨 위(D:\\)도"""
+    p, base = os.path.normcase(os.path.realpath(p)), os.path.normcase(os.path.realpath(base))
+    return p == base or p.startswith(base.rstrip(os.sep) + os.sep)
 
 
-def check_add(p, home, data, root):
-    """넣어도 되는 진짜 경로, 아니면 (None, 이유) — 앱 locker_fs::check_add 와 같은 규칙"""
+def check_add(p, home, data, root, roots=()):
+    """넣어도 되는 진짜 경로, 아니면 (None, 이유) — 앱 locker_fs::check_add 와 같은 규칙.
+    roots = 홈 밖이어도 되는 곳(devRoot·따로 둔 프로젝트·설정에서 연 폴더) — 앱 화면은 사람이 준 파일이라 다 받고, 참모 길은 여기까지만"""
     if not os.path.isabs(p) or os.path.normpath(p) != p.rstrip(os.sep):
         return None, f'not a plain absolute path: {p}'
     if not os.path.exists(p):
         return None, f'no such file: {p}'
     real = os.path.realpath(p)
-    if not within(real, home) or real == os.path.realpath(home):
-        return None, f'outside the home folder: {p}'
+    attach = os.path.join(os.path.realpath(data), 'attach')
+    if real == os.path.realpath(home) or not (within(real, home) or os.path.dirname(real) == attach or any(within(real, r) for r in roots)):
+        return None, (f'outside the home folder and the folders Chammo may open — the person can attach it in chat, or add its folder in '
+                      f'Settings › Assistant › Folders it may open / 홈·열어도 되는 폴더 밖 — 사람이 채팅에 붙이거나 설정에서 그 폴더를 열어 줘야 해: {p}')
     if not os.path.isfile(real):
         return None, f"folders can't be added — files only: {p}"
     if within(real, data) and os.path.dirname(real) != os.path.join(os.path.realpath(data), 'attach'):
@@ -159,6 +182,9 @@ def check_add(p, home, data, root):
 def decide(real, size, home, data, settled):
     """copy | link — 앱 locker_fs::decide 와 같은 표(src-tauri/src/locker_rules.fixture.json)로 시험한다"""
     if os.path.dirname(real) in (os.path.join(data, 'attach'), os.path.join(os.path.realpath(data), 'attach')):
+        return 'copy'
+    # 홈 밖(D:\\Desktop) — 자리 잡은 프로젝트가 아니면 늘 사본(별칭은 참모·미리보기가 못 여는 곳을 가리킨다, 앱 decide 와 같다)
+    if not within(real, home) and not any(within(real, s) for s in settled):
         return 'copy'
     if size > BIG:
         return 'link'
@@ -235,8 +261,8 @@ def sub_dir(owner, rel, make=False):
     return p
 
 
-def add(src, owner, rel, home, data, root, settled):
-    real, why = check_add(src, home, data, root)
+def add(src, owner, rel, home, data, root, settled, roots=()):
+    real, why = check_add(src, home, data, root, roots)
     if not real:
         raise ValueError(why)
     folder = sub_dir(owner, rel, make=True)
@@ -454,10 +480,12 @@ def main(argv, env=os.environ, cwd=None):
     if not args:
         print('locker: add <file> [...]', file=sys.stderr)
         return 2
-    settled, bad = settled_of(home, d), 0
+    # 자리 잡은 곳(devRoot·hqDir·따로 둔 프로젝트) + 설정에서 연 폴더 — 홈을 품은 곳(/·C:\\·C:\\Users)은 디스크 통째라 뺀다(앱 open_roots·roots_from 과 같다).
+    # 연 폴더 파일도 앱처럼 바로가기(통째 복사 안 함)
+    settled, bad = [r for r in settled_of(home, d) + open_of(home, d) if not within(home, r)], 0
     for a in args:
         try:
-            dest, target = add(here(a), owner, folder, home, d, root, settled)
+            dest, target = add(here(a), owner, folder, home, d, root, settled, settled)
             print(f'kept {dest}' + (f'  (shortcut → {target})' if target else ''))
         except (ValueError, OSError) as e:
             print(f'locker: {e}', file=sys.stderr)

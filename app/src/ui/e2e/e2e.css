@@ -22,9 +22,17 @@
 /* 보안 번호(시안 e2e-safety v1) — 번호 판·멤버 줄 상태·대화 속 알림 */
 .sn { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 10px; padding: 12px; border-radius: 10px; background: var(--surface-2); font: 700 20px ui-monospace, Menlo, monospace; letter-spacing: .04em; text-align: center; font-variant-numeric: tabular-nums; color: var(--text); }
 .sn-who { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--text-3); }
-.sn-panel { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); }
-.sn-state { font-size: 12px; color: var(--text-3); }
-.ok-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #1f9a62; margin-right: 6px; vertical-align: middle; }
+/* 팀원 자세히 보기 안 보안 번호(11-09 단순화) — 접힌 한 줄 → 펼치면 번호 판 + 한 줄 + 단추 */
+.sn-row { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+.sn-row-tx { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.sn-row-tx b { font-size: 12.5px; font-weight: 600; }
+.sn-row-tx small { font-size: 11.5px; color: var(--text-3); }
+.sn-cmp { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; }
+.sn-cmp .sn { font-size: 16px; padding: 10px 8px; gap: 6px 8px; }
+.sn-cmp .dc-acts { flex-wrap: wrap; justify-content: flex-end; }
+.sn-hint { font-size: 11.5px; color: var(--text-3); text-align: center; }
+/* 팀원 줄 — 바뀐 사람만 둘째 줄 자리에 짧은 한 줄 */
+.tmp-who > .sn-flag { color: color-mix(in srgb, var(--blocked, #c98a00) 75%, var(--text)); font-weight: 600; }
 .tmx-sys { display: flex; justify-content: center; }
 .tmx-pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; font-size: 12.5px; background: color-mix(in srgb, var(--blocked, #c98a00) 14%, var(--surface)); color: color-mix(in srgb, var(--blocked, #c98a00) 70%, var(--text)); }
 .tmx-pill b { font-weight: 700; }

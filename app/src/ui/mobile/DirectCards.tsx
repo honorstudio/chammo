@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { askCardKey, type AskPlaced } from '../../domain/agentAsk';
 import { askName } from '../../domain/agentBrowser';
 import { directAnswer, peerCardAnswer, phoneNumber, readDirect, readPeerCards } from '../../data/web';
+import { phoneAccountNote, type PhoneAccount } from '../../domain/phoneAccount';
+import { tr } from '../../i18n';
 import { remoteCards, type PeerCardsRow } from '../../domain/remoteCards';
 import { needsLook, phoneOwns, placeDirect, stepSeen, type DirectCard, type Seen } from '../../domain/directAsk';
 import { seenName, type Session } from '../../domain/session';
@@ -80,6 +82,20 @@ export function PhoneAskCards({ asks, sessions, focus }: { asks: AskPlaced[]; se
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/** 이 폰 줄이 결제·운영 카드를 못 받을 때 한 줄(11-09) — 숨긴 카드(결제 관문 물음 포함)가 있을 때만. 단추는 입구(홈 화면 앱 로그인)로. a 는 MobileApp 이 10초마다 읽는다 */
+export function PhoneAccountNote({ a }: { a: PhoneAccount | null }) {
+  const note = phoneAccountNote(a);
+  if (!note) return null;
+  return (
+    <div className="m-direct">
+      <div className="dc-row m-acct">
+        <span>{note.text}</span>
+        {note.entry && <a className="m-btn" href={note.entry} target="_blank" rel="noopener noreferrer">{tr('다시 연결', 'Reconnect')}</a>}
+      </div>
     </div>
   );
 }

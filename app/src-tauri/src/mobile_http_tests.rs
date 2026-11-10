@@ -49,6 +49,16 @@ pub(crate) struct Fake {
     no_convert: bool,
     /// 썸네일 캐시(thumbs)를 흉내 — None 이면 캐시 없음(진짜 앱 밖 시험). 열쇠 "<경로> <px>", 값 None = 못 만듦
     thumbs: Option<Mutex<std::collections::HashMap<String, Option<Vec<u8>>>>>,
+    /// 다른 기기 참모 계정 판정(peer_account) — None 이면 같은 계정(1분 안 확인)
+    acct: Option<Box<dyn Fn(Option<&str>, bool) -> crate::peer_account::Verdict + Send + Sync>>,
+    /// 카드 기록 원문 — 비우면 "LOG"
+    direct: String,
+    /// 테일넷 짝 보유 증명이 틀렸다(peer_live false)
+    live_bad: bool,
+    /// 폰 줄 계정 판정(peer_account::check_phone) — None 이면 내 계정 허용 폰(1분 안 확인)
+    phone_acct: Option<Box<dyn Fn(Option<&str>, bool) -> crate::peer_account::Verdict + Send + Sync>>,
+    /// 다른 기기 카드 기록(peer_cards 의 log) — 비우면 ""
+    peer_log: String,
 }
 
 impl Fake {
@@ -71,7 +81,35 @@ impl Backend for Fake {
     }
     fn direct_log(&self) -> String {
         self.log("direct_log".into());
-        "LOG".into()
+        if self.direct.is_empty() { "LOG".into() } else { self.direct.clone() }
+    }
+    fn peer_verdict(&self, bound: Option<&str>, strict: bool) -> crate::peer_account::Verdict {
+        match &self.acct {
+            Some(f) => f(bound, strict),
+            None => crate::peer_account::Verdict::Same { fresh: true },
+        }
+    }
+    fn peer_bind_verify(&self, b: &crate::peer_account::Bind, ctx: &str) -> Result<String, crate::peer_account::Verdict> {
+        if b.device == "dev-a" && b.proof == format!("p-{ctx}") { Ok(format!("r-{ctx}")) } else { Err(crate::peer_account::Verdict::Other) }
+    }
+    fn peer_me(&self) -> Option<String> {
+        Some("dev-me".into())
+    }
+    fn phone_verdict(&self, relay: Option<&str>, strict: bool) -> crate::peer_account::Verdict {
+        match &self.phone_acct {
+            Some(f) => f(relay, strict),
+            None => crate::peer_account::Verdict::Same { fresh: true },
+        }
+    }
+    fn phone_entry(&self) -> Option<String> {
+        Some("https://phone.example".into())
+    }
+    fn peer_live(&self, _bound: &str, header: &str, _method: &str, _path: &str) -> bool {
+        !self.live_bad || header == "ok"
+    }
+    fn peer_unlink_node(&self, node: &str) -> Result<(), String> {
+        self.log(format!("peer_unlink_node {node}"));
+        Ok(())
     }
     fn direct_answer(&self, id: &str, pick: &crate::direct::Pick) -> Result<(), String> {
         self.log(format!("direct_answer {id} {pick:?}"));
@@ -99,7 +137,7 @@ impl Backend for Fake {
     }
     fn peer_cards(&self) -> serde_json::Value {
         self.log("peer_cards".into());
-        serde_json::json!([{ "dev": "nB", "name": "참모 · 영상PC", "log": "", "sessions": "[]" }])
+        serde_json::json!([{ "dev": "nB", "name": "참모 · 영상PC", "log": self.peer_log, "sessions": "[]" }])
     }
     fn peer_card_answer(&self, dev: &str, id: &str, pick: &crate::direct::Pick) -> Result<(), String> {
         self.log(format!("peer_card_answer {dev} {id} {pick:?}"));
@@ -2956,7 +2994,9 @@ fn md1_hello_는_열쇠_없이_앱_표시만_준다() {
     // 연결을 받는 쪽이 될 수 있나 — 이 기기 link_env 그대로(가짜 바깥은 기본 '못 받음')
     assert_eq!(v["link"], false);
     let keys: Vec<&String> = v.as_object().unwrap().keys().collect();
-    assert_eq!(keys.len(), 5, "{keys:?}");
+    // chammo = 이 기기 Chammo 기기 id(11-09, 짝지을 때 같은 계정 증명에 쓴다 — 비밀 아님)
+    assert_eq!(keys.len(), 6, "{keys:?}");
+    assert_eq!(v["chammo"], "dev-me");
     assert!(f.calls().is_empty(), "맥 쪽 일은 안 부른다");
     // 문지기(Host·funnel)는 그대로, POST 는 안 받는다
     assert_eq!(run(set(get("/api/hello"), "host", Some("evil.com:47123"))).0, 403);
@@ -2970,9 +3010,10 @@ fn md1_다른_참모_짝짓기는_peer_줄로_이름은_몸통에서() {
     let f = Fake::default();
     let code = g.devices.new_code(std::time::SystemTime::now()).unwrap();
     let mut r = set(pair_post(&code), "user-agent", Some("Chammo/0.2.6 (peer)"));
-    r.body = format!(r#"{{"code":"{code}","peer":true,"name":"참모 · my-mac"}}"#).into_bytes();
+    r.body = format!(r#"{{"code":"{code}","peer":true,"name":"참모 · my-mac","device":"dev-a","proof":"p-{code}"}}"#).into_bytes();
     let resp = handle(&r, &g, &f);
-    assert_eq!(resp.status, 200);
+    assert_eq!(resp.status, 200, "{}", String::from_utf8_lossy(&resp.body));
+    assert_eq!(json_of(&resp)["proof"].as_str(), Some(format!("r-{code}").as_str()), "답 증명");
     let tok = serde_json::from_slice::<serde_json::Value>(&resp.body).unwrap()["token"].as_str().unwrap().to_string();
     let id = g.devices.check(&tok, std::time::SystemTime::now()).unwrap();
     let d = g.devices.list().into_iter().find(|d| d.id == id).unwrap();
@@ -3892,7 +3933,7 @@ impl crate::peer_ask::LinkEnv for LinkFake<'_> {
         true
     }
     fn lookup(&self, node: &str) -> Option<crate::peer_ask::LinkPeer> {
-        (node == "nA").then(|| crate::peer_ask::LinkPeer { id: "nA".into(), name: "office-mac".into(), os: "macOS".into(), ip: "100.64.0.2".parse().unwrap(), tailnet: "me@example.com".into() })
+        (node == "nA").then(|| crate::peer_ask::LinkPeer { id: "nA".into(), name: "office-mac".into(), os: "macOS".into(), ip: "100.64.0.2".parse().unwrap(), tailnet: "me@example.com".into(), chammo: None })
     }
     fn confirm(&self, _: &crate::peer_ask::LinkPeer, hash: &str) -> bool {
         self.a.asking(hash, 1)
@@ -3907,6 +3948,9 @@ impl crate::peer_ask::LinkEnv for LinkFake<'_> {
     fn commit(&self, _: &crate::peer_ask::LinkPeer) -> Result<(String, String), String> {
         Ok(("a".repeat(64), "b".repeat(64)))
     }
+    fn bind(&self, b: &crate::peer_account::Bind, ctx: &str) -> Result<String, crate::peer_account::Verdict> {
+        if b.device == "dev-a" && b.proof == format!("p-{ctx}") { Ok(format!("r-{ctx}")) } else { Err(crate::peer_account::Verdict::Other) }
+    }
 }
 
 fn no_key(r: Req) -> Req {
@@ -3919,7 +3963,7 @@ fn pe_연결_요청은_열쇠_없이_받고_되묻기와_사람_허용을_지나
     let env = LinkFake { a: &a, cards: Default::default() };
     let g = gate();
     let req = a.start("nB", 1).unwrap();
-    let body = format!(r#"{{"req":"{req}","node":"nA"}}"#);
+    let body = format!(r#"{{"req":"{req}","node":"nA","device":"dev-a","proof":"p-{req}"}}"#);
     let r = link_route(&no_key(post("/api/link-request", &body)), &g, &b, &env, 1);
     assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
     let st = |t: u64| link_route(&get(&format!("/api/link-status?req={req}")), &g, &b, &env, t);
@@ -3927,6 +3971,7 @@ fn pe_연결_요청은_열쇠_없이_받고_되묻기와_사람_허용을_지나
     b.decide("card0", true, 3).unwrap();
     let yes = json_of(&st(4));
     assert_eq!((yes["state"].as_str(), yes["token"].as_str().map(str::len), yes["back"].as_str().map(str::len)), (Some("yes"), Some(64), Some(64)));
+    assert_eq!(yes["proof"].as_str(), Some(format!("r-{req}").as_str()), "답 증명이 열쇠와 같이 간다");
     assert_eq!(st(5).status, 404, "열쇠는 한 번만");
     // 되묻기 — 요청한 쪽만 자기 해시에 200
     let h = crate::peer_ask::hex_sha(&req);
@@ -3944,9 +3989,20 @@ fn pe_연결_요청_거절_갈래() {
     let g = gate();
     let req = a.start("nB", 1).unwrap();
     let rq = |body: &str| link_route(&no_key(post("/api/link-request", body)), &g, &b, &env, 1).status;
-    assert_eq!(rq(&format!(r#"{{"req":"{req}","node":"nOTHER"}}"#)), 403, "같은 계정 기기가 아님");
-    assert_eq!(rq(&format!(r#"{{"req":"{}","node":"nA"}}"#, "0".repeat(32))), 403, "요청한 적 없다고 되물음에 답함");
-    assert_eq!(rq(r#"{"req":"x","node":"nA"}"#), 400);
+    let ok = format!(r#""device":"dev-a","proof":"p-{req}""#);
+    assert_eq!(rq(&format!(r#"{{"req":"{req}","node":"nOTHER",{ok}}}"#)), 403, "같은 계정 기기가 아님");
+    let z = "0".repeat(32);
+    assert_eq!(rq(&format!(r#"{{"req":"{z}","node":"nA","device":"dev-a","proof":"p-{z}"}}"#)), 403, "요청한 적 없다고 되물음에 답함");
+    // 같은 Chammo 계정 증명(11-09) — 옛 판(칸 없음)·다른 계정 기기·틀린 증명·빈 칸
+    let txt = |body: &str| {
+        let r = link_route(&no_key(post("/api/link-request", body)), &g, &b, &env, 1);
+        (r.status, String::from_utf8_lossy(&r.body).to_string())
+    };
+    assert_eq!(txt(&format!(r#"{{"req":"{req}","node":"nA"}}"#)), (403, "account:unbound".into()), "옛 판 요청");
+    assert_eq!(txt(&format!(r#"{{"req":"{req}","node":"nA","device":"dev-other","proof":"p-{req}"}}"#)), (403, "account:other".into()), "다른 계정 기기");
+    assert_eq!(txt(&format!(r#"{{"req":"{req}","node":"nA","device":"dev-a","proof":"p-0"}}"#)), (403, "account:other".into()), "틀린 증명");
+    assert_eq!(txt(&format!(r#"{{"req":"{req}","node":"nA","device":"","proof":""}}"#)), (403, "account:other".into()), "빈 칸");
+    assert_eq!(rq(r#"{"req":"x","node":"nA","device":"dev-a","proof":"p-x"}"#), 400);
     assert_eq!(rq(&format!(r#"{{"req":"{req}","node":"nA","name":"사용자 폰"}}"#)), 400, "이름은 요청이 정하지 않는다");
     let evil = set(no_key(post("/api/link-request", &format!(r#"{{"req":"{req}","node":"nA"}}"#))), "origin", Some("http://evil.com"));
     assert_eq!(link_route(&evil, &g, &b, &env, 1).status, 403);
@@ -4052,11 +4108,12 @@ fn hu_원격_카드_답은_remote_기기로_적고_같은_cid_는_409() {
     let b = format!(r#"{{"id":"ab12cd34","pick":{{"pick":"yes"}},"cid":"hc-6","ts":{}}}"#, now_ms());
     let r = handle(&as_peer(post("/api/peer-direct-answer", &b)), &g, &f);
     assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
-    assert_eq!(f.calls(), vec!["direct_answer_by ab12cd34 Yes remote:맥북"]);
+    // 결제·운영 카드인지 기록을 한 번 본다(11-09)
+    assert_eq!(f.calls(), vec!["direct_log", "direct_answer_by ab12cd34 Yes remote:맥북"]);
     assert_eq!(handle(&as_peer(post("/api/peer-direct-answer", &b)), &g, &f).status, 409);
     let bad = format!(r#"{{"id":"../x","pick":{{"pick":"yes"}},"cid":"hc-6b","ts":{}}}"#, now_ms());
     assert_eq!(handle(&as_peer(post("/api/peer-direct-answer", &bad)), &g, &f).status, 400);
-    assert_eq!(f.calls().len(), 1);
+    assert_eq!(f.calls().len(), 2);
 }
 
 #[test]
@@ -4248,11 +4305,11 @@ fn pv_폰은_짝지은_기기_이름만_받는다() {
 fn pv_다시_허용해도_꺼_둔_보관함_보여_주기는_이어진다() {
     let g = gate();
     let now = std::time::SystemTime::now();
-    g.devices.add_peer(&"cd".repeat(32), "참모 · 아이맥", "nIMAC", now).unwrap();
+    g.devices.add_peer(&"cd".repeat(32), "참모 · 아이맥", "nIMAC", None, now).unwrap();
     let first = g.devices.list().into_iter().find(|d| d.peer).unwrap();
     assert!(first.locker);
     g.devices.set_locker(&first.id, false).unwrap();
-    g.devices.add_peer(&"ef".repeat(32), "참모 · 아이맥", "nIMAC", now).unwrap();
+    g.devices.add_peer(&"ef".repeat(32), "참모 · 아이맥", "nIMAC", None, now).unwrap();
     let again: Vec<_> = g.devices.list().into_iter().filter(|d| d.peer).collect();
     assert_eq!(again.len(), 1, "같은 노드 줄은 바꿔 끼운다");
     assert_ne!(again[0].id, first.id);
@@ -5083,9 +5140,13 @@ fn peer_끊기_알림은_중계_peer_줄만() {
     let f = Fake::default();
     assert_eq!(handle(&as_peer(post("/api/peer-unlink", "{}")), &g, &f).status, 200);
     assert_eq!(f.calls(), vec!["peer_unlink dev-b".to_string()]);
+    // 코드로 짝지은 테일넷 줄(노드 칸 없음) — 그 줄만 지운다(상대가 로그아웃하며 알려 온다, 11-09)
     let t = peer_gate("peer0098");
     let f2 = Fake::default();
-    assert_eq!(handle(&as_peer(post("/api/peer-unlink", "{}")), &t, &f2).status, 403);
+    assert_eq!(handle(&as_peer(post("/api/peer-unlink", "{}")), &t, &f2).status, 200);
+    assert!(!t.devices.list().iter().any(|d| d.id == "peer0098"));
+    assert_eq!(handle(&as_peer(post("/api/peer-unlink", "{}")), &t, &f2).status, 401, "지운 열쇠는 더 안 통한다");
+    // 폰 열쇠는 못 쓴다
     assert_eq!(handle(&post("/api/peer-unlink", "{}"), &g, &f2).status, 403);
     assert!(f2.calls().is_empty());
     assert!(head_check(&post("/api/peer-unlink", "{}"), &g).is_none());
@@ -5371,4 +5432,264 @@ fn tm_폰_팀_문서_열기는_맥이_풀어_준_자리를_폰_보기_길로_연
     assert_eq!(handle(&set(with_cookie(get(&format!("{p}?team=t-1&id=doc-md"))), "authorization", None), &g, &f).status, 401);
     assert_eq!(handle(&post(p, "{}"), &g, &f).status, 405);
     let _ = std::fs::remove_dir_all(&d);
+}
+
+// ── 11-09 보안: 다른 기기 참모 짝은 같은 Chammo 계정에 묶는다 ─────────────────────
+// (테일스케일로 짝지은 PC 가 Chammo 를 로그아웃하고 다른 계정으로 로그인했는데도 이 맥 카드·결제 카드가 그 PC 에 떴다)
+
+/// 진짜 판정(peer_account::judge) — 이 맥 = acct-me 의 dev-me, 서버가 말한 내 계정 컴퓨터 = computers. stale = 1분 넘게 묵은 목록
+fn acct_world(computers: &'static [&'static str], stale: bool) -> Box<dyn Fn(Option<&str>, bool) -> crate::peer_account::Verdict + Send + Sync> {
+    use crate::peer_account::{judge, Mine, Seen, FRESH_MS};
+    Box::new(move |b, _strict| {
+        let mine = Mine { account: "acct-me".into(), device: "dev-me".into() };
+        let now = 50_000_000;
+        let at = if stale { now - FRESH_MS - 1 } else { now };
+        let seen = Seen { mine: mine.clone(), at_ms: at, computers: computers.iter().map(|c| (c.to_string(), String::new())).collect(), phones: vec![] };
+        judge(b, Some(&mine), Some(&seen), now)
+    })
+}
+
+const PAY_LOG: &str = concat!(
+    r#"{"ts":"2026-11-09T01:00:00Z","type":"ask","id":"aa000001","from":"s1","kind":"pay","q":"가게 결제?"}"#, "\n",
+    r#"{"ts":"2026-11-09T01:00:01Z","type":"ask","id":"bb000002","from":"s2","kind":"ops","q":"운영 배포?"}"#, "\n",
+    r#"{"ts":"2026-11-09T01:00:02Z","type":"ask","id":"cc000003","from":"s3","kind":"other","q":"문구 A/B?"}"#, "\n",
+);
+
+fn card_answer(id: &str, cid: &str) -> String {
+    format!(r#"{{"id":"{id}","pick":{{"pick":"yes"}},"cid":"{cid}","ts":{}}}"#, now_ms())
+}
+
+#[test]
+fn 계정_옛_판_짝은_카드도_사람_말도_카드_답도_못_한다() {
+    // 10월 테일넷 짝(묶인 Chammo 기기 id 없음) — 새 판이 뜨면 그대로 멈춘다
+    let g = gate();
+    g.devices.add_peer(PEER, "참모 · DESKTOP-TEST01", "nPC", None, std::time::SystemTime::now()).unwrap();
+    let f = Fake { acct: Some(acct_world(&["dev-pc"], false)), direct: PAY_LOG.into(), ..Default::default() };
+    let txt = |r: Resp| (r.status, String::from_utf8_lossy(&r.body).to_string());
+    assert_eq!(txt(handle(&as_peer(get("/api/direct")), &g, &f)), (403, "account:unbound".into()));
+    assert_eq!(txt(handle(&as_peer(get("/api/sessions")), &g, &f)), (403, "account:unbound".into()));
+    assert_eq!(handle(&as_peer(post("/api/peer-human", &human("aaaa0001", "결제 승인해", "h-o-1", now_ms()))), &g, &f).status, 403, "사람 말 이름표(human#)");
+    assert_eq!(handle(&as_peer(post("/api/peer-direct-answer", &card_answer("aa000001", "hc-o-1"))), &g, &f).status, 403, "원격 카드 답");
+    assert_eq!(handle(&as_peer(post("/api/peer-say", r#"{"to":"참모-1","text":"x","cid":"p-o-1"}"#)), &g, &f).status, 403);
+    assert!(f.calls().is_empty(), "맥 쪽 일(카드 기록·답·세션)은 하나도 안 부른다: {:?}", f.calls());
+    // 끊기 알림은 받는다(지우기만) — 그 노드 줄째
+    assert_eq!(handle(&as_peer(post("/api/peer-unlink", "{}")), &g, &f).status, 200);
+    assert_eq!(f.calls(), vec!["peer_unlink_node nPC"]);
+}
+
+#[test]
+fn 계정_상대가_로그아웃했거나_다른_계정이면_멈춘다() {
+    let g = gate();
+    // 짝지을 때 dev-pc 로 확인한 줄 — 지금 서버가 말하는 내 계정 컴퓨터엔 dev-pc 가 없다(로그아웃 = 서버가 끊음, 다른 계정 = 새 기기 id)
+    g.devices.add_peer(PEER, "참모 · PC", "nPC", Some("dev-pc"), std::time::SystemTime::now()).unwrap();
+    let f = Fake { acct: Some(acct_world(&["dev-imac"], false)), direct: PAY_LOG.into(), ..Default::default() };
+    let r = handle(&as_peer(get("/api/direct")), &g, &f);
+    assert_eq!((r.status, String::from_utf8_lossy(&r.body).to_string()), (403, "account:other".into()));
+    assert_eq!(handle(&as_peer(post("/api/peer-direct-answer", &card_answer("aa000001", "hc-x-1"))), &g, &f).status, 403);
+    assert!(f.calls().is_empty());
+    // 다시 짝지으면(같은 계정으로 돌아와 서버 목록에 있으면) 다시 된다
+    let back = Fake { acct: Some(acct_world(&["dev-pc"], false)), direct: PAY_LOG.into(), ..Default::default() };
+    let r = handle(&as_peer(get("/api/direct")), &g, &back);
+    assert_eq!(r.status, 200);
+    assert!(String::from_utf8_lossy(&r.body).contains("가게 결제"));
+}
+
+#[test]
+fn 계정_중계_짝도_허브_id_로_같은_검사() {
+    let g = gate();
+    g.devices.add_peer_relay(PEER, "집 맥북", crate::mobile_pair::Relay { device: "dev-b".into(), x: "X".into() }, std::time::SystemTime::now()).unwrap();
+    let other = Fake { acct: Some(acct_world(&["dev-imac"], false)), ..Default::default() };
+    assert_eq!(handle(&as_peer(get("/api/direct")), &g, &other).status, 403);
+    let same = Fake { acct: Some(acct_world(&["dev-b"], false)), ..Default::default() };
+    assert_eq!(handle(&as_peer(get("/api/direct")), &g, &same).status, 200);
+}
+
+#[test]
+fn 계정_결제_운영_카드는_1분_안에_서버로_확인한_같은_계정만() {
+    let g = gate();
+    g.devices.add_peer(PEER, "참모 · PC", "nPC", Some("dev-pc"), std::time::SystemTime::now()).unwrap();
+    // 서버 목록이 1분 넘게 묵었다(10분 안) — 보통 카드는 되고 결제·운영은 빠진다
+    let stale = Fake { acct: Some(acct_world(&["dev-pc"], true)), direct: PAY_LOG.into(), ..Default::default() };
+    let body = String::from_utf8_lossy(&handle(&as_peer(get("/api/direct")), &g, &stale).body).to_string();
+    assert!(body.contains("cc000003") && !body.contains("aa000001") && !body.contains("bb000002"), "{body}");
+    let r = handle(&as_peer(post("/api/peer-direct-answer", &card_answer("aa000001", "hc-s-1"))), &g, &stale);
+    assert_eq!(r.status, 403, "결제 카드 원격 답 막힘");
+    assert_eq!(handle(&as_peer(post("/api/peer-direct-answer", &card_answer("cc000003", "hc-s-2"))), &g, &stale).status, 200, "보통 카드는 된다");
+    assert!(!stale.calls().iter().any(|c| c.contains("aa000001")));
+    // 1분 안 확인 — 결제 카드도 보이고 답도 된다
+    let fresh = Fake { acct: Some(acct_world(&["dev-pc"], false)), direct: PAY_LOG.into(), ..Default::default() };
+    assert!(String::from_utf8_lossy(&handle(&as_peer(get("/api/direct")), &g, &fresh).body).contains("aa000001"));
+    assert_eq!(handle(&as_peer(post("/api/peer-direct-answer", &card_answer("aa000001", "hc-s-3"))), &g, &fresh).status, 200);
+    // 폰(내 기기 열쇠)은 그대로 다 본다
+    let (s, _, r) = run(with_cookie(get("/api/direct")));
+    assert_eq!((s, r.body.len() > 0), (200, true));
+}
+
+#[test]
+fn 계정_내가_로그아웃했으면_모든_짝이_멈춘다() {
+    let g = gate();
+    g.devices.add_peer(PEER, "참모 · PC", "nPC", Some("dev-pc"), std::time::SystemTime::now()).unwrap();
+    let f = Fake { acct: Some(Box::new(|b, _| crate::peer_account::judge(b, None, None, 0))), ..Default::default() };
+    let r = handle(&as_peer(get("/api/env")), &g, &f);
+    assert_eq!((r.status, String::from_utf8_lossy(&r.body).to_string()), (403, "account:nologin".into()));
+}
+
+#[test]
+fn 계정_코드_짝짓기는_증명이_있어야_하고_틀려도_코드는_안_닳는다() {
+    let g = gate();
+    let f = Fake::default();
+    let code = g.devices.new_code(std::time::SystemTime::now()).unwrap();
+    let pair = |body: String| {
+        let mut r = set(pair_post(&code), "user-agent", Some("Chammo/0.5.0 (peer)"));
+        r.body = body.into_bytes();
+        handle(&r, &g, &f)
+    };
+    let txt = |r: Resp| (r.status, String::from_utf8_lossy(&r.body).to_string());
+    assert_eq!(txt(pair(format!(r#"{{"code":"{code}","peer":true,"name":"참모 · PC"}}"#))), (403, "account:unbound".into()), "옛 판(증명 없음)");
+    assert_eq!(txt(pair(format!(r#"{{"code":"{code}","peer":true,"device":"dev-other","proof":"p-{code}"}}"#))), (403, "account:other".into()), "다른 계정 기기");
+    assert_eq!(txt(pair(format!(r#"{{"code":"{code}","peer":true,"device":"dev-a","proof":""}}"#))), (403, "account:other".into()), "빈 증명");
+    // 코드는 그대로 — 맞는 증명이면 된다. 줄엔 그 Chammo 기기 id 가 묶인다
+    let ok = pair(format!(r#"{{"code":"{code}","peer":true,"name":"참모 · PC","device":"dev-a","proof":"p-{code}"}}"#));
+    assert_eq!(ok.status, 200, "{}", String::from_utf8_lossy(&ok.body));
+    let tok = json_of(&ok)["token"].as_str().unwrap().to_string();
+    let id = g.devices.check(&tok, std::time::SystemTime::now()).unwrap();
+    assert_eq!(g.devices.bound_of(&id).as_deref(), Some("dev-a"));
+    // 폰 짝짓기는 증명 칸을 안 본다(폰은 이 칸이 없다)
+    assert!(f.calls().is_empty());
+}
+
+#[test]
+fn 계정_hello_는_이_기기_chammo_기기_id_를_싣는다() {
+    let (s, _, r) = run(get("/api/hello"));
+    assert_eq!(s, 200);
+    assert_eq!(serde_json::from_slice::<serde_json::Value>(&r.body).unwrap()["chammo"], "dev-me");
+}
+
+#[test]
+fn 계정_테일넷_짝은_요청마다_열쇠_보유_증명이_있어야_한다() {
+    // 상대가 서버 로그아웃 없이 데이터만 지우고(다시 깔고) 다른 계정으로 간 경우 — 서버 목록엔 옛 기기 id 가 '허용'으로 남아 판정은 같은 계정.
+    // 그 기기 열쇠가 없어 증명을 못 만든다(공격 리뷰 1)
+    let g = gate();
+    g.devices.add_peer(PEER, "참모 · PC", "nPC", Some("dev-pc"), std::time::SystemTime::now()).unwrap();
+    let f = Fake { acct: Some(acct_world(&["dev-pc"], false)), direct: PAY_LOG.into(), live_bad: true, ..Default::default() };
+    let r = handle(&as_peer(get("/api/direct")), &g, &f);
+    assert_eq!((r.status, String::from_utf8_lossy(&r.body).to_string()), (403, "account:live".into()));
+    assert!(f.calls().is_empty());
+    assert_eq!(handle(&set(as_peer(get("/api/direct")), crate::peer_account::LIVE_HEADER, Some("ok")), &g, &f).status, 200, "증명이 맞으면");
+    // 중계 짝은 허브가 기기 서명으로 본다 — 머리 없이도
+    let r2 = gate();
+    r2.devices.add_peer_relay(PEER, "집 맥북", crate::mobile_pair::Relay { device: "dev-b".into(), x: "X".into() }, std::time::SystemTime::now()).unwrap();
+    let f2 = Fake { acct: Some(acct_world(&["dev-b"], false)), live_bad: true, ..Default::default() };
+    assert_eq!(handle(&as_peer(get("/api/direct")), &r2, &f2).status, 200);
+}
+
+// ── 11-09 2차: 폰 줄도 계정에 — 컴퓨터 브라우저로 폰 화면을 연 직통 줄이 결제 카드에 답할 수 있었다 ─────────────
+
+/// 진짜 판정(peer_account::judge_phone) — 내 계정 허용 폰 = ph-1
+fn phone_world() -> Box<dyn Fn(Option<&str>, bool) -> crate::peer_account::Verdict + Send + Sync> {
+    use crate::peer_account::{judge_phone, Mine, Seen};
+    Box::new(|r, _| {
+        let mine = Mine { account: "acct-me".into(), device: "dev-me".into() };
+        let seen = Seen { mine: mine.clone(), at_ms: 1_000, computers: vec![], phones: vec!["ph-1".into()] };
+        judge_phone(r, Some(&mine), Some(&seen), 1_000)
+    })
+}
+
+fn with_tok(r: Req, tok: &str) -> Req {
+    set(r, "authorization", Some(&format!("Bearer {tok}")))
+}
+
+fn relay_phone(g: &Gate, dev: &str) -> String {
+    let p = crate::mobile_pair::Pairing { name: "iPhone", home: true, prev: None, peer: false, chammo: None };
+    g.devices.pair_linked(&p, crate::mobile_pair::Relay { device: dev.into(), x: "P".into() }, std::time::SystemTime::now()).unwrap()
+}
+
+#[test]
+fn 폰_직통_줄은_결제류_카드를_못_보고_못_답한다() {
+    let g = gate();
+    let f = Fake { phone_acct: Some(phone_world()), direct: PAY_LOG.into(), peer_log: PAY_LOG.into(), ..Default::default() };
+    // 직통 줄(KEY = 테일넷·같은 와이파이 QR, 컴퓨터 브라우저로 연 줄도 이것)
+    let body = String::from_utf8_lossy(&handle(&with_cookie(get("/api/direct")), &g, &f).body).to_string();
+    assert!(body.contains("cc000003") && !body.contains("aa000001") && !body.contains("bb000002"), "{body}");
+    let r = handle(&post("/api/direct-answer", r#"{"id":"aa000001","pick":{"pick":"yes"}}"#), &g, &f);
+    assert_eq!((r.status, String::from_utf8_lossy(&r.body).to_string()), (403, "account:unbound".into()));
+    assert_eq!(handle(&post("/api/direct-answer", r#"{"id":"cc000003","pick":{"pick":"yes"}}"#), &g, &f).status, 200, "보통 카드는 된다");
+    assert!(!f.calls().iter().any(|c| c.starts_with("direct_answer aa000001")));
+    // 다른 기기의 결제 카드도 같은 규칙
+    let rows = json_of(&handle(&with_cookie(get("/api/peer-cards")), &g, &f));
+    assert!(!rows[0]["log"].as_str().unwrap().contains("aa000001"));
+    assert_eq!(handle(&post("/api/peer-card-answer", r#"{"dev":"nB","id":"aa000001","pick":{"pick":"yes"}}"#), &g, &f).status, 403);
+    assert!(!f.calls().iter().any(|c| c.starts_with("peer_card_answer")));
+    // 폰이 읽는 한 줄 — 숨긴 카드 수와 다시 연결할 입구
+    let a = json_of(&handle(&with_cookie(get("/api/phone-account")), &g, &f));
+    assert_eq!((a["state"].as_str(), a["hidden"].as_u64(), a["entry"].as_str()), (Some("unbound"), Some(2), Some("https://phone.example")));
+}
+
+#[test]
+fn 폰_중계_줄은_내_계정_허용_폰이면_결제_카드도_된다() {
+    let g = gate();
+    let tok = relay_phone(&g, "ph-1");
+    let f = Fake { phone_acct: Some(phone_world()), direct: PAY_LOG.into(), ..Default::default() };
+    assert!(String::from_utf8_lossy(&handle(&with_tok(get("/api/direct"), &tok), &g, &f).body).contains("aa000001"));
+    assert_eq!(handle(&with_tok(post("/api/direct-answer", r#"{"id":"aa000001","pick":{"pick":"yes"}}"#), &tok), &g, &f).status, 200);
+    let a = json_of(&handle(&with_tok(get("/api/phone-account"), &tok), &g, &f));
+    assert_eq!((a["state"].as_str(), a["hidden"].as_u64()), (Some("same"), Some(0)));
+    // 계정에서 빠진 폰(끊김·다른 계정) — 중계 줄이어도 막힌다
+    let g2 = gate();
+    let t2 = relay_phone(&g2, "ph-9");
+    let f2 = Fake { phone_acct: Some(phone_world()), direct: PAY_LOG.into(), ..Default::default() };
+    assert!(!String::from_utf8_lossy(&handle(&with_tok(get("/api/direct"), &t2), &g2, &f2).body).contains("aa000001"));
+    let r = handle(&with_tok(post("/api/direct-answer", r#"{"id":"aa000001","pick":{"pick":"yes"}}"#), &t2), &g2, &f2);
+    assert_eq!((r.status, String::from_utf8_lossy(&r.body).to_string()), (403, "account:other".into()));
+}
+
+#[test]
+fn 폰_계정_길은_다른_기기_참모_열쇠로는_못_온다() {
+    let g = peer_gate("peer0301");
+    assert_eq!(handle(&as_peer(get("/api/phone-account")), &g, &Fake::default()).status, 403);
+}
+
+#[test]
+fn 폰_직통_줄은_결제_관문_답도_못_한다() {
+    // scripts/task send 종료 코드 3 — '결제 확인 — … 보내도 돼?' 물음. 결제 카드와 같은 규칙(11-09)
+    let log = [
+        r#"{"ts":"2026-11-09T07:00:00Z","type":"ask","task":"1109-2300-pay1","note":"결제 확인 — shop: 결제 붙이기 — 보내도 돼?"}"#,
+        r#"{"ts":"2026-11-09T07:00:00Z","type":"ask","task":"1109-2300-ok01","note":"문구 A 로 갈까?"}"#,
+    ]
+    .join("\n");
+    let g = gate();
+    let f = Fake { task_log: log.clone(), phone_acct: Some(phone_world()), ..Default::default() };
+    let r = handle(&post("/api/task-answer", r#"{"task":"1109-2300-pay1","note":"응"}"#), &g, &f);
+    assert_eq!((r.status, String::from_utf8_lossy(&r.body).to_string()), (403, "account:unbound".into()));
+    assert_eq!(handle(&post("/api/task-answer", r#"{"task":"1109-2300-ok01","note":"응"}"#), &g, &f).status, 200, "보통 물음은 된다");
+    assert!(!f.calls().iter().any(|c| c.contains("pay1")));
+    // 중계로 붙은 내 계정 폰은 된다(같은 일 답은 5초에 한 번이라 새 문지기로)
+    let g2 = gate();
+    let tok = relay_phone(&g2, "ph-1");
+    let f2 = Fake { task_log: log, phone_acct: Some(phone_world()), ..Default::default() };
+    assert_eq!(handle(&with_tok(post("/api/task-answer", r#"{"task":"1109-2300-pay1","note":"응"}"#), &tok), &g2, &f2).status, 200);
+}
+
+#[test]
+fn 폰_직통_줄의_숨긴_수에_결제_관문_물음도_든다() {
+    // QA 0.4.11 문제 2-1 — 결제 관문 물음은 일 기록(tasks)에 있어 숨긴 수(hidden)에서 빠졌고 "계정 확인 안 됨" 줄이 안 떴다
+    let log = [
+        r#"{"ts":"2026-11-09T07:00:00Z","type":"ask","task":"1109-2300-pay1","note":"결제 확인 — shop: 결제 붙이기 — 보내도 돼?"}"#,
+        r#"{"ts":"2026-11-09T07:00:00Z","type":"ask","task":"1109-2300-pay2","note":"Payment check — shop: add checkout — OK to send?"}"#,
+        r#"{"ts":"2026-11-09T07:01:00Z","type":"answer","task":"1109-2300-pay2","note":"ok","by":"desk"}"#,
+        r#"{"ts":"2026-11-09T07:00:00Z","type":"ask","task":"1109-2300-ok01","note":"문구 A 로 갈까?"}"#,
+    ]
+    .join("\n");
+    let g = gate();
+    let f = Fake { task_log: log.clone(), phone_acct: Some(phone_world()), ..Default::default() };
+    let a = json_of(&handle(&with_cookie(get("/api/phone-account")), &g, &f));
+    assert_eq!((a["state"].as_str(), a["hidden"].as_u64()), (Some("unbound"), Some(1)), "답한 관문·보통 물음은 안 센다");
+    // 결제 카드와 합쳐 센다
+    let f2 = Fake { task_log: log.clone(), direct: PAY_LOG.into(), phone_acct: Some(phone_world()), ..Default::default() };
+    assert_eq!(json_of(&handle(&with_cookie(get("/api/phone-account")), &g, &f2))["hidden"].as_u64(), Some(3));
+    // 중계로 붙은 내 계정 폰은 0
+    let g3 = gate();
+    let tok = relay_phone(&g3, "ph-1");
+    let f3 = Fake { task_log: log, phone_acct: Some(phone_world()), ..Default::default() };
+    assert_eq!(json_of(&handle(&with_tok(get("/api/phone-account"), &tok), &g3, &f3))["hidden"].as_u64(), Some(0));
 }

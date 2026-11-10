@@ -3,7 +3,7 @@
 // · 일하는 중 Enter = 줄 서기, 기록에 queue-operation enqueue(글) → dequeue(맨 앞, 글 없음)·remove(도중 흡수)·popAll(↑로 입력칸에 되돌림)
 // · 쉴 때 입력칸에 글이 있는데 Esc 두 번 = 입력칸 지우기(기록 0) · 막 보낸 말을 Esc 로 끊으면 그 말이 입력칸으로 되돌아온다
 import type { LinkState } from './attachExit';
-import { alreadySent, chatNorm, humanBody, pendingLeft, promptInput, sentByMe, type ChatItem } from './chat';
+import { alreadySent, chatNorm, humanBody, pendingLeft, promptInput, sentByMe, stuckInInput, type ChatItem } from './chat';
 
 export type QItem = { text: string; ts: number };
 /** waiting = Claude 대기열, popped = ↑로 입력칸에 되돌아간 것(안 간 것), deq = 짝(뒤따르는 user 줄)을 아직 못 본 dequeue 수,
@@ -53,12 +53,15 @@ export function applyQueueOps(q: QueueState, chunk: string): QueueState {
       if (got === null) continue;
       deq -= 1;
       const i = waiting.findIndex((w) => sameItem(w.text, got));
-      if (i >= 0) waiting.splice(i, 1);
+      // 글로 짝이 없으면 이름 없는 대기 말(글 없는 enqueue) 하나를 뺀다
+      const j = i >= 0 ? i : waiting.findIndex((w) => !w.text);
+      if (j >= 0) waiting.splice(j, 1);
       continue;
     }
     const text = typeof r.content === 'string' ? humanBody(r.content) : '';
     const ts = Date.parse(r.timestamp ?? '') || 0;
-    if (r.operation === 'enqueue' && text) waiting.push({ text, ts });
+    // 글 없는 enqueue(2.1.319, 11-09 참모 업데이트 3,150개 중 37개) — 이름 없는 대기 말로. 보낸 뒤 붙었으면 그 말이 줄 선 것(pendingState)
+    if (r.operation === 'enqueue') { if (text || r.content === undefined) waiting.push({ text, ts }); }
     else if (r.operation === 'dequeue') deq += 1;
     // 흡수(참모가 받음)는 reason absorbed_mid_turn 만 — 그 밖의 remove(취소·비우기·하위 에이전트로 간 작업 알림)는 간 말이 아니다(0.3.6 리뷰)
     else if (r.operation === 'remove' && text) { take(text); if (r.reason === 'absorbed_mid_turn') absorbed.push({ text, ts }); }
@@ -84,7 +87,10 @@ export const AUTO_ENTER_MAX = 3;
 /** 줄이 접혀 온 입력칸과 맞대려고 공백을 다 뺀다(stuckInInput 와 같은 방식) */
 const sq = (t: string) => chatNorm(t).replace(/\s+/g, '');
 /** 보낸 말과 같은 글이 보낸 뒤(10초 여유) 들어왔나 */
-const after = (items: QItem[], p: PendingMsg) => items.some((q) => q.ts >= p.at - 10_000 && chatNorm(q.text) === chatNorm(p.text));
+const after = (items: QItem[], p: PendingMsg) => items.some((q) => q.ts >= p.at - 10_000 && !!q.text && chatNorm(q.text) === chatNorm(p.text));
+/** 보낸 뒤(1초 여유) 이름 없는 대기 말(글 없는 enqueue)이 줄 섰나 — 글이 없어 짝은 못 맞추지만 앱이 친 Enter 뒤에 붙은 줄이다.
+ *  못 알아보면 30초 뒤 '전달 안 됨 + 다시 보내기'로 떠 같은 말이 대기열에 또 들어갔다(2026-11-09 23:09~23:14, 세 번 감) */
+const anonAfter = (items: QItem[], p: PendingMsg) => items.some((q) => !q.text && q.ts >= p.at - 1000);
 
 /** 일하는 도중 흡수된 때 — 이 말을 친 뒤 흡수됐으면 그 시각, 아니면 null. 흡수는 Enter 뒤라 보낸 시각(1초 여유)보다 늦다 —
  *  since(10초 여유)로 보면 몇 초 전 간 같은 말의 흡수에 짝지어 이번 말이 안 가도 사라졌다(시험 장면).
@@ -125,12 +131,31 @@ export function pendingState(p: PendingMsg & { since?: number }, c: { queue: Que
   const typed = p.at + c.enterWait;
   if (c.now < typed + SETTLE) return 'sending';
   const n = sq(p.text);
+  // 대기열(기록)이 화면보다 먼저 — 엉킨 화면 사본은 받은 말(위 회색 칸)을 입력칸 글로 읽었다(2026-11-09 회사 비서 캡처 — '입력칸에 걸려 있어요' + 안 지워지는 X)
+  if (after(c.queue.waiting, p) || anonAfter(c.queue.waiting, p)) return 'queued';
   // 그림을 읽는 중이면 입력칸에 있어도 보내는 중 — Claude 가 그동안 Enter 를 버려서 앱이 끝난 뒤 다시 넣는다(isPasting)
   if (n && sq(c.termText).includes(n)) return c.pasting ? 'sending' : 'input';
-  if (after(c.queue.waiting, p)) return 'queued';
   // 입력칸에 이 말의 토막만 보인다 — 긴 말을 치는 중이거나 입력칸 높이를 넘었다. 30초 넘게 그대로면 Enter 가 안 먹은 것: '안 갔어요 + 다시 보내기'면 입력칸에 두 벌로 붙는다
   if (typingOf(c.termText, [p.text])) return c.now < typed + LOST_AFTER ? 'sending' : 'input';
   return c.now < typed + LOST_AFTER ? 'sending' : 'lost';
+}
+
+/** Claude 대기열이 다 이 채팅이 보낸 말인가 — 줄 선 말 빼기(↑ 로 대기열 전부를 입력칸에 꺼냄)는 그때만. 남의 말까지 입력칸에 쏟는다.
+ *  글 없는 대기 말(글 없는 enqueue)은 내가 보낸 뒤(1초 여유) 줄 섰으면 내 것 — 예전엔 하나만 섞여도 X 가 아예 안 떴다(2026-11-09) */
+export const queueAllMine = (queued: QItem[], waiting: PendingMsg[]): boolean =>
+  queued.every((q) => (q.text ? waiting.some((w) => chatNorm(w.text) === chatNorm(q.text)) : waiting.some((w) => q.ts >= w.at - 1000)));
+
+/** 낡은 읽기를 볼 최근 — 이보다 오래된 보낸 말은 견주지 않는다 */
+export const STALE_ECHO_MS = 10 * 60_000;
+/** 화면에서 읽은 입력칸 글이 낡은 읽기인가 — 대기 중인 말이거나, 일하는 중 최근에 보낸 말과 같다(그림 칩·공백 빼고).
+ *  그 말은 Claude 가 이미 받았으니 진짜 입력칸엔 없다 — 엉킨 화면 사본(아래 테두리 없음·'m' 한 글자)이 위 회색 칸을 입력칸으로 읽었다(2026-11-09 회사 비서).
+ *  그대로 두면 '입력칸에 걸려 있어요'·입력칸 줄이 뜨고 X(백스페이스)는 빈 진짜 입력칸에 가서 아무것도 안 지운다.
+ *  쉬는 중엔 안 본다 — Esc 로 거둬들여 입력칸에 되돌아온 말(rewound)은 보낸 말과 같지만 진짜 입력칸에 있다 */
+export function staleEcho(termText: string, c: { queue: QueueState; items: ChatItem[]; busy: boolean; now: number }): boolean {
+  const t = sq(termText);
+  if (!t) return false;
+  if (c.queue.waiting.some((q) => q.text && sq(q.text) === t)) return true;
+  return c.busy && sentByMe(c.items).some((i) => c.now - Date.parse(i.ts) < STALE_ECHO_MS && sq(i.text) === t);
 }
 
 /** 입력칸 글이 아직 안 들어간 내 말의 한 토막이면 그 말. 긴 말은 치는 데 몇 초 걸리고 입력칸 높이를 넘으면 화면엔 토막만 보여
@@ -157,7 +182,13 @@ export const absorbedLeft = (pending: (PendingMsg & { since?: number })[], queue
   return left.length ? Math.max(0, Math.min(...left)) : null;
 };
 /** 말풍선 단추 — 보내는 중엔 없음, 안 갔어요면 다시 보내기, 대기 중·입력칸이면 지금 보내기(빼기는 대기열·입력칸 모양을 더 봐서 따로) */
-export const pendAct = (st: PendingState): 'again' | 'now' | null => (st === 'sending' || st === 'wait' ? null : st === 'lost' ? 'again' : 'now');
+export const pendAct = (st: PendingState, app = false): 'again' | 'now' | null => (app || st === 'sending' || st === 'wait' ? null : st === 'lost' ? 'again' : 'now');
+
+/** 앱이 참모 입력칸에 넣은 줄([앱] …, data/tauri sendToSession) — 사람 말이 아니라 옅은 한 줄로, 단추 없이(다시 치면 같은 줄이 두 번 간다).
+ *  기록에 들어오면 앱 줄(relay '앱')로 바뀐다. 2026-11-10 참모-2: 한글이 깨져 들어가(256 바이트 자르기) 짝을 못 지은 줄이 '전달 안 됨 + 다시 보내기'로 남았다 */
+export const isAppLine = (t: string) => t.startsWith('[앱] ');
+/** 앱 줄은 어디에도 안 보여도 '전달 안 됨'으로 남기지 않는다 — 넣었는지는 앱 로그(notify.log reply)가 따로 남긴다 */
+export const appLineShown = (st: PendingState) => st !== 'lost';
 
 /** Enter 를 다시 넣을 말(tries 는 보낸 시각별 누른 횟수 — 같은 말을 나중에 또 보내도 새로 센다) — 입력칸이 그 말 하나뿐이고, 사람이 ↑로 되돌린 게 아니고, / 명령이 아니고, 덜 눌렀고, 친 지 2초 넘었을 때.
  *  일하는 중이어도 고른다 — 일하는 중 Enter 는 줄 서기라 안전하다(예전엔 쉴 때 한 번만 눌러서 일하는 중 걸린 말이 남았다) */
@@ -209,6 +240,12 @@ export function againPlan(text: string, items: ChatItem[], now: number, warned: 
   return warned && chatNorm(warned.text) === chatNorm(text) && now - warned.at <= DUP_CONFIRM ? 'send' : 'warn';
 }
 
+/** '다시 보내기'를 눌렀을 때 — 입력칸(채팅이 읽은 글)에 그 말만 그대로 걸려 있으면 Enter 만('enter'), 아니면 세션 쪽에 다시 보내기로('send').
+ *  'send' 도 Rust(pty_type again)가 입력칸을 다시 보고 남은 그 말이면 같은 글을 또 치지 않는다 — 채팅이 입력칸을 못 읽는 때(엉킨 사본·느린 TUI)를 위해 */
+export function againPlanOf(text: string, leftover: string[] | null, termText: string): 'enter' | 'send' {
+  return leftover?.length === 1 && leftover[0] === text && stuckInInput([text], termText) === text ? 'enter' : 'send';
+}
+
 /** 줄 선 말 하나를 빼고 다시 줄 세울 것 — 같은 말이 둘이면 하나만 */
 export function keepAfterRemove(texts: string[], target: string): string[] {
   const i = texts.indexOf(target);
@@ -235,7 +272,7 @@ export function restoreDraft(draft: string, text: string): string {
 /** 채팅이 터미널 입력칸에 넣는 Enter 한 번 — 앱 치기 줄(typeQueue)에 올려 Rust 자물쇠(pty_type)로 친다.
  *  예전엔 pty 에 '\r' 을 바로 써서 카드 답·[앱] 줄·새 말을 치는 중간에 박혀 반만 보내졌다(2026-10-21 리뷰 ②-8).
  *  expect = 그 말이 입력칸에 그대로일 때만(칠 때 화면을 다시 본다 — 타이머가 본 화면은 0.4초 전 것이다). 입력칸 모양이 아니면(선택 창) 안 친다 */
-export function enterTask(api: { type: (keys: string[]) => Promise<void>; screen: () => { lines: string[]; cursor: [number, number] } }, expect?: string): () => Promise<void> {
+export function enterTask(api: { type: (keys: string[]) => Promise<unknown>; screen: () => { lines: string[]; cursor: [number, number] } }, expect?: string): () => Promise<void> {
   return async () => {
     if (expect !== undefined) {
       const { lines, cursor } = api.screen();

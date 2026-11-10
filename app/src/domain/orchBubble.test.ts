@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BADGE, DESK_PAD, POP_MS, anchorOf, openKeep, badgeCounts, bubbleFace, deskFrame, deskPop, deskStage, stageBox, FAN_LEAVE_MS, FAN_OUT_MS, fanKeep, fanPlan, fanPoints, fanRings, fanSide, isDrag, padRect, farEdges, fitPopSize, placeOf, popLayout, resizedPop,  popOrigin, popPlace, popSteps, readAnchor, readSpot, screenPlace, screenSave, type Rect, type Screen } from './orchBubble';
+import { BADGE, DESK_PAD, POP_MS, anchorOf, openKeep, badgeCounts, bubbleFace, deskFrame, deskPop, deskStage, deskView, stageBox, FAN_LEAVE_MS, FAN_OUT_MS, fanKeep, fanPlan, fanPoints, fanRings, fanSide, isDrag, padRect, farEdges, fitPopSize, placeOf, popLayout, resizedPop,  popOrigin, popPlace, popSteps, readAnchor, readSpot, screenPlace, screenSave, type Rect, type Screen } from './orchBubble';
 
 const box = { x: 0, y: 0, w: 1200, h: 800 };
 
@@ -227,6 +227,60 @@ describe('바탕 배지 한 판 — 열기·접기에도 창을 안 바꾼다(11
     const f = deskFrame({ x: 0, y: 0, w: 88, h: 88 }, badgeOf({ x: 0, y: 0 }), [], EXT, POP);
     expect(f.pop).toBeNull();
     expect(f.win).toEqual(deskStage({ x: 0, y: 0, w: 88, h: 88 }, [], EXT).win);
+  });
+});
+
+describe('바탕 배지 창 = 한 판의 보이는 칸(11-10 사용자 "참모 배지가 항상 이 정도 영역을 차지 … 크기가 변해야 하는 거 아님?")', () => {
+  // 웹뷰(판)는 늘 deskFrame 크기 그대로 두고 맥 창만 지금 보일 칸으로 줄인다 — 판 안 그림이 안 움직여 깜빡임 없이 창이 작다
+  const mac: Screen = { id: 'mac', x: 0, y: 0, w: 1512, h: 982 };
+  const ext: Screen = { id: 'ext', x: 1512, y: -200, w: 2560, h: 1440 };
+  const EXT = { w: 236, h: 150 };
+  const POP = { w: 360, h: 470 };
+  const badgeOf = (b: { x: number; y: number }) => ({ x: b.x + 18, y: b.y + 10, w: 52, h: 52 });
+  const spots = [{ x: 30, y: 40 }, { x: 1400, y: 40 }, { x: 30, y: 870 }, { x: 1400, y: 870 }, { x: 700, y: 450 }, { x: 3000, y: 900 }, { x: 1512 + 40, y: -150 }];
+  const inside = (a: Rect, b: Rect) => a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w && a.y + a.h <= b.y + b.h;
+  const frameOf = (b: { x: number; y: number }, big = false) => deskFrame({ ...b, w: 88, h: 88 }, badgeOf(b), [mac, ext], EXT, POP, big);
+  it('배지만 있을 땐 배지 상자 + 여백(108×108) — 사용자 캡처의 370×580 투명 판이 아니다', () => {
+    for (const b of spots) {
+      const f = frameOf(b);
+      const v = deskView(f, 'rest', EXT);
+      expect(v).toEqual({ x: f.box.x - DESK_PAD, y: f.box.y - DESK_PAD, w: 88 + DESK_PAD * 2, h: 88 + DESK_PAD * 2 });
+      expect(f.win.w * f.win.h).toBeGreaterThan(v.w * v.h * 10); // 판은 그대로 크다 — 창만 작다
+    }
+  });
+  it('부채·배너가 펴진 동안은 무대(배지 + 화면 가운데 쪽 펼칠 자리) — deskStage 와 같은 화면 자리', () => {
+    for (const b of spots) {
+      const f = frameOf(b);
+      const v = deskView(f, 'stage', EXT);
+      const st = deskStage({ ...b, w: 88, h: 88 }, [mac, ext], EXT).win;
+      expect({ x: f.win.x + v.x, y: f.win.y + v.y, w: v.w, h: v.h }).toEqual(st);
+    }
+  });
+  it('대화창이 열린 동안은 판 전체(대화창 + 배지)', () => {
+    for (const b of spots) for (const big of [false, true]) {
+      const f = frameOf(b, big);
+      expect(deskView(f, 'open', EXT)).toEqual({ x: 0, y: 0, w: f.win.w, h: f.win.h });
+    }
+  });
+  it('보이는 칸은 늘 판 안이고, 배지 원은 어느 모양에서도 칸 안 — 창이 줄어도 배지가 안 잘린다', () => {
+    for (const b of spots) for (const m of ['rest', 'stage', 'open'] as const) {
+      const f = frameOf(b);
+      const v = deskView(f, m, EXT);
+      expect(inside(v, { x: 0, y: 0, w: f.win.w, h: f.win.h })).toBe(true);
+      expect(inside({ x: f.box.x + 18, y: f.box.y + 10, w: 52, h: 52 }, v)).toBe(true);
+    }
+  });
+  it('작은 칸 ⊂ 무대 ⊂ 판 — 펼칠 땐 창만 커지고 접을 땐 창만 작아진다(판 안 그림은 제자리)', () => {
+    for (const b of spots) {
+      const f = frameOf(b);
+      expect(inside(deskView(f, 'rest', EXT), deskView(f, 'stage', EXT))).toBe(true);
+      expect(inside(deskView(f, 'stage', EXT), deskView(f, 'open', EXT))).toBe(true);
+    }
+  });
+  it('판 끝에 걸린 칸은 판 안으로 자른다(모니터를 몰라 대화창 없는 판·여백 0)', () => {
+    const f = deskFrame({ x: 0, y: 0, w: 88, h: 88 }, badgeOf({ x: 0, y: 0 }), [], EXT, POP, false, 0);
+    const v = deskView(f, 'rest', EXT, 10);
+    expect(inside(v, { x: 0, y: 0, w: f.win.w, h: f.win.h })).toBe(true);
   });
 });
 

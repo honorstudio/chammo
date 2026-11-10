@@ -5,13 +5,13 @@ import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { afterUnpeek, peekStep, tabStrip, type Live } from '../../domain/agentBrowser';
 import { keyEvents, keyTarget, type InputEv } from '../../domain/agentInput';
-import { closeWay, deskOffer, paneMenuKeys, paneStatus, paneWantsPeek, signedLine, turnCard, turnCardAfterDone, type PaneMenuKey } from '../../domain/browserDock';
+import { backToPane, closeWay, deskOffer, nativeLine, paneMenuKeys, paneStatus, paneWantsPeek, signedLine, turnCard, turnCardAfterDone, type PaneMenuKey } from '../../domain/browserDock';
 import { IS_WIN } from '../../domain/reader';
 import { handBack, pressedAt, takeOver } from '../AgentBrowserModal';
 import { askPermission, readConfig } from '../../data/tauri';
 import { tr } from '../../i18n';
 import { useAgentTabs } from '../AgentBrowser';
-import { IconBack, IconClose, IconForward, IconMore, IconRefresh } from '../Icons';
+import { IconBack, IconClose, IconDockIn, IconForward, IconMore, IconRefresh } from '../Icons';
 import { IconButton } from '../kit/IconButton';
 import type { MenuItem } from '../OrchDialogs';
 import { usePanePlace } from './panePlace';
@@ -162,6 +162,8 @@ export function BrowserPane({ live, name, onHide, onClosed, openMenu }: { live: 
     void mine().then(() => invoke('agent_close_tab', { profile, pid: live.pid, target: id })).catch(() => {});
   };
   const showChrome = () => void mine().then(() => invoke('agent_focus', { profile })).then(() => t.setShown(true), () => {});
+  // 꺼낸 크롬 창(사람이 '크롬에서 보기'로 연 것도)을 숨기고 칸 그림으로 — 드문 크롬 자체 풍선은 꺼내서 크롬에서 닫고 이걸로 돌아온다(2026-11-09 사용자)
+  const unshow = () => { setPeeked(null); setDeskShown(false); void invoke('agent_hide', { profile }).then(() => t.setShown(false), () => {}); };
   // 칸 카드의 '크롬 창 꺼내기' — 패스키 창 때문에 꺼내는 것이라 저절로 길(agent_peek): 창이 닫히거나 페이지가 넘어가면 다시 숨는다(peekStep unpeek).
   // 그새 창이 사라졌으면(no popup) 크롬에서 보기로
   const peekNow = () => {
@@ -182,7 +184,6 @@ export function BrowserPane({ live, name, onHide, onClosed, openMenu }: { live: 
     const items: Record<PaneMenuKey, MenuItem> = {
       chrome: { label: win ? tr('보이는 창으로 열기', 'Open in a visible window') : tr('크롬에서 보기', 'Show in Chrome'), run: () => void invoke('agent_focus', { profile }).then(() => t.setShown(true), () => {}) },
       desk: { label: tr('숨은 화면에서 도는 중 — 작업 표시줄에 안 보여', 'Running on a hidden desktop — not in the taskbar'), title: tr('패스키·Windows Hello 처럼 창이 필요하면 보이는 창으로 열어', 'Open it in a visible window when a passkey or Windows Hello prompt is needed') },
-      unshow: { label: tr('숨은 화면으로 돌려놓기', 'Move back to the hidden desktop'), run: () => void invoke('agent_hide', { profile }).then(() => t.setShown(false), () => {}) },
       signed: { label: tr('이번만 구글 크롬으로 열기', 'Open in Google Chrome this once'), title: tr('패스키 로그인이 막힐 때 — 그동안 독에 보이고 칸이 조금 흐려', 'When a passkey sign-in is blocked — it shows in the Dock and the pane is a little blurry meanwhile'), run: () => signed(true) },
       unsigned: { label: tr('참모 브라우저로 돌아가기', 'Back to the Chammo browser'), run: () => signed(false) },
       headless: { label: tr('창 없이 도는 중 — 맥 독에 안 보여', 'Running without a window — not in the Dock'), title: tr('이 맥엔 가짜 화면이 없어 화면 없는 크롬으로 돌아', 'This Mac has no virtual display, so Chrome runs headless') },
@@ -222,6 +223,10 @@ export function BrowserPane({ live, name, onHide, onClosed, openMenu }: { live: 
           ))}
         </div>
         {t.pinned && <button className="bp-follow" onClick={() => void invoke('agent_pin', { profile, target: null }).catch(() => {})}>{tr('따라가기', 'Follow')}</button>}
+        {backToPane(t.shown, !!t.headless) && <>
+          <span className="bp-out" role="status">{tr('크롬에서 보는 중', 'Viewing in Chrome')}</span>
+          <IconButton size="s" label={tr('칸으로 돌려놓기', 'Back into the pane')} onClick={unshow}><IconDockIn /></IconButton>
+        </>}
         {openMenu && <IconButton size="s" label={tr('더보기', 'More')} onClick={more}><IconMore /></IconButton>}
       </div>
       {/* 사람 차례·끄기 확인·돌려주기는 머리줄 바로 밑(11-02 사용자 — 칸 맨 아래라 못 알아봤다) */}
@@ -249,6 +254,14 @@ export function BrowserPane({ live, name, onHide, onClosed, openMenu }: { live: 
             <button className="cv-btn solid" onClick={done} title={tr('세션에 돌려주기', 'Hand back to the session')}>{tr('다 했어', 'Done')}</button>
           </>}
           {(card.kind === 'passkey' || card.kind === 'window') && !t.shown && <button className="cv-btn solid" onClick={peekNow}>{tr('크롬 창 꺼내기', 'Open Chrome window')}</button>}
+        </div>
+      )}
+      {/* 크롬 자체 창(계정·카드 저장, 펼침 목록, 자동 완성 목록)은 칸에서 못 다룬다 — 꺼내서 크롬에서, 끝나면 툴바 '칸으로 돌려놓기' */}
+      {nativeLine(!!t.native, t.shown, !!t.headless, !!card) && (
+        <div className="bp-turn" role="status">
+          <i className="bp-turn-dot" aria-hidden="true" />
+          <span className="bp-turn-text">{tr('크롬이 띄운 창이 있어', 'Chrome opened its own window')}</span>
+          <button className="cv-btn solid" onClick={showChrome}>{tr('크롬에서 보기', 'Show in Chrome')}</button>
         </div>
       )}
       {stat.giveBack && (

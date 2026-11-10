@@ -140,3 +140,12 @@ export function attachPhaseWatcher(): (chunk: string) => AttachPhase | null {
     return next;
   };
 }
+
+/** 일하는 세션 칸이 이만큼 출력이 없으면 죽은 보기 — 일하는 TUI 는 스피너·경과 초를 1초마다 그린다.
+ *  다만 UserPromptSubmit 훅이 도는 동안엔 화면을 안 그려(11-10 실측) 넉넉히 3분 — 다시 붙이기만 하니 틀려도 칸이 한 번 다시 그려질 뿐 */
+export const DEAD_PANE_MS = 180_000;
+/** 붙어 있다고 보이는데 죽은 보기인가 — 세션은 일하는 중(state working)인데 칸 출력이 DEAD_PANE_MS 넘게 없다.
+ *  2026-11-10 개발 담당: 보기 attach 의 세션 소켓이 끊겼는데('->(none)') 프로세스가 안 끝나(KILL 도 커널에서 멈춤) 칸이 90분 출력 0 —
+ *  EOF 가 안 와 '다시 붙기'가 안 돌았고, 앱은 live 로 보고 쳐서 말이 사라졌다. 사용자가 본 터미널도 90분 전 화면에 얼어 있었다.
+ *  쉬는 세션 화면은 몇 시간 가만할 수 있어 안 본다. quietMs = PaneApi.quiet()(-1 = 아직 출력 전) */
+export const deadPane = (state: string, quietMs: number): boolean => state === 'working' && quietMs > DEAD_PANE_MS;

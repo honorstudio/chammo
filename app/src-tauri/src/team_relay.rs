@@ -1621,6 +1621,8 @@ pub fn self_room(dir: &Path, kc: &dyn Store, http: &dyn Http) -> Result<String, 
 pub const LAST_SERVER_FILE: &str = "last-server.txt";
 
 pub fn forget_local(dir: &Path, kc: &dyn Store) -> Result<String, String> {
+    // 다른 기기 참모 짝도 끊는다 — 짝은 이 Chammo 계정에 묶여 있다(11-09 보안). 열쇠를 지우기 전에(상대에게 알리는 데 쓴다)
+    crate::remote::drop_all_now(dir);
     crate::team_relay_ws::stop();
     keys::forget_all();
     let st = load_state(dir);

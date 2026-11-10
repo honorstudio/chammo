@@ -44,11 +44,21 @@ pub fn kind_of(cmd: &str, ours: &str) -> Option<&'static str> {
     if exe.contains("chrom") && !cmd.contains(" --type=") {
         let automated = cmd.contains("--remote-debugging-port") || cmd.contains("--remote-debugging-pipe");
         let headless = cmd.contains("--headless");
-        let mine = arg_value(cmd, "--user-data-dir").is_some_and(|d| !ours.is_empty() && d.replace('\\', "/").starts_with(ours));
-        return (automated && !headless && !mine).then_some("chrome");
+        let dir = arg_value(cmd, "--user-data-dir").map(|d| d.replace('\\', "/"));
+        let mine = dir.as_deref().is_some_and(|d| !ours.is_empty() && d.starts_with(ours));
+        let raw_exe = cmd.split(" --").next().unwrap_or(cmd).replace('\\', "/");
+        return (automated && !headless && !mine && !dir.as_deref().is_some_and(|d| other_home(&raw_exe, d))).then_some("chrome");
     }
     // 크롬 확장 중계 — 사용자의 평소 크롬을 쓴다. 우리 래퍼(chammo-browser)는 --extension 을 안 쓴다
     (cmd.contains("@playwright/mcp") && cmd.split_whitespace().any(|a| a == "--extension") && !cmd.contains("chammo-browser")).then_some("extension")
+}
+
+/// 다른 데이터 폴더(시험 CHAMMO_HOME)의 chammo-browser 가 띄운 크롬인가 — 그 폴더 browser/app 의 사본 실행 파일로 같은 폴더 browser/profiles 를 연다.
+/// 시험 폴더로 `chammo-browser launch` 한 E2E 크롬을 '앱 밖 크롬'으로 잡아 참모 입력칸에 헛경고를 냈다(2026-11-09). 스크립트가 직접 띄운 정품 크롬은 이 모양이 아니다
+fn other_home(exe: &str, dir: &str) -> bool {
+    let Some(i) = dir.find("/browser/profiles/") else { return false };
+    let app = format!("{}/browser/app/", &dir[..i]);
+    exe.starts_with(&app) && exe.contains("Chammo Browser.app/")
 }
 
 /// 앱 밖 크롬·중계 중 조상이 팀 세션인 것. ours = 우리 브라우저 폴더(끝 '/' 포함, 경로 구분은 '/')
@@ -139,6 +149,18 @@ mod tests {
         assert_eq!(kind_of("node /Users/u/.chammo/tools/chammo-browser/node_modules/@playwright/mcp/cli.js --user-data-dir /x", OURS), None);
         assert_eq!(kind_of("npx @playwright/mcp@latest --extension", OURS), Some("extension"));
         assert_eq!(kind_of("npx @playwright/mcp@latest --extensions-dir /x", OURS), None);
+    }
+
+    #[test]
+    fn 시험_데이터_폴더의_chammo_browser_크롬은_앱_밖이_아니다() {
+        // 2026-11-09 — 시험 CHAMMO_HOME 으로 chammo-browser launch 한 E2E 크롬이 '앱 밖 크롬' 헛경고
+        let t = "/Users/u/.claude/jobs/d5/tmp/home2";
+        let c = format!("{t}/browser/app/com.google.Chrome.beta-158.0.8127.18/Chammo Browser.app/Contents/MacOS/Google Chrome Beta --disable-field-trial-config --remote-debugging-port=0 --user-data-dir={t}/browser/profiles/nb-test --remote-debugging-pipe about:blank");
+        assert_eq!(kind_of(&c, OURS), None);
+        // 정품 크롬으로 그 프로필 모양을 흉내 낸 것·다른 폴더 사본으로 연 것·사본 실행 파일로 임시 프로필을 연 것은 그대로 잡는다
+        assert_eq!(kind_of(&format!("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --remote-debugging-pipe --user-data-dir={t}/browser/profiles/x"), OURS), Some("chrome"));
+        assert_eq!(kind_of(&c.replace("--user-data-dir=/Users/u/.claude/jobs/d5/tmp/home2/", "--user-data-dir=/tmp/other/"), OURS), Some("chrome"));
+        assert_eq!(kind_of(&format!("{t}/browser/app/x/Chammo Browser.app/Contents/MacOS/Google Chrome Beta --remote-debugging-pipe --user-data-dir=/var/folders/T/playwright_profile-1"), OURS), Some("chrome"));
     }
 
     #[test]

@@ -18,6 +18,9 @@ static HAS_FACE: AtomicBool = AtomicBool::new(true);
 static HOT: Mutex<Vec<[f64; 4]>> = Mutex::new(Vec::new());
 /// 올리면 부채가 펴지는 자리 — 비활성 패널은 앱이 안 깨어 있으면 웹뷰에 마우스 올림 사건이 안 와서(그래서 누를 때 부채가 떴다) 전역 마우스 자리로 본다
 static HOVER: Mutex<Vec<[f64; 4]>> = Mutex::new(Vec::new());
+/// 한 판(웹뷰) 크기와 지금 보일 칸(판 기준 논리 px [x, y, w, h]) — 맥은 창 = 그 칸, 웹뷰 = 판 크기 그대로 칸만큼 비켜 놓는다(11-10 사용자 "늘 이 정도 영역을 차지").
+/// 판 안 그림이 안 움직이니 창 크기가 바뀌어도 배지가 안 튄다(10-28·11-05 깜빡임은 웹뷰 크기가 바뀌어 한 프레임 옛 그림이 왼쪽 위에 붙어서였다). 윈도우는 창 = 판(칸 = 판 전체)
+static SHAPE: Mutex<Option<Shape>> = Mutex::new(None);
 /// 맥: 누른 채 끄는 동안 창이 커서를 따라가는 중(bubble_drag → follow) — 그동안 옮김 사건을 화면에 안 넘기고(놓은 뒤 한 번) 클릭도 바탕으로 안 흘린다
 static FOLLOWING: AtomicBool = AtomicBool::new(false);
 
@@ -91,6 +94,124 @@ fn rect_of(w: &tauri::WebviewWindow) -> Option<Screen> {
     Some(Screen { id: String::new(), x: p.x as f64 / k, y: p.y as f64 / k, w: s.width as f64 / k, h: s.height as f64 / k })
 }
 
+/// 판 크기 + 보일 칸
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shape {
+    pub w: f64,
+    pub h: f64,
+    pub view: [f64; 4],
+}
+
+fn shape() -> Option<Shape> {
+    *SHAPE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// 보일 칸을 판 안으로 — 없거나 깨졌거나 1점보다 얇으면 판 전체
+pub fn fit_view(v: Option<[f64; 4]>, w: f64, h: f64) -> [f64; 4] {
+    let full = [0.0, 0.0, w, h];
+    let Some(v) = v.filter(|v| v.iter().all(|n| n.is_finite())) else { return full };
+    let (x, y) = (v[0].clamp(0.0, w), v[1].clamp(0.0, h));
+    let (r, b) = ((v[0] + v[2]).clamp(x, w), (v[1] + v[3]).clamp(y, h));
+    if r - x < 1.0 || b - y < 1.0 {
+        return full;
+    }
+    [x, y, r - x, b - y]
+}
+
+/// 창 자리 → 판 자리(판 왼쪽 위 = 창 왼쪽 위 - 칸 비킴). 화면(DeskBubble)은 늘 판 기준으로 계산한다
+pub fn plate_of(win: &Screen, s: Option<Shape>) -> Screen {
+    match s {
+        Some(s) => Screen { id: String::new(), x: win.x - s.view[0], y: win.y - s.view[1], w: s.w, h: s.h },
+        None => win.clone(),
+    }
+}
+
+/// 맥: (창 프레임 — 화면 좌표 아래 0, 웹뷰 프레임 — 부모 좌표) [x, y, w, h]. plate = 판 왼쪽 위(위 0 논리 점), h0 = 주 화면 높이
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn mac_frames(plate: (f64, f64), s: Shape, h0: f64, flipped: bool) -> ([f64; 4], [f64; 4]) {
+    let [vx, vy, vw, vh] = s.view;
+    let win = [plate.0 + vx, h0 - (plate.1 + vy + vh), vw, vh];
+    let web = [-vx, if flipped { -vy } else { vh + vy - s.h }, s.w, s.h];
+    (win, web)
+}
+
+/// 맥: 창 프레임(화면 좌표 아래 0) + 지금 칸 → 판 왼쪽 위(위 0 논리 점)
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn plate_from_cocoa(f: [f64; 4], h0: f64, view: [f64; 4]) -> (f64, f64) {
+    (f[0] - view[0], h0 - (f[1] + f[3]) - view[1])
+}
+
+/// 창에 할 일 — 판째 놓기, 또는 지금 판 그대로 칸만 바꾸기
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[derive(Clone, Copy)]
+enum Set {
+    Place((f64, f64), Shape),
+    View([f64; 4]),
+}
+
+/// 판·칸을 창에 — 맥은 메인 스레드에서 그 순간의 창 자리로 판 자리를 읽고(앞 놓기가 아직 줄에 있어도 어긋나지 않게) 창 프레임과 웹뷰 프레임을 한 번에,
+/// 다 바꾼 뒤에 SHAPE 를 적는다(마우스 따라가기·화면 목록이 실제 창과 같은 값을 본다). 그 밖은 창 = 판
+fn apply(window: &tauri::WebviewWindow, set: Set) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = window.with_webview(move |wv| unsafe {
+            use objc2::msg_send;
+            use objc2::runtime::{AnyObject, Bool};
+            use objc2_foundation::{NSPoint, NSRect, NSSize};
+            let (win, web) = (wv.ns_window() as *mut AnyObject, wv.inner() as *mut AnyObject);
+            if win.is_null() || web.is_null() {
+                return;
+            }
+            let screens: *mut AnyObject = msg_send![objc2::class!(NSScreen), screens];
+            let first: *mut AnyObject = if screens.is_null() { std::ptr::null_mut() } else { msg_send![screens, firstObject] };
+            if first.is_null() {
+                return;
+            }
+            let h0 = { let f: NSRect = msg_send![first, frame]; f.size.height };
+            let (plate, s) = match set {
+                Set::Place(p, s) => (p, s),
+                Set::View(v) => {
+                    let Some(cur) = shape() else { return };
+                    let next = Shape { view: fit_view(Some(v), cur.w, cur.h), ..cur };
+                    if next.view == cur.view {
+                        return;
+                    }
+                    let f: NSRect = msg_send![win, frame];
+                    (plate_from_cocoa([f.origin.x, f.origin.y, f.size.width, f.size.height], h0, cur.view), next)
+                }
+            };
+            let parent: *mut AnyObject = msg_send![web, superview];
+            let flipped: Bool = if parent.is_null() { Bool::NO } else { msg_send![parent, isFlipped] };
+            let (a, b) = mac_frames(plate, s, h0, flipped.as_bool());
+            let r = |v: [f64; 4]| NSRect::new(NSPoint::new(v[0], v[1]), NSSize::new(v[2], v[3]));
+            // 창·웹뷰가 한 화면 갱신에 같이 바뀌게 — 창 서버는 다음 flush 까지 이 창 갱신을 붙들고(display: false 라 여기서 flush 안 함),
+            // 웹뷰 자리까지 바꾼 뒤 이번 돌림 끝 한 번에 보인다. 웹뷰는 판 크기 그대로라 웹 그림을 다시 안 그린다
+            let _: () = msg_send![win, disableScreenUpdatesUntilFlush];
+            let _: () = msg_send![web, setAutoresizingMask: 0usize];
+            // 창 위로 삐져나간 웹뷰 부분을 웹킷이 제목줄처럼 '가려진 위 여백'으로 잡아 화면 높이를 줄인다(실측: 배지 칸이면 innerHeight 580 → 108,
+            // 배지 y 492 가 화면 밖이라 눌러도 안 잡힘) — 자동 여백을 끄고 0 으로. macOS 26 은 공개 obscuredContentInsets, 옛 판은 내부 선택자
+            let responds = |s: objc2::runtime::Sel| -> bool { let b: Bool = msg_send![web, respondsToSelector: s]; b.as_bool() };
+            if responds(objc2::sel!(_setAutomaticallyAdjustsContentInsets:)) {
+                let _: () = msg_send![web, _setAutomaticallyAdjustsContentInsets: Bool::NO];
+            }
+            if responds(objc2::sel!(setObscuredContentInsets:)) {
+                let _: () = msg_send![web, setObscuredContentInsets: objc2_foundation::NSEdgeInsets { top: 0.0, left: 0.0, bottom: 0.0, right: 0.0 }];
+            } else if responds(objc2::sel!(_setTopContentInset:)) {
+                let _: () = msg_send![web, _setTopContentInset: 0.0f64];
+            }
+            let _: () = msg_send![win, setFrame: r(a), display: false];
+            let _: () = msg_send![web, setFrame: r(b)];
+            *SHAPE.lock().unwrap_or_else(|e| e.into_inner()) = Some(s);
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    if let Set::Place(plate, s) = set {
+        *SHAPE.lock().unwrap_or_else(|e| e.into_inner()) = Some(Shape { view: [0.0, 0.0, s.w, s.h], ..s });
+        let _ = window.set_size(tauri::LogicalSize::new(s.w, s.h));
+        let _ = window.set_position(tauri::LogicalPosition::new(plate.0, plate.1));
+    }
+}
+
 /// 모니터 목록 + 앱 창 모니터 + 배지 창 자리 — 화면이 자리를 계산한다
 #[tauri::command]
 pub fn bubble_screens(app_handle: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<Screens, String> {
@@ -102,16 +223,17 @@ pub fn bubble_screens(app_handle: tauri::AppHandle, window: tauri::WebviewWindow
     let app = app_handle.get_webview_window("main").and_then(|m| m.current_monitor().ok().flatten()).and_then(|cur| {
         mons.iter().enumerate().find(|(_, m)| m.position() == cur.position() && m.size() == cur.size()).map(|(i, m)| screen_of(m, i).id)
     });
-    let out = Screens { screens, app, win: rect_of(&window) };
+    let out = Screens { screens, app, win: rect_of(&window).map(|r| plate_of(&r, shape())) };
     if cfg!(debug_assertions) {
         crate::claude::log_out("bubble", &format!("screens {:?} app {:?} win {:?}", out.screens, out.app, out.win));
     }
     Ok(out)
 }
 
-/// 배지 창 자리·크기(논리 px) — key = 대화창(글을 칠 수 있게), radius = 둥근 모서리(배지 = 동그라미)
+/// 배지 판 자리·크기(논리 px) — view = 판 안 지금 보일 칸(맥 창 크기, 없으면 판 전체), key = 대화창(글을 칠 수 있게), radius = 둥근 모서리(배지 = 동그라미)
 #[tauri::command]
-pub fn bubble_place(window: tauri::WebviewWindow, x: f64, y: f64, w: f64, h: f64, key: bool, radius: f64) -> Result<(), String> {
+#[allow(clippy::too_many_arguments)]
+pub fn bubble_place(window: tauri::WebviewWindow, x: f64, y: f64, w: f64, h: f64, key: bool, radius: f64, view: Option<[f64; 4]>) -> Result<(), String> {
     if window.label() != LABEL {
         return Err("bubble window only".into());
     }
@@ -119,11 +241,11 @@ pub fn bubble_place(window: tauri::WebviewWindow, x: f64, y: f64, w: f64, h: f64
         return Err("bad size".into());
     }
     if cfg!(debug_assertions) {
-        crate::claude::log_out("bubble", &format!("place {x},{y} {w}x{h} key={key}"));
+        crate::claude::log_out("bubble", &format!("place {x},{y} {w}x{h} view {view:?} key={key}"));
     }
     KEYABLE.store(key, Ordering::SeqCst);
-    let _ = window.set_size(tauri::LogicalSize::new(w, h));
-    let _ = window.set_position(tauri::LogicalPosition::new(x, y));
+    let view = fit_view(view, w, h);
+    apply(&window, Set::Place((x, y), Shape { w, h, view }));
     round(&window, radius);
     #[cfg(target_os = "macos")]
     keyable(&window, key);
@@ -135,6 +257,19 @@ pub fn bubble_place(window: tauri::WebviewWindow, x: f64, y: f64, w: f64, h: f64
             let _ = window.set_focus();
         }
     }
+    Ok(())
+}
+
+/// 판은 그대로 보일 칸만 바꾼다(판 기준 논리 px) — 부채·배너가 펴지기 전에 키우고, 접힌 뒤에 줄인다. 맥만(윈도우는 창 = 판)
+#[tauri::command]
+pub fn bubble_view(window: tauri::WebviewWindow, view: [f64; 4]) -> Result<(), String> {
+    if window.label() != LABEL {
+        return Err("bubble window only".into());
+    }
+    if !view.iter().all(|v| v.is_finite()) {
+        return Err("bad view".into());
+    }
+    apply(&window, Set::View(view));
     Ok(())
 }
 
@@ -284,7 +419,9 @@ fn track(app: tauri::AppHandle) {
             }
             let (Some(win), Ok(k)) = (rect_of(&w), w.scale_factor()) else { continue };
             let Some(m) = mouse(k) else { continue };
-            let p = local(m, &win);
+            // 창 안일 때만, 자리는 판 기준(받는 자리·올림 자리가 판 기준이다)
+            let plate = plate_of(&win, shape());
+            let p = local(m, &win).map(|_| (m.0 - plate.x, m.1 - plate.y));
             let hot = HOT.lock().unwrap_or_else(|e| e.into_inner()).clone();
             let pass = !FOLLOWING.load(Ordering::SeqCst) && !p.is_some_and(|p| hot.is_empty() || hit(p, &hot));
             if pass != through {
@@ -662,6 +799,67 @@ fn panelize(_: &tauri::AppHandle, _: &tauri::WebviewWindow) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // 11-10 사용자 "참모 배지가 항상 이 정도 영역을 차지(370×580 투명 판)" — 웹뷰(판)는 그대로, 맥 창만 보일 칸으로
+    #[test]
+    fn 보이는_칸은_판_안으로_자르고_없거나_깨지면_판_전체() {
+        assert_eq!(fit_view(Some([262.0, 472.0, 108.0, 108.0]), 370.0, 580.0), [262.0, 472.0, 108.0, 108.0]);
+        assert_eq!(fit_view(None, 370.0, 580.0), [0.0, 0.0, 370.0, 580.0]);
+        assert_eq!(fit_view(Some([300.0, 500.0, 108.0, 108.0]), 370.0, 580.0), [300.0, 500.0, 70.0, 80.0], "판 밖은 잘린다");
+        assert_eq!(fit_view(Some([f64::NAN, 0.0, 10.0, 10.0]), 370.0, 580.0), [0.0, 0.0, 370.0, 580.0]);
+        assert_eq!(fit_view(Some([400.0, 0.0, 10.0, 10.0]), 370.0, 580.0), [0.0, 0.0, 370.0, 580.0], "판 밖 칸 = 빈 칸 → 판 전체");
+        assert_eq!(fit_view(Some([10.0, 10.0, 0.5, 30.0]), 370.0, 580.0), [0.0, 0.0, 370.0, 580.0], "1점보다 얇으면 판 전체");
+    }
+
+    #[test]
+    fn 판_자리는_창_자리에서_보이는_칸만큼_뺀다() {
+        // 배지만 보일 때 창 = 판 (262,472) 의 108×108 → 판 왼쪽 위는 창보다 그만큼 왼쪽 위
+        let s = Shape { w: 370.0, h: 580.0, view: [262.0, 472.0, 108.0, 108.0] };
+        let win = Screen { id: String::new(), x: 1300.0, y: 800.0, w: 108.0, h: 108.0 };
+        assert_eq!(plate_of(&win, Some(s)), Screen { id: String::new(), x: 1038.0, y: 328.0, w: 370.0, h: 580.0 });
+        assert_eq!(plate_of(&win, None), win, "아직 놓기 전 = 창 그대로");
+    }
+
+    #[test]
+    fn 맥_창은_보이는_칸_웹뷰는_판_크기로_그_칸만큼_비켜_놓는다() {
+        // 판 (1038,328) 370×580, 칸 (262,472) 108×108, 주 화면 높이 982 — 맥 화면 좌표는 아래가 0
+        let s = Shape { w: 370.0, h: 580.0, view: [262.0, 472.0, 108.0, 108.0] };
+        let (win, web) = mac_frames((1038.0, 328.0), s, 982.0, false);
+        assert_eq!(win, [1300.0, 982.0 - (800.0 + 108.0), 108.0, 108.0]);
+        // 뒤집히지 않은 부모(아래가 0): 판 위쪽이 창 위쪽보다 472 위 → y = 108 + 472 - 580
+        assert_eq!(web, [-262.0, 0.0, 370.0, 580.0]);
+        let (_, flipped) = mac_frames((1038.0, 328.0), s, 982.0, true);
+        assert_eq!(flipped, [-262.0, -472.0, 370.0, 580.0]);
+        // 판 전체(대화창)면 창 = 판, 웹뷰 = 창 꽉
+        let full = Shape { view: [0.0, 0.0, 370.0, 580.0], ..s };
+        let (win, web) = mac_frames((1038.0, 328.0), full, 982.0, false);
+        assert_eq!(win, [1038.0, 982.0 - 908.0, 370.0, 580.0]);
+        assert_eq!(web, [0.0, 0.0, 370.0, 580.0]);
+    }
+
+    #[test]
+    fn 칸만_바꿀_땐_그_순간_창_자리에서_판_자리를_읽는다() {
+        // 배지 칸 창(맥 좌표 아래 0: (1300, 74) 108×108, 주 화면 982) → 위 0 (1300, 800) → 칸 (262,472) 만큼 뺀 판 (1038, 328)
+        assert_eq!(plate_from_cocoa([1300.0, 74.0, 108.0, 108.0], 982.0, [262.0, 472.0, 108.0, 108.0]), (1038.0, 328.0));
+        // mac_frames 와 왕복
+        let s = Shape { w: 370.0, h: 580.0, view: [26.0, 322.0, 344.0, 258.0] };
+        let (win, _) = mac_frames((1038.0, 328.0), s, 982.0, false);
+        assert_eq!(plate_from_cocoa(win, 982.0, s.view), (1038.0, 328.0));
+    }
+
+    #[test]
+    fn 칸이_바뀌어도_판의_화면_자리는_그대로_웹뷰_안_배지가_안_튄다() {
+        // 같은 판에서 칸만 rest → stage → open: 웹뷰(판)의 화면 위 왼쪽 위 = 창 자리 + 웹뷰 비킴 이 늘 같다
+        let plate = (1038.0, 328.0);
+        let h0 = 982.0;
+        let mut tops = vec![];
+        for v in [[262.0, 472.0, 108.0, 108.0], [26.0, 322.0, 344.0, 258.0], [0.0, 0.0, 370.0, 580.0]] {
+            let (win, web) = mac_frames(plate, Shape { w: 370.0, h: 580.0, view: v }, h0, false);
+            // 맥 좌표(아래 0)의 웹뷰 위쪽 = 창 아래 + 웹뷰 y + 웹뷰 높이 → 위 0 좌표로
+            tops.push((win[0] + web[0], h0 - (win[1] + web[1] + web[3])));
+        }
+        assert!(tops.iter().all(|t| *t == (1038.0, 328.0)), "{tops:?}");
+    }
 
     #[test]
     fn 마우스가_그대로면_창을_0점5초에_한_번만_묻는다() {

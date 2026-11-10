@@ -85,7 +85,11 @@ const readPrefs = (dir) => JSON.parse(fs.readFileSync(path.join(dir, 'Default', 
 // 알림 권한 기본 차단(2026-11-08 거래소) — 세션 크롬은 알림 쓸 일이 없는데, 크롬 자체 권한 풍선은 앱 칸(CDP 입력)에서 안 눌렸다
 // https 균형 모드 끄기(2026-11-09 윈도우 PC 수집 스크립트) — 크롬 베타 158 은 이게 기본으로 켜져, https 가 안 되는 http 사이트를 net::ERR_BLOCKED_BY_CLIENT 로 막았다.
 // 158 에선 기능 스위치(HttpsFirstBalancedModeAutoEnable)가 없어져 실행 인자로는 못 끈다 — 설정 칸 하나로 끈다(맥 베타 158 실측)
-const QUIET = { signin: { interception_enabled: false }, profile: { default_content_setting_values: { notifications: 2 } }, https_first_balanced_mode_enabled: false };
+// 크롬 자체 제안 풍선 끄기(2026-11-09 사용자 번역 풍선) — 칸 그림엔 보이는데 칸 누름은 페이지로만 가서 X 를 못 눌렀다
+const OFFERS_OFF = { translate: { enabled: false }, credentials_enable_service: false, download_bubble: { partial_view_enabled: false } };
+const QUIET = { signin: { interception_enabled: false }, profile: { default_content_setting_values: { notifications: 2 } }, https_first_balanced_mode_enabled: false, ...OFFERS_OFF };
+// 어제(11-09 낮)까지 판이 손본 프로필 — 제안 풍선 칸만 비었다
+const YESTERDAY = { signin: { interception_enabled: false }, profile: { default_content_setting_values: { notifications: 2 } }, https_first_balanced_mode_enabled: false };
 
 test('로그인 권유 끄기 — 새 프로필이면 Default/Preferences 를 만들어 interception_enabled=false 와 알림 기본 차단만 넣는다', () => {
   const dir = tmpProfile();
@@ -99,7 +103,7 @@ test('로그인 권유 끄기 — 있던 설정(사이트 로그인·다른 sign
   const dir = tmpProfile(before);
   assert.strictEqual(quietSignin(dir), 'set');
   const after = readPrefs(dir);
-  assert.deepStrictEqual(after, { ...before, signin: { ...before.signin, interception_enabled: false }, profile: { name: 'project-x', default_content_setting_values: { notifications: 2 } }, https_first_balanced_mode_enabled: false });
+  assert.deepStrictEqual(after, { ...before, signin: { ...before.signin, interception_enabled: false }, profile: { name: 'project-x', default_content_setting_values: { notifications: 2 } }, https_first_balanced_mode_enabled: false, ...OFFERS_OFF });
   assert.strictEqual(after.signin.allowed, true, 'signin.allowed 를 끄면 크롬에 로그인된 프로필이 로그아웃된다 — 건드리지 않는다');
 });
 
@@ -143,7 +147,7 @@ test('알림 기본 차단 — 로그인 권유만 꺼져 있던 프로필(어�
 
 test('알림 기본 차단 — 사람이 크롬 설정에서 고른 기본값(허용 1·차단 2)은 안 바꾼다, 물어봄(3)이면 차단으로', () => {
   for (const [v, want, r] of [[1, 1, 'already'], [2, 2, 'already'], [3, 2, 'set']]) {
-    const dir = tmpProfile({ signin: { interception_enabled: false }, profile: { default_content_setting_values: { notifications: v } }, https_first_balanced_mode_enabled: false });
+    const dir = tmpProfile({ signin: { interception_enabled: false }, profile: { default_content_setting_values: { notifications: v } }, https_first_balanced_mode_enabled: false, ...OFFERS_OFF });
     assert.strictEqual(quietSignin(dir), r, String(v));
     assert.strictEqual(readPrefs(dir).profile.default_content_setting_values.notifications, want, String(v));
   }
@@ -166,8 +170,37 @@ test('https 균형 모드 끄기 — 어제까지 판으로 손본 프로필(로
   assert.deepStrictEqual(readPrefs(dir), { ...QUIET, k: 1 });
 });
 
+test('제안 풍선 끄기 — 이미 쓰던 프로필(어제까지 판)에도 번역·저장 제안·다운로드 풍선을 끈다', () => {
+  const dir = tmpProfile({ ...YESTERDAY, translate_blocked_languages: ['ko'], autofill: { last_version_deduped: 158 } });
+  assert.strictEqual(quietSignin(dir), 'set');
+  const after = readPrefs(dir);
+  assert.deepStrictEqual(after, { ...QUIET, translate_blocked_languages: ['ko'], autofill: { last_version_deduped: 158 } }, '자동 완성(주소·카드)은 안 건드린다');
+  assert.strictEqual(quietSignin(dir), 'already', '두 번째 판은 그대로');
+});
+
+test('제안 풍선 끄기 — 사람이 크롬 설정에서 켠 것(true)은 그대로, 하나만 비어도 그것만 채운다', () => {
+  const dir = tmpProfile({ ...YESTERDAY, translate: { enabled: true }, credentials_enable_service: true, download_bubble: { partial_view_enabled: true } });
+  assert.strictEqual(quietSignin(dir), 'already');
+  assert.strictEqual(readPrefs(dir).translate.enabled, true);
+  const one = tmpProfile({ ...YESTERDAY, translate: { enabled: true, x: 1 }, credentials_enable_service: false });
+  assert.strictEqual(quietSignin(one), 'set');
+  assert.deepStrictEqual(readPrefs(one).translate, { enabled: true, x: 1 });
+  assert.deepStrictEqual(readPrefs(one).download_bubble, { partial_view_enabled: false });
+});
+
+test('제안 풍선 끄기 — 가는 길의 칸이 객체가 아니거나 값이 boolean 이 아니면 바꿔 넣는다', () => {
+  for (const bad of ['x', [1], null, 0]) {
+    const dir = tmpProfile({ ...YESTERDAY, translate: bad, download_bubble: bad, credentials_enable_service: bad });
+    assert.strictEqual(quietSignin(dir), 'set', JSON.stringify(bad));
+    assert.deepStrictEqual(readPrefs(dir), QUIET, JSON.stringify(bad));
+  }
+  const dir = tmpProfile({ ...YESTERDAY, ...OFFERS_OFF, translate: { enabled: 'false' } });
+  assert.strictEqual(quietSignin(dir), 'set', "글자 'false' 는 크롬이 안 읽는다");
+  assert.strictEqual(readPrefs(dir).translate.enabled, false);
+});
+
 test('https 균형 모드 끄기 — 사람이 크롬 설정에서 켠 것(균형 true·엄격 https_only_mode_enabled true)은 그대로', () => {
-  const base = { signin: { interception_enabled: false }, profile: { default_content_setting_values: { notifications: 2 } } };
+  const base = { signin: { interception_enabled: false }, profile: { default_content_setting_values: { notifications: 2 } }, ...OFFERS_OFF };
   const on = tmpProfile({ ...base, https_first_balanced_mode_enabled: true });
   assert.strictEqual(quietSignin(on), 'already');
   assert.strictEqual(readPrefs(on).https_first_balanced_mode_enabled, true);

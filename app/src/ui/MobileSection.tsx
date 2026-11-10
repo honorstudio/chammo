@@ -2,7 +2,7 @@
 // 11-01: 계정이 있으면 켜고 끄기는 위 '내 기기' 칸의 폰 연결 스위치 하나 — 여긴 테일스케일 덤 칸이라 같은 스위치를 또 두지 않는다
 // 목록은 폰 단위 — 사파리·홈 화면 앱(열쇠 둘)을 한 줄로 묶고 칸은 작은 글로(domain/mobileDevices)
 import { useEffect, useState } from 'react';
-import { mobileApi, openTarget, writeClipboard, type MobileStatus, type PairQr } from '../data/tauri';
+import { mobileApi, openTarget, writeClipboard, type EntryQr, type MobileStatus, type PairQr } from '../data/tauri';
 import { groupCode, pairCodeFrom } from '../domain/mobileAuth';
 import { kindLabels, lastPaired, phoneGroups } from '../domain/mobileDevices';
 import { IconClose, IconPower, IconUnlink } from './Icons';
@@ -27,6 +27,13 @@ export function MobileSection({ title, onAccount }: { title: string; onAccount?:
   const [err, setErr] = useState<string | null>(null);
   // 모두 끊기는 두 번 — 웹뷰 confirm 창 대신 그 자리에서 한 번 더 묻는다
   const [clearing, setClearing] = useState(false);
+  // 직통 폰 줄을 중계로 다시 붙이는 '폰 추가' QR(11-09 — 직통 줄은 계정 확인이 안 돼 결제·운영 카드가 안 간다)
+  const [entry, setEntry] = useState<EntryQr | null>(null);
+  const reconnect = () => {
+    if (!hasAccount) { onAccount?.(); return; }
+    setErr(null);
+    void mobileApi.entryQr().then(setEntry, (e: unknown) => setErr(String(e)));
+  };
 
   // Chammo 계정에 로그인했나 — 그러면 켜기·끄기는 위 내 기기 칸에서(테일스케일 없이 붙는 길이 기본)
   const [hasAccount, setHasAccount] = useState(false);
@@ -115,7 +122,9 @@ export function MobileSection({ title, onAccount }: { title: string; onAccount?:
                 <div className="su-row-text">
                   <b title={g.name}>{g.name}</b>
                   <span>{[tr(`마지막 ${day(g.lastUsed)}`, `Last ${day(g.lastUsed)}`), ...kindLabels(g.name, g.kinds, kindWords)].join(' · ')}</span>
+                  {g.direct && <span className="su-warn">{tr('계정 확인 안 됨 — 중계로 다시 연결', 'Account not verified — reconnect through the relay')}</span>}
                 </div>
+                {g.direct && <button className="btn" disabled={busy} onClick={reconnect}>{hasAccount ? tr('다시 연결', 'Reconnect') : tr('로그인하고 다시 연결', 'Sign in to reconnect')}</button>}
                 {g.locker !== undefined && (
                   <label className="peer-share">
                     <input type="checkbox" role="switch" className="cfg-sw" checked={g.locker} disabled={busy} onChange={(e) => act(() => mobileApi.deviceLocker(g.group, e.target.checked))} />
@@ -127,6 +136,17 @@ export function MobileSection({ title, onAccount }: { title: string; onAccount?:
             ))}
             {phones.length === 0 && <span className="su-hint">{tr('연결된 폰이 없어요', 'No phones connected')}</span>}
           </div>
+          {entry && (
+            <div className="su-mobile">
+              {entry.qrSvg && <img className="su-qr" alt={tr('폰 추가 QR', 'Add phone QR')} src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(entry.qrSvg)}`} />}
+              <div className="su-mobile-side">
+                <b>{tr('폰 카메라로 찍어 주세요', 'Scan with the phone camera')}</b>
+                <span className="su-hint">{tr('홈 화면 앱에서 구글로 로그인하고 이 컴퓨터를 고르면 중계로 다시 붙어요. 붙은 뒤 옛 줄은 끊어 주세요',
+                  'Sign in with Google in the Home Screen app and pick this computer to reconnect through the relay. Then disconnect the old row')}</span>
+                <div className="su-inline"><IconButton size="l" tone="line" label={tr('닫기', 'Close')} onClick={() => setEntry(null)}><IconClose /></IconButton></div>
+              </div>
+            </div>
+          )}
           {phones.length > 1 && (
             <div className="su-inline">
               {clearing

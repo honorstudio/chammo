@@ -4,13 +4,13 @@
 // 대화창은 원격 채팅(RemoteChat)처럼 터미널 없는 ChatView: 읽기는 대화 기록, 보내기는 Rust bubble_send(폰 보내기와 같은 길).
 // 자리는 모니터별 화면 + 비율로 기억(domain/orchBubble screenSave·screenPlace), 대화창은 배지가 있는 모니터 안에서만(deskPop)
 import { invoke } from '@tauri-apps/api/core';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { listSessionsRaw, readCtx } from '../../data/tauri';
 import { promptInput } from '../../domain/chat';
 import { parseCtx, type Ctx } from '../../domain/ctx';
 import { keepSame } from '../../domain/keepSame';
 import { agentState } from '../../domain/session';
-import { DESK_PAD, POP_MS, deskFrame, openKeep, fanKeep, fanPlan, farEdges, fitPopSize, resizedPop, type Far, isDrag, popSteps, readSpot, screenPlace, screenSave, stageBox, type PopAnim, type Pt, type Rect, type Screen } from '../../domain/orchBubble';
+import { DESK_PAD, POP_MS, deskFrame, deskView, type DeskMode, openKeep, fanKeep, fanPlan, farEdges, fitPopSize, resizedPop, type Far, isDrag, popSteps, readSpot, screenPlace, screenSave, stageBox, type PopAnim, type Pt, type Rect, type Screen } from '../../domain/orchBubble';
 import { BadgeCore, BubbleFan, useHoverFan, type FanOrch } from './BubbleFan';
 import { shownName } from '../../domain/orchLabel';
 import { orchVars } from '../../domain/orchTheme';
@@ -52,7 +52,9 @@ const nick = (l: string) => shownName(l);
 const read = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 const write = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* 이번 실행만 */ } };
 const screensNow = () => invoke<Screens>('bubble_screens');
-const place = (r: Rect, key: boolean, radius: number) => invoke('bubble_place', { x: r.x, y: r.y, w: r.w, h: r.h, key, radius });
+/** 판(웹뷰) 자리·크기 + 지금 보일 칸(맥 창 = 그 칸, 판 기준 px) — 판 안 그림은 안 움직이고 창만 줄고 커진다(11-10 사용자 "늘 이 정도 영역을 차지") */
+const place = (r: Rect, key: boolean, radius: number, view: Rect) => invoke('bubble_place', { x: r.x, y: r.y, w: r.w, h: r.h, key, radius, view: [view.x, view.y, view.w, view.h] });
+const viewOf = (f: Frame, mode: DeskMode) => deskView(f, mode, EXT);
 /** 화면이 한 번 그려질 때까지 — 창이 안 보이면 rAF 가 안 와서 80ms 에 넘어간다 */
 const paint = () => new Promise<void>((ok) => { const t = window.setTimeout(ok, 80); requestAnimationFrame(() => requestAnimationFrame(() => { window.clearTimeout(t); ok(); })); });
 const wait = (ms: number) => new Promise<void>((ok) => window.setTimeout(ok, ms));
@@ -67,6 +69,7 @@ export function DeskBubble() {
   const [frame, setFrame] = useState<Frame>(() => ({ win: { x: 0, y: 0, w: 0, h: 0 }, box: stageBox({ x: -1, y: -1 }, EXT), side: { x: -1, y: -1 }, pop: null, origin: { x: 0, y: 0 }, badge: true }));
   const frameRef = useRef(frame);
   frameRef.current = frame;
+  const modeRef = useRef<DeskMode>('rest');
   // 대화창 보통 크기 — 사람이 끌어 바꾼 크기(없으면 POP). '크게'는 따로 모드라 여기 안 적는다
   const sizeRef = useRef<{ w: number; h: number }>((() => { try { const v = JSON.parse(read(SIZE_KEY) ?? 'null') as { w?: number; h?: number } | null; return v && v.w! > 0 && v.h! > 0 ? { w: v.w!, h: v.h! } : POP; } catch { return POP; } })());
   // 별명 툴팁(얼굴 줄은 가로 스크롤이라 그 안에 그리면 잘린다 — 창 맨 위 층에)
@@ -124,7 +127,7 @@ export function DeskBubble() {
     const flip = f.box.x !== frameRef.current.box.x || f.box.y !== frameRef.current.box.y;
     if (sameRect(s.win, f.win) && !flip) { if (JSON.stringify(f) !== JSON.stringify(frameRef.current)) setFrame(f); return; }
     if (flip) { setHide(true); await paint(); }
-    await place(f.win, false, 0);
+    await place(f.win, false, 0, viewOf(f, modeRef.current));
     setFrame(f);
     if (flip) { await paint(); setHide(false); }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -159,7 +162,7 @@ export function DeskBubble() {
           if (!s.win) return;
           // 열린 대화창째 끌었으면 배지 화면 밖으로 나간 만큼 창째 당긴다(배지·대화창 사이 자리는 그대로) — 이 옮김 사건은 위에서 draggedRef 를 내려 안 센다
           const to = openRef.current ? openKeep(s.win, frameRef.current.box, s.screens, DESK) : null;
-          if (to) await place({ ...s.win, ...to }, true, 0);
+          if (to) await place({ ...s.win, ...to }, true, 0, viewOf(frameRef.current, 'open'));
           const w0 = to ? { ...s.win, ...to } : s.win;
           const b = { x: w0.x + frameRef.current.box.x, y: w0.y + frameRef.current.box.y };
           write(SPOT_KEY, JSON.stringify(screenSave({ x: b.x, y: b.y }, s.screens, DESK)));
@@ -245,7 +248,7 @@ export function DeskBubble() {
       setOpen(true);
       setPeek('');
       if (grow) await paint(); // 접힌(안 보이는) 대화창을 먼저 그린 뒤 펼친다
-      await place(f.win, true, 0); // 대화창 = 키 창(글을 칠 수 있게) — 판이 같으면 자리·크기는 그대로
+      await place(f.win, true, 0, viewOf(f, 'open')); // 대화창 = 키 창(글을 칠 수 있게) + 창을 판 전체로 — 판 안 그림은 그대로라 배지는 제자리
       if (grow && moved) await paint();
       if (flip) setHide(false);
       setAnim('in');
@@ -261,7 +264,7 @@ export function DeskBubble() {
     setOpen(false);
     openRef.current = false;
     const s = await screensNow().catch(() => null);
-    await place(s?.win ?? frameRef.current.win, false, 0);
+    await place(s?.win ?? frameRef.current.win, false, 0, viewOf(frameRef.current, 'rest')); // 접힌 뒤에 창만 배지 칸으로
     await toBadge(true); // 대화창째 끌어 옮겼으면 그 자리 판으로(배지 자리가 바뀌면 감춘 채)
   };
   // 부채 — 올리면 창 안 화면 가운데 쪽으로 펼치기만 한다(창 크기·자리는 그대로 — 바꾸면 창과 웹뷰가 한 프레임 어긋나 배지가 튀었다, 10-28 사용자)
@@ -302,7 +305,7 @@ export function DeskBubble() {
     sizeRef.current = { w: f.pop.w, h: f.pop.h };
     d.busy = true;
     setFrame(f);
-    void place(f.win, true, 0).finally(() => { d.busy = false; });
+    void place(f.win, true, 0, viewOf(f, 'open')).finally(() => { d.busy = false; });
   };
   const endGrip = () => {
     const d = grip.current;
@@ -397,6 +400,13 @@ export function DeskBubble() {
     : { hot: [badgeAt, ...(peek ? [[P + peekX, P + off.y, PEEK - 14, 52] as [number, number, number, number]] : [])], hover: [badgeAt] };
   const hitKey = JSON.stringify(hits);
   useEffect(() => { void invoke('bubble_hot', hits).catch(() => {}); }, [hitKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 맥 창 = 판의 보일 칸 — 배지만이면 배지 칸(108), 부채·배너는 무대, 대화창은 판 전체. 부채·배너는 펴질 때 창부터 키우고(첫 그림은 투명) 다 접힌 뒤 줄인다.
+  // 열린 동안(열기·키우기·크기 손잡이·끌어 당김)은 place 가 판과 칸을 같이 놓는다 — 여기서 옛 판에 새 칸을 대면 한 박자 잘못 줄었다
+  const mode: DeskMode = open ? 'open' : (fanShown || peek) && !dragging ? 'stage' : 'rest';
+  modeRef.current = mode;
+  const view = viewOf(frame, mode);
+  const viewKey = `${view.x},${view.y},${view.w},${view.h}`;
+  useLayoutEffect(() => { if (frame.win.w > 0 && !open && !openingRef.current) void invoke('bubble_view', { view: [view.x, view.y, view.w, view.h] }).catch(() => {}); }, [viewKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!who) return <div className="obd-empty" />;
   const avatar = (o: typeof who, size: number) => <OrchAvatar name={o.owner} size={size} state={o.pip === 'ask' ? 'ask' : o.busy ? 'work' : 'rest'} color={o.color} label={o.label} />;

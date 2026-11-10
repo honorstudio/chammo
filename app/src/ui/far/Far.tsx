@@ -10,6 +10,7 @@ import { orchColor } from '../avatar';
 import { every } from '../poll';
 import { FarBar, FarButton, FarPop, FarRail } from './FarParts';
 import { FarSpace } from './FarSpace';
+import { farPaused } from '../../domain/peerDevices';
 import { useFarRead, type FarRead } from './useFarRead';
 
 export type FarTarget = { dev: string; name: string };
@@ -91,6 +92,9 @@ export function useFarMode(o: { remoteChat: RemoteChatTarget | null; setRemoteCh
   const devCards = far ? o.cards.filter((c) => c.dev === far.dev) : [];
   const button = (isFar: boolean) => <FarButton far={isFar} open={!!pop} wait={!isFar && o.cards.length > 0} onClick={(e) => openAt(e.currentTarget)} />;
   const color = orchColor(remoteChat?.name ?? '');
+  // 계정 때문에 멈춘 짝(QA 0.4.11 문제 3-2) — 꺼진 기기처럼 '켜지면 이어져요'가 아니라 그 자리에서 다시 짝짓기
+  const paused = far && !data.home ? farPaused(status?.id === far.dev ? status : undefined, data.err) : null;
+  const repaired = () => { setStatus(undefined); data.again(); };
   return {
     far,
     railTop: saved.length > 0 && !far ? button(false) : undefined,
@@ -98,10 +102,11 @@ export function useFarMode(o: { remoteChat: RemoteChatTarget | null; setRemoteCh
       color,
       none: !!data.home && data.home.assistants.length === 0,
       cut: !!data.err && !data.home,
+      paused: !!paused,
       rail: <FarRail button={button(true)} assistants={data.home?.assistants ?? []} on={remoteChat?.dev === far.dev ? remoteChat.agent : null} onPick={(a) => chat(a)} />,
-      main: <FarSpace key={far.dev} t={far} data={data} status={status} cards={devCards} agent={remoteChat?.agent ?? null} onAgent={(a) => chat(a)} fontSize={o.fontSize} />,
+      main: <FarSpace key={far.dev} t={far} data={data} status={status} paused={paused} onRepaired={repaired} cards={devCards} agent={remoteChat?.agent ?? null} onAgent={(a) => chat(a)} fontSize={o.fontSize} />,
     } : undefined,
-    bar: far ? <FarBar name={far.name} cut={!!data.err} onBack={back} /> : null,
+    bar: far ? <FarBar name={far.name} cut={!!data.err} paused={!!paused} onBack={back} /> : null,
     pop: pop ? (
       <div className="far-pop-at" style={{ left: pop.left, top: pop.top }}>
         <FarPop saved={saved} cur={far?.dev ?? null} waitDevs={new Set(o.cards.map((c) => c.dev))} onPick={pick} onHere={back} onClose={() => setPop(null)} onConnect={() => { setPop(null); o.onConnect(); }} />

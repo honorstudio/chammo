@@ -32,3 +32,26 @@ describe('우클릭은 열기·끌기가 아니다', () => {
   });
   it('끌기는 왼쪽 버튼 + ctrl 없을 때만', () => expect(drag).toMatch(/if \(e\.button !== 0 \|\| e\.ctrlKey\) return;/));
 });
+
+// 2026-11-10 — 꺼진 세션 탭: 이름이 '꺼진 세션'으로 바뀌고, 고르면 '왼쪽 메뉴에서 골라 줘'만 떴다
+import dead from './DeadSessionPage.tsx?raw';
+describe('꺼진 세션 탭', () => {
+  it('탭 이름은 살아 있을 때 본 이름(기억) — 기억도 꺼진 목록도 없을 때만 \'꺼진 세션\'', () => {
+    expect(view).toMatch(/rememberTabSessions\(tabSess\.current, sessions, cardName, \(s\) => tidyLight\(s, helpers\)\)/);
+    expect(view).toMatch(/const dead = ss \? null : deadTab\(p\.slice\(2\), tabSess\.current, stopped\);\n\s*const nm = ss \? cardName\(ss\) : dead\?\.name \?\? tr\('꺼진 세션', 'Ended session'\);/);
+  });
+  it('꺼진 세션 탭을 고르면 빈 안내 대신 꺼진 세션 화면(다시 켜기·탭 닫기)', () => {
+    expect(view).toMatch(/\} else if \(pick\.startsWith\('s:'\) && lockerOrch\) \{[\s\S]{0,700}<DeadSessionPage key=\{pick\}[^>]*canResume=\{!!d\.resume && !!onResume\}[\s\S]{0,120}onClose=\{closeDead\} \/>/);
+  });
+  it('꺼진 세션 화면 = 이름 + 한 줄 + 아이콘 둘(Icons.tsx 직접 그린 SVG, 이름은 aria-label)', () => {
+    expect(dead).toMatch(/tr\('꺼졌어 · 대화는 남아 있어', 'Stopped · conversation kept'\)/);
+    expect(dead).toMatch(/label=\{tr\('다시 켜기', 'Resume'\)\}[^\n]*><IconResume \/><\/IconButton>/);
+    expect(dead).toMatch(/label=\{tr\('탭 닫기', 'Close tab'\)\} onClick=\{onClose\}><IconClose \/><\/IconButton>/);
+    expect(dead).not.toMatch(/lucide|[\u{1F300}-\u{1FAFF}]/u);
+  });
+  it('꺼진 도우미·예약 세션 탭은 세션 목록이 바뀔 때 저절로 닫힌다(지금 탭 줄 + 다른 참모 몫까지)', () => {
+    expect(view).toMatch(/goneLightTabs\(h\.tabs, ids, tabSess\.current\);\n\s*if \(gone\.length\) holds\.current\.set\(o,/);
+    expect(view).toMatch(/setLkHold\(hold\);\n\s*if \(to\) setPick\(to, 'close'\);\n\s*\}, \[sessions\]\);/);
+  });
+  it('꺼진 세션 탭 오른쪽 클릭에도 다시 켜기', () => expect(view).toMatch(/: wake \? \[\{ label: tr\('다시 켜기', 'Resume'\), run: \(\) => onResume\?\.\(wake\) \}\] : \[\]/));
+});

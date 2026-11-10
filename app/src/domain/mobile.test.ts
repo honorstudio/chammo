@@ -699,6 +699,8 @@ describe('결정 카드 답 — 한 번만(2026-10-06 사용자 폰에서 ㄱㄱ
     expect(answerFail('too soon')).toBe('soon');
     expect(answerFail('Failed to fetch')).toBe('retry');
     expect(answerFail('HTTP 502')).toBe('retry');
+    expect(answerFail('account:unbound')).toBe('account');
+    expect(answerFail('account:nologin')).toBe('account');
   });
 });
 

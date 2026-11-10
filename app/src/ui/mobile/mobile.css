@@ -37,7 +37,7 @@ button { font: inherit; color: inherit; }
 .m-sm { font-size: 13px; }
 .m-center { padding: 48px 24px; text-align: center; color: var(--text-3); }
 .m-center h1 { font-size: 20px; color: var(--text); }
-.m-error { padding: 6px 16px; font-size: 13.5px; color: var(--danger-ink); }
+.m-error { padding: 6px 16px; font-size: 13.5px; color: var(--danger-ink); word-break: keep-all; overflow-wrap: anywhere; }
 .m-top-err { position: absolute; top: env(safe-area-inset-top); left: 0; right: 0; z-index: calc(var(--z-sheet) + 5); background: var(--surface); }
 
 .m-app { position: fixed; left: 0; right: 0; top: 0; height: 100dvh; overflow: hidden; } /* top·height 는 보이는 화면(useViewport)이 덮는다 */
@@ -604,6 +604,11 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-app .dc-link { min-height: 44px; display: inline-flex; align-items: center; }
 .m-app .dc-acts .dc-ib { width: 44px; height: 44px; }
 .m-direct .dc-row > * { max-width: none; }
+/* 이 폰 줄이 결제·운영 카드를 못 받을 때(11-09) — 면 색만, 단추는 손가락 44px */
+.m-direct .m-acct { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 14px; background: var(--warn-bg); color: var(--warn-ink); font-size: 14px; }
+.m-direct .m-acct span { flex: 1; min-width: 0; word-break: keep-all; overflow-wrap: anywhere; }
+/* 폰은 데스크톱 .btn 을 안 실어 파란 링크 글자로 보였다(QA 0.4.11 문제 2-2) — 폰 단추(.m-btn) 모양, 줄바꿈 없이 */
+.m-direct .m-acct .m-btn { flex: none; display: inline-flex; align-items: center; color: var(--text); text-decoration: none; white-space: nowrap; }
 .m-direct .dc-btn { min-height: 46px; flex: 1 1 auto; }
 /* 알림을 눌러 온 카드 — 전체 테두리가 두 번 반짝(왼쪽 띠 금지), 그 뒤 옅은 테두리로 남는다 */
 .m-direct .m-jumped { border-radius: 14px; animation: m-jumped 1.2s ease-out 2; box-shadow: 0 0 0 2px color-mix(in srgb, var(--orch-solid, var(--accent)) 45%, transparent); }

@@ -13,13 +13,14 @@ import { builtinSlash, completeSlash, isMemoryCmd, matchSlash, slashQuery, type 
 import { appendChat, chatBusy, chatEscStops, chatNorm, escUnsends, enterDelay, parseChat, pasteKind, clickFocusesInput, sentByMe, promptInput, sendControls, splitPaths, splitRefs, staleRefs, stillPending, stuckInInput, taskCounts, termRest, withRefs, type ChatItem, type ChatRef } from '../../domain/chat';
 import type { LinkState } from '../../domain/attachExit';
 import { HOLD_MAX } from '../../domain/paneLinks';
-import { absorbedAt, absorbedLeft, againPlan, applyQueueOps, autoEnterTarget, DUP_CONFIRM, emptyQueue, inputLeftover, keepAfterRemove, LOST_AFTER, mineForLeftover, newPending, pendAct, pendingState, pendLook, resent, restoreDraft, typingOf, waitingOf, type PendingState, type QueueState } from '../../domain/chatQueue';
+import { absorbedAt, absorbedLeft, againPlan, againPlanOf, applyQueueOps, autoEnterTarget, DUP_CONFIRM, emptyQueue, inputLeftover, keepAfterRemove, LOST_AFTER, mineForLeftover, newPending, appLineShown, isAppLine, pendAct, pendingState, pendLook, queueAllMine, resent, restoreDraft, staleEcho, typingOf, waitingOf, type PendingState, type QueueState } from '../../domain/chatQueue';
 import { mdToHtml } from '../md';
 import { openWebLink } from '../followLink';
 import { chatSendLog, openTarget, readSessionTasks, readTranscript, type SessionTask, type TranscriptChunk } from '../../data/tauri';
 import { modKey } from '../../domain/keys';
 import { docUrl, IS_WIN } from '../../domain/reader';
-import { DROP_EVENT, DROP_PATHS_EVENT } from '../fileDrop';
+import { ATTACH_FAIL_EVENT, DROP_EVENT, DROP_PATHS_EVENT, givenFrom, pastePaths } from '../fileDrop';
+import { saveClipFiles } from './pasteFiles';
 import { clearCount, termReadDue } from '../../domain/termInput';
 import { attachStep, NO_ATT, type Att, type AttEvent, type AttState } from '../../domain/chatAttach';
 import { chipName, chipPastes, isFolderChip } from '../../domain/drop';
@@ -109,7 +110,8 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   link?: LinkState;
   state: string;
   /** 보낸다 — 약속을 주면 못 보냈을 때(false) 입력칸에 되살리고 한 줄 알린다 */
-  send: (text: string) => void | Promise<boolean>;
+  /** again = '다시 보내기' — 세션 쪽이 입력칸에 남은 그 말에 같은 글을 겹쳐 치지 않는다(pty_type again) */
+  send: (text: string, again?: boolean) => void | Promise<boolean>;
   interrupt: () => void;
   /** 터미널에 키를 하나씩(선택 창 버튼) — 한꺼번에 넣으면 TUI 가 놓친다 */
   rawKeys?: (seq: string[]) => Promise<void>;
@@ -195,6 +197,8 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     }
     return r;
   };
+  // 못 붙인 이유를 띄우는 함수(아래 attachErr) — 끌어 놓기 받는 곳(빈 의존성 효과)이 늘 지금 것을 부르게
+  const tellNow = useRef<(errors: string[]) => void>(() => {});
   // 이번 메시지에 앱이 터미널 입력칸에 붙여 넣은 글 길이 — 화면 읽기는 긴 입력칸을 잘라 보여서 지울 때 모자랐다(domain/termInput)
   const pasted = useRef(0);
   const attach = (item: Att, kind: 'img' | 'file'): string => {
@@ -285,7 +289,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     // 맨 위로 올린 스크린샷은 보관함 줄(연결한 스크린샷 폴더)에서 한 번 더 안 보이게
     ...(locker && paneId ? lockerChoices(lockerTree, hashQ, 12).filter((f) => !shotItems.some((s) => sameName(s.title ?? '', f.name))).slice(0, 6) : []).map((f) => ({ key: f.path, main: f.name, sub: f.folder || tr('보관함', 'Locker'), pick: () => attachInstead([f.path]) })),
     ...(locker && paneId && !hashQ ? [{ key: ':choose', main: tr('파일 고르기…', 'Choose a file…'), sub: tr('고른 파일은 보관함에도 들어가요', 'Also goes into the locker'),
-      pick: () => void lockerApi.choose(locker).then((r) => attachInstead((r?.added ?? []).map((a) => a.path)), () => {}) }] : []),
+      pick: () => void lockerApi.choose(locker).then((r) => { attachInstead((r?.added ?? []).map((a) => a.path)); tellAttach(r?.errors ?? []); }, (e: unknown) => tellAttach([String(e)])) }] : []),
   ];
   const atItems: PopItem[] = atQ === null ? [] : matchMentions(who, atQ).map((w) => ({
     key: `@${w.id}`, main: w.label, sub: w.role, off: w.off, title: seenName(w.name),
@@ -319,18 +323,21 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
       if (!paths.length) { e.preventDefault(); return; }
       const chips = paths.map((p) => {
         const it = { key: `${p}:${Date.now()}`, name: chipName(p), path: p };
-        return { path: p, label: /\.(png|jpe?g|gif|webp|heic)$/i.test(p) ? attach({ ...it, url: docUrl(p) }, 'img') : attach(it, 'file') };
+        return { path: p, from: givenFrom.get(p), label: /\.(png|jpe?g|gif|webp|heic)$/i.test(p) ? attach({ ...it, url: docUrl(p) }, 'img') : attach(it, 'file') };
       });
       // 터미널 입력칸엔 이름표 바로 뒤 따옴표 경로로(그림은 이스케이프 따로 한 조각) — 조각 사이는 Claude 가 앞 붙여넣기를 다 읽게 조금 쉬고
       e.preventDefault();
-      chipPastes(chips).forEach((t, i) => {
+      chipPastes(chips, IS_WIN).forEach((t, i) => {
         pasted.current += [...t].length;
         const put = () => pane.dispatchEvent(new CustomEvent(DROP_EVENT, { detail: t }));
         if (i) window.setTimeout(put, 400 * i); else put();
       });
     };
+    // 못 붙인 것 — 받았다고 알리고(preventDefault) 이유를 입력칸 위에
+    const onFail = (e: Event) => { e.preventDefault(); tellNow.current((e as CustomEvent<{ from: string; error: string }[]>).detail.map((b) => b.error)); };
     pane.addEventListener(DROP_PATHS_EVENT, onPaths);
-    return () => pane.removeEventListener(DROP_PATHS_EVENT, onPaths);
+    pane.addEventListener(ATTACH_FAIL_EVENT, onFail);
+    return () => { pane.removeEventListener(DROP_PATHS_EVENT, onPaths); pane.removeEventListener(ATTACH_FAIL_EVENT, onFail); };
   }, []);
   const input = useRef<HTMLTextAreaElement>(null);
   // 방금 보낸 글 — 입력기가 비운 칸에 그 글을 통째로 되살리면 버린다(domain/enterSend, 10-28 팀 메신저 '해결해결')
@@ -487,7 +494,8 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   }, []);
 
   // 터미널 입력칸 글 — 지구본 키로 말하면 거기 받아 적힌다. 터미널로 바꾸지 않고 여기 보여 준다(2026-09-30 사용자)
-  const [termText, setTermText] = useState('');
+  // termRead = 화면에서 읽은 그대로, termText = 낡은 읽기(staleEcho — Claude 가 이미 받은 말)를 뺀 것. 아래는 다 termText 로 본다
+  const [termRead, setTermText] = useState('');
   const [compacting, setCompacting] = useState(false);
   const [pasting, setPasting] = useState(false); // Claude 가 붙여넣은 그림을 읽는 중(isPasting)
   // 터미널에 뜬 선택 창 — 채팅에 버튼으로(2026-10-01 사용자 "cli 안 거치게")
@@ -512,7 +520,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   const stirred = useRef(0);
   useEffect(() => { stirred.current = Date.now(); }, [draft, attached, pending.length, pollMs]);
   const busyRef = useRef(false);
-  busyRef.current = attached.length > 0 || !!termText || !!dialog || pasting || compacting;
+  busyRef.current = attached.length > 0 || !!termRead || !!dialog || pasting || compacting;
   useEffect(() => {
     if (!hasScreen) return;
     const id = window.setInterval(() => {
@@ -543,7 +551,6 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   // 지구본 키로 말하면 Claude(voice.autoSubmit)가 보통 알아서 보낸다. 가끔 안 보내고 입력칸에 남는다(참모가 일할 때 등, 2026-09-30) —
   // 말이 끝나고 4초 뒤에도 받아 적은 글이 그대로면 대신 Enter. 그림 표시가 섞였거나 사람이 입력칸에 쓰는 중이면 두다
   const termRef = useRef('');
-  termRef.current = termText;
   const draftRef = useRef('');
   draftRef.current = draft;
   useEffect(() => {
@@ -560,6 +567,8 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   }, [voiceStop]);
 
   const busy = chatBusy(state, items);
+  const termText = staleEcho(termRead, { queue, items, busy, now: Date.now() }) ? '' : termRead;
+  termRef.current = termText;
   // 입력칸 글이 앱이 치고 있는(또는 높이를 넘어 토막만 보이는) 내 말이면 '입력칸에 들어가 있는 것'이 아니다 — 위 칸에 안 띄우고, 빈 채팅 Enter 로 보내지도 않는다(2026-10-26 사용자 301.png)
   const inFlight = termText ? typingOf(termText, waiting.map((p) => p.text)) : null;
   const termFree = inFlight ? '' : termText;
@@ -612,6 +621,15 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   const [dupWarn, setDupWarn] = useState<{ text: string; at: number } | null>(null);
   // 그림 아닌 파일을 붙여넣었을 때 잠깐 띄우는 안내(domain/chat pasteKind)
   const [pasteFile, setPasteFile] = useState(false);
+  // 못 붙인 파일과 이유 — 홈 밖 큰 파일·없는 파일·사본 실패·붙여넣기 저장 실패·보관함 거절. 위 띠(앱 전체 알림) 대신 이 채팅 입력칸 위에(공개 이슈 #19)
+  const [attachErr, setAttachErr] = useState<string[] | null>(null);
+  useEffect(() => {
+    if (!attachErr) return;
+    const t = window.setTimeout(() => setAttachErr(null), 12000);
+    return () => window.clearTimeout(t);
+  }, [attachErr]);
+  const tellAttach = (errors: string[]) => { if (errors.length) setAttachErr(errors); };
+  tellNow.current = tellAttach;
   // 못 보낸 말 — 세션 치기가 거절되거나 시간을 넘겼다. 말풍선 대신 입력칸에 되살리고 한 줄 알린다(2026-10-24 윈도우 '어떤 말도 안 감')
   const [sendFail, setSendFail] = useState(false);
   useEffect(() => {
@@ -694,11 +712,16 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   }, [queue, termText, clock]);
   const act = (p: { text: string; at: number }, what: 'now' | 'drop' | 'again') => {
     const st = stateOf.get(p.at);
-    if (what === 'again') { if (dupBlocked(p.text)) return; flushLeftover(); send(p.text); repend(p); return; }
+    if (what === 'again') {
+      if (dupBlocked(p.text)) return;
+      // 입력칸에 이 말만 그대로 걸려 있으면 Enter 만 — flushLeftover 가 Enter 를 넣은 뒤 또 치면 같은 말이 두 번 갔다
+      if (againPlanOf(p.text, leftover, termText) === 'enter') { if (enterOk()) { submitTerminal(p.text); quietUntil.current = Date.now() + 1500; repend(p); } return; }
+      flushLeftover(); send(p.text, true); repend(p); return;
+    }
     if (st === 'queued') {
       if (what === 'now') { if (busy && !unsendsNow()) sendQueuedNow(); return; } // 쉬고 있으면 Claude 가 곧 꺼내 보낸다 · 앞 말에 답이 없으면 줄 선 채로(Esc 가 앞 말을 거둬들인다)
       // ↑ 는 대기열이 비면 지난 말을 불러온다 — 일하는 중이고 그 말이 아직 줄에 있을 때만
-      if (!rawKeys || !busy || termRef.current || !queue.waiting.some((q) => chatNorm(q.text) === chatNorm(p.text))) return;
+      if (!rawKeys || !busy || termRef.current || !(queue.waiting.some((q) => chatNorm(q.text) === chatNorm(p.text)) || queueAllMine(queue.waiting, [p]))) return;
       removing.current = { at: p.at, text: p.text, until: Date.now() + 4000 };
       void rawKeys(['\x1b[A']);
       return;
@@ -843,10 +866,17 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
         {waiting.map((p) => {
           const st = stateOf.get(p.at) ?? 'sending';
           const look = pendLook(st, busy); // 모양·글만 — 단추는 진짜 상태(st)로
+          // 앱이 넣은 줄([앱] …) — 기록에 들어온 앱 줄과 같은 옅은 한 줄, 단추 없음(domain/chatQueue isAppLine)
+          const app = isAppLine(p.text);
+          if (app) return appLineShown(st) ? (
+            <div key={p.at} className="chat-row relay">
+              <div className="chat-relay app pending" title={tr('앱이 넣는 중', 'The app is passing this on')}><div className="who">{tr('앱이 전함', 'From the app')}</div><div className="body">{p.text.replace(/^\[앱\]\s*/, '')}</div></div>
+            </div>
+          ) : null;
           // 줄 선 말 빼기는 ↑(줄 선 말 전부 입력칸으로)를 쓰니, 대기열이 다 이 채팅이 보낸 말이고 입력칸이 빌 때만 —
           // 다른 세션 말까지 입력칸에 쏟아지고, 입력칸에 글이 있으면 ↑ 는 그 안에서 커서만 옮긴다
           const canDrop = st === 'input' ? !!leftover?.includes(p.text) // 모르는 글과 섞였으면 그 말만 뺄 수 없다 — 입력칸 줄의 빼기로
-            : st !== 'queued' || (!!rawKeys && busy && !termText && queue.waiting.every((q) => waiting.some((w) => chatNorm(w.text) === chatNorm(q.text))));
+            : st !== 'queued' || (!!rawKeys && busy && !termText && queueAllMine(queue.waiting, waiting));
           return (
             <div key={p.at} className="chat-row me">
               <div className={`bubble me pending st-${look}`}>
@@ -860,7 +890,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
                   lost: tr('전달 안 됨', 'Not delivered'),
                   wait: tr('붙으면 보내요', 'Sends once attached'),
                 }[look]}</span>
-                {pendAct(st) && link !== 'gone' && ( /* 끊긴 채면 다시 보내도 줄에서 기다리다 붙는 순간 두 번 간다 — 안내 줄이 '다시 켜지면 다시 보내 줘' */
+                {pendAct(st, app) && link !== 'gone' && ( /* 끊긴 채면 다시 보내도 줄에서 기다리다 붙는 순간 두 번 간다 — 안내 줄이 '다시 켜지면 다시 보내 줘' */
                   <span className="chat-pend-acts">
                     {pendAct(st) === 'again'
                       ? <IconButton size="s" tone="line" label={tr('다시 보내기', 'Send again')} onClick={() => act(p, 'again')}><IconRefresh /></IconButton>
@@ -919,6 +949,12 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
       {pasteFile && (
         <div className="chat-hint chat-dup" role="status">
           <span>{tr('파일은 붙여넣기로 못 붙여요 — 채팅 칸에 끌어다 놓아 주세요', "Files can't be pasted — drag them into the chat instead")}</span>
+        </div>
+      )}
+      {attachErr && (
+        <div className="chat-hint chat-dup" role="alert">
+          <span>{tr('붙이지 못했어요', "Couldn't attach")} — {attachErr.join(' · ')}</span>
+          <IconButton size="s" tone="line" label={tr('닫기', 'Close')} onClick={() => setAttachErr(null)}><IconClose /></IconButton>
         </div>
       )}
       {sendFail && (
@@ -1037,6 +1073,16 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
             if (remote) return; // 원격엔 그림을 넘길 터미널이 없다 — 글만
             const items = [...e.clipboardData.items];
             const kind = pasteKind(items, !!e.clipboardData.getData('text/plain'));
+            // 윈도우 — 붙여 넣은 그림·파일 내용을 앱이 attach 에 저장해 경로로 붙인다. Alt+V 로 Claude 가 클립보드를 읽게 하면
+            // 탐색기에서 복사한 그림 파일은 못 읽어 #img1 글자만 갔다(공개 이슈 #19, 윈도우 시험 PC 재현). 맥은 그대로(Ctrl+V — Claude 가 [Image #n])
+            const files = IS_WIN && paneId ? items.filter((i) => i.kind === 'file').map((i) => i.getAsFile()).filter((f): f is File => !!f && f.size > 0) : [];
+            if (kind !== 'text' && files.length && paneId) {
+              e.preventDefault();
+              // 이 채팅이 든 칸에 바로 — 세션 id 로 칸을 찾으면 데스크 말풍선(paneId 'bubble:…')에선 못 찾아 조용히 사라졌다(리뷰)
+              const pane = root.current?.closest<HTMLElement>('.pane');
+              void saveClipFiles(files).then(({ ok, bad }) => { if (ok.length && pane) void pastePaths(pane, ok); tellAttach(bad.map((b) => b.error)); });
+              return;
+            }
             if (kind === 'file') { e.preventDefault(); setPasteFile(true); return; } // 경로를 못 받는다 — 끌어다 놓기로
             const file = items.find((i) => i.type.startsWith('image/'))?.getAsFile() ?? null;
             if (kind === 'image') {

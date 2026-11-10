@@ -79,6 +79,50 @@ pub struct Saved {
     /// 중계로 짝지은 컴퓨터(테일스케일 없이, C-4) — 그 터널 공개 열쇠 b64. 이때 id = `relay:<중계 기기 id>`(키체인 칸과 같은 이름), ip 는 0.0.0.0
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relay_x: Option<String>,
+    /// 테일넷 짝 — 짝지을 때 증명으로 확인한 그 기기의 Chammo 기기 id(peer_account). 없으면 계정이 안 묶인 옛 짝이라 멈춤(11-09 보안)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
+}
+
+/// 그 짝에 묶인 상대 Chammo 기기 id — 중계 짝은 허브 id(서버가 같은 계정으로 이었다), 테일넷 짝은 짝지을 때 확인한 값
+pub fn bound(s: &Saved) -> Option<String> {
+    match (s.relay_x.is_some(), s.id.strip_prefix("relay:")) {
+        (true, Some(hub)) => Some(hub.to_string()),
+        _ => s.device.clone(),
+    }
+}
+
+/// 계정 확인(부르는 쪽) — 짝 목록에 없으면 묶인 값도 없다(Unbound). 시험은 판정 함수를 넣는다
+pub fn verdict_with(dir: &Path, id: &str, judge: &dyn Fn(Option<&str>) -> crate::peer_account::Verdict) -> crate::peer_account::Verdict {
+    let b = load(dir).into_iter().find(|s| s.id == id).and_then(|s| bound(&s));
+    judge(b.as_deref())
+}
+
+/// 계정이 안 맞는 짝은 망을 부르지 않고 바로 멈춤 — "account:<이유>"
+pub fn gate_with(dir: &Path, id: &str, strict: bool, judge: &dyn Fn(Option<&str>, bool) -> crate::peer_account::Verdict) -> Result<(), String> {
+    let v = verdict_with(dir, id, &|b| judge(b, strict));
+    let ok = if strict { v.strict() } else { v.ok() };
+    if ok { Ok(()) } else { Err(v.err()) }
+}
+
+fn verdict_bound(id: &str) -> Option<String> {
+    load(&data_dir()).into_iter().find(|s| s.id == id).and_then(|s| bound(&s))
+}
+
+fn gate(id: &str, strict: bool) -> Result<(), String> {
+    gate_with(&data_dir(), id, strict, &crate::peer_account::check)
+}
+
+/// 기기 칸 — 짝은 지었는데 계정이 안 맞는 기기는 status "account" + paused(이유)로(화면이 '계정이 바뀌어 연결이 멈췄어요 — 다시 짝짓기')
+pub fn mark_paused(views: &mut [DeviceView], saved: &[Saved], judge: &dyn Fn(Option<&str>) -> crate::peer_account::Verdict) {
+    for v in views.iter_mut().filter(|v| v.paired) {
+        let b = saved.iter().find(|s| s.id == v.id).and_then(bound);
+        let j = judge(b.as_deref());
+        if !j.ok() {
+            v.status = "account";
+            v.paused = Some(j.code());
+        }
+    }
 }
 
 /// 화면 한 줄 — status: connected(열쇠 통함) · pair(참모는 있는데 열쇠 없음/끊김) · offline(짝지은 기기가 안 닿음)
@@ -96,6 +140,9 @@ pub struct DeviceView {
     pub link: bool,
     pub version: Option<String>,
     pub last_ok: Option<u64>,
+    /// status "account" 일 때 이유(peer_account::Verdict::code) — 화면 한 줄은 peer_account::word
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paused: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -165,7 +212,7 @@ pub fn link_peer(json: &str, node: &str) -> Option<crate::peer_ask::LinkPeer> {
     let (_, peers) = same_user_peers(json)?;
     let p = peers.into_iter().find(|p| p.id == node)?;
     let tailnet = v["CurrentTailnet"]["Name"].as_str().or(v["CurrentTailnet"]["MagicDNSSuffix"].as_str()).or(v["MagicDNSSuffix"].as_str()).unwrap_or("");
-    Some(crate::peer_ask::LinkPeer { id: p.id, name: p.name, os: p.os, ip: p.ip, tailnet: clean(tailnet, 64) })
+    Some(crate::peer_ask::LinkPeer { id: p.id, name: p.name, os: p.os, ip: p.ip, tailnet: clean(tailnet, 64), chammo: None })
 }
 
 pub fn presence(r: &Result<Response, NetErr>) -> Presence {
@@ -202,11 +249,11 @@ pub fn merge(peers: &[TsPeer], saved: &[Saved], probe: impl Fn(&str) -> Probe) -
             (false, Presence::Absent, _) => continue,
             (false, _, _) => "pair",
         };
-        out.push(DeviceView { id: p.id.clone(), name: p.name.clone(), os: p.os.clone(), status, paired: s.is_some(), old, link, version, last_ok: s.and_then(|s| s.last_ok) });
+        out.push(DeviceView { id: p.id.clone(), name: p.name.clone(), os: p.os.clone(), status, paired: s.is_some(), old, link, version, last_ok: s.and_then(|s| s.last_ok), paused: None });
     }
     // 짝지었는데 테일넷 목록에서 사라진 기기(지워졌거나 이름이 바뀜) — 끊김으로 남긴다
     for s in saved.iter().filter(|s| !peers.iter().any(|p| p.id == s.id)) {
-        out.push(DeviceView { id: s.id.clone(), name: s.name.clone(), os: String::new(), status: "offline", paired: true, old: false, link: false, version: None, last_ok: s.last_ok });
+        out.push(DeviceView { id: s.id.clone(), name: s.name.clone(), os: String::new(), status: "offline", paired: true, old: false, link: false, version: None, last_ok: s.last_ok, paused: None });
     }
     out
 }
@@ -276,28 +323,43 @@ fn net_word(e: &NetErr) -> String {
     }
 }
 
-/// 짝짓기 — 원격 /api/pair 에 코드를 내고 받은 열쇠를 키체인에, 기기를 목록에
-pub fn pair(kc: &dyn Store, dir: &Path, peer: &TsPeer, code: &str, my_name: &str, send: &SendFn) -> Result<(), String> {
+/// 그 기기 Chammo 기기 id — /api/hello chammo(로그인해 허용된 기기만, 11-09~). 옛 판·로그인 안 한 기기는 None
+pub fn hello_chammo(t: &Target, send: &SendFn) -> Result<Option<String>, String> {
+    let r = send(t, &Request { method: "GET", path: "/api/hello", body: None, token: None, live: None }, HELLO_WAIT, 4096).map_err(|e| net_word(&e))?;
+    let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap_or_default();
+    Ok(v["chammo"].as_str().filter(|d| crate::peer_account::valid_dev(d)).map(str::to_string))
+}
+
+/// 상대가 Chammo 계정 기기 id 를 안 알려 줌 — 옛 판이거나 로그인 안 함
+const NO_CHAMMO: &str = "그 기기의 Chammo 가 옛 판이거나 로그인 전이에요 — 그 기기를 업데이트하고 이 기기와 같은 Chammo 계정으로 로그인한 뒤 다시 해 주세요";
+
+/// 짝짓기 — 그 기기 Chammo 기기 id 를 묻고(hello), 같은 계정 증명(peer_account::Bind)을 붙여 /api/pair 에 코드를 낸다.
+/// 받은 열쇠는 키체인에, 기기는 목록에(그 기기 id 와 함께). 예전엔 옛 판(400)이면 코드만 다시 냈는데 그러면 그 기기에 폰 줄로 남아 막는다(11-09)
+pub fn pair(kc: &dyn Store, dir: &Path, peer: &TsPeer, code: &str, my_name: &str, send: &SendFn, binder: &dyn crate::peer_account::Binder) -> Result<(), String> {
     let code = norm_code(code).ok_or("연결 코드는 16진 32자예요 — 그 기기 설정 > 폰의 코드를 그대로 붙여 넣어 주세요")?;
     let name = format!("참모 · {}", if my_name.is_empty() { "이 기기" } else { my_name });
-    let body = serde_json::json!({ "code": code, "peer": true, "name": name }).to_string();
     let t = Target { ip: peer.ip, port: peer_port() };
-    let post = |b: &str| send(&t, &Request { method: "POST", path: "/api/pair", body: Some(b.as_bytes()), token: None }, CALL_WAIT, 4096).map_err(|e| net_word(&e));
-    let mut r = post(&body)?;
-    // 0.2.5 까지의 폰 서버는 모르는 칸(peer·name)을 400 으로 거절한다(deny_unknown_fields) — 코드는 안 닳으니 코드만 다시. 그 기기엔 '기기' 줄로 남는다
-    if r.status == 400 {
-        r = post(&serde_json::json!({ "code": code }).to_string())?;
-    }
+    let theirs = hello_chammo(&t, send)?.ok_or(NO_CHAMMO)?;
+    let b = binder.bind(&theirs, &code).map_err(crate::peer_account::bind_word)?;
+    let body = serde_json::json!({ "code": code, "peer": true, "name": name, "device": b.device, "proof": b.proof }).to_string();
+    let r = send(&t, &Request { method: "POST", path: "/api/pair", body: Some(body.as_bytes()), token: None, live: None }, CALL_WAIT, 4096).map_err(|e| net_word(&e))?;
+    let text = String::from_utf8_lossy(&r.body).trim().to_string();
     match r.status {
         200 => {}
+        400 => return Err(NO_CHAMMO.into()),
         401 => return Err("연결 코드가 틀렸거나 10분이 지났어요. 그 기기에서 새 코드를 만들어 주세요".into()),
+        403 if crate::peer_account::paused(&text).is_some() => return Err(crate::peer_account::bind_word(crate::peer_account::Verdict::Other).into()),
         403 => return Err("그 기기가 연결을 막았어요(주소가 안 맞음)".into()),
         s => return Err(format!("그 기기가 짝짓기를 못 했어요({s})")),
     }
-    let token = serde_json::from_slice::<serde_json::Value>(&r.body).ok().and_then(|v| v["token"].as_str().map(str::to_string)).filter(|t| t.len() == 64 && t.chars().all(|c| c.is_ascii_hexdigit()));
-    let token = token.ok_or("그 기기가 준 열쇠 모양이 이상해요")?;
+    let v = serde_json::from_slice::<serde_json::Value>(&r.body).unwrap_or_default();
+    let token = v["token"].as_str().map(str::to_string).filter(|t| hex64(t)).ok_or("그 기기가 준 열쇠 모양이 이상해요")?;
+    // 답 증명 — 그 주소에서 답한 게 정말 그 Chammo 기기인가
+    if !binder.check_reply(&theirs, &code, v["proof"].as_str().unwrap_or("")) {
+        return Err("그 기기의 Chammo 계정을 확인하지 못했어요 — 다시 해 주세요".into());
+    }
     kc.set(&service(), &peer.id, &Secret::new(token)).map_err(|e| format!("열쇠를 {STORE_WORD}에 못 넣었어요({e:?})"))?;
-    upsert_saved(dir, &peer.id, &peer.name, peer.ip).map_err(|e| e.to_string())
+    upsert_saved(dir, &peer.id, &peer.name, peer.ip, Some(&theirs)).map_err(|e| e.to_string())
 }
 
 pub fn unpair(kc: &dyn Store, dir: &Path, id: &str) -> Result<(), String> {
@@ -322,30 +384,34 @@ pub struct Link<'a> {
     pub dir: &'a Path,
     pub lines: &'a crate::mobile_pair::Devices,
     pub asks: &'a crate::peer_ask::Asks,
+    /// 같은 Chammo 계정 증명(11-09)
+    pub bind: &'a dyn crate::peer_account::Binder,
 }
 
 fn hex64(s: &str) -> bool {
     s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
-fn upsert_saved(dir: &Path, id: &str, name: &str, ip: Ipv4Addr) -> std::io::Result<()> {
+fn upsert_saved(dir: &Path, id: &str, name: &str, ip: Ipv4Addr, device: Option<&str>) -> std::io::Result<()> {
     mutate(dir, |list| {
         list.retain(|s| s.id != id);
-        list.push(Saved { id: id.into(), name: name.into(), ip, port: peer_port(), paired_at: now_ms(), last_ok: Some(now_ms()), relay_x: None });
+        list.push(Saved { id: id.into(), name: name.into(), ip, port: peer_port(), paired_at: now_ms(), last_ok: Some(now_ms()), relay_x: None, device: device.map(str::to_string) });
     })
 }
 
 /// 받는 쪽 — 사람이 허용했고 요청한 기기가 받아 가는 순간: 열쇠 둘을 만들어 (그 기기가 이 기기에 쓸 것 → 기기 줄 해시, 이 기기가 그 기기에 쓸 것 → 키체인)
 /// 둘 중 하나라도 못 걸면 되돌린다(반쪽 연결을 남기지 않는다)
 pub fn accept(kc: &dyn Store, dir: &Path, lines: &crate::mobile_pair::Devices, p: &crate::peer_ask::LinkPeer) -> Result<(String, String), String> {
+    // 같은 계정 증명을 지난 요청만(peer_ask 가 확인한 값) — 없으면 열쇠를 안 만든다
+    let chammo = p.chammo.as_deref().filter(|d| crate::peer_account::valid_dev(d)).ok_or("계정 확인이 안 된 연결 요청이에요")?;
     let rnd = || crate::mobile_pair::random_hex(32).map_err(|e| e.to_string());
     let (token, back) = (rnd()?, rnd()?);
-    lines.add_peer(&token, &format!("참모 · {}", p.name), &p.id, std::time::SystemTime::now()).map_err(|e| e.to_string())?;
+    lines.add_peer(&token, &format!("참모 · {}", p.name), &p.id, Some(chammo), std::time::SystemTime::now()).map_err(|e| e.to_string())?;
     if let Err(e) = kc.set(&service(), &p.id, &Secret::new(back.clone())) {
         let _ = lines.remove_node(&p.id);
         return Err(format!("열쇠를 {STORE_WORD}에 못 넣었어요({e:?})"));
     }
-    if let Err(e) = upsert_saved(dir, &p.id, &p.name, p.ip) {
+    if let Err(e) = upsert_saved(dir, &p.id, &p.name, p.ip, Some(chammo)) {
         let _ = lines.remove_node(&p.id);
         let _ = kc.remove(&service(), &p.id);
         return Err(e.to_string());
@@ -364,12 +430,16 @@ pub fn connect(l: &Link, me_id: &str, peer: &TsPeer, send: &SendFn, pause: &dyn 
 
 fn connect_inner(l: &Link, me_id: &str, peer: &TsPeer, req: &str, send: &SendFn, pause: &dyn Fn(), now: &dyn Fn() -> u64) -> Result<(), String> {
     let t = Target { ip: peer.ip, port: peer_port() };
-    let body = serde_json::json!({ "req": req, "node": me_id }).to_string();
-    let r = send(&t, &Request { method: "POST", path: "/api/link-request", body: Some(body.as_bytes()), token: None }, CALL_WAIT, 4096).map_err(|e| net_word(&e))?;
+    let theirs = hello_chammo(&t, send)?.ok_or(NO_CHAMMO)?;
+    let b = l.bind.bind(&theirs, req).map_err(crate::peer_account::bind_word)?;
+    let body = serde_json::json!({ "req": req, "node": me_id, "device": b.device, "proof": b.proof }).to_string();
+    let r = send(&t, &Request { method: "POST", path: "/api/link-request", body: Some(body.as_bytes()), token: None, live: None }, CALL_WAIT, 4096).map_err(|e| net_word(&e))?;
     let text = String::from_utf8_lossy(&r.body).trim().to_string();
     match r.status {
         200..=299 => {}
         404 => return Err("그 기기의 Chammo가 옛 버전이에요. 업데이트하거나 '코드로' 연결해 주세요".into()),
+        400 => return Err(NO_CHAMMO.into()),
+        403 if crate::peer_account::paused(&text).is_some() => return Err(crate::peer_account::bind_word(crate::peer_account::Verdict::Other).into()),
         403 if text.starts_with("unconfirmed") => return Err("그 기기가 이 기기를 확인하지 못했어요. 두 기기 모두 Chammo를 켜 두고 다시 해 주세요".into()),
         403 => return Err("같은 테일스케일 계정 기기끼리만 이어져요".into()),
         429 => return Err("연결 요청이 너무 잦아요 — 10분쯤 뒤에 다시".into()),
@@ -386,13 +456,19 @@ fn connect_inner(l: &Link, me_id: &str, peer: &TsPeer, req: &str, send: &SendFn,
             return Err("연결을 취소했어요".into());
         }
         // 한 번 못 닿는 건 넘긴다(절전에서 깨는 중) — 다음 바퀴에 다시
-        if let Ok(r) = send(&t, &Request { method: "GET", path: &path, body: None, token: None }, HELLO_WAIT, 4096) {
+        if let Ok(r) = send(&t, &Request { method: "GET", path: &path, body: None, token: None, live: None }, HELLO_WAIT, 4096) {
             if r.status == 404 {
                 return Err("그 기기가 이 요청을 기억하지 못해요. 앱이 다시 켜졌을 수 있어요. 다시 연결해 주세요".into());
             }
             let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap_or_default();
             match (r.status, v["state"].as_str().unwrap_or("")) {
-                (200, "yes") => return keep(l, peer, v["token"].as_str().unwrap_or(""), v["back"].as_str().unwrap_or("")),
+                (200, "yes") => {
+                    // 답 증명 — 열쇠를 준 쪽이 정말 그 Chammo 기기인가
+                    if !l.bind.check_reply(&theirs, req, v["proof"].as_str().unwrap_or("")) {
+                        return Err("그 기기의 Chammo 계정을 확인하지 못했어요 — 다시 해 주세요".into());
+                    }
+                    return keep(l, peer, v["token"].as_str().unwrap_or(""), v["back"].as_str().unwrap_or(""), &theirs);
+                }
                 (200, "no") => return Err("그 기기에서 거절했어요".into()),
                 (200, "expired") => return Err("5분 안에 그 기기에서 허용하지 않았어요".into()),
                 (200, "failed") => return Err("그 기기가 연결하다 실패했어요 — 다시 해 주세요".into()),
@@ -404,16 +480,16 @@ fn connect_inner(l: &Link, me_id: &str, peer: &TsPeer, req: &str, send: &SendFn,
 }
 
 /// 받은 열쇠 둘 걸기 — 못 걸면 되돌린다
-fn keep(l: &Link, peer: &TsPeer, token: &str, back: &str) -> Result<(), String> {
+fn keep(l: &Link, peer: &TsPeer, token: &str, back: &str, chammo: &str) -> Result<(), String> {
     if !hex64(token) || !hex64(back) || token == back {
         return Err("그 기기가 준 열쇠 모양이 이상해요".into());
     }
     l.kc.set(&service(), &peer.id, &Secret::new(token.to_string())).map_err(|e| format!("열쇠를 {STORE_WORD}에 못 넣었어요({e:?})"))?;
-    if let Err(e) = l.lines.add_peer(back, &format!("참모 · {}", peer.name), &peer.id, std::time::SystemTime::now()) {
+    if let Err(e) = l.lines.add_peer(back, &format!("참모 · {}", peer.name), &peer.id, Some(chammo), std::time::SystemTime::now()) {
         let _ = l.kc.remove(&service(), &peer.id);
         return Err(e.to_string());
     }
-    upsert_saved(l.dir, &peer.id, &peer.name, peer.ip).map_err(|e| e.to_string())
+    upsert_saved(l.dir, &peer.id, &peer.name, peer.ip, Some(chammo)).map_err(|e| e.to_string())
 }
 
 #[derive(Debug, Serialize)]
@@ -454,7 +530,12 @@ fn call_any(kc: &dyn Store, dir: &Path, id: &str, here: Option<Ipv4Addr>, method
     let ip = here.ok_or("테일넷에 그 기기가 안 보여요(꺼짐·지워짐·다른 계정)")?;
     let token = kc.get(&service(), id).map_err(|e| format!("{STORE_WORD}에서 열쇠를 못 읽었어요({e:?})"))?.ok_or("pair")?;
     let t = Target { ip, port: list[i].port };
-    let r = send(&t, &Request { method, path, body: body.map(str::as_bytes), token: Some(token.expose()) }, CALL_WAIT, MAX_BODY).map_err(|e| net_word(&e))?;
+    // 테일넷 짝 — 그 기기 열쇠를 지금도 가졌다는 증명(받는 쪽이 본다, 11-09). 중계 짝은 허브가 기기 서명으로 본다
+    let live = match (&list[i].relay_x, &list[i].device) {
+        (None, Some(d)) => crate::peer_account::live_now(d, method, path),
+        _ => None,
+    };
+    let r = send(&t, &Request { method, path, body: body.map(str::as_bytes), token: Some(token.expose()), live: live.as_deref() }, CALL_WAIT, MAX_BODY).map_err(|e| net_word(&e))?;
     if r.status == 401 {
         return Err("pair".into());
     }
@@ -531,12 +612,16 @@ pub async fn remote_devices() -> Result<DevicesOut, String> {
 
 /// 지금 테일넷의 기기 칸 — 같은 계정 온라인 기기마다 hello(+짝지은 기기는 열쇠로 /api/env)
 pub fn devices_now() -> Result<DevicesOut, String> {
-    let relay = relay_views(&load(&data_dir()));
-    if !crate::mobile::tailscale_installed() {
+    let saved = load(&data_dir());
+    let relay = relay_views(&saved);
+    let mut out = if !crate::mobile::tailscale_installed() {
         // 테일스케일 없이가 기본 — 중계로 이은 컴퓨터만(없으면 안내용 NO_TAILSCALE)
-        return if relay.is_empty() { Err(NO_TAILSCALE.into()) } else { Ok(DevicesOut { me: String::new(), devices: relay }) };
-    }
-    combine(devices_tailnet(), relay)
+        if relay.is_empty() { Err(NO_TAILSCALE.to_string()) } else { Ok(DevicesOut { me: String::new(), devices: relay }) }
+    } else {
+        combine(devices_tailnet(), relay)
+    }?;
+    mark_paused(&mut out.devices, &saved, &|b| crate::peer_account::check(b, false));
+    Ok(out)
 }
 
 /// 테일넷 목록 + 중계 줄 — 테일넷이 실패해도(테일스케일이 깔렸지만 꺼진 맥, C-6 재실측) 중계 줄이 있으면 그것만이라도. 없으면 테일넷 오류 그대로
@@ -556,7 +641,7 @@ pub fn relay_views(saved: &[Saved]) -> Vec<DeviceView> {
     saved
         .iter()
         .filter(|s| s.relay_x.is_some() && s.id.starts_with("relay:"))
-        .map(|s| DeviceView { id: s.id.clone(), name: s.name.clone(), os: String::new(), status: "connected", paired: true, old: false, link: true, version: None, last_ok: s.last_ok })
+        .map(|s| DeviceView { id: s.id.clone(), name: s.name.clone(), os: String::new(), status: "connected", paired: true, old: false, link: true, version: None, last_ok: s.last_ok, paused: None })
         .collect()
 }
 
@@ -577,10 +662,10 @@ fn devices_tailnet() -> Result<DevicesOut, String> {
                     let (send, saved, kc) = (&send, &saved, &kc);
                     sc.spawn(move || {
                         let t = Target { ip: p.ip, port: peer_port() };
-                        let hello = presence(&send(&t, &Request { method: "GET", path: "/api/hello", body: None, token: None }, HELLO_WAIT, 4096));
+                        let hello = presence(&send(&t, &Request { method: "GET", path: "/api/hello", body: None, token: None, live: None }, HELLO_WAIT, 4096));
                         let auth = (saved.iter().any(|s| s.id == p.id) && hello != Presence::Absent).then(|| {
                             let tok = kc.get(&service(), &p.id).ok().flatten();
-                            tok.is_some_and(|tok| send(&t, &Request { method: "GET", path: "/api/env", body: None, token: Some(tok.expose()) }, HELLO_WAIT, 64 * 1024).is_ok_and(|r| r.status == 200))
+                            tok.is_some_and(|tok| send(&t, &Request { method: "GET", path: "/api/env", body: None, token: Some(tok.expose()), live: None }, HELLO_WAIT, 64 * 1024).is_ok_and(|r| r.status == 200))
                         });
                         (p.id.clone(), Probe { hello, auth })
                     })
@@ -620,6 +705,62 @@ pub fn forget_relay(relay: &str) -> Result<(), String> {
     mutate(&data_dir(), |l| l.retain(|s| s.id != id)).map_err(|e| e.to_string())
 }
 
+/// 상대 테일넷 컴퓨터가 끊었다고 알려 왔다(로그아웃 등, 11-09) — 그 노드 목록 줄·열쇠·그 노드가 이 기기를 부르던 peer 줄
+pub fn forget_node(node: &str) -> Result<(), String> {
+    unpair_with(&keychain(), &data_dir(), &crate::mobile::devices(), node)
+}
+
+/// 로그아웃 — 짝지은 기기마다 끊는다고 알리고(되는 만큼만 — 꺼져 있어도) 이쪽 목록·열쇠·그쪽이 이쪽을 부르던 peer 줄을 모두 지운다.
+/// notify = 상대에게 알리기(시험은 가짜). 남은 peer 줄(목록에 없던 옛 줄)도 지운다. 지운 짝 수
+pub fn drop_all(kc: &dyn Store, dir: &Path, lines: &crate::mobile_pair::Devices, notify: &dyn Fn(&Saved)) -> Result<usize, String> {
+    let list = load(dir);
+    for s in &list {
+        notify(s);
+        if let Err(e) = unpair_with(kc, dir, lines, &s.id) {
+            // 하나가 실패해도 나머지는 지운다 — 목록 줄은 아래에서 통째로
+            crate::claude::log_out("peer", &format!("로그아웃 — {} 짝 지우기 실패: {e}", s.name));
+        }
+    }
+    mutate(dir, |l| l.clear()).map_err(|e| e.to_string())?;
+    lines.remove_all_peers().map_err(|e| e.to_string())?;
+    // 계정을 확인할 길이 없는 직통 폰 줄도(11-09 2차) — 중계 폰 줄은 서버가 같은 계정만 붙인다
+    lines.remove_direct_phones().map_err(|e| e.to_string())?;
+    Ok(list.len())
+}
+
+/// 상대에게 끊는다고 알리기 — 짧게(로그아웃을 붙잡지 않게), 실패는 넘긴다
+fn notify_unlink(s: &Saved) {
+    const WAIT: Duration = Duration::from_secs(3);
+    let send: Box<SendFn> = match &s.relay_x {
+        Some(x) => Box::new(relay_send(&s.id, x.clone())),
+        None => match route_and_peers() {
+            Ok((route, peers)) if peers.iter().any(|p| p.id == s.id && p.online) => Box::new(real_send(route)),
+            _ => return,
+        },
+    };
+    let here = if s.relay_x.is_some() { Some(Ipv4Addr::UNSPECIFIED) } else { route_and_peers().ok().and_then(|(_, p)| p.iter().find(|p| p.id == s.id).map(|p| p.ip)) };
+    let capped = cap_wait(&*send, WAIT);
+    let _ = call_any(&keychain(), &data_dir(), &s.id, here, "POST", "/api/peer-unlink", Some("{}"), &capped);
+}
+
+/// 이 기기 로그아웃(team_relay::forget_local) — 진짜 데이터 폴더일 때만(시험 폴더는 안 건드린다)
+pub fn drop_all_now(dir: &Path) {
+    crate::peer_account::forget();
+    // 시험은 진짜 데이터 폴더·키체인을 안 건드린다(시험 폴더 지우기는 drop_all 로 따로 잰다)
+    if cfg!(test) || dir != crate::config::data_dir() {
+        return;
+    }
+    // 개발판 시험 앱(CHAMMO_HOME)이 진짜 키체인 칸을 지우지 않게 — 시험 칸 이름(CHAMMO_PEER_SERVICE)을 줬을 때만(공격 리뷰 8)
+    if cfg!(debug_assertions) && std::env::var_os("CHAMMO_HOME").is_some() && std::env::var_os("CHAMMO_PEER_SERVICE").is_none() {
+        return;
+    }
+    match drop_all(&keychain(), dir, &crate::mobile::devices(), &notify_unlink) {
+        Ok(n) if n > 0 => crate::claude::log_out("peer", &format!("로그아웃 — 다른 기기 짝 {n}개를 끊고 알렸어요")),
+        Ok(_) => {}
+        Err(e) => crate::claude::log_out("peer", &format!("로그아웃 — 다른 기기 짝 지우기 실패: {e}")),
+    }
+}
+
 /// 테일넷 줄 + 중계 줄 — 같은 이름의 안 닿는 테일넷 줄(옛 짝·꺼짐)은 빼서 한 기기가 두 번 안 보이게(C-5 실측 ③). 닿는 테일넷 줄은 남긴다(빠른 길)
 pub fn merge_relay(tail: Vec<DeviceView>, relay: Vec<DeviceView>) -> Vec<DeviceView> {
     let names: std::collections::HashSet<String> = relay.iter().map(|d| d.name.clone()).collect();
@@ -632,7 +773,7 @@ pub fn save_relay_peer(dir: &Path, hub: &str, name: &str, x: &str) -> std::io::R
     let name: String = name.chars().filter(|c| !c.is_control()).take(40).collect();
     mutate(dir, |l| {
         l.retain(|s| s.id != id);
-        l.push(Saved { id: id.clone(), name, ip: Ipv4Addr::UNSPECIFIED, port: 0, paired_at: now_ms(), last_ok: Some(now_ms()), relay_x: Some(x.to_string()) });
+        l.push(Saved { id: id.clone(), name, ip: Ipv4Addr::UNSPECIFIED, port: 0, paired_at: now_ms(), last_ok: Some(now_ms()), relay_x: Some(x.to_string()), device: None });
     })
 }
 
@@ -654,7 +795,7 @@ pub fn pair_now(id: &str, code: &str) -> Result<(), String> {
     let (route, json) = tailnet()?;
     let (me, peers) = same_user_peers(&json).ok_or("테일스케일이 꺼져 있거나 로그인 전이에요")?;
     let peer = peers.into_iter().find(|p| p.id == id).ok_or("테일넷에 그 기기가 없어요(같은 계정 기기만)")?;
-    pair(&keychain(), &data_dir(), &peer, code, &me, &real_send(route))
+    pair(&keychain(), &data_dir(), &peer, code, &me, &real_send(route), &crate::peer_account::RealBinder)
 }
 
 pub fn unpair_now(id: &str) -> Result<(), String> {
@@ -689,7 +830,7 @@ impl crate::peer_ask::LinkEnv for RealLink {
     fn confirm(&self, p: &crate::peer_ask::LinkPeer, hash: &str) -> bool {
         let Ok((route, _)) = tailnet() else { return false };
         let path = format!("/api/link-check?h={hash}");
-        let r = crate::remote_net::send(&route, &Target { ip: p.ip, port: peer_port() }, &Request { method: "GET", path: &path, body: None, token: None }, HELLO_WAIT, 4096);
+        let r = crate::remote_net::send(&route, &Target { ip: p.ip, port: peer_port() }, &Request { method: "GET", path: &path, body: None, token: None, live: None }, HELLO_WAIT, 4096);
         r.is_ok_and(|r| r.status == 200 && serde_json::from_slice::<serde_json::Value>(&r.body).is_ok_and(|v| v["ok"] == true))
     }
     fn card(&self, p: &crate::peer_ask::LinkPeer, until_ms: u64) -> Result<String, String> {
@@ -700,6 +841,9 @@ impl crate::peer_ask::LinkEnv for RealLink {
     }
     fn commit(&self, p: &crate::peer_ask::LinkPeer) -> Result<(String, String), String> {
         accept(&keychain(), &data_dir(), &crate::mobile::devices(), p)
+    }
+    fn bind(&self, b: &crate::peer_account::Bind, ctx: &str) -> Result<String, crate::peer_account::Verdict> {
+        crate::peer_account::verify_now(b, ctx)
     }
 }
 
@@ -717,7 +861,7 @@ pub fn connect_now(id: &str) -> Result<(), String> {
     let me = self_id(&json).ok_or("테일스케일에서 이 기기 번호를 못 읽었어요")?;
     let peer = peers.into_iter().find(|p| p.id == id).ok_or("테일넷에 그 기기가 없어요(같은 계정 기기만)")?;
     let (kc, dir, lines) = (keychain(), data_dir(), crate::mobile::devices());
-    let l = Link { kc: &kc, dir: &dir, lines: &lines, asks: crate::peer_ask::asks() };
+    let l = Link { kc: &kc, dir: &dir, lines: &lines, asks: crate::peer_ask::asks(), bind: &crate::peer_account::RealBinder };
     connect(&l, &me, &peer, &real_send(route), &|| std::thread::sleep(Duration::from_secs(2)), &now_ms)
 }
 
@@ -755,6 +899,8 @@ pub fn call_now(id: &str, method: &str, path: &str, body: Option<&str>) -> Resul
 
 /// call_now 인데 요청 마감을 wait 아래로(늘리지는 않는다) — 카드 모으기는 대신 보내기 10초보다 짧게 끊는다
 pub fn call_now_wait(id: &str, method: &str, path: &str, body: Option<&str>, wait: Duration) -> Result<CallOut, String> {
+    // 같은 Chammo 계정 짝만(11-09) — 아니면 망을 안 부른다
+    gate(id, false)?;
     if let Some(x) = relay_x_of(id) {
         let s = relay_send(id, x);
         return call(&keychain(), &data_dir(), id, Some(Ipv4Addr::UNSPECIFIED), method, path, body, &cap_wait(&s, wait));
@@ -813,6 +959,7 @@ pub fn human_body(mut v: serde_json::Value, cid: &str, now: u64) -> Result<Strin
 
 pub(crate) fn human_now(id: &str, path: &str, v: serde_json::Value) -> Result<serde_json::Value, String> {
     let cid = format!("h-{}", crate::mobile_pair::random_hex(8).map_err(|e| e.to_string())?);
+    gate(id, false)?;
     let body = human_body(v, &cid, now_ms())?;
     let r = match relay_x_of(id) {
         Some(x) => call_human(&keychain(), &data_dir(), id, Some(Ipv4Addr::UNSPECIFIED), path, &body, &relay_send(id, x))?,
@@ -839,8 +986,12 @@ pub fn card_answer_now(id: &str, card: &str, pick: &crate::direct::Pick) -> Resu
 /// 3초 넘게 묵었으면 뒤에서 한 바퀴(기기들을 병렬로, 안 닿는 기기는 짧게 쉬며) — peer_cards.rs
 pub fn cards_now() -> serde_json::Value {
     static CARDS: crate::peer_cards::Hub = crate::peer_cards::Hub::new();
-    let paired: Vec<(String, String)> = load(&data_dir()).into_iter().map(|d| (d.id, d.name)).collect();
-    let (v, go) = CARDS.look(&paired, std::time::Instant::now());
+    // 계정이 안 맞는 짝(11-09)은 묻지 않고 줄만 — 화면이 '계정이 바뀌어 연결이 멈췄어요 — 다시 짝짓기'
+    let (paired, stopped) = split_paused(load(&data_dir()), &|b| crate::peer_account::check(b, false));
+    let (mut v, go) = CARDS.look(&paired, std::time::Instant::now());
+    if let Some(a) = v.as_array_mut() {
+        a.extend(stopped);
+    }
     if go {
         let p = paired.clone();
         let run = move || CARDS.refresh(&p, &card_fetch, &std::time::Instant::now);
@@ -850,6 +1001,21 @@ pub fn cards_now() -> serde_json::Value {
         }
     }
     v
+}
+
+/// 짝 목록 → (카드를 물을 짝, 계정이 안 맞아 멈춘 짝의 줄 {dev, name, log:"", sessions:"[]", off, paused})
+pub fn split_paused(saved: Vec<Saved>, judge: &dyn Fn(Option<&str>) -> crate::peer_account::Verdict) -> (Vec<(String, String)>, Vec<serde_json::Value>) {
+    let mut go = Vec::new();
+    let mut stop = Vec::new();
+    for s in saved {
+        let v = judge(bound(&s).as_deref());
+        if v.ok() {
+            go.push((s.id, s.name));
+        } else {
+            stop.push(serde_json::json!({ "dev": s.id, "name": s.name, "log": "", "sessions": "[]", "off": true, "paused": v.code(), "pausedText": crate::peer_account::word(v.code()) }));
+        }
+    }
+    (go, stop)
 }
 
 /// 테일넷이 꺼졌다고 말하는 기기인가 — 그런 기기는 망을 안 부르고 바로 실패(userspace SOCKS 는 꺼진 기기에 5초를 붙잡는다, 11-08 실측).
@@ -871,6 +1037,8 @@ fn card_fetch(id: &str) -> Result<crate::peer_cards::Got, String> {
         r => Err(format!("HTTP {}", r.status)),
     };
     let log = text("/api/direct")?;
+    // 결제·운영 카드는 1분 안에 서버로 다시 확인한 같은 계정 기기 것만 보여 준다(이중 안전 — 그쪽 서버도 거른다)
+    let log = if crate::peer_account::check(verdict_bound(id).as_deref(), true).strict() { log } else { crate::direct::hide_kinds(&log, crate::direct::STRICT_KINDS) };
     Ok(crate::peer_cards::Got { log, sessions: text("/api/sessions").ok() })
 }
 

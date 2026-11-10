@@ -53,9 +53,9 @@ fn peer(id: &str, online: bool) -> TsPeer {
 #[test]
 fn md3_기기_칸_상태_합치기() {
     let saved = vec![
-        Saved { id: "nA".into(), name: "A".into(), ip: "100.64.0.1".parse().unwrap(), port: 47123, paired_at: 1, last_ok: Some(5), relay_x: None },
-        Saved { id: "nGONE".into(), name: "옛 PC".into(), ip: "100.64.0.2".parse().unwrap(), port: 47123, paired_at: 1, last_ok: Some(3), relay_x: None },
-        Saved { id: "nB".into(), name: "B".into(), ip: "100.64.0.3".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None, relay_x: None },
+        Saved { id: "nA".into(), name: "A".into(), ip: "100.64.0.1".parse().unwrap(), port: 47123, paired_at: 1, last_ok: Some(5), relay_x: None, device: None },
+        Saved { id: "nGONE".into(), name: "옛 PC".into(), ip: "100.64.0.2".parse().unwrap(), port: 47123, paired_at: 1, last_ok: Some(3), relay_x: None, device: None },
+        Saved { id: "nB".into(), name: "B".into(), ip: "100.64.0.3".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None, relay_x: None, device: None },
     ];
     let peers = vec![peer("nA", true), peer("nB", true), peer("nNEW", true), peer("nOLD", true), peer("nNONE", true)];
     let probe = |id: &str| match id {
@@ -78,7 +78,7 @@ fn md3_기기_칸_상태_합치기() {
 
 #[test]
 fn md3_기기가_꺼지면_offline_짝지은_적_없으면_안_보인다() {
-    let saved = vec![Saved { id: "nA".into(), name: "A".into(), ip: "100.64.0.1".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None, relay_x: None }];
+    let saved = vec![Saved { id: "nA".into(), name: "A".into(), ip: "100.64.0.1".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None, relay_x: None, device: None }];
     let v = merge(&[peer("nA", false), peer("nX", false)], &saved, |_| Probe { hello: Presence::Absent, auth: None });
     assert_eq!(v.iter().map(|d| (d.id.as_str(), d.status)).collect::<Vec<_>>(), [("nA", "offline")]);
 }
@@ -120,6 +120,32 @@ fn md3_짝짓기_코드는_16진_32자만() {
 }
 
 const TOK: &str = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
+const CODE: &str = "0123456789abcdef0123456789abcdef";
+
+/// 같은 Chammo 계정 증명 가짜 — 그 기기(dev-box)만 내 계정 컴퓨터. 답 증명은 r-<ctx>
+struct Fb;
+impl crate::peer_account::Binder for Fb {
+    fn bind(&self, target: &str, ctx: &str) -> Result<crate::peer_account::Bind, crate::peer_account::Verdict> {
+        if target == "dev-box" { Ok(crate::peer_account::Bind { device: "dev-self".into(), proof: format!("p-{ctx}") }) } else { Err(crate::peer_account::Verdict::Other) }
+    }
+    fn check_reply(&self, _target: &str, ctx: &str, proof: &str) -> bool {
+        proof == format!("r-{ctx}")
+    }
+}
+
+/// 그 기기 hello — Chammo 기기 id 를 알려 준다(11-09~)
+fn hello_box() -> Result<Response, NetErr> {
+    ok(200, r#"{"app":"chammo","proto":1,"version":"0.5.0","chammo":"dev-box"}"#)
+}
+
+/// hello 는 dev-box 로 답하고 나머지는 f 로
+fn with_hello<'a>(f: impl Fn(&Request) -> Result<Response, NetErr> + 'a) -> impl Fn(&Target, &Request, Duration, usize) -> Result<Response, NetErr> + 'a {
+    move |_: &Target, r: &Request, _: Duration, _: usize| if r.path == "/api/hello" { hello_box() } else { f(r) }
+}
+
+fn pair_ok() -> String {
+    format!(r#"{{"token":"{TOK}","proof":"r-{CODE}"}}"#)
+}
 
 fn tmp(name: &str) -> std::path::PathBuf {
     let d = std::env::temp_dir().join(format!("chammo-remote-{name}-{}", std::process::id()));
@@ -133,54 +159,80 @@ fn md3_짝짓기는_열쇠를_키체인에_목록엔_열쇠_없이() {
     let dir = tmp("pair");
     let kc = Fake::default();
     let sent = RefCell::new(Vec::new());
-    let send = |_: &Target, r: &Request, _: Duration, _: usize| {
+    let send = with_hello(|r: &Request| {
         sent.borrow_mut().push((r.method.to_string(), r.path.to_string(), String::from_utf8_lossy(r.body.unwrap_or(&[])).into_owned(), r.token.is_some()));
-        ok(200, &format!(r#"{{"token":"{TOK}"}}"#))
-    };
-    pair(&kc, &dir, &peer("nBOX", true), "0123456789abcdef0123456789abcdef", "my-mac", &send).unwrap();
+        ok(200, &pair_ok())
+    });
+    pair(&kc, &dir, &peer("nBOX", true), CODE, "my-mac", &send, &Fb).unwrap();
     let (m, p, body, tok) = sent.borrow()[0].clone();
     assert_eq!((m.as_str(), p.as_str(), tok), ("POST", "/api/pair", false));
     let b: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(b["peer"], true);
     assert_eq!(b["name"], "참모 · my-mac");
+    // 같은 Chammo 계정 증명(11-09) — 이 기기 Chammo 기기 id 와 증명, 그 기기 id 는 목록에
+    assert_eq!((b["device"].as_str(), b["proof"].as_str()), (Some("dev-self"), Some(format!("p-{CODE}").as_str())));
+    assert_eq!(load(&dir)[0].device.as_deref(), Some("dev-box"));
     assert_eq!(kc.val(SERVICE, "nBOX").as_deref(), Some(TOK));
     let file = std::fs::read_to_string(dir.join(FILE)).unwrap();
     assert!(file.contains("nBOX") && !file.contains(TOK), "목록 파일엔 열쇠가 없다");
     // 다시 짝지으면 줄이 안 는다
-    pair(&kc, &dir, &peer("nBOX", true), "0123456789abcdef0123456789abcdef", "my-mac", &send).unwrap();
+    pair(&kc, &dir, &peer("nBOX", true), CODE, "my-mac", &send, &Fb).unwrap();
     assert_eq!(load(&dir).len(), 1);
 }
 
 #[test]
-fn md3_옛판이_모르는_칸을_400으로_거절하면_코드만_다시() {
+fn md3_옛판_상대와는_짝짓지_않는다_코드만_다시_내지_않는다() {
+    // 예전엔 400(모르는 칸)이면 코드만 다시 냈다 — 그 기기에 폰 줄(더 넓은 권한)로 남고 계정도 안 묶였다(11-09)
     let dir = tmp("pairold");
     let kc = Fake::default();
-    let bodies = RefCell::new(Vec::new());
-    pair(&kc, &dir, &peer("nIMAC", true), "0123456789abcdef0123456789abcdef", "m", &|_: &Target, r: &Request, _: Duration, _: usize| {
-        let b: serde_json::Value = serde_json::from_slice(r.body.unwrap()).unwrap();
-        bodies.borrow_mut().push(b.clone());
-        if b.get("peer").is_some() { ok(400, "bad json") } else { ok(200, &format!(r#"{{"token":"{TOK}"}}"#)) }
-    })
-    .unwrap();
-    assert_eq!(bodies.borrow().len(), 2);
-    assert_eq!(bodies.borrow()[1], serde_json::json!({ "code": "0123456789abcdef0123456789abcdef" }));
-    assert_eq!(kc.val(SERVICE, "nIMAC").as_deref(), Some(TOK));
+    let posts = RefCell::new(0);
+    let e = pair(&kc, &dir, &peer("nIMAC", true), CODE, "m", &with_hello(|_| { *posts.borrow_mut() += 1; ok(400, "bad json") }), &Fb).unwrap_err();
+    assert!(e.contains("업데이트"), "{e}");
+    assert_eq!(*posts.borrow(), 1, "코드만 다시 내지 않는다");
+    // hello 에 Chammo 기기 id 가 없는 옛 판 — 코드도 안 낸다
+    let e = pair(&kc, &dir, &peer("nIMAC", true), CODE, "m", &|_: &Target, r: &Request, _: Duration, _: usize| {
+        assert_eq!(r.path, "/api/hello", "코드를 안 낸다");
+        ok(200, r#"{"app":"chammo","proto":1,"version":"0.4.9"}"#)
+    }, &Fb).unwrap_err();
+    assert!(e.contains("옛 판"), "{e}");
+    assert!(kc.val(SERVICE, "nIMAC").is_none() && load(&dir).is_empty());
+}
+
+#[test]
+fn 짝짓기_다른_계정이거나_답_증명이_틀리면_열쇠를_안_남긴다() {
+    let dir = tmp("pair-acct");
+    let kc = Fake::default();
+    // 그 기기가 다른 Chammo 계정(내 계정 컴퓨터 목록에 없음) — 코드를 내기 전에 멈춘다
+    let e = pair(&kc, &dir, &peer("nBOX", true), CODE, "m", &|_: &Target, r: &Request, _: Duration, _: usize| {
+        assert_eq!(r.path, "/api/hello");
+        ok(200, r#"{"app":"chammo","chammo":"dev-other"}"#)
+    }, &Fb).unwrap_err();
+    assert!(e.contains("같은 Chammo 계정"), "{e}");
+    // 받는 쪽이 계정 증명을 거절(403 account:other)
+    let e = pair(&kc, &dir, &peer("nBOX", true), CODE, "m", &with_hello(|_| ok(403, "account:other")), &Fb).unwrap_err();
+    assert!(e.contains("같은 Chammo 계정"), "{e}");
+    // 열쇠는 줬는데 답 증명이 틀림·빔 — 다른 기기가 그 주소에서 답했을 수 있다
+    for body in [format!(r#"{{"token":"{TOK}","proof":"r-x"}}"#), format!(r#"{{"token":"{TOK}"}}"#)] {
+        let e = pair(&kc, &dir, &peer("nBOX", true), CODE, "m", &with_hello(|_| ok(200, &body)), &Fb).unwrap_err();
+        assert!(e.contains("계정을 확인하지"), "{e}");
+    }
+    assert!(kc.val(SERVICE, "nBOX").is_none() && load(&dir).is_empty());
 }
 
 #[test]
 fn md3_짝짓기_실패는_이유만_열쇠는_안_남긴다() {
     let dir = tmp("pairfail");
     let kc = Fake::default();
-    let e = pair(&kc, &dir, &peer("nBOX", true), "0123456789abcdef0123456789abcdef", "m", &|_: &Target, _: &Request, _: Duration, _: usize| ok(401, "nope")).unwrap_err();
+    let e = pair(&kc, &dir, &peer("nBOX", true), CODE, "m", &with_hello(|_| ok(401, "nope")), &Fb).unwrap_err();
     assert!(e.contains("코드"), "{e}");
     assert!(load(&dir).is_empty());
     // 원격이 이상한 토큰을 주면 안 받는다
-    let e = pair(&kc, &dir, &peer("nBOX", true), "0123456789abcdef0123456789abcdef", "m", &|_: &Target, _: &Request, _: Duration, _: usize| ok(200, r#"{"token":"short"}"#)).unwrap_err();
+    let e = pair(&kc, &dir, &peer("nBOX", true), CODE, "m", &with_hello(|_| ok(200, &format!(r#"{{"token":"short","proof":"r-{CODE}"}}"#))), &Fb).unwrap_err();
     assert!(!e.is_empty());
     assert!(kc.val(SERVICE, "nBOX").is_none());
     // 키체인 쓰기 실패면 목록에도 안 남긴다
     *kc.fail_set.borrow_mut() = Some(SERVICE.into());
-    let e = pair(&kc, &dir, &peer("nBOX", true), "0123456789abcdef0123456789abcdef", "m", &|_: &Target, _: &Request, _: Duration, _: usize| ok(200, &format!(r#"{{"token":"{TOK}"}}"#))).unwrap_err();
+    let e = pair(&kc, &dir, &peer("nBOX", true), CODE, "m", &with_hello(|_| ok(200, &pair_ok())), &Fb).unwrap_err();
     assert!(!e.contains(TOK), "{e}");
     assert!(load(&dir).is_empty());
 }
@@ -190,7 +242,7 @@ fn md3_대신_보내기는_열쇠를_붙이고_401이면_짝짓기_필요() {
     let dir = tmp("call");
     let kc = Fake::default();
     kc.put(SERVICE, "nBOX", TOK);
-    save(&dir, &[Saved { id: "nBOX".into(), name: "B".into(), ip: "100.64.0.9".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None, relay_x: None }]).unwrap();
+    save(&dir, &[Saved { id: "nBOX".into(), name: "B".into(), ip: "100.64.0.9".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None, relay_x: None, device: None }]).unwrap();
     let saw = RefCell::new(None);
     let here = Some("100.64.0.9".parse().unwrap());
     let out = call(&kc, &dir, "nBOX", here, "GET", "/api/sessions", None, &|t: &Target, r: &Request, _: Duration, _: usize| {
@@ -223,10 +275,10 @@ fn 대신_보내는_사이_새로_이은_기기_줄이_안_사라진다() {
     let dir = tmp("call-race");
     let kc = Fake::default();
     kc.put(SERVICE, "nBOX", TOK);
-    save(&dir, &[Saved { id: "nBOX".into(), name: "B".into(), ip: "100.64.0.9".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None, relay_x: None }]).unwrap();
+    save(&dir, &[Saved { id: "nBOX".into(), name: "B".into(), ip: "100.64.0.9".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None, relay_x: None, device: None }]).unwrap();
     let here = Some("100.64.0.9".parse().unwrap());
     call(&kc, &dir, "nBOX", here, "GET", "/api/sessions", None, &|_: &Target, _: &Request, _: Duration, _: usize| {
-        upsert_saved(&dir, "nNEW", "새 기기", "100.64.0.10".parse().unwrap()).unwrap(); // 망을 기다리는 사이 다른 연결이 끝남
+        upsert_saved(&dir, "nNEW", "새 기기", "100.64.0.10".parse().unwrap(), None).unwrap(); // 망을 기다리는 사이 다른 연결이 끝남
         ok(200, "[]")
     })
     .unwrap();
@@ -240,7 +292,7 @@ fn md3_끊기는_키체인과_목록에서_둘_다() {
     let dir = tmp("unpair");
     let kc = Fake::default();
     kc.put(SERVICE, "nBOX", TOK);
-    save(&dir, &[Saved { id: "nBOX".into(), name: "B".into(), ip: "100.64.0.9".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None, relay_x: None }]).unwrap();
+    save(&dir, &[Saved { id: "nBOX".into(), name: "B".into(), ip: "100.64.0.9".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None, relay_x: None, device: None }]).unwrap();
     unpair(&kc, &dir, "nBOX").unwrap();
     assert!(kc.val(SERVICE, "nBOX").is_none());
     assert!(load(&dir).is_empty());
@@ -252,7 +304,7 @@ fn md3_열쇠는_지금_테일넷에서_그_노드의_주소로만() {
     let dir = tmp("ip");
     let kc = Fake::default();
     kc.put(SERVICE, "nBOX", TOK);
-    save(&dir, &[Saved { id: "nBOX".into(), name: "B".into(), ip: "100.64.0.9".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None, relay_x: None }]).unwrap();
+    save(&dir, &[Saved { id: "nBOX".into(), name: "B".into(), ip: "100.64.0.9".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None, relay_x: None, device: None }]).unwrap();
     let never = |_: &Target, _: &Request, _: Duration, _: usize| -> Result<Response, NetErr> { panic!("보내면 안 된다") };
     let e = call(&kc, &dir, "nBOX", None, "GET", "/api/sessions", None, &never).unwrap_err();
     assert!(e.contains("테일넷"), "{e}");
@@ -313,7 +365,7 @@ fn md3_실측_짝짓기_한_바퀴() {
     let kc = Mem::default();
     let send = real_send(route.clone());
     let t0 = std::time::Instant::now();
-    pair(&kc, &dir, &peer, &code, &me, &send).unwrap();
+    pair(&kc, &dir, &peer, &code, &me, &send, &crate::peer_account::RealBinder).unwrap();
     eprintln!("① 짝짓기 됨 {:?} ({route:?})", t0.elapsed());
     let here = Some(peer.ip);
     let get = |p: &str| {
@@ -401,7 +453,7 @@ fn pe_받는_쪽은_자기_테일넷의_같은_계정_기기만_이름과_테일
 }
 
 fn lp(id: &str) -> crate::peer_ask::LinkPeer {
-    crate::peer_ask::LinkPeer { id: id.into(), name: format!("{id}-host"), os: "macOS".into(), ip: "100.64.0.9".parse().unwrap(), tailnet: "me@example.com".into() }
+    crate::peer_ask::LinkPeer { id: id.into(), name: format!("{id}-host"), os: "macOS".into(), ip: "100.64.0.9".parse().unwrap(), tailnet: "me@example.com".into(), chammo: Some("dev-a".into()) }
 }
 
 #[test]
@@ -419,6 +471,13 @@ fn pe_허용해서_받아_갈_때_받는_쪽은_양쪽_열쇠를_건다() {
     assert_eq!(v.name, "참모 · nA-host");
     assert_eq!(kc.val(SERVICE, "nA").as_deref(), Some(back.as_str()));
     assert_eq!(load(&dir)[0].id, "nA");
+    // 증명한 Chammo 기기 id 가 양쪽(기기 줄·목록)에 묶인다
+    assert_eq!(lines.bound_of(&id).as_deref(), Some("dev-a"));
+    assert_eq!(load(&dir)[0].device.as_deref(), Some("dev-a"));
+    // 증명 없는 요청(옛 판)은 열쇠를 안 만든다
+    let lines2 = crate::mobile_pair::Devices::memory();
+    assert!(accept(&kc, &tmp("accept2"), &lines2, &crate::peer_ask::LinkPeer { chammo: None, ..lp("nB") }).is_err());
+    assert!(lines2.list().is_empty());
     assert!(!std::fs::read_to_string(dir.join(FILE)).unwrap().contains(&back));
 }
 
@@ -444,6 +503,9 @@ impl Wire<'_> {
     fn send(&self, _: &Target, r: &Request, _: Duration, _: usize) -> Result<Response, NetErr> {
         self.seen.borrow_mut().push((r.method.into(), r.path.into(), String::from_utf8_lossy(r.body.unwrap_or(&[])).into_owned()));
         assert!(r.token.is_none(), "연결 요청엔 열쇠가 없다");
+        if r.path == "/api/hello" {
+            return hello_box();
+        }
         if r.path == "/api/link-request" {
             // 받는 쪽이 되묻는 것처럼 — 요청하는 쪽 Asks 가 그 요청을 아나
             let b: serde_json::Value = serde_json::from_slice(r.body.unwrap()).unwrap();
@@ -452,7 +514,9 @@ impl Wire<'_> {
         }
         let mut s = self.statuses.borrow_mut();
         let (c, b) = if s.len() > 1 { s.remove(0) } else { s[0].clone() };
-        ok(c, &b)
+        // 답 증명 자리 — 요청 번호로
+        let req = r.path.split("req=").nth(1).unwrap_or("");
+        ok(c, &b.replace("{PROOF}", &format!("r-{req}")))
     }
 }
 
@@ -462,7 +526,7 @@ fn wire<'a>(asks: &'a crate::peer_ask::Asks, statuses: &[(u16, &str)]) -> Wire<'
 
 fn run(w: &Wire, kc: &Fake, dir: &std::path::Path, lines: &crate::mobile_pair::Devices) -> Result<(), String> {
     let t = std::cell::Cell::new(0u64);
-    let l = Link { kc, dir, lines, asks: w.asks };
+    let l = Link { kc, dir, lines, asks: w.asks, bind: &Fb };
     connect(&l, "nSELF", &peer("nBOX", true), &|a: &Target, r: &Request, d, m| w.send(a, r, d, m), &|| t.set(t.get() + 2000), &|| t.get())
 }
 
@@ -471,17 +535,22 @@ fn pe_연결을_누르면_허용될_때까지_기다렸다가_양쪽_열쇠를_�
     let dir = tmp("connect");
     let (kc, lines, asks) = (Fake::default(), crate::mobile_pair::Devices::memory(), crate::peer_ask::Asks::default());
     let back = "b".repeat(64);
-    let w = wire(&asks, &[(200, r#"{"state":"wait"}"#), (200, r#"{"state":"wait"}"#), (200, &format!(r#"{{"state":"yes","token":"{TOK}","back":"{back}"}}"#))]);
+    let w = wire(&asks, &[(200, r#"{"state":"wait"}"#), (200, r#"{"state":"wait"}"#), (200, &format!(r#"{{"state":"yes","token":"{TOK}","back":"{back}","proof":"{{PROOF}}"}}"#))]);
     run(&w, &kc, &dir, &lines).unwrap();
     let seen = w.seen.borrow();
-    assert_eq!((seen[0].0.as_str(), seen[0].1.as_str()), ("POST", "/api/link-request"));
-    let b: serde_json::Value = serde_json::from_str(&seen[0].2).unwrap();
+    assert_eq!(seen[0].1, "/api/hello", "그 기기 Chammo 기기 id 부터");
+    assert_eq!((seen[1].0.as_str(), seen[1].1.as_str()), ("POST", "/api/link-request"));
+    let b: serde_json::Value = serde_json::from_str(&seen[1].2).unwrap();
     assert_eq!(b["node"], "nSELF");
-    assert!(seen[1].1.starts_with("/api/link-status?req="), "{}", seen[1].1);
+    let req = b["req"].as_str().unwrap();
+    assert_eq!((b["device"].as_str(), b["proof"].as_str()), (Some("dev-self"), Some(format!("p-{req}").as_str())), "같은 계정 증명");
+    assert!(seen[2].1.starts_with("/api/link-status?req="), "{}", seen[2].1);
+    let id = lines.check(&back, std::time::SystemTime::now()).unwrap();
+    assert_eq!(lines.bound_of(&id).as_deref(), Some("dev-box"), "그 기기가 이 기기를 부르는 줄도 계정에 묶인다");
+    assert_eq!(load(&dir)[0].device.as_deref(), Some("dev-box"));
     assert_eq!(kc.val(SERVICE, "nBOX").as_deref(), Some(TOK), "이 기기 → 그 기기 열쇠는 키체인");
     assert!(lines.check(&back, std::time::SystemTime::now()).is_some(), "그 기기 → 이 기기 열쇠는 기기 줄(해시)");
     assert_eq!(load(&dir)[0].id, "nBOX");
-    let req = b["req"].as_str().unwrap();
     assert!(!asks.waiting(req, 0), "끝나면 요청을 거둔다(더는 되묻기에 안 맞다고 함)");
 }
 
@@ -491,7 +560,10 @@ fn pe_거절_시간_끝_옛_판_다른_계정은_이유만_남기고_아무것�
         ((200, r#"{"state":"no"}"#), "거절"),
         ((200, r#"{"state":"expired"}"#), "5분"),
         ((404, "no such request"), "기억하지"),
-        ((200, r#"{"state":"yes","token":"짧음","back":"x"}"#), "열쇠 모양"),
+        ((200, r#"{"state":"yes","token":"짧음","back":"x","proof":"{PROOF}"}"#), "열쇠 모양"),
+        // 답 증명이 틀림·빔 — 열쇠가 맞아도 안 건다(11-09)
+        ((200, r#"{"state":"yes","token":"a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90","back":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","proof":"r-x"}"#), "계정을 확인하지"),
+        ((200, r#"{"state":"yes","token":"a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90","back":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}"#), "계정을 확인하지"),
     ] {
         let dir = tmp("connect-no");
         let (kc, lines, asks) = (Fake::default(), crate::mobile_pair::Devices::memory(), crate::peer_ask::Asks::default());
@@ -500,14 +572,14 @@ fn pe_거절_시간_끝_옛_판_다른_계정은_이유만_남기고_아무것�
         assert!(e.contains(want), "{want}: {e}");
         assert!(kc.val(SERVICE, "nBOX").is_none() && lines.list().is_empty() && load(&dir).is_empty());
     }
-    for (code, body, want) in [(404, "not found", "옛 버전"), (403, "not your device", "같은 테일스케일 계정"), (403, "unconfirmed", "확인"), (429, "too many", "잦"), (501, "unsupported", "업데이트")] {
+    for (code, body, want) in [(404, "not found", "옛 버전"), (403, "not your device", "같은 테일스케일 계정"), (403, "unconfirmed", "확인"), (429, "too many", "잦"), (501, "unsupported", "업데이트"), (403, "account:other", "같은 Chammo 계정"), (400, "bad json", "업데이트")] {
         let dir = tmp("connect-req");
         let (kc, lines, asks) = (Fake::default(), crate::mobile_pair::Devices::memory(), crate::peer_ask::Asks::default());
         let mut w = wire(&asks, &[(200, r#"{"state":"wait"}"#)]);
         w.request = (code, body.into());
         let e = run(&w, &kc, &dir, &lines).unwrap_err();
         assert!(e.contains(want), "{code} {body}: {e}");
-        assert_eq!(w.seen.borrow().len(), 1, "요청이 안 받아들여지면 기다리지 않는다");
+        assert_eq!(w.seen.borrow().len(), 2, "요청이 안 받아들여지면 기다리지 않는다(hello + 요청)");
     }
 }
 
@@ -523,7 +595,7 @@ fn pe_기다리다_취소하거나_시간이_다_가면_멈춘다() {
     // 취소 — 다른 곳에서 cancel_node 하면 다음 바퀴에 멈춘다
     let w2 = wire(&asks, &[(200, r#"{"state":"wait"}"#)]);
     let t = std::cell::Cell::new(0u64);
-    let l = Link { kc: &kc, dir: &dir, lines: &lines, asks: &asks };
+    let l = Link { kc: &kc, dir: &dir, lines: &lines, asks: &asks, bind: &Fb };
     let e = connect(&l, "nSELF", &peer("nBOX", true), &|a: &Target, r: &Request, d, m| w2.send(a, r, d, m), &|| { asks.cancel_node("nBOX"); t.set(t.get() + 2000) }, &|| t.get()).unwrap_err();
     assert!(e.contains("취소"), "{e}");
 }
@@ -533,7 +605,7 @@ fn pe_끊으면_그_기기가_이_기기에_쓰던_줄도_지운다() {
     let dir = tmp("unpair-node");
     let (kc, lines) = (Fake::default(), crate::mobile_pair::Devices::memory());
     let back = "c".repeat(64);
-    lines.add_peer(&back, "참모 · BOX", "nBOX", std::time::SystemTime::now()).unwrap();
+    lines.add_peer(&back, "참모 · BOX", "nBOX", None, std::time::SystemTime::now()).unwrap();
     kc.put(SERVICE, "nBOX", TOK);
     unpair_with(&kc, &dir, &lines, "nBOX").unwrap();
     assert!(kc.val(SERVICE, "nBOX").is_none());
@@ -568,7 +640,7 @@ fn hu_사람_길은_참모_길로는_못_간다() {
     let dir = tmp("human");
     let kc = Fake::default();
     kc.put(SERVICE, "nBOX", TOK);
-    save(&dir, &[Saved { id: "nBOX".into(), name: "B".into(), ip: "100.64.0.9".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None, relay_x: None }]).unwrap();
+    save(&dir, &[Saved { id: "nBOX".into(), name: "B".into(), ip: "100.64.0.9".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None, relay_x: None, device: None }]).unwrap();
     let here = Some("100.64.0.9".parse().unwrap());
     let never = |_: &Target, _: &Request, _: Duration, _: usize| -> Result<Response, NetErr> { panic!("보내면 안 된다") };
     assert!(call(&kc, &dir, "nBOX", here, "POST", "/api/peer-human", Some("{}"), &never).is_err());
@@ -615,7 +687,7 @@ fn hu_실측_사람_길_한_바퀴() {
     let dir = tmp("live-human");
     let kc = Mem::default();
     let send = real_send(route.clone());
-    pair(&kc, &dir, &peer, code.trim(), &me, &send).unwrap();
+    pair(&kc, &dir, &peer, code.trim(), &me, &send, &crate::peer_account::RealBinder).unwrap();
     eprintln!("짝짓기 됨 — 이 기기 이름 {me}");
     let here = Some(peer.ip);
     let now = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
@@ -651,7 +723,7 @@ fn 중계_줄은_relay_id_칸의_열쇠로_같은_문을_지나간다() {
     let dir = tmp("relay-call");
     let kc = Fake::default();
     kc.put(SERVICE, &relay_key_account("dev-a"), TOK);
-    save(&dir, &[Saved { id: "relay:dev-a".into(), name: "사무실 아이맥".into(), ip: std::net::Ipv4Addr::UNSPECIFIED, port: 0, paired_at: 1, last_ok: None, relay_x: Some("X".into()) }]).unwrap();
+    save(&dir, &[Saved { id: "relay:dev-a".into(), name: "사무실 아이맥".into(), ip: std::net::Ipv4Addr::UNSPECIFIED, port: 0, paired_at: 1, last_ok: None, relay_x: Some("X".into()), device: None }]).unwrap();
     let saw = RefCell::new(None);
     let out = call(&kc, &dir, "relay:dev-a", Some(std::net::Ipv4Addr::UNSPECIFIED), "GET", "/api/sessions", None, &|_: &Target, r: &Request, _: Duration, _: usize| {
         *saw.borrow_mut() = r.token.map(str::to_string);
@@ -668,7 +740,7 @@ fn 중계_줄은_relay_id_칸의_열쇠로_같은_문을_지나간다() {
 
 #[test]
 fn 중계로_이은_컴퓨터는_기기_목록에_연결됨으로() {
-    let s = |id: &str, x: Option<&str>| Saved { id: id.into(), name: "아이맥".into(), ip: std::net::Ipv4Addr::UNSPECIFIED, port: 0, paired_at: 1, last_ok: Some(9), relay_x: x.map(str::to_string) };
+    let s = |id: &str, x: Option<&str>| Saved { id: id.into(), name: "아이맥".into(), ip: std::net::Ipv4Addr::UNSPECIFIED, port: 0, paired_at: 1, last_ok: Some(9), relay_x: x.map(str::to_string), device: None };
     let v = relay_views(&[s("relay:dev-a", Some("X")), s("nTAIL", None), s("relay:dev-b", None)]);
     assert_eq!(v.len(), 1);
     assert_eq!((v[0].id.as_str(), v[0].status, v[0].paired), ("relay:dev-a", "connected", true));
@@ -717,7 +789,7 @@ fn 중계_줄_끊기는_상대에게_알리고_이쪽을_지운다() {
 // C-5 실측 ③ — 같은 컴퓨터가 테일넷 옛 줄(꺼짐·짝짓기 필요)과 중계 줄(연결됨)로 두 번 나오면 중계 줄 하나만
 #[test]
 fn 같은_이름의_안_닿는_테일넷_줄은_중계_줄에_합친다() {
-    let v = |id: &str, name: &str, status: &'static str| DeviceView { id: id.into(), name: name.into(), os: String::new(), status, paired: true, old: false, link: true, version: None, last_ok: None };
+    let v = |id: &str, name: &str, status: &'static str| DeviceView { id: id.into(), name: name.into(), os: String::new(), status, paired: true, old: false, link: true, version: None, last_ok: None, paused: None };
     let tail = vec![v("nOLD", "Laptop-B", "offline"), v("nPC", "DESKTOP", "connected"), v("nLIVE", "아이맥", "connected")];
     let relay = vec![v("relay:a", "Laptop-B", "connected"), v("relay:b", "아이맥", "connected")];
     let out: Vec<String> = merge_relay(tail, relay).into_iter().map(|d| d.id).collect();
@@ -727,7 +799,7 @@ fn 같은_이름의_안_닿는_테일넷_줄은_중계_줄에_합친다() {
 // C-6 버그 A — 테일스케일이 깔렸지만 꺼진 맥: 테일넷 목록이 실패해도 중계 줄은 돌려준다(scripts/peer list·say 가 돈다)
 #[test]
 fn 테일넷이_실패해도_중계_줄은_돌려준다() {
-    let v = |id: &str, status: &'static str| DeviceView { id: id.into(), name: id.into(), os: String::new(), status, paired: true, old: false, link: true, version: None, last_ok: None };
+    let v = |id: &str, status: &'static str| DeviceView { id: id.into(), name: id.into(), os: String::new(), status, paired: true, old: false, link: true, version: None, last_ok: None, paused: None };
     let out = combine(Err("테일스케일이 꺼져 있거나 로그인 전이에요".into()), vec![v("relay:a", "connected")]).unwrap();
     assert_eq!(out.devices.len(), 1);
     assert_eq!(out.devices[0].id, "relay:a");
@@ -743,7 +815,7 @@ fn 카드_모으기는_요청_마감을_짧게_묶는다() {
     let dir = tmp("cap");
     let kc = Fake::default();
     kc.put(SERVICE, "nBOX", TOK);
-    save(&dir, &[Saved { id: "nBOX".into(), name: "B".into(), ip: "100.64.0.9".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None, relay_x: None }]).unwrap();
+    save(&dir, &[Saved { id: "nBOX".into(), name: "B".into(), ip: "100.64.0.9".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None, relay_x: None, device: None }]).unwrap();
     let saw = RefCell::new(vec![]);
     let send = |_: &Target, _: &Request, w: Duration, _: usize| -> Result<Response, NetErr> {
         saw.borrow_mut().push(w);
@@ -764,4 +836,95 @@ fn 테일넷이_꺼졌다는_기기만_바로_거른다() {
     assert!(!tailnet_off(&peers, "nON"));
     assert!(!tailnet_off(&peers, "nGONE"), "목록에 없는 기기는 call 이 이유를 낸다");
     assert!(!tailnet_off(&[], "relay:abc"));
+}
+
+// ── 11-09 보안: 부르는 쪽도 같은 Chammo 계정 짝만 ─────────────────────
+
+/// 서버가 말한 내 계정 컴퓨터 = dev-box·hub-1 (진짜 판정)
+fn judge_world(b: Option<&str>, strict: bool) -> crate::peer_account::Verdict {
+    use crate::peer_account::{judge, Mine, Seen, FRESH_MS};
+    let mine = Mine { account: "acct-me".into(), device: "dev-self".into() };
+    let now = 90_000_000;
+    let at = if strict { now } else { now - FRESH_MS - 1 };
+    let seen = Seen { mine: mine.clone(), at_ms: at, computers: vec![("dev-box".into(), String::new()), ("hub-1".into(), String::new())], phones: vec![] };
+    judge(b, Some(&mine), Some(&seen), now)
+}
+
+fn saved_three(dir: &std::path::Path) {
+    let s = |id: &str, device: Option<&str>, relay: Option<&str>| Saved { id: id.into(), name: format!("{id}-이름"), ip: "100.64.0.9".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None, relay_x: relay.map(str::to_string), device: device.map(str::to_string) };
+    save(dir, &[s("nOLD", None, None), s("nBOX", Some("dev-box"), None), s("nPC", Some("dev-pc"), None), s("relay:hub-1", None, Some("X")), s("relay:hub-9", None, Some("X"))]).unwrap();
+}
+
+#[test]
+fn 계정_부르는_쪽은_묶인_같은_계정_짝만_망을_부른다() {
+    let dir = tmp("acct-gate");
+    saved_three(&dir);
+    let g = |id: &str, strict: bool| gate_with(&dir, id, strict, &judge_world);
+    assert_eq!(g("nOLD", false), Err("account:unbound".into()), "10월 옛 짝");
+    assert_eq!(g("nPC", false), Err("account:other".into()), "로그아웃·다른 계정");
+    assert_eq!(g("nBOX", false), Ok(()));
+    assert_eq!(g("relay:hub-1", false), Ok(()), "중계 짝은 허브 id 로");
+    assert_eq!(g("relay:hub-9", false), Err("account:other".into()));
+    assert_eq!(g("nNONE", false), Err("account:unbound".into()), "목록에 없는 기기");
+    // 결제·운영은 1분 안 확인만 — 묵은 목록(judge_world 의 strict=false 쪽)은 막힌다
+    assert_eq!(gate_with(&dir, "nBOX", true, &|b, _| judge_world(b, false)), Err("account:same".into()));
+    assert_eq!(gate_with(&dir, "nBOX", true, &judge_world), Ok(()));
+}
+
+#[test]
+fn 계정_기기_칸과_카드_줄은_멈춘_짝을_한_줄로() {
+    let dir = tmp("acct-views");
+    saved_three(&dir);
+    let saved = load(&dir);
+    let mut views = relay_views(&saved);
+    views.extend(merge(&[], &saved.iter().filter(|s| s.relay_x.is_none()).cloned().collect::<Vec<_>>(), |_| Probe { hello: Presence::Absent, auth: None }));
+    mark_paused(&mut views, &saved, &|b| judge_world(b, false));
+    let st = |id: &str| views.iter().find(|v| v.id == id).map(|v| (v.status, v.paused)).unwrap();
+    assert_eq!(st("nOLD"), ("account", Some("unbound")));
+    assert_eq!(st("nPC"), ("account", Some("other")));
+    assert_eq!(st("relay:hub-1"), ("connected", None));
+    assert_eq!(st("nBOX"), ("offline", None), "계정은 맞고 안 닿을 뿐");
+    // 카드 모으기 — 멈춘 짝은 묻지 않고 줄만(화면 한 줄)
+    let (go, stop) = split_paused(saved, &|b| judge_world(b, false));
+    assert_eq!(go.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["nBOX", "relay:hub-1"]);
+    assert_eq!(stop.len(), 3);
+    let pc = stop.iter().find(|r| r["dev"] == "nPC").unwrap();
+    assert_eq!((pc["paused"].as_str(), pc["off"].as_bool(), pc["log"].as_str()), (Some("other"), Some(true), Some("")));
+    assert!(pc["pausedText"].as_str().unwrap().contains("계정이 바뀌어 연결이 멈췄어요"));
+}
+
+#[test]
+fn 계정_로그아웃하면_짝을_다_알리고_지운다() {
+    let dir = tmp("acct-logout");
+    saved_three(&dir);
+    let (kc, lines) = (Fake::default(), crate::mobile_pair::Devices::memory());
+    kc.put(SERVICE, "nBOX", TOK);
+    kc.put(SERVICE, "relay:hub-1", TOK);
+    let now = std::time::SystemTime::now();
+    lines.add_peer(&"c".repeat(64), "참모 · BOX", "nBOX", Some("dev-box"), now).unwrap();
+    lines.add_peer(&"d".repeat(64), "참모 · 옛 줄", "nGONE", None, now).unwrap();
+    lines.add_peer_relay(&"e".repeat(64), "허브", crate::mobile_pair::Relay { device: "hub-1".into(), x: "X".into() }, now).unwrap();
+    lines.add_test("phone001", &"f".repeat(64), "iPhone", false);
+    let relay_tok = lines.pair_linked(&crate::mobile_pair::Pairing { name: "iPhone", home: true, prev: None, peer: false, chammo: None }, crate::mobile_pair::Relay { device: "ph-1".into(), x: "P".into() }, now).unwrap();
+    let told = RefCell::new(Vec::new());
+    let n = drop_all(&kc, &dir, &lines, &|s: &Saved| told.borrow_mut().push(s.id.clone())).unwrap();
+    assert_eq!(n, 5);
+    assert_eq!(told.borrow().len(), 5, "짝마다 끊는다고 알린다");
+    assert!(load(&dir).is_empty());
+    assert!(kc.val(SERVICE, "nBOX").is_none() && kc.val(SERVICE, "relay:hub-1").is_none());
+    // 중계 폰 줄만 남는다 — 옛 peer 줄도, 계정을 확인할 길이 없는 직통 폰 줄(phone001)도 지운다(11-09 2차)
+    let left: Vec<_> = lines.list().into_iter().map(|d| (d.peer, d.relay)).collect();
+    assert_eq!(left, vec![(false, true)]);
+    assert!(lines.check(&relay_tok, now).is_some());
+}
+
+#[test]
+fn 계정_옛_짝_목록_파일도_그대로_읽힌다() {
+    // 10월 파일(device 칸 없음) — 읽히고 묶인 값은 없다
+    let dir = tmp("acct-oldfile");
+    std::fs::write(dir.join(FILE), r#"[{"id":"nDMaq","name":"DESKTOP-TEST01","ip":"100.64.0.5","port":47123,"pairedAt":1792585625766,"lastOk":1}]"#).unwrap();
+    let l = load(&dir);
+    assert_eq!(l.len(), 1);
+    assert_eq!(bound(&l[0]), None);
+    assert_eq!(gate_with(&dir, "nDMaq", false, &judge_world), Err("account:unbound".into()));
 }

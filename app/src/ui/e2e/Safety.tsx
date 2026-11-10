@@ -1,9 +1,9 @@
-// 보안 번호 받아들이기(시안 docs/design-drafts/e2e-safety v1, chammo-relay ADR 0007 결정 2·5) — 결정 대기함 카드 몸통·번호 판·멤버 줄 패널.
+// 보안 번호 받아들이기(시안 docs/design-drafts/e2e-safety v1, chammo-relay ADR 0007 결정 2·5) — 결정 대기함 카드 몸통·번호 판·팀원 자세히 보기 안 번호 비교.
 // 받아들이기·막아 두기는 카드 답(direct_answer — 메인 창·짝지은 폰)으로만. '같아요'(확인됨)·카드 다시 띄우기는 메신저 창 명령
 import { useState } from 'react';
 import { e2eSafetyBlock, e2eSafetyRefetch, e2eSafetyUnblock, e2eSafetyVerify, safetyAnswer } from '../../data/teamApi';
 import type { DirectCard } from '../../domain/directAsk';
-import { needsRefetch, safetyGroups, safetyLabel, type SafetyPerson } from '../../domain/e2eSafety';
+import { needsRefetch, safetyGroups, type SafetyPerson } from '../../domain/e2eSafety';
 import { tr } from '../../i18n';
 import '../chat/directCard.css';
 import './e2e.css';
@@ -66,14 +66,9 @@ export function SafetyCardBody({ c, busy, answer }: { c: DirectCard; busy: boole
   );
 }
 
-/** 멤버 줄 상태 — 초록 점은 확인됨일 때만 */
-export function SafetyState({ p }: { p: SafetyPerson }) {
-  const l = safetyLabel(p);
-  return <span className={`sn-state${l.ok ? ' ok' : ''}`}>{l.ok && <i className="ok-dot" aria-hidden />}{l.text}</span>;
-}
-
-/** 번호 보기 패널(팀 설정 멤버 줄·대화 '확인') — 안 견준 사람은 '같아요', 바뀐 사람은 카드 답 문으로 받아들이기·막아 두기, 막아 뒀으면 카드 다시 띄우기 */
-export function SafetyPanel({ p, teamName, onDone, readOnly }: { p: SafetyPerson; teamName?: string; onDone: () => void;
+/** 번호 비교(팀원 자세히 보기 안 — 11-09 사용자 "너무 복잡": 머리 줄·긴 안내 없이 번호 판 + 한 줄 + 단추).
+ *  안 견준 사람은 '같아요', 바뀐 사람은 카드 답 문으로 받아들이기·막아 두기, 막아 뒀으면 다시. 동작은 ADR 0007 그대로 */
+export function SafetyCompare({ p, onDone, readOnly }: { p: SafetyPerson; onDone: () => void;
   /** 폰 웹 — 메신저 창 명령이 없다. 번호만 보여 주고 받아들이기는 폰 결정 대기함 카드로 */ readOnly?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -84,11 +79,15 @@ export function SafetyPanel({ p, teamName, onDone, readOnly }: { p: SafetyPerson
     void go().then(onDone, (x: unknown) => setErr(String(x))).finally(() => setBusy(false));
   };
   const changed = p.state === 'changed' || p.state === 'forked';
+  const g = safetyGroups(p.number);
   return (
-    <div className="sn-panel" role="group" aria-label={tr(`${p.name} 보안 번호`, `${p.name} safety number`)}>
-      <SafetyNumber code={p.number} who={p.name} team={teamName} />
-      <div className="dc-muted" style={{ textAlign: 'center' }}>{tr(`${p.name} 화면의 번호와 같은지 만나서나 전화로 견줘요`, `Compare it with ${p.name}'s screen in person or on a call`)}</div>
-      {readOnly ? <div className="dc-muted" style={{ textAlign: 'center' }}>{changed ? tr('받아들이기·막아 두기는 결정 대기함 카드에서 해요', 'Accept or block from the card in your inbox') : tr('같다고 표시하는 건 컴퓨터 앱 팀 설정에서 해요', 'Mark it as the same in the desktop app team settings')}</div> : (
+    <div className="sn-cmp" role="group" aria-label={tr(`${p.name} 보안 번호`, `${p.name} safety number`)}>
+      {g.length ? <div className="sn" aria-label={tr(`보안 번호 ${p.number}`, `Safety number ${p.number}`)}>{g.map((x, i) => <span key={i}>{x}</span>)}</div>
+        : <div className="dc-muted">{tr('번호를 아직 못 셈했어요 — 잠시 뒤 다시', "Can't compute it yet — try again shortly")}</div>}
+      <div className="sn-hint">{readOnly
+        ? (changed ? tr('받아들이기는 결정 대기함에서', 'Accept from your inbox') : tr('같다고 표시는 컴퓨터에서', 'Mark as same on the desktop'))
+        : tr(`${p.name} 화면의 번호와 같은지 봐요`, `Check it matches ${p.name}'s screen`)}</div>
+      {!readOnly && !!g.length && (
       <div className="dc-acts">
         {/* 바뀌어 저절로 받아들인 사람(사용자 10-29) — 견줘 보고 다르면 여기서만 막아 둔다 */}
         {!changed && (p.rekeyedAt ?? 0) > 0 && <button className="dc-btn dc-no" disabled={busy} onClick={(e) => run(e, () => e2eSafetyBlock(p.account))}>{tr('다르면 막아 두기', 'Different — block')}</button>}

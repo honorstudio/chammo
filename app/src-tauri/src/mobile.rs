@@ -1192,7 +1192,7 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
     }
     fn push_subscribe(&self, device: &str, endpoint: &str, p256dh: &str, auth: &str) -> Result<(), String> {
         let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
-        crate::push::subscribe(crate::config::data_dir(), crate::push::Sub { device: device.into(), endpoint: endpoint.into(), p256dh: p256dh.into(), auth: auth.into(), at })
+        crate::push::subscribe(crate::config::data_dir(), crate::push::Sub { device: device.into(), endpoint: endpoint.into(), p256dh: p256dh.into(), auth: auth.into(), at, replaces: vec![] })
     }
     fn push_unsubscribe(&self, device: &str, endpoint: &str) -> Result<(), String> {
         crate::push::unsubscribe(crate::config::data_dir(), device, endpoint)
@@ -1380,6 +1380,27 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
     }
     fn peer_unlink(&self, relay: &str) -> Result<(), String> {
         crate::remote::forget_relay(relay)
+    }
+    fn peer_unlink_node(&self, node: &str) -> Result<(), String> {
+        crate::remote::forget_node(node)
+    }
+    fn peer_verdict(&self, bound: Option<&str>, strict: bool) -> crate::peer_account::Verdict {
+        crate::peer_account::check(bound, strict)
+    }
+    fn peer_bind_verify(&self, b: &crate::peer_account::Bind, ctx: &str) -> Result<String, crate::peer_account::Verdict> {
+        crate::peer_account::verify_now(b, ctx)
+    }
+    fn peer_me(&self) -> Option<String> {
+        crate::peer_account::my_device()
+    }
+    fn phone_verdict(&self, relay: Option<&str>, strict: bool) -> crate::peer_account::Verdict {
+        crate::peer_account::check_phone(relay, strict)
+    }
+    fn phone_entry(&self) -> Option<String> {
+        crate::team_relay::phone_web(&crate::team_relay::load_state(crate::config::data_dir()))
+    }
+    fn peer_live(&self, bound: &str, header: &str, method: &str, path: &str) -> bool {
+        crate::peer_account::live_check(bound, header, method, path)
     }
     fn peer_key_back(&self, relay: &str, name: &str, x: &str, token: &str) -> Result<(), String> {
         crate::remote::store_relay_key(relay, token)?;

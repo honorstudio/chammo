@@ -1,6 +1,7 @@
 // 터미널에 파일 끌어다 놓기 — iTerm 처럼 경로를 셸 이스케이프해서 입력칸에 넣는다.
 // Claude Code 는 붙여넣은 글자를 ' /' 앞에서 경로별로 자르고 \x → x 로 풀어서, 이미지 확장자면 [Image #n] 으로 읽는다(2.1.283 실측)
 import { kindOf } from './reader';
+import { tr } from '../i18n';
 
 const SPECIAL = /[\s\\'"$!&;*?[\]{}()|<>#~^`]/g;
 
@@ -51,9 +52,13 @@ const CLAUDE_IMAGE = /\.(png|jpe?g|gif|webp)$/i;
  * Claude 가 읽는 그림은 지금처럼 이스케이프 경로만 앞 조각에 모은다 — Claude 는 붙여넣은 글을 ' /' 앞에서만 잘라 그림을 알아봐서
  * 따옴표로 묶거나 이름표를 사이에 섞으면 [Image #n] 으로 안 바뀐다(바뀐 뒤엔 [Image #n] 이 경계라 문제없다)
  */
-export function chipPastes(items: { path: string; label?: string }[]): string[] {
-  const imgs = items.filter((i) => CLAUDE_IMAGE.test(i.path)).map((i) => i.path);
-  const rest = items.filter((i) => !CLAUDE_IMAGE.test(i.path)).map((i) => `${i.label ? `${i.label} ` : ''}${quotePath(i.path)}`);
+export function chipPastes(items: { path: string; label?: string; from?: string }[], win = false): string[] {
+  // 윈도우 Claude(2.1.319 실측)는 붙여넣은 그림 경로를 어떤 꼴(그대로·\\·따옴표·/)로도 [Image #n] 으로 안 바꾼다 — 이스케이프 경로만 덩그러니
+  // 남아 #img1 이 어느 그림인지 몰랐다(공개 이슈 #19). 윈도우는 그림도 파일처럼 이름표 + 따옴표 경로로(참모가 경로로 읽는다)
+  const asImage = (p: string) => !win && CLAUDE_IMAGE.test(p);
+  const imgs = items.filter((i) => asImage(i.path)).map((i) => i.path);
+  // 홈 밖 파일의 사본이면 원본도 — 참모가 사본만 고치고 사용자 원본(D:\\Desktop)은 그대로인 걸 모르고 끝냈다(공개 이슈 #19 리뷰)
+  const rest = items.filter((i) => !asImage(i.path)).map((i) => `${i.label ? `${i.label} ` : ''}${quotePath(i.path)}${i.from && i.from !== i.path ? ` ${originNote(i.from)}` : ''}`);
   return [dropText(imgs), rest.length ? `${rest.join(' ')} ` : ''].filter(Boolean);
 }
 
@@ -100,3 +105,28 @@ export function dropSlot(blocks: BlockRect[], y: number): DropSlot | null {
   }
   return best;
 }
+
+/** 사본 뒤에 붙는 원본 표시 — (원본 "D:\\…"). termRest·staleRefs 가 이 꼴을 안다 */
+export const originNote = (from: string): string => `(${tr('원본', 'original')} ${quotePath(from)})`;
+/** 입력칸 글에서 원본 표시 찾기(한·영) */
+export const ORIGIN_NOTE = /\((?:원본|original)\s*"(?:[^"\\]|\\.)*"\)/g;
+
+/** 사람이 준 파일을 열 수 있는 경로로 바꾼 결과(Rust outside::attach_given) — 홈·허용 폴더 밖이면 <데이터>/attach 사본, 못 하면 이유 */
+export type Given = { from: string; path?: string; copied?: boolean; error?: string };
+
+/** attach_given 결과 → 붙일 경로 · 못 붙인 것(이유). 답이 이상하면(옛 앱·실패) 원래 경로 그대로 — 붙이기 자체는 막지 않는다 */
+export function splitGiven(asked: string[], got: unknown): { ok: string[]; bad: { from: string; error: string }[] } {
+  if (!Array.isArray(got) || got.length !== asked.length) return { ok: asked, bad: [] };
+  const ok: string[] = [];
+  const bad: { from: string; error: string }[] = [];
+  asked.forEach((from, i) => {
+    const g = got[i] as Given | null;
+    if (g && typeof g.path === 'string' && g.path) ok.push(g.path);
+    else if (g && typeof g.error === 'string') bad.push({ from, error: g.error });
+    else ok.push(from);
+  });
+  return { ok, bad };
+}
+
+/** 채팅 첨부 사본(<데이터>/attach/<숫자>-이름) — 맥 / · 윈도우 \ 둘 다. 이 파일들만 참모 보관함에도 넣는다(집이 따로 없는 것) */
+export const isAttachCopy = (p: string): boolean => /[\\/]attach[\\/]\d+-[^\\/]+$/.test(p);

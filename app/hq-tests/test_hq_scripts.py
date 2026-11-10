@@ -176,6 +176,38 @@ class Show(unittest.TestCase):
             self.assertEqual(show.user_roots(os.path.join(d, 'none'), home), [home])
 
 
+    def test_설정에서_연_폴더와_첨부_사본은_홈_밖이어도_연다(self):
+        # 공개 이슈 #19 — 윈도우 일 파일은 D:\Desktop. 사람이 설정에서 연 폴더(드라이브 맨 위도)와 채팅 첨부 사본(<데이터>/attach)은 연다,
+        # 홈을 품은 곳(/·C:\·C:\Users)·홈 안·없는 폴더는 안 받는다
+        with tempfile.TemporaryDirectory() as d:
+            d = os.path.realpath(d)
+            home, data, D = (os.path.join(d, x) for x in ('home', 'data', 'D'))
+            for x in (home, os.path.join(data, 'attach'), os.path.join(D, 'Desktop', '보고'), os.path.join(home, 'docs')):
+                os.makedirs(x)
+            pdf = os.path.join(D, 'Desktop', '보고', '견적.pdf')
+            open(pdf, 'w').write('%PDF')
+            copy = os.path.join(data, 'attach', '17-매출.xlsx')
+            open(copy, 'w').write('x')
+            open(os.path.join(d, 'secret.txt'), 'w').write('x')
+            json.dump({'devRoot': '', 'openFolders': [D, d, '/', home, os.path.join(home, 'docs'), os.path.join(d, '없음'), 3]}, open(os.path.join(data, 'config.json'), 'w'))
+            roots = show.user_roots(data, home)
+            self.assertEqual(roots, [home, D, os.path.join(data, 'attach')])
+            self.assertEqual(show.resolve(pdf, home=home, roots=roots), pdf)
+            self.assertEqual(show.resolve(copy, home=home, roots=roots), copy)
+            self.assertIsNone(show.resolve(os.path.join(d, 'secret.txt'), home=home, roots=roots), '홈을 품은 곳은 안 열린다')
+            self.assertIsNone(show.resolve(os.path.join(data, 'config.json'), home=home, roots=roots), '데이터 폴더는 attach 만')
+            # 고치기 전과 같은 판단 — 설정이 없으면 D: 는 막힌다
+            json.dump({}, open(os.path.join(data, 'config.json'), 'w'))
+            self.assertIsNone(show.resolve(pdf, home=home, roots=show.user_roots(data, home)))
+
+    def test_윈도우_드라이브_맨_위도_안으로_친다(self):
+        if os.sep != '\\':
+            self.assertTrue(show.inside('/a/b', '/a') and not show.inside('/ab', '/a') and show.inside('/a', '/a/'))
+            return
+        self.assertTrue(show.inside('D:\\Desktop\\a.pdf', 'D:\\'))
+        self.assertTrue(show.inside('d:\\desktop\\a.pdf', 'D:\\Desktop'))
+
+
 class VoiceHint(unittest.TestCase):
     def hint(self, files):
         with tempfile.TemporaryDirectory() as d:

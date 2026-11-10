@@ -24,6 +24,11 @@ const NAME_WITH_ICON = new Set<string>([
   '/src/ui/team/TeamCal.tsx 종일', // 팀 캘린더 목록 줄 — 시각·제목을 읽는 줄, 고리 아이콘은 반복 일정 표시(동작 아님)
 ]);
 
+// 익숙한 이름이어도 그 자리에선 처음 보는 동작이라 글 단추로 둔다 — 파일:글
+const TEXT_OK = new Set<string>([
+  '/src/ui/space/BrowserPane.tsx 크롬에서 보기', // 크롬 자체 창 줄의 할 일 — 아이콘 title 에만 있어 마우스를 올려야 보였다(QA 0.4.11 문제 5-1). 툴바 쪽은 아이콘 그대로
+]);
+
 /** <button …>자식</button> 을 찾는다 — 여는 태그 안 {…}·'…' 의 > 는 건너뛴다 */
 function buttons(src: string): { line: number; open: string; kids: string }[] {
   const out: { line: number; open: string; kids: string }[] = [];
@@ -60,7 +65,7 @@ describe('익숙한 동작은 아이콘 버튼', () => {
       if (/role="menuitem"/.test(b.open)) continue;
       // 첫 설치의 작은 글 링크(fr-lnk) — 처음 보는 사람용, 문구는 사용자 11-05 지정('계정 추가')
       if (/className="fr-lnk"/.test(b.open)) continue;
-      for (const w of said(b.kids)) if (FAMILIAR.includes(w)) bad.push(`${f}:${b.line} ${w}`);
+      for (const w of said(b.kids)) if (FAMILIAR.includes(w) && !TEXT_OK.has(`${f} ${w}`)) bad.push(`${f}:${b.line} ${w}`);
     }
     expect(bad).toEqual([]);
   });

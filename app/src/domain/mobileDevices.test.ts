@@ -52,3 +52,15 @@ describe('다른 기기 참모 줄 — 폰과 묶지 않고 칸 이름은 참모
     expect('locker' in g.find((x) => x.group === 'b')!).toBe(false);
   });
 });
+
+describe('phoneGroups — 직통 폰 줄 표시(11-09 계정 확인)', () => {
+  const row = (o: Partial<import('./mobileDevices').DeviceRow>) => ({ id: 'a', name: 'iPhone', created: 1, lastSeen: 2, home: false, group: 'g1', paired: 1, ...o });
+  it('중계 줄만이면 표시 없음, 직통 줄이 하나라도 있으면 direct', () => {
+    expect(phoneGroups([row({ relay: true }), row({ id: 'b', home: true, relay: true })])[0]!.direct).toBeUndefined();
+    expect(phoneGroups([row({ relay: true }), row({ id: 'b', home: true })])[0]!.direct).toBe(true);
+  });
+  it('옛 맥(relay 칸 없음)은 직통으로 본다 · 다른 기기 참모 줄은 아니다', () => {
+    expect(phoneGroups([row({})])[0]!.direct).toBe(true);
+    expect(phoneGroups([row({ peer: true, group: 'p' })])[0]!.direct).toBeUndefined();
+  });
+});

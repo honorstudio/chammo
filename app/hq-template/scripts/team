@@ -88,6 +88,10 @@ def this_device():
 
 def parse(argv):
     """인자 → (부탁 dict, None) 또는 (None, 오류 글)"""
+    # --help·-h 는 사용법 — say·self-say·teamchat say 가 그 글자를 메시지로 보내던 것(11-09 아이맥 참모: self#7·self#9). -- 뒤는 글이라 안 본다
+    head = argv[:argv.index('--')] if '--' in argv else argv
+    if any(a in ('-h', '--help') for a in head):
+        return None, USAGE
     rest, opts = [], {}
     i = 0
     while i < len(argv):

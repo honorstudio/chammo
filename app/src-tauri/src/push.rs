@@ -166,11 +166,30 @@ pub struct Sub {
     pub p256dh: String,
     pub auth: String,
     pub at: u64,
+    /// 같은 구독 주소를 먼저 쥐었던 옛 기기들 — 같은 폰 앱을 다시 짝지은 것(주소 = 그 폰 앱의 구독 하나).
+    /// 알림은 이 줄의 기기로만 가고 옛 기기엔 중계 부탁도 안 낸다(2026-11-09 사용자 폰 알림 두 번 — 같은 아이폰이 두 기기 줄이었다)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replaces: Vec<String>,
 }
 
-/// 같은 기기·같은 주소면 새 것으로 바꾼다
-pub fn add_sub(list: &mut Vec<Sub>, s: Sub) {
-    list.retain(|x| !(x.device == s.device && x.endpoint == s.endpoint));
+/// replaces 에 남길 옛 기기 수 — 같은 폰을 여러 번 다시 짝지어도 파일이 안 불게
+pub const REPLACES_MAX: usize = 16;
+
+/// 구독 넣기 — 같은 주소는 한 줄. 같은 기기면 새 것으로 바꾸고, 다른 기기가 쥐고 있던 주소면(같은 폰 앱을 다시 짝지음)
+/// 새 기기 줄 하나로 합치고 옛 기기를 replaces 에 적는다
+pub fn add_sub(list: &mut Vec<Sub>, mut s: Sub) {
+    let mut old: Vec<String> = Vec::new();
+    for x in list.iter().filter(|x| x.endpoint == s.endpoint) {
+        old.extend(x.replaces.iter().cloned());
+        old.push(x.device.clone());
+    }
+    old.append(&mut s.replaces);
+    let mut seen = std::collections::HashSet::new();
+    let mut keep: Vec<String> = old.into_iter().rev().filter(|d| *d != s.device && seen.insert(d.clone())).collect(); // 최근 것부터
+    keep.truncate(REPLACES_MAX);
+    keep.reverse();
+    s.replaces = keep;
+    list.retain(|x| x.endpoint != s.endpoint);
     list.push(s);
 }
 
@@ -184,14 +203,42 @@ pub fn live_subs(list: &[Sub], devices: &[String]) -> Vec<Sub> {
     list.iter().filter(|s| devices.contains(&s.device)).cloned().collect()
 }
 
-/// 이 컴퓨터 VAPID 로 직접 보낼 구독 — 중계 길 폰(relayed)은 중계 VAPID 로 구독해서 빼야 한다(직접 보내면 푸시 서버 403)
-pub fn direct_subs(list: &[Sub], devices: &[String], relayed: &[String]) -> Vec<Sub> {
-    live_subs(list, devices).into_iter().filter(|s| !relayed.contains(&s.device)).collect()
+/// 알림 한 번을 어디로 보낼지 — relay = 중계에 부탁할 (기기, 봉할 구독 = 그 기기의 가장 최근 것), direct = 이 컴퓨터 VAPID 로 직접 보낼 구독
+/// (중계 길 폰은 중계 VAPID 로 구독해서 direct 에서 뺀다 — 직접 보내면 푸시 서버 403)
+#[derive(Debug, Default)]
+pub struct Plan {
+    pub relay: Vec<(String, Option<Sub>)>,
+    pub direct: Vec<Sub>,
 }
 
-/// 그 기기의 가장 최근 구독(폰이 다시 구독하면 주소·열쇠가 함께 바뀐다)
-pub fn latest_sub<'a>(list: &'a [Sub], device: &str) -> Option<&'a Sub> {
-    list.iter().filter(|s| s.device == device).max_by_key(|s| s.at)
+/// 같은 구독 주소(= 같은 폰 앱)엔 한 번만. 짝지은 기기의 구독 중 주소마다 가장 최근(at) 것이 주인이고,
+/// 주인 아닌 구독만 가진 기기·살아 있는 주인의 replaces 에 적힌 기기(자기 주소가 따로 없을 때)는 옛 기기라 건너뛴다 —
+/// 중계는 기기 줄마다 구독을 따로 쥐어서, 옛 기기에 부탁하면 같은 주소로 또 보낸다(11-09 실측).
+/// 구독을 원래 안 알린 중계 폰은 지금처럼 본문 없는 부탁({to})
+pub fn plan(list: &[Sub], devices: &[String], relayed: &[String]) -> Plan {
+    let live = live_subs(list, devices);
+    let mut owner: std::collections::HashMap<&str, &Sub> = std::collections::HashMap::new();
+    for s in &live {
+        let e = owner.entry(s.endpoint.as_str()).or_insert(s);
+        if s.at >= e.at {
+            *e = s;
+        }
+    }
+    let owned = |d: &str| live.iter().filter(|s| s.device == d && std::ptr::eq(owner[s.endpoint.as_str()], *s)).collect::<Vec<_>>();
+    let moved = |d: &str| {
+        owned(d).is_empty() && (live.iter().any(|s| s.device == d) || owner.values().any(|o| o.replaces.iter().any(|r| r == d)))
+    };
+    let mut p = Plan::default();
+    for d in devices {
+        if relayed.contains(d) {
+            if !moved(d) {
+                p.relay.push((d.clone(), owned(d).into_iter().max_by_key(|s| s.at).cloned()));
+            }
+        } else {
+            p.direct.extend(owned(d).into_iter().cloned());
+        }
+    }
+    p
 }
 
 /// 중계 /v0/push/notify 가 받는 암호문 상한(바이트) — 중계 PUSH_BODY_MAX 와 같은 값
@@ -295,10 +342,13 @@ fn sub_log(line: &str) {
 pub fn subscribe(dir: &Path, s: Sub) -> Result<(), String> {
     let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut list = load_subs(dir)?;
-    let line = format!("add {} {} (전체 {})", s.device, origin(&s.endpoint), list.len() + usize::from(!list.iter().any(|x| x.device == s.device && x.endpoint == s.endpoint)));
+    let (device, from) = (s.device.clone(), origin(&s.endpoint));
+    let took: Vec<String> = list.iter().filter(|x| x.endpoint == s.endpoint && x.device != s.device).map(|x| x.device.clone()).collect();
     add_sub(&mut list, s);
     write_subs(dir, &list)?;
-    sub_log(&line);
+    // 같은 폰 앱을 다시 짝지어 옛 기기 구독을 합쳤으면 기록에 남긴다 — '알림 두 번'을 나중에 기록으로 가리려고
+    let merged = if took.is_empty() { String::new() } else { format!(" — 같은 주소 옛 기기 {} 합침", took.join(",")) };
+    sub_log(&format!("add {device} {from} (전체 {}){merged}", list.len()));
     Ok(())
 }
 
@@ -384,10 +434,11 @@ pub fn send_all(title: &str, body: &str, target: &str) {
     // 중계로 짝지은 폰은 중계 VAPID 로 구독해서 이 컴퓨터 열쇠로는 못 보낸다 — 중계에 부탁하되, 폰이 알려 준 구독 열쇠로 봉한 본문을 싣는다(ADR 0013)
     let all = read_subs(&dir);
     let msg = payload(title, body, target);
-    let relayed: Vec<(String, String)> = devices.iter().filter_map(|id| pair.relay_of(id).map(|r| (id.clone(), r))).collect();
-    crate::phone_relay::notify_phones(&dir, relayed.iter().map(|(id, r)| relay_notify_body(r, latest_sub(&all, id), &msg)).collect());
-    let relayed: Vec<String> = relayed.into_iter().map(|(id, _)| id).collect();
-    let subs = direct_subs(&all, &devices, &relayed);
+    let relay_of: std::collections::HashMap<String, String> = devices.iter().filter_map(|id| pair.relay_of(id).map(|r| (id.clone(), r))).collect();
+    let relayed: Vec<String> = devices.iter().filter(|id| relay_of.contains_key(*id)).cloned().collect();
+    // 같은 폰 앱(같은 구독 주소)은 한 번만 — 다시 짝지어 남은 옛 기기 줄엔 안 보낸다
+    let Plan { relay, direct: subs } = plan(&all, &devices, &relayed);
+    crate::phone_relay::notify_phones(&dir, relay.iter().filter_map(|(id, s)| Some(relay_notify_body(relay_of.get(id)?, s.as_ref(), &msg))).collect());
     if subs.is_empty() {
         return;
     }

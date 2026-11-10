@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { browserDock, browserKey, browserOfPick, closeAsk, closeWay, deskOffer, dockTitleOf, hqBrowserHome, paneMenuKeys, paneWantsPeek, paneStatus, browserOwner, paneTarget, signedAutoPeek, signedLine, stillClosed, turnCard, turnCardAfterDone, wentAway } from './browserDock';
+import { backToPane, browserDock, nativeLine, browserKey, browserOfPick, closeAsk, closeWay, deskOffer, dockTitleOf, hqBrowserHome, paneMenuKeys, paneWantsPeek, paneStatus, browserOwner, paneTarget, signedAutoPeek, signedLine, stillClosed, turnCard, turnCardAfterDone, wentAway } from './browserDock';
 import { peekStep, type Live } from './agentBrowser';
 
 const live = (o: Partial<Live> = {}): Live => ({ profile: 'shop-app', pid: 10, sessionPid: 100, url: 'http://localhost:3000/admin', title: '주문 — shop-app', tabs: [], tool: '', toolAt: 0, busy: false, ts: 0, ...o });
@@ -50,7 +50,7 @@ describe('세션 브라우저 칸 더보기', () => {
   // 2026-10-28 윈도우판 — 숨은 데스크톱 크롬은 창을 못 옮겨서 '크롬에서 보기' = 같은 프로필을 보이는 창으로 다시 띄우기
   it('윈도우 숨은 데스크톱 — 회색 안내 + 보이는 창으로 열기, 꺼냈으면 숨은 화면으로 돌려놓기', () => {
     expect(paneMenuKeys(false, true, { desk: true, shown: false })).toEqual(['desk', 'chrome', 'copy', 'close']);
-    expect(paneMenuKeys(false, true, { desk: false, shown: true })).toEqual(['unshow', 'copy', 'close']);
+    expect(paneMenuKeys(false, true, { desk: false, shown: true })).toEqual(['copy', 'close']); // 꺼냈으면 '칸으로 돌려놓기'는 툴바에(backToPane) — 메뉴엔 안 겹쳐 둔다
     expect(paneMenuKeys(true, false, { desk: false, shown: false })).toEqual(['headless', 'close']); // 헤드리스로 물러났으면 맥과 같다
   });
   // 2026-10-28 맥 패스키 탈출구 — ad-hoc 사본엔 맥 패스키가 없어 '이번만 구글 크롬으로 열기', 바꿔 뒀으면 '참모 브라우저로 돌아가기'
@@ -319,5 +319,31 @@ describe('칸 카드 — 크롬 자체 창이라 칸(CDP 입력)에서 안 눌�
   it("'다 했어'로 걷은 부름이어도 권한·계정 카드는 남는다", () => {
     const c = turnCard(live({ ask: { reason: 'x', at: 5 } }), { dialog: null, chooser: null, permission: perm });
     expect(turnCardAfterDone(c, 5, 5)).toEqual(c);
+  });
+});
+
+// 2026-11-09 사용자 — 사람이 '크롬에서 보기'로 꺼낸 창은 그대로 남아 칸으로 돌아올 길이 없었다(맥 메뉴엔 '크롬에서 보기'만). 드문 크롬 자체 풍선의 일반 탈출구
+describe('backToPane', () => {
+  it('꺼낸 크롬이면 칸 툴바에 칸으로 돌려놓기 — 맥·윈도우 같다', () => {
+    expect(backToPane(true, false)).toBe(true);
+    expect(backToPane(false, false)).toBe(false);
+  });
+  it('헤드리스는 꺼낼 창이 없다', () => {
+    expect(backToPane(true, true)).toBe(false);
+  });
+});
+
+// 2026-11-10 사용자 — 칸 그림엔 크롬 자체 창(계정·카드 저장 풍선·펼침 목록·자동 완성 목록)이 비치는데 칸 누름·키는 페이지로만 가서 못 다뤘다
+describe('nativeLine', () => {
+  it('크롬 자체 창이 떠 있으면 칸에 크롬에서 보기 한 줄', () => {
+    expect(nativeLine(true, false, false, false)).toBe(true);
+    expect(nativeLine(false, false, false, false)).toBe(false);
+  });
+  it('꺼내 둔 동안·헤드리스는 없다 — 크롬에서 바로 다룬다', () => {
+    expect(nativeLine(true, true, false, false)).toBe(false);
+    expect(nativeLine(true, false, true, false)).toBe(false);
+  });
+  it('네 차례 카드(권한·원탭·패스키)가 떠 있으면 카드가 먼저 — 두 줄로 겹치지 않게', () => {
+    expect(nativeLine(true, false, false, true)).toBe(false);
   });
 });

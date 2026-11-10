@@ -140,7 +140,7 @@ fn code_at(st: &Devices, now: SystemTime) -> String {
 
 fn pair_as(st: &Devices, name: &str, home: bool, prev: Option<&str>, now: SystemTime) -> String {
     let c = code_at(st, now);
-    st.pair_with(&c, &Pairing { name, home, prev, peer: false }, now).unwrap()
+    st.pair_with(&c, &Pairing { name, home, prev, peer: false, chammo: None }, now).unwrap()
 }
 
 #[test]
@@ -206,7 +206,7 @@ fn 홈_화면_앱은_코드_낸_기기_아래로_묶이고_다시_하면_바꿔_
     let sid = st.check(&safari, now).unwrap();
     let home_pair = |st: &Devices| {
         let c = st.new_code_from(&sid, now).unwrap();
-        st.pair_with(&c, &Pairing { name: "iPhone", home: true, prev: None, peer: false }, now).unwrap()
+        st.pair_with(&c, &Pairing { name: "iPhone", home: true, prev: None, peer: false, chammo: None }, now).unwrap()
     };
     let h1 = home_pair(&st);
     let l = st.list();
@@ -226,12 +226,12 @@ fn 다른_이름_기기에_붙인_코드는_묶지_않는다() {
     let safari = pair_as(&st, "iPhone", false, None, now);
     let sid = st.check(&safari, now).unwrap();
     let c = st.new_code_from(&sid, now).unwrap();
-    st.pair_with(&c, &Pairing { name: "iPad", home: true, prev: None, peer: false }, now).unwrap();
+    st.pair_with(&c, &Pairing { name: "iPad", home: true, prev: None, peer: false, chammo: None }, now).unwrap();
     let ipad = st.list().into_iter().find(|d| d.name == "iPad").unwrap();
     assert_ne!(ipad.group, sid);
     // 홈 화면 앱이 아닌 브라우저에 붙여도(다른 브라우저일 수 있다) 묶지 않는다
     let c = st.new_code_from(&sid, now).unwrap();
-    st.pair_with(&c, &Pairing { name: "iPhone", home: false, prev: None, peer: false }, now).unwrap();
+    st.pair_with(&c, &Pairing { name: "iPhone", home: false, prev: None, peer: false, chammo: None }, now).unwrap();
     assert_eq!(st.list().iter().filter(|d| d.group == sid).count(), 1);
 }
 
@@ -256,7 +256,7 @@ fn 끊기는_기기_통째로_사파리와_홈_화면_앱_둘_다() {
     let other = pair_as(&st, "iPad", false, None, now);
     let sid = st.check(&safari, now).unwrap();
     let c = st.new_code_from(&sid, now).unwrap();
-    let home = st.pair_with(&c, &Pairing { name: "iPhone", home: true, prev: None, peer: false }, now).unwrap();
+    let home = st.pair_with(&c, &Pairing { name: "iPhone", home: true, prev: None, peer: false, chammo: None }, now).unwrap();
     st.remove(&sid).unwrap();
     assert!(st.check(&safari, now).is_none() && st.check(&home, now).is_none());
     assert!(st.check(&other, now).is_some());
@@ -280,7 +280,7 @@ fn 상한을_넘으면_가장_오래_안_쓴_줄부터_뺀다() {
 }
 
 fn dev(id: &str, created: u64, last: Option<u64>) -> Device {
-    Device { id: id.into(), name: "iPhone".into(), hash: sha(id), created, last_seen: last, home: false, group: None, paired: None, peer: false, node: None, no_locker: false, relay: None }
+    Device { id: id.into(), name: "iPhone".into(), hash: sha(id), created, last_seen: last, home: false, group: None, paired: None, peer: false, node: None, no_locker: false, relay: None, chammo: None }
 }
 
 #[test]
@@ -360,10 +360,10 @@ fn 바꿔_끼울_때도_코드는_한_번만() {
     let now = SystemTime::now();
     let t1 = pair_as(&st, "iPhone", false, None, now);
     let c = st.new_code(now).unwrap();
-    assert!(st.pair_with(&c, &Pairing { name: "iPhone", home: false, prev: Some(&t1), peer: false }, now).is_some());
-    assert!(st.pair_with(&c, &Pairing { name: "iPhone", home: false, prev: Some(&t1), peer: false }, now).is_none());
+    assert!(st.pair_with(&c, &Pairing { name: "iPhone", home: false, prev: Some(&t1), peer: false, chammo: None }, now).is_some());
+    assert!(st.pair_with(&c, &Pairing { name: "iPhone", home: false, prev: Some(&t1), peer: false, chammo: None }, now).is_none());
     // 코드 없이 옛 열쇠만으로는 안 된다
-    assert!(st.pair_with("", &Pairing { name: "iPhone", home: false, prev: Some(&t1), peer: false }, now).is_none());
+    assert!(st.pair_with("", &Pairing { name: "iPhone", home: false, prev: Some(&t1), peer: false, chammo: None }, now).is_none());
 }
 
 #[test]
@@ -373,11 +373,11 @@ fn 홈_화면_앱이_낸_코드로는_그_앱을_바꿔_끼우지_않는다() {
     let safari = pair_as(&st, "iPhone", false, None, now);
     let sid = st.check(&safari, now).unwrap();
     let c = st.new_code_from(&sid, now).unwrap();
-    let home = st.pair_with(&c, &Pairing { name: "iPhone", home: true, prev: None, peer: false }, now).unwrap();
+    let home = st.pair_with(&c, &Pairing { name: "iPhone", home: true, prev: None, peer: false, chammo: None }, now).unwrap();
     let hid = st.check(&home, now).unwrap();
     // 그 홈 화면 앱이 코드를 내서 다른 홈 화면 앱(같은 기종 다른 폰일 수 있다)이 붙는다
     let c = st.new_code_from(&hid, now).unwrap();
-    let other = st.pair_with(&c, &Pairing { name: "iPhone", home: true, prev: None, peer: false }, now).unwrap();
+    let other = st.pair_with(&c, &Pairing { name: "iPhone", home: true, prev: None, peer: false, chammo: None }, now).unwrap();
     assert!(st.check(&home, now).is_some(), "코드를 낸 앱이 끊겼다");
     assert!(st.check(&other, now).is_some());
     assert_eq!(st.list().len(), 3);
@@ -400,7 +400,7 @@ fn md1_다른_참모_짝짓기는_peer_줄로_남고_이름은_거른다() {
     let st = Devices::memory();
     let now = SystemTime::now();
     let c = st.new_code(now).unwrap();
-    let tok = st.pair_with(&c, &Pairing { name: "참모 · my-mac\u{1b}[31m\n", home: false, prev: None, peer: true }, now).unwrap();
+    let tok = st.pair_with(&c, &Pairing { name: "참모 · my-mac\u{1b}[31m\n", home: false, prev: None, peer: true, chammo: None }, now).unwrap();
     let id = st.check(&tok, now).unwrap();
     let v = st.list().into_iter().find(|d| d.id == id).unwrap();
     assert!(v.peer);
@@ -419,13 +419,13 @@ fn pe_허용한_연결은_노드별_peer_줄_하나_다시_허용하면_바꿔_�
     let st = Devices::open(&dir);
     let now = SystemTime::now();
     let (t1, t2) = ("a".repeat(64), "b".repeat(64));
-    st.add_peer(&t1, "참모 · office-mac\n", "nOFFICE", now).unwrap();
+    st.add_peer(&t1, "참모 · office-mac\n", "nOFFICE", None, now).unwrap();
     let id1 = st.check(&t1, now).unwrap();
     let v = st.list().into_iter().find(|d| d.id == id1).unwrap();
     assert!(v.peer && !v.home);
     assert_eq!(v.name, "참모 · office-mac", "제어 글자는 빠진다");
     // 같은 기기를 다시 허용 — 옛 열쇠는 죽고 줄은 하나
-    st.add_peer(&t2, "참모 · office-mac", "nOFFICE", now).unwrap();
+    st.add_peer(&t2, "참모 · office-mac", "nOFFICE", None, now).unwrap();
     assert!(st.check(&t1, now).is_none(), "옛 열쇠는 죽는다");
     assert!(st.check(&t2, now).is_some());
     assert_eq!(st.list().iter().filter(|d| d.peer).count(), 1);
@@ -438,7 +438,7 @@ fn pe_허용한_연결은_노드별_peer_줄_하나_다시_허용하면_바꿔_�
     st.remove_node("nOFFICE").unwrap();
     assert!(st.check(&t2, now).is_none(), "그 기기 줄은 끊긴다");
     assert!(st.check(&phone, now).is_some(), "폰은 그대로");
-    assert!(st.add_peer("짧음", "x", "nX", now).is_err(), "열쇠는 16진 64자만");
+    assert!(st.add_peer("짧음", "x", "nX", None, now).is_err(), "열쇠는 16진 64자만");
 }
 
 #[test]
@@ -471,7 +471,7 @@ fn code_alive_does_not_spend_the_code() {
     assert!(!st.code_alive("ffff", now));
     assert!(!st.code_alive("", now));
     assert!(!st.code_alive(&c, now + PAIR_TTL + Duration::from_secs(1)));
-    assert!(st.pair_relay(&c, &Pairing { name: "iPhone", home: false, prev: None, peer: false }, relay("r1"), now).is_some());
+    assert!(st.pair_relay(&c, &Pairing { name: "iPhone", home: false, prev: None, peer: false, chammo: None }, relay("r1"), now).is_some());
     assert!(!st.code_alive(&c, now));
 }
 
@@ -480,7 +480,7 @@ fn pair_relay_binds_the_line_and_finds_it_by_relay_device() {
     let st = Devices::memory();
     let now = SystemTime::now();
     let c = st.new_code(now).unwrap();
-    let tok = st.pair_relay(&c, &Pairing { name: "iPhone", home: false, prev: None, peer: false }, relay("r1"), now).unwrap();
+    let tok = st.pair_relay(&c, &Pairing { name: "iPhone", home: false, prev: None, peer: false, chammo: None }, relay("r1"), now).unwrap();
     let id = st.check(&tok, now).unwrap();
     assert_eq!(st.relay_line("r1"), Some((id.clone(), "eA".into())));
     assert_eq!(st.relay_of(&id), Some("r1".into()));
@@ -495,12 +495,12 @@ fn pair_relay_refuses_peer_and_reswap_keeps_one_line() {
     let st = Devices::memory();
     let now = SystemTime::now();
     let c = st.new_code(now).unwrap();
-    assert!(st.pair_relay(&c, &Pairing { name: "참모", home: false, prev: None, peer: true }, relay("r1"), now).is_none());
+    assert!(st.pair_relay(&c, &Pairing { name: "참모", home: false, prev: None, peer: true, chammo: None }, relay("r1"), now).is_none());
     let c = st.new_code(now).unwrap();
-    let t1 = st.pair_relay(&c, &Pairing { name: "iPhone", home: false, prev: None, peer: false }, relay("r1"), now).unwrap();
+    let t1 = st.pair_relay(&c, &Pairing { name: "iPhone", home: false, prev: None, peer: false, chammo: None }, relay("r1"), now).unwrap();
     // 같은 저장 공간이 다시 짝지으면(옛 열쇠 증명) 줄을 바꿔 끼우고 새 중계 묶음으로
     let c = st.new_code(now).unwrap();
-    st.pair_relay(&c, &Pairing { name: "iPhone", home: false, prev: Some(&t1), peer: false }, Relay { device: "r9".into(), x: "eQ".into() }, now).unwrap();
+    st.pair_relay(&c, &Pairing { name: "iPhone", home: false, prev: Some(&t1), peer: false, chammo: None }, Relay { device: "r9".into(), x: "eQ".into() }, now).unwrap();
     assert_eq!(st.list().len(), 1);
     assert_eq!(st.relay_line("r1"), None);
     assert_eq!(st.relay_line("r9").map(|x| x.1), Some("eQ".into()));
@@ -521,7 +521,7 @@ fn plain_pairing_keeps_relay_unset_and_old_files_still_load() {
 
 fn relay_pair(st: &Devices, dev: &str, prev: Option<&str>, now: SystemTime) -> String {
     let c = st.new_code(now).unwrap();
-    st.pair_relay(&c, &Pairing { name: "iPhone", home: false, prev, peer: false }, relay(dev), now).unwrap()
+    st.pair_relay(&c, &Pairing { name: "iPhone", home: false, prev, peer: false, chammo: None }, relay(dev), now).unwrap()
 }
 
 #[test]
@@ -613,7 +613,7 @@ fn pair_linked_needs_no_code_and_leaves_a_live_qr_alone() {
     let st = Devices::memory();
     let now = SystemTime::now();
     let c = st.new_code(now).unwrap();
-    let tok = st.pair_linked(&Pairing { name: "iPhone", home: false, prev: None, peer: false }, relay("r1"), now).unwrap();
+    let tok = st.pair_linked(&Pairing { name: "iPhone", home: false, prev: None, peer: false, chammo: None }, relay("r1"), now).unwrap();
     let id = st.check(&tok, now).unwrap();
     assert_eq!(st.relay_of(&id), Some("r1".into()));
     assert!(st.code_alive(&c, now), "떠 있던 QR 코드는 그대로");
@@ -623,14 +623,14 @@ fn pair_linked_needs_no_code_and_leaves_a_live_qr_alone() {
 fn pair_linked_same_relay_device_replaces_its_line_and_refuses_peer() {
     let st = Devices::memory();
     let now = SystemTime::now();
-    let t1 = st.pair_linked(&Pairing { name: "iPhone", home: false, prev: None, peer: false }, relay("r1"), now).unwrap();
-    let t2 = st.pair_linked(&Pairing { name: "iPhone", home: false, prev: None, peer: false }, Relay { device: "r1".into(), x: "eQ".into() }, now).unwrap();
+    let t1 = st.pair_linked(&Pairing { name: "iPhone", home: false, prev: None, peer: false, chammo: None }, relay("r1"), now).unwrap();
+    let t2 = st.pair_linked(&Pairing { name: "iPhone", home: false, prev: None, peer: false, chammo: None }, Relay { device: "r1".into(), x: "eQ".into() }, now).unwrap();
     assert_eq!(st.list().len(), 1, "같은 중계 기기를 다시 묶으면 그 줄을 바꿔 끼운다");
     assert!(st.check(&t1, now).is_none(), "옛 토큰은 죽는다");
     assert!(st.check(&t2, now).is_some());
     assert_eq!(st.relay_line("r1").map(|x| x.1), Some("eQ".into()), "새 터널 열쇠");
-    assert!(st.pair_linked(&Pairing { name: "참모", home: false, prev: None, peer: true }, relay("r2"), now).is_none());
-    assert!(st.pair_linked(&Pairing { name: "x", home: false, prev: None, peer: false }, Relay { device: String::new(), x: "eA".into() }, now).is_none(), "중계 기기 id 없이는 안 묶는다");
+    assert!(st.pair_linked(&Pairing { name: "참모", home: false, prev: None, peer: true, chammo: None }, relay("r2"), now).is_none());
+    assert!(st.pair_linked(&Pairing { name: "x", home: false, prev: None, peer: false, chammo: None }, Relay { device: String::new(), x: "eA".into() }, now).is_none(), "중계 기기 id 없이는 안 묶는다");
 }
 
 // 컴퓨터끼리 중계(계획 2026-11-01-peer-relay C-3a) — 중계로 짝지은 다른 컴퓨터 참모 줄. 신원 = 중계 기기 id, 열쇠 = 그 컴퓨터 터널 열쇠
@@ -655,7 +655,7 @@ fn pe_중계_peer_줄은_중계_기기마다_하나_폰_줄_찾기에는_안_섞
     assert_eq!(st.list().iter().filter(|d| d.peer).count(), 1);
     // 폰 중계 줄은 relay_peer_line 에 안 나온다
     let c = st.new_code(now).unwrap();
-    let ph = st.pair_relay(&c, &Pairing { name: "iPhone", home: false, prev: None, peer: false }, Relay { device: "dev-phone".into(), x: "P".into() }, now).unwrap();
+    let ph = st.pair_relay(&c, &Pairing { name: "iPhone", home: false, prev: None, peer: false, chammo: None }, Relay { device: "dev-phone".into(), x: "P".into() }, now).unwrap();
     let ph_id = st.check(&ph, now).unwrap();
     assert!(!st.is_peer(&ph_id));
     assert_eq!(st.relay_peer_line("dev-phone"), None);
@@ -673,7 +673,7 @@ fn pe_중계_peer_줄을_지워도_그_컴퓨터를_계정에서_끊지_않는�
     assert!(st.pending_revokes().is_empty(), "{:?}", st.pending_revokes());
     // 폰 중계 줄은 그대로 끊기 대기열
     let c = st.new_code(now).unwrap();
-    let ph = st.pair_relay(&c, &Pairing { name: "iPhone", home: false, prev: None, peer: false }, Relay { device: "dev-phone".into(), x: "P".into() }, now).unwrap();
+    let ph = st.pair_relay(&c, &Pairing { name: "iPhone", home: false, prev: None, peer: false, chammo: None }, Relay { device: "dev-phone".into(), x: "P".into() }, now).unwrap();
     st.remove(&st.check(&ph, now).unwrap()).unwrap();
     assert_eq!(st.pending_revokes(), vec!["dev-phone".to_string()]);
 }

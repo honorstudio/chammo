@@ -34,3 +34,12 @@ describe('브라우저 칸 탭 X', () => {
     expect(pane).toMatch(/className="cv-btn danger" onClick=\{closeNow\}/);
   });
 });
+
+// QA 0.4.11 문제 5-1 — '크롬에서 보기'가 아이콘 title 에만 있어 마우스를 올려야 보였다. 처음 보는 동작이라 글 단추로
+describe('크롬 자체 창 줄', () => {
+  const line = pane.slice(pane.indexOf("tr('크롬이 띄운 창이 있어'"), pane.indexOf('{stat.giveBack && ('));
+  it('줄에 "크롬에서 보기" 글 단추가 보인다(아이콘 단추 아님)', () => {
+    expect(line).toMatch(/<button className="cv-btn solid" onClick=\{showChrome\}>\{tr\('크롬에서 보기', 'Show in Chrome'\)\}<\/button>/);
+    expect(line).not.toMatch(/IconButton/);
+  });
+});

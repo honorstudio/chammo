@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { diffInput, hasNonAscii, normalizeInput, toSequence, yieldsToXterm, imeStep } from './imeBridge';
+import { diffInput, hasNonAscii, normalizeInput, toSequence, yieldsToXterm, imeStep, imeBridgeOn } from './imeBridge';
 
 // 실측 이벤트 로그(2026-09-25, WKWebView 두벌식)에서 그대로 가져온 전후 쌍들
 describe('diffInput — 입력기가 바꿔치기한 텍스트칸의 전후 차이', () => {
@@ -144,5 +144,27 @@ describe('imeStep — 입력 이벤트 하나를 pty 로 보낼 것으로', () =
 
   it('조합 이벤트가 없던 웹뷰(insertText·insertReplacementText)의 한글은 예전처럼', () => {
     expect(run([['insertText', '', 'ㅇ'], ['insertReplacementText', 'ㅇ', '아']])).toEqual(['ㅇ', DEL + '아']);
+  });
+});
+
+describe('imeBridgeOn — 한글 다리는 WKWebView(맥) 몫', () => {
+  it('맥은 늘 다리를 건다(지금 동작 그대로)', () => {
+    expect(imeBridgeOn(false, null)).toBe(true);
+    expect(imeBridgeOn(false, 'on')).toBe(true);
+    expect(imeBridgeOn(false, 'bridge noswallow')).toBe(true);
+  });
+
+  // 2026-11-09 윈도우 신고 "키가 두 번씩": WebView2(크로미움)는 한글 키마다 keyCode 229 를 보내서 xterm 이
+  // 조합 도우미(_handleAnyTextareaChanges)로 텍스트칸 차이를 이미 보낸다 — 다리까지 걸면 같은 글자를 또 보낸다
+  it('윈도우는 다리를 안 건다 — xterm 이 크로미움 조합 이벤트를 원래대로 처리', () => {
+    expect(imeBridgeOn(true, null)).toBe(false);
+    expect(imeBridgeOn(true, '')).toBe(false);
+    expect(imeBridgeOn(true, 'on\n')).toBe(false);
+  });
+
+  it('윈도우 진단 스위치(ime-debug.on 에 bridge) — 옛 동작으로 전후를 잰다', () => {
+    expect(imeBridgeOn(true, 'bridge')).toBe(true);
+    expect(imeBridgeOn(true, 'noswallow bridge\n')).toBe(true);
+    expect(imeBridgeOn(true, 'nobridge')).toBe(false); // 낱말 그대로만
   });
 });

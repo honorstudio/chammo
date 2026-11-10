@@ -8,6 +8,7 @@ import { IconDevice } from '../Icons';
 import type { FarTarget } from './Far';
 import './far.css';
 import { seenName } from '../../domain/session';
+import { pausedText } from '../../domain/peerDevices';
 
 export const avState = (d: FarDot) => (d === 'run' ? 'work' : d === 'ask' ? 'ask' : 'rest');
 
@@ -37,6 +38,7 @@ export function FarPop({ saved, cur, waitDevs, onPick, onHere, onClose, onConnec
   const rows = saved.map((s) => ({ s, d: devs?.find((x) => x.id === s.id) }));
   const sub = (d: RemoteDevice | undefined) => {
     if (!devs) return tr('찾는 중…', 'Looking…');
+    if (d?.status === 'account') return pausedText(d.paused);
     if (!d || d.status === 'offline') return tr('연결 끊김', 'Not reachable');
     if (d.status === 'pair') return tr('다시 연결 필요', 'Needs reconnecting');
     const os = d.os ? `${/win/i.test(d.os) ? tr('윈도우', 'Windows') : tr('맥', 'Mac')} · ` : '';
@@ -59,11 +61,11 @@ export function FarPop({ saved, cur, waitDevs, onPick, onHere, onClose, onConnec
 }
 
 /** 맨 위 전체 폭 줄 — '<기기> 보는 중' + 이 맥으로(왼쪽 색 띠 대신 면 색) */
-export function FarBar({ name, cut, onBack }: { name: string; cut: boolean; onBack: () => void }) {
+export function FarBar({ name, cut, paused, onBack }: { name: string; cut: boolean; paused?: boolean; onBack: () => void }) {
   return (
     <div className={`far-bar ${cut ? 'cut' : ''}`} role="status">
       <IconDevice />
-      <b>{cut ? tr(`${name} · 연결 끊김`, `${name} · not reachable`) : tr(`${name} 보는 중`, `Viewing ${name}`)}</b>
+      <b>{paused ? tr(`${name} · 연결 멈춤`, `${name} · paused`) : cut ? tr(`${name} · 연결 끊김`, `${name} · not reachable`) : tr(`${name} 보는 중`, `Viewing ${name}`)}</b>
       {!cut && <span className="far-bar-sub">{tr('보내는 말은 사람 말로, 파일은 읽기만', 'What you send goes as you; files are read-only')}</span>}
       <span className="far-sp" />
       <button className="far-back" onClick={onBack}>{tr(`이 ${josa(machine(), "으로", "로")}`, `Back to this ${machine()}`)}</button>

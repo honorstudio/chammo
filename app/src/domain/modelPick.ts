@@ -29,8 +29,9 @@ export const MODEL_CHOICES: (ModelOpt & { alias: 'opus' | 'sonnet' | 'haiku' })[
   { alias: 'haiku', id: 'claude-haiku-5-5', label: 'Haiku 5.5' },
 ];
 
-/** '그 밖' 접기 — /model 창의 나머지 줄 순서 그대로 */
+/** '그 밖' 접기 — /model 창의 나머지 줄 순서 그대로. Fable 5.2(2.1.321, 2026-11-10)는 Claude Code 첫 줄에 있지만 사용량을 빨리 써서 칩에선 '그 밖' 맨 앞에 둔다(첫 줄 넷이면 칩 창이 두 줄로 넘친다) */
 export const OTHER_MODELS: ModelOpt[] = [
+  { id: 'claude-fable-5-2', label: 'Fable 5.2' },
   { id: 'claude-fable-5-1', label: 'Fable 5.1' },
   { id: 'claude-haiku-4-5', label: 'Haiku 4.5' },
   { id: 'claude-sonnet-5', label: 'Sonnet 5' },
@@ -44,7 +45,7 @@ export const OTHER_MODELS: ModelOpt[] = [
 
 const ALL_MODELS: ModelOpt[] = [...MODEL_CHOICES, ...OTHER_MODELS];
 /** 채팅에서 친 별칭 — 칩 칸의 전체 id 로 */
-const ALIASES: Record<string, string> = { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5', haiku: 'claude-haiku-5-5', fable: 'claude-fable-5-1' };
+const ALIASES: Record<string, string> = { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5', haiku: 'claude-haiku-5-5', fable: 'claude-fable-5-2' };
 
 /** 칩이 칠 수 있는 id 인가(폰 요청·채팅 명령 검사) */
 export const isModelId = (v: unknown): v is string => ALL_MODELS.some((m) => m.id === v);

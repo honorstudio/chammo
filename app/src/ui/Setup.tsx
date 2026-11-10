@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { TtsField } from './TtsField';
 import { baseTools, setGitIdentity, appVersion, trustFolders, browserSetupStart, browserSetupState, browserStatus, checkEnv, claudeTrusted, projectAccess, notifyOpenSettings, notifyRequest, notifyStatus, axTrusted, screenTrusted, askPermission, createHq, folderStatus, getAppEnv, makeDir, openTarget, pickFolder, rebuildMenu, writeConfig, type Config, type FolderStatus } from '../data/tauri';
-import { addExtraProject, claudeSignedInText, parseClaudeVersion, setupCommand, winSetupNotes, tildify, notifyRow, axRow, browserRow, browserChecklist, ghRow, gitIdentityRow, gitIdentityError, installState, loginRow, GET_URL, setupFailed, versionFit, type BrowserSetupState, type BrowserStatus, type EnvCheck, type NotifyStatus, type SetupTask, type SkipKey, type Trust } from '../domain/setup';
+import { addExtraProject, addOpenFolder, claudeSignedInText, parseClaudeVersion, setupCommand, winSetupNotes, tildify, notifyRow, axRow, browserRow, browserChecklist, ghRow, gitIdentityRow, gitIdentityError, installState, loginRow, GET_URL, setupFailed, versionFit, type BrowserSetupState, type BrowserStatus, type EnvCheck, type NotifyStatus, type SetupTask, type SkipKey, type Trust } from '../domain/setup';
 import type { Animation, FeatureSwitch } from '../domain/config';
 import { firstTab, settingsEscCloses, settingsTabs, tabOf, type SettingsTab, type SetupStart } from '../domain/settingsTabs';
 import { BRAND } from '../domain/avatar';
@@ -217,6 +217,18 @@ export function Setup({ config, fontSize, onClose, start, tab: tab0 }: Props) {
       if (r.note === 'inside') setError(tr('프로젝트 폴더 안에 있는 폴더라 이미 보여요.', 'That folder is inside the projects folder, so it already shows up.'));
       else if (r.note === 'root') setError(tr('프로젝트 폴더 자체나 홈 폴더 전체는 추가할 수 없어요. 프로젝트 하나를 골라 주세요.', 'Pick a single project folder, not the projects folder or your whole home folder.'));
       else if (!r.note) set('extraProjects', r.list);
+    } catch (e) { setError(String(e)); }
+  };
+  /** 열어도 되는 폴더 — 홈 밖(D:\Desktop 등)도 참모 도구(show·locker·sheet)·미리보기가 열게. 사람이 여기서만 더한다(공개 이슈 #19) */
+  const opens = draft.openFolders ?? [];
+  const addOpen = async () => {
+    try {
+      const got = await pickFolder(tr('참모가 열어도 되는 폴더나 드라이브를 골라 주세요', 'Choose a folder or drive the assistant may open'), '~');
+      if (!got) return;
+      const r = addOpenFolder(opens, got, home);
+      if (r.note === 'holds-home') setError(tr('홈 폴더를 품은 곳(디스크 맨 위·사용자 폴더)은 통째로 열 수 없어요. 그 안의 일 폴더를 골라 주세요.', "You can't open a place that holds your home folder (a disk top or the users folder). Pick a work folder inside it."));
+      else if (r.note === 'inside') setError(tr('홈 폴더 안은 이미 열려 있어요.', 'Folders inside your home folder are already open.'));
+      else if (!r.note) set('openFolders', r.list);
     } catch (e) { setError(String(e)); }
   };
   // 새 영어 설치는 앱 이름과 다른 기본 이름(Assistant) — 마칠 때 적는다(ux-start M2). 이미 쓰는 사람은 그대로
@@ -498,6 +510,23 @@ export function Setup({ config, fontSize, onClose, start, tab: tab0 }: Props) {
             <div className="su-hint">{tr('프로젝트 폴더 밖에 있는 폴더도 하나씩 추가할 수 있어요. 옮기지 않고 그 자리에서 프로젝트로 보여요.', 'Add folders that live outside the projects folder, one by one. They stay where they are and show up as projects.')}</div>
           </div>
   );
+  const opensField = (
+          <div className="su-field su-field-list">
+            <div className="su-list-row">
+              <span className="su-label">{tr('열어도 되는 폴더', 'Folders it may open')}</span>
+              <span className="su-extras">
+                {opens.map((p) => (
+                  <span className="su-extra" key={p}>
+                    <code>{p}</code>
+                    <IconButton tone="line" label={tr('빼기', 'Remove')} onClick={() => set('openFolders', opens.filter((x) => x !== p))}><IconClose /></IconButton>
+                  </span>
+                ))}
+                <IconButton size="l" tone="line" label={tr('폴더 추가', 'Add folder')} onClick={() => void addOpen()}><IconPlus /></IconButton>
+              </span>
+            </div>
+            <div className="su-hint">{tr(`홈 폴더 밖(D: 드라이브 등)에서 ${name}가 파일을 열고 엑셀을 읽을 수 있는 폴더예요. 채팅에 붙인 파일은 여기 없어도 사본으로 들어가요.`, `Folders outside your home folder (another drive, for example) where ${name} may open files and read spreadsheets. Files you attach in chat don't need to be here — they go in as a copy.`)}</div>
+          </div>
+  );
   const hqField = (
           <Field label={tr('참모 작업 폴더', 'Assistant workspace folder')} hint={hq?.hqReady
             ? tr(`준비됐어요. ${name}가 여기서 일해요.`, `Ready. ${name} works from here.`)
@@ -703,7 +732,7 @@ export function Setup({ config, fontSize, onClose, start, tab: tab0 }: Props) {
   };
   const tabBody: Record<SettingsTab, ReactNode> = {
     general: <>{langField}{memoField}{draft.features.git && githubField}{searchField}</>,
-    agent: <>{nameField}{hqField}{devField}{extrasField}{trustBlock}{switches(['autoRevive'])}</>,
+    agent: <>{nameField}{hqField}{devField}{extrasField}{opensField}{trustBlock}{switches(['autoRevive'])}</>,
     // PR 리뷰는 git 을 쓸 때만(ADR 0024)
     features: <>{axBlock}{screenBlock}{switches(['office', 'gacha', 'git', ...(draft.features.git ? ['review' as const] : []), 'bubble', 'bubbleDesk', 'autoTidy', 'craftBasics', 'usagePing'])}{animField}</>,
     voice: <>{notifyBlock}{switches(['voice'])}{ttsField}{talkField}</>,

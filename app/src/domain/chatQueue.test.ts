@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { absorbedLeft, ABSORB_GRACE, applyQueueOps, LOST_AFTER, autoEnterTarget, emptyQueue, ESC_GAP, escPlan, inputLeftover, keepAfterRemove, MINE_KEEP, mineForLeftover, pendAct, pendingState, pendLook, restoreDraft, typeQueue, TYPE_TIMEOUT_MSG, typingOf, type QueueState } from './chatQueue';
+import { absorbedLeft, ABSORB_GRACE, againPlanOf, applyQueueOps, LOST_AFTER, autoEnterTarget, emptyQueue, ESC_GAP, escPlan, inputLeftover, keepAfterRemove, MINE_KEEP, mineForLeftover, appLineShown, isAppLine, pendAct, pendingState, pendLook, queueAllMine, restoreDraft, staleEcho, typeQueue, TYPE_TIMEOUT_MSG, typingOf, type QueueState } from './chatQueue';
 import chat from '../ui/chat/ChatView.tsx?raw';
 import grid from '../ui/SessionGrid.tsx?raw';
 import pane from '../ui/TerminalPane.tsx?raw';
@@ -128,9 +128,9 @@ describe('pendingState — 보낸 말이 지금 어디 있나', () => {
   });
 
   it('그림을 읽는 중(Pasting…)엔 입력칸에 있어도 보내는 중 — 앱이 끝나길 기다렸다 Enter 를 다시 넣는다(2026-11-05 send-stuck)', () => {
-    const term = '#img1 #img2 아카이빙 카페 심볼[Image #2] [Image #3]';
-    expect(pendingState({ text: '#img1 #img2 아카이빙 카페 심볼', at: at(1) }, { ...base, termText: term, pasting: true })).toBe('sending');
-    expect(pendingState({ text: '#img1 #img2 아카이빙 카페 심볼', at: at(1) }, { ...base, termText: term })).toBe('input');
+    const term = '#img1 #img2 고양이 그림 하나[Image #2] [Image #3]';
+    expect(pendingState({ text: '#img1 #img2 고양이 그림 하나', at: at(1) }, { ...base, termText: term, pasting: true })).toBe('sending');
+    expect(pendingState({ text: '#img1 #img2 고양이 그림 하나', at: at(1) }, { ...base, termText: term })).toBe('input');
   });
 
   it('막 쳐서 Enter 를 기다리는 동안은 보내는 중', () => {
@@ -395,7 +395,7 @@ describe('typeQueue — 세션별 앱 치기 줄', () => {
   });
   it('채팅 보내기 실패(치기 거절·시간 넘김)가 채팅 칸까지 닿는다 — 오류 한 줄 + 입력 되살림', () => {
     expect(grid).toMatch(/LINK_WAIT \+ TYPE_TIMEOUT\)\.then\(\(\) => \{[\s\S]{0,80}return true; \}, \(e: unknown\) => \{[\s\S]{0,160}return false; \}\)/);
-    expect(grid).toMatch(/const sent = typeAndSend\(id, text\);[\s\S]{0,240}return sent;/);
+    expect(grid).toMatch(/const sent = typeAndSend\(id, text, true, again\);[\s\S]{0,240}return sent;/);
     expect(chat).toMatch(/restoreDraft\(/);
     expect(chat).toMatch(/sendFail &&/);
     // 윈도우 경로(C:\\…\\a.png)도 칩 이름은 파일 이름만 — '/' 로만 잘라 전체 경로가 이름이 됐다
@@ -404,7 +404,112 @@ describe('typeQueue — 세션별 앱 치기 줄', () => {
   it('채팅 치기·Esc·지우기는 창에 바로 쓰지 않고 잠그는 길(pty_type)로', () => {
     expect(grid).not.toMatch(/api\.raw\(/);
     expect(grid).toMatch(/api\.type\(/);
-    expect(pane).toMatch(/type: \(keys, enterMs\)/);
-    expect(tauriTs).toMatch(/invoke<void>\('pty_type'/);
+    expect(pane).toMatch(/type: \(keys, enterMs, again\)/);
+    expect(tauriTs).toMatch(/invoke<string>\('pty_type'/);
+  });
+});
+
+describe('다시 보내기는 같은 말을 겹쳐 치지 않는다(2026-11-09 chat-send-stuck — 남은 말에 또 쳐서 입력칸에 쌓였다가 한꺼번에 갔다)', () => {
+  it('입력칸에 그 말만 그대로 걸려 있으면 Enter 만', () => {
+    expect(againPlanOf('이거 좀 바꿔볼래', ['이거 좀 바꿔볼래'], '이거 좀 바꿔볼래')).toBe('enter');
+    expect(againPlanOf('#img1 .', ['#img1 .'], ' #img1  . ')).toBe('enter');
+  });
+  it('입력칸이 비었거나 못 읽었거나 다른 글과 섞였으면 세션 쪽에 다시 보내기로(Rust 가 남은 그 말이면 Enter 만)', () => {
+    expect(againPlanOf('이거 좀 바꿔볼래', null, '')).toBe('send');
+    expect(againPlanOf('a', ['a', 'b'], 'a\nb')).toBe('send');
+    expect(againPlanOf('/clear', ['/clear'], '/clear')).toBe('send');
+  });
+  it('채팅 다시 보내기는 again 표시로 세션 쪽에 보낸다 — Rust pty_type 이 입력칸을 다시 본다', () => {
+    expect(chat).toMatch(/send\(p\.text, true\)/);
+    expect(grid).toMatch(/typeAndSend\(id, text, true, again\)/);
+    expect(pane).toMatch(/typePty\(id, keys, enterMs, again\)/);
+    expect(tauriTs).toMatch(/invoke<string>\('pty_type', \{ id, keys, enterMs: enterMs \?\? null, again: again \?\? null \}\)/);
+  });
+});
+
+// 2026-11-09 23:09~23:14 참모 업데이트 실측(2.1.319): 일하는 중 보낸 말의 enqueue 줄에 글(content)이 없었다(이 세션 3,150개 중 37개).
+// 앱은 대기 중인 말을 못 알아보고 30초 뒤 '전달 안 됨 + 다시 보내기' → 사용자가 눌러 같은 말이 대기열에 또 들어가
+// '내 머리속에 있어' 두 번, '#img1 … 엑스 누르고싶음' 세 번이 턴이 끝날 때마다 늦게 들어갔다(다른 탭을 볼 때)
+describe('글 없는 enqueue — 이름 없는 대기 말로 센다', () => {
+  const sent = { text: '내 머리속에 있어', at: at(10), since: at(0) };
+  it('재현: 보낸 뒤 글 없는 enqueue 가 붙었으면 30초가 지나도 전달 안 됨이 아니라 대기 중', () => {
+    const q = applyQueueOps(emptyQueue, op('enqueue', T(11)));
+    expect(pendingState(sent, { queue: q, termText: '', now: at(10) + 60_000, enterWait: 400 })).toBe('queued');
+  });
+  it('보내기 전에 붙은 글 없는 enqueue 는 이 말이 아니다', () => {
+    const q = applyQueueOps(emptyQueue, op('enqueue', T(5)));
+    expect(pendingState(sent, { queue: q, termText: '', now: at(10) + 60_000, enterWait: 400 })).toBe('lost');
+  });
+  it('dequeue 뒤 사람 말이 오면 이름 없는 것 하나를 뺀다 — 글로 짝이 맞는 게 있으면 그것부터', () => {
+    let q = applyQueueOps(emptyQueue, [op('enqueue', T(11)), op('enqueue', T(12), 'B'), op('enqueue', T(13))].join('\n'));
+    expect(q.waiting.length).toBe(3);
+    q = applyQueueOps(q, [op('dequeue', T(20)), user('B')].join('\n'));
+    expect(q.waiting.map((w) => w.text)).toEqual(['', '']);
+    q = applyQueueOps(q, [op('dequeue', T(21)), user('내 머리속에 있어')].join('\n'));
+    expect(q.waiting.length).toBe(1);
+  });
+  it('이름 없는 대기 말은 다른 말의 짝(after)으로 안 쓰인다 — 글 있는 대기 말 비교는 그대로', () => {
+    const q = applyQueueOps(emptyQueue, op('enqueue', T(11), '다른 말'));
+    expect(pendingState(sent, { queue: q, termText: '', now: at(10) + 60_000, enterWait: 400 })).toBe('lost');
+  });
+});
+
+// 2026-11-09 23:2x 회사 비서 캡처: 진짜 입력칸(아래 ❯)은 비었는데 엉킨 화면 사본(아래 테두리 없음·'m' 한 글자)에서 채팅이 받은 말(위 회색 칸)을
+// 입력칸 글로 읽어 '입력칸에 걸려 있어요' + 입력칸 줄(X)을 띄웠다. X 는 빈 진짜 입력칸에 백스페이스를 보내 아무것도 안 지웠다
+describe('기록이 화면보다 먼저 — 엉킨 사본이 받은 말을 입력칸 글로 읽어도', () => {
+  const p = { text: '#img1 뭔가 이런 화면을 보여주는', at: at(10), since: at(0) };
+  it('재현: 대기열에 든 말은 화면에 보여도 대기 중(입력칸에 걸려 있어요 아님)', () => {
+    const q = applyQueueOps(emptyQueue, op('enqueue', T(11), p.text));
+    expect(pendingState(p, { queue: q, termText: `[Image #5] ${p.text}`, now: at(10) + 60_000, enterWait: 400 })).toBe('queued');
+    const anon = applyQueueOps(emptyQueue, op('enqueue', T(11)));
+    expect(pendingState(p, { queue: anon, termText: `[Image #5] ${p.text}`, now: at(10) + 60_000, enterWait: 400 })).toBe('queued');
+  });
+  it('대기열에 없으면 예전대로 입력칸', () => {
+    expect(pendingState(p, { queue: emptyQueue, termText: p.text, now: at(10) + 60_000, enterWait: 400 })).toBe('input');
+  });
+  const sentItem = (text: string, ts: number) => ({ kind: 'user' as const, text, ts: new Date(ts).toISOString() });
+  it('재현: 읽은 입력칸 글이 대기 중인 말이거나, 일하는 중 이미 보낸 말과 같으면 낡은 읽기', () => {
+    const q = applyQueueOps(emptyQueue, op('enqueue', T(11), p.text));
+    expect(staleEcho(`[Image #5] ${p.text}`, { queue: q, items: [], busy: false, now: at(20) })).toBe(true);
+    expect(staleEcho(p.text, { queue: emptyQueue, items: [sentItem(`[Image #5] ${p.text}`, at(11))] as never, busy: true, now: at(20) })).toBe(true);
+  });
+  it('쉬는 중 되돌아온 말(Esc 로 거둬들임)·모르는 글·오래된 말은 낡은 읽기가 아니다', () => {
+    expect(staleEcho(p.text, { queue: emptyQueue, items: [sentItem(p.text, at(11))] as never, busy: false, now: at(20) })).toBe(false);
+    expect(staleEcho('새로 쓰는 글', { queue: emptyQueue, items: [sentItem(p.text, at(11))] as never, busy: true, now: at(20) })).toBe(false);
+    expect(staleEcho(p.text, { queue: emptyQueue, items: [sentItem(p.text, at(11))] as never, busy: true, now: at(11) + 11 * 60_000 })).toBe(false);
+    expect(staleEcho('', { queue: emptyQueue, items: [], busy: true, now: at(20) })).toBe(false);
+  });
+});
+
+describe('줄 선 말 빼기(X)는 대기열이 다 내 말일 때 — 글 없는 대기 말은 내가 보낸 뒤 줄 섰으면 내 것', () => {
+  const mine = [{ text: '빼낼 말', at: at(10) }];
+  it('재현: 글 없는 대기 말이 섞여도 내가 보낸 뒤 줄 선 것이면 빼기를 띄운다(예전엔 X 가 아예 안 떴다)', () => {
+    const q = applyQueueOps(emptyQueue, op('enqueue', T(11)));
+    expect(queueAllMine(q.waiting, mine)).toBe(true);
+  });
+  it('남의 말·내가 보내기 전에 줄 선 글 없는 말이 있으면 ↑ 가 그것까지 입력칸에 쏟는다 — 안 띄운다', () => {
+    expect(queueAllMine(applyQueueOps(emptyQueue, op('enqueue', T(11), '남의 말')).waiting, mine)).toBe(false);
+    expect(queueAllMine(applyQueueOps(emptyQueue, op('enqueue', T(5))).waiting, mine)).toBe(false);
+    expect(queueAllMine(applyQueueOps(emptyQueue, op('enqueue', T(11), '빼낼 말')).waiting, mine)).toBe(true);
+  });
+});
+
+describe('앱이 넣은 줄([앱] …) 말풍선 — 사람 말이 아니다(2026-11-10 참모-2)', () => {
+  it('다시 보내기·지금 보내기가 없다 — 누르면 같은 줄이 두 번 간다', () => {
+    for (const st of ['sending', 'queued', 'input', 'lost', 'wait'] as const) expect(pendAct(st, true)).toBeNull();
+    expect(pendAct('lost')).toBe('again');
+  });
+  it('앱 줄은 [앱] 머리로 알아본다', () => {
+    expect(isAppLine('[앱] 오래 멈춘 목표: 가짜 목표 — 조각 0/3')).toBe(true);
+    expect(isAppLine('앱 고쳐 줘')).toBe(false);
+    expect(isAppLine(' [앱] 앞에 빈칸')).toBe(false);
+  });
+  it('어디에도 안 보여도 "전달 안 됨"으로 남기지 않는다 — 넣는 길 기록(notify.log reply)이 따로 있다', () => {
+    expect(appLineShown('lost')).toBe(false);
+    for (const st of ['sending', 'queued', 'input', 'wait'] as const) expect(appLineShown(st)).toBe(true);
+  });
+  it('채팅 화면이 앱 줄을 옅은 한 줄로 그리고 단추를 안 붙인다', () => {
+    expect(chat).toMatch(/isAppLine\(p\.text\)/);
+    expect(chat).toMatch(/pendAct\(st, app\)/);
   });
 });

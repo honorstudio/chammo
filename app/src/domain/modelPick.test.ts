@@ -20,8 +20,8 @@ describe('MODEL_CHOICES — 계열마다 가장 새 판, 전체 id 로(2026-10-2
     expect(MODEL_CHOICES.map((m) => m.label)).toEqual(['Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5']);
   });
   it("'그 밖' 은 /model 창의 나머지 줄 — Fable 5.1 이 맨 앞, 셋과 겹치지 않는다", () => {
-    expect(OTHER_MODELS[0]).toEqual({ id: 'claude-fable-5-1', label: 'Fable 5.1' });
-    expect(OTHER_MODELS.map((m) => m.label)).toEqual(['Fable 5.1', 'Haiku 4.5', 'Sonnet 5', 'Opus 5', 'Fable 5', 'Opus 4.8', 'Opus 4.7', 'Opus 4.6', 'Sonnet 4.6']);
+    expect(OTHER_MODELS[0]).toEqual({ id: 'claude-fable-5-2', label: 'Fable 5.2' });
+    expect(OTHER_MODELS.map((m) => m.label)).toEqual(['Fable 5.2', 'Fable 5.1', 'Haiku 4.5', 'Sonnet 5', 'Opus 5', 'Fable 5', 'Opus 4.8', 'Opus 4.7', 'Opus 4.6', 'Sonnet 4.6']);
     const main = new Set(MODEL_CHOICES.map((m) => m.id));
     expect(OTHER_MODELS.some((m) => main.has(m.id))).toBe(false);
   });
@@ -211,7 +211,7 @@ describe('modelCommand — 채팅에서 친 /model·/effort 를 칩으로 돌린
   it('/model 별칭 — 칩 칸의 전체 id 로(별칭은 Claude Code 판마다 풀리는 곳이 다르다)', () => {
     expect(modelCommand('/model sonnet')).toEqual({ want: { model: 'claude-sonnet-5-5' } });
     expect(modelCommand('/model Opus')).toEqual({ want: { model: 'claude-opus-5-5' } });
-    expect(modelCommand('/model fable')).toEqual({ want: { model: 'claude-fable-5-1' } });
+    expect(modelCommand('/model fable')).toEqual({ want: { model: 'claude-fable-5-2' } });
   });
   it('/model 전체 id — 목록에 있는 것만', () => {
     expect(modelCommand('/model claude-opus-4-8')).toEqual({ want: { model: 'claude-opus-4-8' } });

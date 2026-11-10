@@ -837,3 +837,371 @@ fn inapp_newwin_e2e() {
         let _ = std::fs::remove_file(live_dir().join(format!("{profile}.json")));
     }
 }
+
+/// 칸 누름 자리 실측(11-09 사용자 — 회사 비서 칸에 크롬 창이 통째로 보이고 누르면 아래로 밀림). 머리 있는 크롬을 가짜 화면에 두고:
+/// 칸 일꾼이 잰 창 모양(툴바·페이지 칸)으로 Swift 칸(BrowserMirror pageRect·ratio)과 같은 셈을 하고, 창을 진짜로 찍어(screencapture) 빨간 표시를 찾아
+/// 그 자리를 칸에서 누른 것처럼 넣는다 → 페이지가 받은 자리 - 표시 가운데 = 어긋난 px. 평소·viewport 흉내(세션 browser_resize)·칸 크기 바뀜 세 판.
+/// 크롬은 직접 안 띄운다 — chammo-browser launch pco-test(시험 CHAMMO_HOME) 로 받는다. 가짜 화면이 없으면(앱 꺼짐) 멈춘다
+/// `CHAMMO_HOME=<빈 시험 폴더> cargo test pane_offset_e2e -- --ignored --nocapture --test-threads=1`
+/// 칸(SCK)으로 보는 시험 크롬 — 앱이 있는 맥처럼 시험 데이터 폴더를 갖추고(가짜 화면·config.json·Dock 숨김 dylib) `chammo-browser launch` 로 띄운다.
+/// 끝나면(Drop) 돌려주고 프로필을 지운다. cli = 쓸 chammo-browser.js(없으면 깔린 것, 그것도 없으면 저장소 것), prefs = 띄우기 전 Default/Preferences
+struct PaneChrome {
+    node: String,
+    cli: String,
+    data: PathBuf,
+    broot: PathBuf,
+    profile: String,
+    me: String,
+    live: Live,
+    pid: i32,
+}
+impl PaneChrome {
+    fn run(&self, args: &[&str]) -> String {
+        run_cli(&self.node, &self.cli, &self.data, &self.broot, args)
+    }
+    fn prefs(&self) -> serde_json::Value {
+        let f = self.broot.join("profiles").join(&self.profile).join("Default").join("Preferences");
+        serde_json::from_str(&std::fs::read_to_string(f).unwrap_or_default()).unwrap_or_default()
+    }
+}
+impl Drop for PaneChrome {
+    fn drop(&mut self) {
+        let _ = self.run(&["release", &self.profile, "--owner", &self.me]);
+        let _ = std::fs::remove_dir_all(self.broot.join("profiles").join(&self.profile));
+    }
+}
+
+fn pane_chrome(profile: &str, cli: Option<String>, prefs: Option<serde_json::Value>) -> PaneChrome {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let data = crate::config::data_dir().to_path_buf();
+    assert!(!crate::config::is_real_data(&home, &data), "CHAMMO_HOME 을 시험 폴더로 줘");
+    let broot = data.join("browser");
+    std::fs::create_dir_all(&broot).unwrap();
+    // 가짜 화면 자리는 앱이 띄운 것을 빌린다(읽기만) — 크롬이 사람 화면에 안 뜨게. 매번 새로 — 앱이 다시 켜지면 화면 번호가 바뀌어(56→58) 옛 복사본으론 못 찾았다
+    let vd_file = broot.join("vdisplay.json");
+    let real = std::path::Path::new(&home).join(".honor-orchestrator/browser/vdisplay.json");
+    std::fs::copy(&real, &vd_file).expect("가짜 화면(vdisplay.json)이 없다 — Chammo 앱이 켜져 있어야 한다");
+    wait_for("가짜 화면", 5, crate::vdisplay::bounds);
+    // 앱이 있는 맥처럼 — config.json(앱 있음)·Dock 숨김 dylib 가 없으면 크롬이 보통 앱으로 떠 칸이 SCK 대신 그림 길로 간다(사용자 칸은 SCK)
+    if !data.join("config.json").exists() {
+        std::fs::write(data.join("config.json"), "{}").unwrap();
+    }
+    let dylib = data.join("tools").join("chammo-accessory.dylib");
+    if !dylib.exists() {
+        std::fs::create_dir_all(dylib.parent().unwrap()).unwrap();
+        std::fs::copy(std::path::Path::new(&home).join(".honor-orchestrator/tools/chammo-accessory.dylib"), &dylib).expect("앱이 깐 chammo-accessory.dylib 가 없다");
+    }
+    let pdir = broot.join("profiles").join(profile);
+    let _ = std::fs::remove_dir_all(&pdir);
+    if let Some(p) = prefs {
+        std::fs::create_dir_all(pdir.join("Default")).unwrap();
+        std::fs::write(pdir.join("Default").join("Preferences"), p.to_string()).unwrap();
+    }
+    let installed = format!("{home}/.honor-orchestrator/tools/chammo-browser/bin/chammo-browser.js");
+    let cli = cli.unwrap_or_else(|| if std::path::Path::new(&installed).exists() { installed } else { repo_cli() });
+    let node = [format!("{home}/.honor-orchestrator/tools/bin/node")].into_iter().find(|p| std::path::Path::new(p).exists()).unwrap_or_else(|| "node".into());
+    let me = std::process::id().to_string();
+    let run = |args: &[&str]| run_cli(&node, &cli, &data, &broot, args);
+    // 새 시험 폴더는 첫 launch 때 크롬 사본을 재서명해 만드느라 지킴이가 늦을 수 있다 — 한 번 더. 여기서 멈춰도 주인(이 시험 프로세스)이 끝나면 지킴이가 돌려준다
+    let mut got = run(&["launch", profile, "--owner", &me, "--wait", "30"]);
+    if !got.contains("\"ok\":true") {
+        got = run(&["launch", profile, "--owner", &me, "--wait", "30"]);
+    }
+    let j: serde_json::Value = serde_json::from_str(got.lines().last().unwrap_or("{}")).unwrap_or_default();
+    assert_eq!(j["ok"], true, "launch: {got}");
+    let live = wait_for("live 파일", 15, || read_live(profile).filter(|l| port_open(l.port)));
+    let pid = wait_for("크롬 pid", 10, || chrome_pid(live.port));
+    PaneChrome { node, cli, data, broot, profile: profile.into(), me, live, pid }
+}
+
+fn run_cli(node: &str, cli: &str, data: &std::path::Path, broot: &std::path::Path, args: &[&str]) -> String {
+    let out = crate::platform::command(node)
+        .arg(cli)
+        .args(args)
+        .env("CHAMMO_HOME", data)
+        .env("CHAMMO_BROWSER_HOME", broot)
+        .stderr(std::process::Stdio::inherit())
+        .output()
+        .expect("chammo-browser");
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// 이 저장소의 chammo-browser — 고친 래퍼(src/features.js)를 시험할 때. node_modules 는 본 폴더 것을 심볼릭 링크로(워크트리)
+fn repo_cli() -> String {
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../../tools/chammo-browser/bin/chammo-browser.js").to_string()
+}
+
+/// 칸 크기 맞추기를 계속 불러 일꾼이 창 모양(geom)을 재게 한다 — 보는 칸 흉내. 끄면 멈춘다
+fn keep_pane(profile: &'static str, want: Arc<Mutex<(f64, f64)>>) -> Arc<AtomicBool> {
+    let on = Arc::new(AtomicBool::new(true));
+    let o = on.clone();
+    std::thread::spawn(move || {
+        while o.load(Ordering::Relaxed) {
+            let (a, b) = *want.lock().unwrap();
+            let _ = pane_geom(profile, a, b, true);
+            std::thread::sleep(Duration::from_millis(300));
+        }
+    });
+    on
+}
+
+#[test]
+#[ignore]
+fn pane_offset_e2e() {
+    use crate::agent_input::InputEv;
+    let profile = "pco-test";
+    let pc = pane_chrome(profile, None, None);
+    let (live, pid, me) = (pc.live.clone(), pc.pid, pc.me.clone());
+    let mut owner = Owner::new(&live);
+    // 왼쪽 위 파란 점·(200,300) 빨간 40px 표시, 누름 자리를 적는다
+    let page = "data:text/html,<body style=margin:0;background:%23eef><div style=position:fixed;left:200px;top:300px;width:40px;height:40px;background:red></div><script>window.hits=[];addEventListener('mousedown',e=>hits.push([e.clientX,e.clientY]))</script>";
+    let (t, s) = owner.tab(page);
+    wait_for("시험 페이지", 10, || owner.eval(&s, "window.hits ? 1 : null").ok().filter(|v| v == 1));
+    let want = Arc::new(Mutex::new((900.0, 600.0)));
+    let on = keep_pane(profile, want.clone());
+    show(profile, &t);
+    let shot = std::env::temp_dir().join(format!("pco-{me}.bmp"));
+    let mut results = vec![];
+    for (name, emulate, pane) in [("평소", None, (900.0, 600.0)), ("흉내 1280x900", Some((1280, 900)), (900.0, 600.0)), ("흉내 + 칸 1100x700", Some((1280, 900)), (1100.0, 700.0))] {
+        *want.lock().unwrap() = pane;
+        if let Some((w, h)) = emulate {
+            // 플레이라이트 setViewportSize 와 같은 모양(화면 크기도 같이) — 주인 세션이 붙어 있는 동안 산다
+            owner.cdp.call("Emulation.setDeviceMetricsOverride", serde_json::json!({ "width": w, "height": h, "deviceScaleFactor": 1, "mobile": false, "screenWidth": w, "screenHeight": h }), Some(&s), |_| {}).unwrap();
+        }
+        // 창 모양이 1.5초 그대로일 때까지(칸 크기 맞춤이 끝남)
+        let mut last = None;
+        let mut since = Instant::now();
+        let g = wait_for("창 모양 가라앉음", 20, || {
+            let g = pane_geom(profile, pane.0, pane.1, true)?.1?;
+            if last != Some(g) {
+                last = Some(g);
+                since = Instant::now();
+            }
+            (since.elapsed() > Duration::from_millis(1500)).then_some(g)
+        });
+        assert!(!pane_geom(profile, pane.0, pane.1, true).expect("칸").2, "[{name}] 칸이 SCK 가 아니라 그림 길이다 — 시험 크롬이 Dock 숨김으로 안 떴다");
+        let pmeta = with_workers(|ws| ws.get(profile).and_then(|w| w.view.lock().ok().and_then(|v| v.pane_meta))).expect("칸 페이지 크기");
+        // 창을 찍어 빨간 표시를 찾는다(창 점 = 픽셀 / 배율)
+        let win = wait_for("CG 창", 5, || crate::chrome_popup::windows(pid).into_iter().find(|w| w.layer == 0 && (w.rect.x - g.win[0]).abs() < 4.0 && (w.rect.y - g.win[1]).abs() < 4.0));
+        let _ = std::fs::remove_file(&shot);
+        let ok = crate::platform::command("/usr/sbin/screencapture").args(["-x", "-o", "-t", "bmp", &format!("-l{}", win.num)]).arg(&shot).status().map(|s| s.success()).unwrap_or(false);
+        assert!(ok, "창 찍기 실패(화면 기록 권한?)");
+        let (bw, bh, red) = red_box(&std::fs::read(&shot).unwrap());
+        let _ = std::fs::remove_file(&shot);
+        let k = bw as f64 / g.win[2];
+        let red = red.expect("캡처에 빨간 표시가 없다");
+        let (xw, yw) = (((red.0 + red.2) as f64 / 2.0) / k, ((red.1 + red.3) as f64 / 2.0) / k);
+        // Swift BrowserMirror — sourceRect = 툴바 밑(top 은 0..창 높이-2), 칸 비율 = 그 칸 안 자리
+        let top = g.top.clamp(0.0, (g.win[3] - 2.0).max(0.0));
+        let (rx, ry) = (xw / g.win[2], (yw - top) / (g.win[3] - top));
+        assert!(bh > 0 && (0.0..=1.0).contains(&rx) && (0.0..=1.0).contains(&ry), "표시가 칸 그림 밖: {rx},{ry}");
+        let m = |ty: &str| InputEv::Mouse { ty: ty.into(), x: rx, y: ry, button: Some(if ty == "mouseMoved" { "none" } else { "left" }.into()), click_count: Some(1), delta_x: None, delta_y: None, modifiers: 0 };
+        let before = owner.eval(&s, "hits.length").unwrap().as_u64().unwrap_or(0);
+        pane_input(profile, vec![m("mouseMoved"), m("mousePressed"), m("mouseReleased")]).unwrap();
+        let hit = wait_for("누름이 페이지에", 10, || {
+            let v = owner.eval(&s, "hits.length > 0 ? hits[hits.length - 1].concat(hits.length) : null").ok()?;
+            let a = v.as_array()?.iter().filter_map(|x| x.as_f64()).collect::<Vec<_>>();
+            (a.len() == 3 && a[2] as u64 > before).then(|| (a[0], a[1]))
+        });
+        // 표시 가운데 = 페이지 (220, 320)
+        let (dx, dy) = (hit.0 - 220.0, hit.1 - 320.0);
+        // 툴바(창 위 40점)는 칸 그림 밖이어야 한다 — Swift ratio 가 버린다
+        let bar_ry = (40.0 - top) / (g.win[3] - top);
+        eprintln!("[{name}] 창 {:?} 툴바 {:.0} 칸 페이지 {:.0}x{:.0}(css) 배율 {k} · 표시 창점 ({xw:.1},{yw:.1}) → 페이지 ({},{}) 어긋남 dx {dx} dy {dy} · 툴바 누름 비율 {bar_ry:.3}", g.win, g.top, pmeta.w, pmeta.h, hit.0, hit.1);
+        results.push((name, dx, dy, bar_ry));
+    }
+    on.store(false, Ordering::Relaxed);
+    let _ = agent_handback(profile.to_string(), live.pid);
+    for (name, dx, dy, bar) in &results {
+        assert!(dx.abs() <= 2.0 && dy.abs() <= 2.0, "[{name}] 누른 자리가 {dx},{dy} px 어긋남: {results:?}");
+        assert!(*bar < 0.0, "[{name}] 툴바가 칸 그림 안에 있다: {results:?}");
+    }
+}
+
+/// 영어 페이지 — 한글 크롬은 '이 페이지를 번역하시겠습니까?' 풍선을 띄운다. 누름 자리를 hits 에 적는다
+fn english_server() -> u16 {
+    use std::io::{Read, Write};
+    let page = format!(
+        "<!doctype html><html lang=en><title>English news</title><body style=margin:0><select style='position:fixed;left:20px;top:0;width:200px;height:30px'><option>one</option><option>two</option><option>three</option></select><h1 style=margin-top:40px>The quick brown fox</h1>{}<script>window.hits=[];addEventListener('mousedown',e=>hits.push([e.clientX,e.clientY]))</script></body></html>",
+        "<p>This is a long English paragraph about the weather, the economy, and the people who live in the city. It keeps going so the language detector is confident.</p>".repeat(20)
+    );
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for mut s in l.incoming().flatten() {
+            let mut buf = [0u8; 2048];
+            let _ = s.read(&mut buf);
+            let _ = write!(s, "HTTP/1.1 200 OK\r\ncontent-type: text/html; charset=utf-8\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{page}", page.len());
+        }
+    });
+    port
+}
+
+/// 브라우저 창 안에 화면에 그려진 번역 풍선(237x87 안팎) — 없으면 None
+fn translate_bubble(pid: i32, win: [f64; 4]) -> Option<crate::chrome_popup::Win> {
+    let b = crate::vdisplay::Rect { x: win[0], y: win[1], w: win[2], h: win[3] };
+    crate::chrome_popup::windows(pid)
+        .into_iter()
+        .find(|w| w.layer == 0 && w.onscreen && (150.0..=360.0).contains(&w.rect.w) && (60.0..=140.0).contains(&w.rect.h) && crate::chrome_popup::within(w.rect, b))
+}
+
+/// 크롬 자체 풍선(11-09 사용자 번역 풍선) — ① 칸 누름은 CDP 로 페이지에만 가서 풍선 X 를 못 누른다(원인) ② 칸에서 X 를 누르면 AX 로 닫히고 페이지는 안 눌린다
+/// ③ 쓰던 프로필도 다음 launch 에 제안 풍선 설정이 꺼져 풍선이 안 뜬다. 고친 래퍼를 쓰려고 저장소 chammo-browser 로 띄운다.
+/// `CHAMMO_HOME=<빈 시험 폴더> cargo test native_bubble_e2e -- --ignored --nocapture --test-threads=1` — 손쉬운 사용 허용이 있는 터미널에서(앱도 그 허용으로 누른다)
+#[test]
+#[ignore]
+fn native_bubble_e2e() {
+    use crate::agent_input::InputEv;
+    let profile = "nb-test";
+    let url = format!("http://localhost:{}/", english_server());
+    let want = Arc::new(Mutex::new((1000.0, 700.0)));
+
+    // ① ② 사람이 크롬 설정에서 번역을 켜 둔 프로필 — 풍선이 뜬다(켠 값은 래퍼가 안 건드린다)
+    {
+        let pc = pane_chrome(profile, Some(repo_cli()), Some(serde_json::json!({ "translate": { "enabled": true } })));
+        assert_eq!(pc.prefs()["translate"]["enabled"], true, "사람이 켠 번역은 그대로");
+        let mut owner = Owner::new(&pc.live);
+        let (t, s) = owner.tab(&url);
+        wait_for("영어 페이지", 10, || owner.eval(&s, "window.hits ? 1 : null").ok().filter(|v| v == 1));
+        let on = keep_pane(profile, want.clone());
+        show(profile, &t);
+        // 칸 크기 맞추기가 끝날 때까지(창 모양이 1.5초 그대로)
+        let (mut last, mut since) = (None, Instant::now());
+        let g = wait_for("창 모양 가라앉음", 20, || {
+            let g = pane_geom(profile, 1000.0, 700.0, true)?.1?;
+            if last != Some(g) {
+                last = Some(g);
+                since = Instant::now();
+            }
+            (since.elapsed() > Duration::from_millis(1500)).then_some(g)
+        });
+        assert!(!pane_geom(profile, 1000.0, 700.0, true).expect("칸").2, "칸이 SCK 가 아니라 그림 길이다 — 시험 크롬이 Dock 숨김으로 안 떴다");
+        let b = wait_for("번역 풍선", 15, || translate_bubble(pc.pid, g.win));
+        // 닫기 단추 = 오른쪽 위(11-09 실측: 풍선 (-2288,1066) 237x87 의 닫기 (-2095,1073) 28x32 → 가운데 오른쪽에서 30·위에서 23)
+        let (x, y) = (b.rect.x + b.rect.w - 30.0, b.rect.y + 23.0);
+        let top = g.top.clamp(0.0, (g.win[3] - 2.0).max(0.0));
+        let (rx, ry) = ((x - g.win[0]) / g.win[2], (y - g.win[1] - top) / (g.win[3] - top));
+        eprintln!("창 {:?} 툴바 {} 풍선 {:?} 닫기 ({x},{y}) 칸 비율 ({rx:.3},{ry:.3})", g.win, g.top, b.rect);
+        assert!((0.0..=1.0).contains(&rx) && (0.0..=1.0).contains(&ry), "닫기 단추가 칸 그림 밖(툴바 위)");
+
+        // ① 원인 — 페이지 길(CDP)로 그 자리를 누르면 풍선은 그대로고 밑의 페이지가 눌린다
+        // 페이지 점 = 창 점에서 창 왼쪽·툴바를 뺀 것(창 폭 = 페이지 폭, 배율 1 — pane_offset_e2e 실측)
+        let (px, py) = (x - g.win[0], y - g.win[1] - top);
+        for ty in ["mousePressed", "mouseReleased"] {
+            owner.cdp.call("Input.dispatchMouseEvent", serde_json::json!({ "type": ty, "x": px, "y": py, "button": "left", "clickCount": 1 }), Some(&s), |_| {}).unwrap();
+        }
+        let hits = |o: &mut Owner| o.eval(&s, "hits.length").unwrap().as_u64().unwrap_or(0);
+        wait_for("페이지가 눌림", 5, || (hits(&mut owner) == 1).then_some(()));
+        std::thread::sleep(Duration::from_millis(800));
+        assert!(translate_bubble(pc.pid, g.win).is_some(), "페이지 길 누름으론 풍선이 안 닫힌다(원인)");
+
+        // ② 칸은 크롬 자체 창이 떠 있다고 안다 — '크롬이 띄운 창이 있어 · 크롬에서 보기' 한 줄(nativeLine)
+        wait_for("칸이 크롬 자체 창을 안다", 5, || agent_tabs(profile.into()).native.then_some(()));
+        // ③ 칸에서 같은 자리를 누르면 — 풍선 위 누름은 페이지로 안 간다. 닫기 단추는 AX 로 눌러 보는데, 크롬이 접근성 트리를 열어 줄 때만 된다
+        // (11-09 23:35·00:38 은 닫힘 113ms, 11-10 02:10 엔 크롬이 창 목록을 안 내줘 안 됨 — 진짜 세션 크롬도 같았다). 그래서 닫힘은 단언하지 않고 적기만
+        let m = |ty: &str| InputEv::Mouse { ty: ty.into(), x: rx, y: ry, button: Some(if ty == "mouseMoved" { "none" } else { "left" }.into()), click_count: Some(1), delta_x: None, delta_y: None, modifiers: 0 };
+        pane_input(profile, vec![m("mouseMoved"), m("mousePressed"), m("mouseReleased")]).unwrap();
+        let t0 = Instant::now();
+        let closed = (0..30).any(|_| {
+            std::thread::sleep(Duration::from_millis(100));
+            translate_bubble(pc.pid, g.win).is_none()
+        });
+        #[cfg(target_os = "macos")]
+        eprintln!("칸 닫기(AX) → {} {:?} · 그 자리 AX {:?}", if closed { "닫힘" } else { "안 닫힘(크롬 접근성 꺼짐 — 칸 '크롬에서 보기' 길)" }, t0.elapsed(), crate::native_bubble::ax::describe_at(pc.pid, x, y));
+        std::thread::sleep(Duration::from_millis(500));
+        assert_eq!(hits(&mut owner), 1, "풍선 위 누름이 페이지로 가면 안 된다");
+        if closed {
+            wait_for("닫히면 칸 한 줄도 내린다", 5, || (!agent_tabs(profile.into()).native).then_some(()));
+            // 풍선이 없으면 같은 자리 칸 누름은 다시 페이지로
+            pane_input(profile, vec![m("mousePressed"), m("mouseReleased")]).unwrap();
+            wait_for("풍선 없으면 페이지로", 5, || (hits(&mut owner) == 2).then_some(()));
+        }
+        // ④ 꺼낸 동안엔 한 줄을 안 띄운다(크롬에서 바로 다룬다) — 꺼낸 표만 세운다(크롬에서 보기는 창을 사용자 화면으로 옮겨 시험에선 안 부른다)
+        SHOWN.lock().unwrap().push(pc.pid);
+        wait_for("꺼낸 동안 native 없음", 5, || (!agent_tabs(profile.into()).native).then_some(()));
+        hide_now(profile, false).expect("돌려놓기");
+        on.store(false, Ordering::Relaxed);
+        let _ = agent_handback(profile.to_string(), pc.live.pid);
+    }
+
+    // ③ 어제까지 판이 손본 프로필(제안 풍선 칸 없음) — 다음 launch 에 래퍼가 끄고, 영어 페이지에 풍선이 안 뜬다
+    let yesterday = serde_json::json!({ "signin": { "interception_enabled": false }, "profile": { "default_content_setting_values": { "notifications": 2 } }, "https_first_balanced_mode_enabled": false });
+    // 다른 프로필로 — 같은 프로필을 바로 다시 띄우면 앞 크롬이 꺼지는 중(SingletonLock)이라 래퍼가 설정 쓰기를 건너뛴다('running', 크롬이 끌 때 덮으니까)
+    let pc = pane_chrome("nb-test2", Some(repo_cli()), Some(yesterday));
+    let p = pc.prefs();
+    assert_eq!(p["translate"]["enabled"], false, "{p}");
+    assert_eq!(p["credentials_enable_service"], false);
+    assert!(p["autofill"].is_null(), "자동 완성(주소·카드)은 안 건드린다: {p}");
+    assert_eq!(p["download_bubble"]["partial_view_enabled"], false);
+    let mut owner = Owner::new(&pc.live);
+    let (_t, s) = owner.tab(&url);
+    wait_for("영어 페이지", 10, || owner.eval(&s, "window.hits ? 1 : null").ok().filter(|v| v == 1));
+    let win = wait_for("창 자리", 10, || crate::chrome_popup::windows(pc.pid).into_iter().find(|w| w.layer == 0 && w.onscreen && w.rect.w >= 800.0)).rect;
+    for _ in 0..30 {
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(translate_bubble(pc.pid, [win.x, win.y, win.w, win.h]).is_none(), "번역을 끈 프로필인데 풍선이 떴다");
+    }
+    // 펼침 목록(<select>) — 크롬이 맥 메뉴로 띄워 칸엔 안 비치고 칸 키로도 안 움직인다(11-10 실측). 칸이 크롬 자체 창으로 알아 '크롬에서 보기'를 띄운다
+    let on = keep_pane("nb-test2", Arc::new(Mutex::new((1000.0, 700.0))));
+    show("nb-test2", &_t);
+    wait_for("칸 모양", 20, || pane_geom("nb-test2", 1000.0, 700.0, true)?.1);
+    assert!(!agent_tabs("nb-test2".into()).native, "평소엔 없다");
+    for ty in ["mousePressed", "mouseReleased"] {
+        owner.cdp.call("Input.dispatchMouseEvent", serde_json::json!({ "type": ty, "x": 120, "y": 15, "button": "left", "clickCount": 1 }), Some(&s), |_| {}).unwrap();
+    }
+    wait_for("펼침 목록을 크롬 자체 창으로 안다", 5, || agent_tabs("nb-test2".into()).native.then_some(()));
+    on.store(false, Ordering::Relaxed);
+}
+
+/// 꺼낸 크롬(사람이 '크롬에서 보기'로 연 것도)을 칸 툴바 '칸으로 돌려놓기'(agent_hide, auto 없이)로 숨기고 칸 그림으로 — 드문 크롬 자체 풍선의 탈출구(11-09 사용자).
+/// '크롬에서 보기'(agent_focus)는 창을 보이는 화면(사용자 화면)으로 옮겨서 부르지 않고 꺼낸 표만 세운다 — Dock 보이기(set_regular)도 안 한다.
+/// `CHAMMO_HOME=<빈 시험 폴더> cargo test pane_unshow_e2e -- --ignored --nocapture --test-threads=1`
+#[test]
+#[ignore]
+fn pane_unshow_e2e() {
+    let profile = "nb-unshow";
+    let pc = pane_chrome(profile, Some(repo_cli()), None);
+    let mut owner = Owner::new(&pc.live);
+    let (t, _s) = owner.tab("data:text/html,<title>unshow</title><p>pane");
+    let on = keep_pane(profile, Arc::new(Mutex::new((1000.0, 700.0))));
+    show(profile, &t);
+    wait_for("칸 모양", 20, || pane_geom(profile, 1000.0, 700.0, true)?.1);
+    // 사람이 꺼낸 것처럼 — 표만. 저절로 꺼낸 표(PEEKED)는 없다: 그러면 지킴이·저절로 되돌리기가 손대지 않는 '사람 것'
+    SHOWN.lock().unwrap().push(pc.pid);
+    assert!(PEEKED.lock().unwrap().iter().all(|p| p.1 != pc.pid));
+    wait_for("칸이 꺼냄을 안다(툴바 돌려놓기가 보일 때)", 5, || agent_tabs(profile.into()).shown.then_some(()));
+    // 툴바 돌려놓기
+    hide_now(profile, false).expect("돌려놓기");
+    assert!(!SHOWN.lock().unwrap().contains(&pc.pid), "꺼낸 표가 떨어진다");
+    wait_for("칸이 돌아옴을 안다", 5, || (!agent_tabs(profile.into()).shown).then_some(()));
+    let vd = crate::vdisplay::bounds().expect("가짜 화면").1;
+    wait_for("창이 가짜 화면 안", 5, || {
+        let ws: Vec<_> = crate::chrome_popup::windows(pc.pid).into_iter().filter(|w| w.layer == 0 && w.rect.w >= 800.0).collect();
+        (!ws.is_empty() && ws.iter().all(|w| crate::vdisplay::inside(w.rect, vd))).then_some(())
+    });
+    assert!(!pane_geom(profile, 1000.0, 700.0, true).expect("칸").2, "칸은 SCK 그대로(그림 길로 안 떨어진다)");
+    on.store(false, Ordering::Relaxed);
+}
+
+/// BMP(screencapture -t bmp) → (가로, 세로, 빨간 픽셀 상자(x0,y0,x1,y1) 위 원점)
+fn red_box(b: &[u8]) -> (usize, usize, Option<(usize, usize, usize, usize)>) {
+    let u32le = |i: usize| u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
+    let off = u32le(10) as usize;
+    let w = u32le(18) as usize;
+    let hs = i32::from_le_bytes([b[22], b[23], b[24], b[25]]);
+    let h = hs.unsigned_abs() as usize;
+    let bpp = u16::from_le_bytes([b[28], b[29]]) as usize / 8;
+    let row = (w * bpp).div_ceil(4) * 4;
+    let mut bx: Option<(usize, usize, usize, usize)> = None;
+    for y in 0..h {
+        let r = off + if hs > 0 { (h - 1 - y) * row } else { y * row };
+        for x in 0..w {
+            let p = r + x * bpp;
+            let (bb, gg, rr) = (b[p], b[p + 1], b[p + 2]);
+            if rr > 200 && gg < 60 && bb < 60 {
+                bx = Some(bx.map_or((x, y, x, y), |o| (o.0.min(x), o.1.min(y), o.2.max(x), o.3.max(y))));
+            }
+        }
+    }
+    (w, h, bx)
+}

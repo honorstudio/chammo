@@ -8,7 +8,7 @@ const subs = new Set<() => void>();
 const set = (next: WaitSent) => { if (next === sent) return; sent = next; subs.forEach((f) => f()); };
 
 export const peekWaitSent = () => sent;
-export const markWaitSent = (key: string, a: string, fail = false) => set({ ...sent, [key]: { a, at: Date.now(), ...(fail ? { fail } : {}) } });
+export const markWaitSent = (key: string, a: string, fail = false, why?: string) => set({ ...sent, [key]: { a, at: Date.now(), ...(fail ? { fail } : {}), ...(why ? { why } : {}) } });
 
 /** raw = 숨기기 전 목록 — 거기서 빠진 카드의 표시를 지운다 */
 export function useWaitSent(raw: Waiting[]): WaitSent {

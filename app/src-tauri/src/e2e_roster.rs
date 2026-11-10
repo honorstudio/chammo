@@ -28,7 +28,7 @@ pub struct RosterMember {
     /// owner | member
     pub role: String,
     pub active: bool,
-    /// 믿는 사슬로 확인한 들어옴(과 확인된 초대) — 아니면 받아들이기 전까지 받는 사람에서 뺀다
+    /// 믿는 사슬로 확인한 들어옴(과 확인된 초대) — 권한 일(owner_ok·holders·방 고치기)에만 쓴다. 받는 사람·서명자는 사슬만 본다(처음 본 팀원은 믿는다, ADR 0007 11-09)
     pub confirmed: bool,
     /// 팀장·매니저 자리가 확인된 고리로 생겼나 — 아니면 그 사람 권한 일(초대·올림·빼기)은 확인 전
     pub owner_ok: bool,
@@ -73,7 +73,7 @@ fn canon_perms(v: &Value) -> Option<Vec<String>> {
 pub struct RosterRoom {
     pub name: String,
     pub members: Vec<String>,
-    /// 만들고 고친 고리가 다 확인된 사람의 믿는 서명 — 한 번이라도 확인 전 사람이 고쳤으면 받아들이기 전까지 못 쓴다
+    /// 만들고 고친 고리가 다 확인된 사람의 믿는 서명 — 아니면 방 고치기만 마지막 확인된 사람에서 이어 서명한다(보내기·받기는 그대로, ADR 0007 11-09)
     pub confirmed: bool,
     /// 마지막으로 확인됐을 때의 방 사람 — 확인된 사람이 이 안에서만 다시 서명하면 되살아난다(더하기는 그다음, 공격 리뷰 4)
     pub trusted_members: Vec<String>,

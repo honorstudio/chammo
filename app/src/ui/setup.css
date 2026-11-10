@@ -114,6 +114,8 @@
 
 /* 계정 칸 상태 — 소진이면 빨간 글(전역 .running·.done 과 안 겹치게 acct- 접두) */
 .su-row-text .acct-st-out { color: var(--danger-ink); }
+/* 직통 폰 줄 — 계정 확인 안 됨(11-09). 글 색만(왼쪽 띠 없이) */
+.su-row-text .su-warn { color: var(--danger-ink); }
 .acct-auto { margin-top: 10px; }
 /* 설정 > 모바일 — QR 과 열쇠 든 주소 */
 .su-mobile { display: flex; gap: 16px; align-items: flex-start; }

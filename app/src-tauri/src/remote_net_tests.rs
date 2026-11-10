@@ -37,7 +37,7 @@ fn one_shot(resp: &'static [u8]) -> (SocketAddr, thread::JoinHandle<String>) {
 }
 
 fn get(path: &str) -> Request<'_> {
-    Request { method: "GET", path, body: None, token: None }
+    Request { method: "GET", path, body: None, token: None, live: None }
 }
 
 #[test]
@@ -57,10 +57,24 @@ fn md2_직통으로_get_하고_머리를_원격_것으로_맞춘다() {
 }
 
 #[test]
+fn 테일넷_짝_보유_증명_머리는_모양이_맞을_때만_싣는다() {
+    let (at, h) = one_shot(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}");
+    let target = Target { ip: Ipv4Addr::LOCALHOST, port: at.port() };
+    send(&Route::Direct, &target, &Request { live: Some("1794000000000.abcdef"), ..get("/api/direct") }, T, 1024).unwrap();
+    assert!(h.join().unwrap().contains("X-Chammo-Live: 1794000000000.abcdef\r\n"));
+    // 줄바꿈이 섞이면 머리를 안 싣는다(머리 끼워 넣기)
+    let (at, h) = one_shot(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}");
+    let target = Target { ip: Ipv4Addr::LOCALHOST, port: at.port() };
+    send(&Route::Direct, &target, &Request { live: Some("1.a\r\nX-Evil: 1"), ..get("/api/direct") }, T, 1024).unwrap();
+    let head = h.join().unwrap();
+    assert!(!head.contains("X-Chammo-Live") && !head.contains("X-Evil"), "{head}");
+}
+
+#[test]
 fn md2_post_는_같은_출처_json_으로() {
     let (at, h) = one_shot(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}");
     let target = Target { ip: Ipv4Addr::LOCALHOST, port: at.port() };
-    let r = send(&Route::Direct, &target, &Request { method: "POST", path: "/api/send", body: Some(br#"{"id":"x"}"#), token: None }, T, 1024).unwrap();
+    let r = send(&Route::Direct, &target, &Request { method: "POST", path: "/api/send", body: Some(br#"{"id":"x"}"#), token: None, live: None }, T, 1024).unwrap();
     assert_eq!(r.status, 200);
     let head = h.join().unwrap();
     assert!(head.contains(&format!("Origin: http://127.0.0.1:{}\r\n", at.port())), "{head}");

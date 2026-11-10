@@ -77,7 +77,7 @@ fn 구독_주소는_알려진_푸시_서버_https_만() {
 
 #[test]
 fn 구독은_기기마다_같은_주소면_하나() {
-    let a = Sub { device: "d1".into(), endpoint: "https://web.push.apple.com/a".into(), p256dh: "k".into(), auth: "s".into(), at: 1 };
+    let a = Sub { device: "d1".into(), endpoint: "https://web.push.apple.com/a".into(), p256dh: "k".into(), auth: "s".into(), at: 1, replaces: vec![] };
     let mut list = vec![];
     add_sub(&mut list, a.clone());
     add_sub(&mut list, Sub { at: 2, ..a.clone() });
@@ -94,7 +94,7 @@ fn 구독은_기기마다_같은_주소면_하나() {
 
 #[test]
 fn 끊긴_기기의_구독엔_안_보낸다() {
-    let s = |d: &str| Sub { device: d.into(), endpoint: format!("https://web.push.apple.com/{d}"), p256dh: "k".into(), auth: "s".into(), at: 1 };
+    let s = |d: &str| Sub { device: d.into(), endpoint: format!("https://web.push.apple.com/{d}"), p256dh: "k".into(), auth: "s".into(), at: 1, replaces: vec![] };
     let live = live_subs(&[s("d1"), s("d2")], &["d2".to_string()]);
     assert_eq!(live.iter().map(|s| s.device.as_str()).collect::<Vec<_>>(), vec!["d2"]);
 }
@@ -125,7 +125,7 @@ fn push_e2e() {
     println!("PUBLIC {}", v.public_b64());
     let Ok(sub) = std::env::var("E2E_SUB") else { return };
     let j: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(sub).unwrap()).unwrap();
-    let s = Sub { device: "e2e".into(), endpoint: j["endpoint"].as_str().unwrap().into(), p256dh: j["keys"]["p256dh"].as_str().unwrap().into(), auth: j["keys"]["auth"].as_str().unwrap().into(), at: 0 };
+    let s = Sub { device: "e2e".into(), endpoint: j["endpoint"].as_str().unwrap().into(), p256dh: j["keys"]["p256dh"].as_str().unwrap().into(), auth: j["keys"]["auth"].as_str().unwrap().into(), at: 0, replaces: vec![] };
     let code = post(&v, &s, &payload("참모 시험", "웹 푸시 끝에서 끝까지", "session:e2e")).unwrap();
     println!("STATUS {code}");
     assert!((200..300).contains(&code), "{code}");
@@ -138,7 +138,7 @@ fn 구독_파일을_못_읽으면_덮어쓰지_않는다() {
     std::fs::create_dir_all(&d).unwrap();
     let f = d.join("push-subs.json");
     std::fs::write(&f, "[{깨진").unwrap();
-    let s = Sub { device: "d1".into(), endpoint: "https://web.push.apple.com/a".into(), p256dh: "k".into(), auth: "s".into(), at: 1 };
+    let s = Sub { device: "d1".into(), endpoint: "https://web.push.apple.com/a".into(), p256dh: "k".into(), auth: "s".into(), at: 1, replaces: vec![] };
     assert!(subscribe(&d, s.clone()).is_err());
     assert!(unsubscribe(&d, "d1", "https://web.push.apple.com/a").is_err());
     assert_eq!(std::fs::read_to_string(&f).unwrap(), "[{깨진", "그대로");
@@ -192,7 +192,7 @@ fn decrypt_as_phone(body: &[u8], ua_private: &[u8], auth: &[u8]) -> Vec<u8> {
 fn phone_sub(device: &str, at: u64) -> (Sub, Vec<u8>, Vec<u8>) {
     let ua = SecretKey::from_slice(&[7u8; 32]).unwrap();
     let auth = vec![9u8; 16];
-    let s = Sub { device: device.into(), endpoint: format!("https://fcm.googleapis.com/fcm/send/{device}-{at}"), p256dh: URL.encode(ua.public_key().to_encoded_point(false).as_bytes()), auth: URL.encode(&auth), at };
+    let s = Sub { device: device.into(), endpoint: format!("https://fcm.googleapis.com/fcm/send/{device}-{at}"), p256dh: URL.encode(ua.public_key().to_encoded_point(false).as_bytes()), auth: URL.encode(&auth), at, replaces: vec![] };
     (s, ua.to_bytes().to_vec(), auth)
 }
 
@@ -226,11 +226,10 @@ fn 중계_폰은_가장_최근_구독을_쓰고_맥_열쇠로_직접_보내지_�
     let (new, _, _) = phone_sub("ph01", 9);
     let (tail, _, _) = phone_sub("tail1", 3);
     let list = vec![old, new.clone(), tail.clone()];
-    assert_eq!(latest_sub(&list, "ph01"), Some(&new));
-    assert_eq!(latest_sub(&list, "nope"), None);
+    let p = plan(&list, &["ph01".to_string(), "tail1".to_string(), "nope".to_string()], &["ph01".to_string(), "nope".to_string()]);
+    assert_eq!(p.relay, vec![("ph01".to_string(), Some(new)), ("nope".to_string(), None)]);
     // 중계 폰(ph01)의 구독은 중계 VAPID 로 걸린 것 — 맥 VAPID 로 보내면 푸시 서버가 403
-    let direct = direct_subs(&list, &["ph01".to_string(), "tail1".to_string()], &["ph01".to_string()]);
-    assert_eq!(direct, vec![tail]);
+    assert_eq!(p.direct, vec![tail]);
 }
 
 #[test]
@@ -264,7 +263,7 @@ fn relay_body_vectors() {
     let pt = ua.public_key().to_encoded_point(false);
     let auth = rand::<16>().unwrap();
     let endpoint = "https://web.push.apple.com/vectors/relay-body";
-    let s = Sub { device: "ph01".into(), endpoint: endpoint.into(), p256dh: URL.encode(pt.as_bytes()), auth: URL.encode(auth), at: 1 };
+    let s = Sub { device: "ph01".into(), endpoint: endpoint.into(), p256dh: URL.encode(pt.as_bytes()), auth: URL.encode(auth), at: 1, replaces: vec![] };
     let msg = payload("모모 — 답이 왔어", "빌드 끝났어, 비밀번호: hunter2xyz 는 가려져", "session:vector");
     let ask = relay_notify_body("PHONE", Some(&s), &msg);
     let v = serde_json::json!({
@@ -294,4 +293,170 @@ fn 중계_푸시_답에서_본문이_빠졌으면_기록할_한_줄을_만든다
     assert_eq!(notify_note(&bare, 429, &serde_json::json!({ "error": "slow_down" })).as_deref(), Some("폰 bbbb1111 푸시 부탁 429"));
     // 받는 기기 id 에 이상한 글자가 있어도 기록엔 영숫자 8자까지만
     assert_eq!(notify_note(&serde_json::json!({ "to": "\n[가짜]ab" }), 404, &serde_json::Value::Null).as_deref(), Some("폰 ab 이 중계에 없어(끊긴 기기) — 푸시 못 보냄"));
+}
+
+// ── 같은 폰 앱을 다시 짝지었을 때(2026-11-09 사용자 폰 알림 두 번) ─────────────
+// 실측: 같은 아이폰이 11-07(1c2e…)·11-09 11:08(fbf7…) 두 번 짝지어 두 기기 줄이 됐고, 홈 화면 앱의 구독 주소는 하나라
+// push-subs.json 에 같은 주소가 두 기기 이름으로 들어갔다. 알림 한 번에 중계 부탁이 두 기기로 나가 같은 주소에 두 번 닿았다
+// (중계 push_subs last_at 둘 다 23:43:46·47).
+
+fn ep(tag: &str) -> String {
+    format!("https://web.push.apple.com/{tag}")
+}
+fn sub(device: &str, endpoint: &str, at: u64) -> Sub {
+    Sub { device: device.into(), endpoint: endpoint.into(), p256dh: format!("k-{device}-{at}"), auth: format!("a-{device}-{at}"), at, replaces: vec![] }
+}
+fn ids(v: &[String]) -> Vec<String> {
+    v.to_vec()
+}
+fn relay_to(p: &Plan) -> Vec<&str> {
+    p.relay.iter().map(|(d, _)| d.as_str()).collect()
+}
+
+#[test]
+fn 같은_주소를_다른_기기가_구독하면_하나로_합치고_옛_기기를_적는다() {
+    let mut list = vec![sub("old", &ep("same"), 1), sub("other", &ep("o"), 1)];
+    add_sub(&mut list, sub("new", &ep("same"), 5));
+    let same: Vec<&Sub> = list.iter().filter(|s| s.endpoint == ep("same")).collect();
+    assert_eq!(same.len(), 1, "같은 주소는 한 줄");
+    assert_eq!(same[0].device, "new");
+    assert_eq!(same[0].replaces, vec!["old".to_string()]);
+    // 다른 주소(다른 폰)는 그대로
+    assert!(list.iter().any(|s| s.device == "other"));
+    // 새 기기가 다시 구독해도(폰은 하루에도 여러 번 다시 보낸다) 옛 기기 기록은 남는다
+    add_sub(&mut list, sub("new", &ep("same"), 9));
+    let s = list.iter().find(|s| s.endpoint == ep("same")).unwrap();
+    assert_eq!((s.at, s.replaces.clone()), (9, vec!["old".to_string()]));
+}
+
+#[test]
+fn 세_번_짝지어도_옛_기기는_전부_적히고_되찾은_기기는_빠진다() {
+    let mut list = vec![sub("a", &ep("x"), 1)];
+    add_sub(&mut list, sub("b", &ep("x"), 2));
+    add_sub(&mut list, sub("c", &ep("x"), 3));
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].replaces, vec!["a".to_string(), "b".to_string()]);
+    // 옛 기기 a 가 같은 주소로 다시 구독(같은 폰 앱이 옛 열쇠로 돌아옴) — a 가 주인, c 가 옛 기기
+    add_sub(&mut list, sub("a", &ep("x"), 4));
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].device, "a");
+    assert_eq!(list[0].replaces, vec!["b".to_string(), "c".to_string()]);
+}
+
+#[test]
+fn 옛_기록은_한없이_쌓이지_않는다() {
+    let mut list = vec![];
+    for i in 0..100u64 {
+        add_sub(&mut list, sub(&format!("d{i}"), &ep("x"), i));
+    }
+    assert_eq!(list.len(), 1);
+    assert!(list[0].replaces.len() <= REPLACES_MAX);
+    // 가장 최근 옛 기기는 남는다
+    assert!(list[0].replaces.contains(&"d98".to_string()));
+}
+
+#[test]
+fn 옛_파일에_같은_주소가_두_기기로_있으면_알림은_새_기기로_한_번만() {
+    // 11-09 23:35 사용자 데이터 모양 그대로(주소·열쇠만 가짜): 중계 폰 다섯, 구독 넷(두 줄이 같은 주소)
+    let list = vec![sub("d0fe", &ep("p1"), 10), sub("4fdd", &ep("p2"), 20), sub("3be5", &ep("p3"), 30), sub("1c2e", &ep("phone"), 40), sub("fbf7", &ep("phone"), 50)];
+    let devices = ids(&["95c3".into(), "00ae".into(), "3be5".into(), "1c2e".into(), "fbf7".into()]);
+    let p = plan(&list, &devices, &devices);
+    assert_eq!(relay_to(&p), vec!["95c3", "00ae", "3be5", "fbf7"], "옛 기기 1c2e 엔 중계 부탁을 안 낸다");
+    let (_, s) = p.relay.iter().find(|(d, _)| d == "fbf7").unwrap();
+    assert_eq!(s.as_ref().map(|s| s.at), Some(50), "새 기기 열쇠로 봉한다");
+    assert!(p.direct.is_empty());
+    // 같은 주소로 가는 부탁은 하나뿐
+    let to_phone = p.relay.iter().filter(|(_, s)| s.as_ref().map(|s| s.endpoint == ep("phone")).unwrap_or(false)).count();
+    assert_eq!(to_phone, 1);
+}
+
+#[test]
+fn 합친_뒤에는_구독이_없어진_옛_기기에도_본문_없는_부탁을_안_낸다() {
+    // 합치면 옛 기기 줄이 사라진다 — 그냥 두면 '열쇠 모르는 중계 폰'으로 보여 {to} 만 보내고, 중계는 같은 주소로 또 보낸다
+    let mut list = vec![sub("1c2e", &ep("phone"), 40)];
+    add_sub(&mut list, sub("fbf7", &ep("phone"), 50));
+    let devices = ids(&["1c2e".into(), "fbf7".into(), "nosub".into()]);
+    let p = plan(&list, &devices, &devices);
+    assert_eq!(relay_to(&p), vec!["fbf7", "nosub"], "구독을 원래 안 알린 폰(nosub)은 지금처럼 본문 없이");
+}
+
+#[test]
+fn 새_기기를_끊으면_옛_기기로_다시_간다() {
+    let mut list = vec![sub("1c2e", &ep("phone"), 40)];
+    add_sub(&mut list, sub("fbf7", &ep("phone"), 50));
+    // fbf7 을 끊었다 — 1c2e 는 아직 짝지어 있다. 그 주소 주인이 없으니 옛 기기를 막지 않는다
+    let devices = ids(&["1c2e".into()]);
+    let p = plan(&list, &devices, &devices);
+    assert_eq!(relay_to(&p), vec!["1c2e"]);
+    // 옛 파일 모양(두 줄)에서도 같다 — 살아 있는 쪽으로
+    let legacy = vec![sub("1c2e", &ep("phone"), 40), sub("fbf7", &ep("phone"), 50)];
+    let p = plan(&legacy, &devices, &devices);
+    assert_eq!(relay_to(&p), vec!["1c2e"]);
+    assert_eq!(p.relay[0].1.as_ref().map(|s| s.at), Some(40));
+}
+
+#[test]
+fn 직통_폰도_같은_주소면_한_번만_보낸다() {
+    let list = vec![sub("t1", &ep("tail"), 1), sub("t2", &ep("tail"), 2), sub("t3", &ep("own"), 3)];
+    let devices = ids(&["t1".into(), "t2".into(), "t3".into()]);
+    let p = plan(&list, &devices, &[]);
+    assert!(p.relay.is_empty());
+    let mut got: Vec<(&str, &str)> = p.direct.iter().map(|s| (s.device.as_str(), s.endpoint.as_str())).collect();
+    got.sort();
+    assert_eq!(got, vec![("t2", ep("tail").as_str()), ("t3", ep("own").as_str())]);
+}
+
+#[test]
+fn 직통과_중계가_같은_주소를_쥐면_새_쪽_한_길로만() {
+    // 폰이 직통(테일넷)에서 중계로 옮겨 다시 짝지은 경우
+    let list = vec![sub("tail", &ep("p"), 1), sub("rel", &ep("p"), 2)];
+    let devices = ids(&["tail".into(), "rel".into()]);
+    let p = plan(&list, &devices, &ids(&["rel".into()]));
+    assert_eq!(relay_to(&p), vec!["rel"]);
+    assert!(p.direct.is_empty(), "옛 직통 줄로 또 보내지 않는다");
+}
+
+#[test]
+fn 다른_폰들은_전과_같이_각자_받는다() {
+    let list = vec![sub("ph1", &ep("a"), 1), sub("ph2", &ep("b"), 2), sub("tl", &ep("c"), 3)];
+    let devices = ids(&["ph1".into(), "ph2".into(), "tl".into()]);
+    let p = plan(&list, &devices, &ids(&["ph1".into(), "ph2".into()]));
+    assert_eq!(relay_to(&p), vec!["ph1", "ph2"]);
+    assert_eq!(p.direct.iter().map(|s| s.device.as_str()).collect::<Vec<_>>(), vec!["tl"]);
+    // 한 기기가 다시 구독해 주소가 바뀌면 중계 봉함은 가장 최근 것으로(전과 같음)
+    let list = vec![sub("ph1", &ep("old"), 1), sub("ph1", &ep("new"), 9)];
+    let p = plan(&list, &ids(&["ph1".into()]), &ids(&["ph1".into()]));
+    assert_eq!(p.relay[0].1.as_ref().map(|s| s.endpoint.clone()), Some(ep("new")));
+}
+
+#[test]
+fn 끊긴_기기의_옛_기록은_살아_있는_기기를_막지_않는다() {
+    // 주인(new)이 끊겼는데 replaces 에 old 가 있다 — old 는 살아 있으니 받아야 한다
+    let mut list = vec![sub("old", &ep("x"), 1)];
+    add_sub(&mut list, sub("new", &ep("x"), 2));
+    let p = plan(&list, &ids(&["old".into()]), &ids(&["old".into()]));
+    assert_eq!(relay_to(&p), vec!["old"]);
+}
+
+#[test]
+fn 파일에서도_구독을_합친다() {
+    let d = std::env::temp_dir().join(format!("chammo-push-merge-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    // 옛 판이 남긴 파일(replaces 칸 없음)도 읽는다
+    std::fs::write(d.join("push-subs.json"), format!(r#"[{{"device":"1c2e","endpoint":"{}","p256dh":"k","auth":"s","at":40}}]"#, ep("phone"))).unwrap();
+    subscribe(&d, sub("fbf7", &ep("phone"), 50)).unwrap();
+    let back = read_subs(&d);
+    assert_eq!(back.len(), 1);
+    assert_eq!((back[0].device.as_str(), back[0].replaces.clone()), ("fbf7", vec!["1c2e".to_string()]));
+    // 옛 판이 다시 읽어도 깨지지 않게 — 옛 기기가 없으면 칸을 안 쓴다
+    subscribe(&d, sub("solo", &ep("solo"), 60)).unwrap();
+    let raw = std::fs::read_to_string(d.join("push-subs.json")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    let solo = v.as_array().unwrap().iter().find(|x| x["device"] == "solo").unwrap();
+    assert!(solo.get("replaces").is_none());
+    // 옛 기기가 자기 이름으로 그 주소를 끄려 해도 새 기기 구독은 안 지워진다(남의 기기 구독은 못 지운다)
+    unsubscribe(&d, "1c2e", &ep("phone")).unwrap();
+    assert!(read_subs(&d).iter().any(|s| s.device == "fbf7"));
+    let _ = std::fs::remove_dir_all(&d);
 }

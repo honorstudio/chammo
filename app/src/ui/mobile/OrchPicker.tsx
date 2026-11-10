@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react';
 import type { MobileEnv } from '../../data/web';
 import type { Ctx } from '../../domain/ctx';
+import { accountRefusal } from '../../domain/phoneAccount';
 import { answerFail, dupAnswer, lineSlot, phoneName, subStatus, waitAnswer, waitKey, type WaitSent, type Waiting } from '../../domain/mobile';
 import type { Session } from '../../domain/session';
 import { IconArrowUp, IconChevron, IconPin, IconPinOff, IconPlus, IconPower, IconTrash } from '../Icons';
@@ -56,12 +57,15 @@ function WaitReply({ w, name, sent }: { w: Waiting; name: string; sent: WaitSent
     markWaitSent(key, a);
     if (w.kind !== 'decide' || !w.taskId) { out.send(t); return; }
     withLimit(taskAnswer(w.taskId, a), ANSWER_LIMIT_MS).then(() => out.send(t), (e: Error) => {
-      if (answerFail(e.message) === 'retry') markWaitSent(key, a, true);
+      const f = answerFail(e.message);
+      if (f === 'retry') markWaitSent(key, a, true);
+      // 계정 확인이 안 된 폰 줄의 결제 관문 답 — 다시 눌러도 안 된다, 왜인지와 할 일을 한 줄로(QA 0.4.11 문제 2-1)
+      else if (f === 'account') markWaitSent(key, a, true, accountRefusal(e.message) ?? undefined);
     });
   };
   return (
     <>
-      {mine?.fail && <div className="m-error">{tr('못 보냈어요 — 다시 눌러 주세요', "Couldn't send — tap to try again")}</div>}
+      {mine?.fail && <div className="m-error">{mine.why ?? tr('못 보냈어요 — 다시 눌러 주세요', "Couldn't send — tap to try again")}</div>}
       {answers.length > 0 && <div className="m-quick">{answers.map((a) => <button key={a} type="button" onClick={() => send(a)}>{a}</button>)}</div>}
       <form className="m-wait-reply" onSubmit={(e) => { e.preventDefault(); send(v); }}>
         <input value={v} onChange={(e) => setV(e.target.value)} placeholder={tr('여기서 바로 답하기', 'Reply here')} enterKeyHint="send" aria-label={tr(`${name}에게 답하기`, `Reply to ${name}`)} />

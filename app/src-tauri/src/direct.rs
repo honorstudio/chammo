@@ -229,6 +229,28 @@ pub fn hide_peer_links(log: &str) -> String {
     out
 }
 
+/// 같은 Chammo 계정 기기라도 1분 안에 서버로 다시 확인한 기기에만 보내고 받는 카드(11-09 — 결제·운영은 이중 안전, 되돌리기 어려운 발송·삭제도)
+pub const STRICT_KINDS: &[&str] = &["pay", "ops", "send", "delete"];
+
+/// 그 종류 카드(ask 줄)를 뺀다 — 답·닫힘 줄은 남아도 카드가 없으니 안 보인다
+pub fn hide_kinds(log: &str, kinds: &[&str]) -> String {
+    let mut out = String::with_capacity(log.len());
+    for line in log.split_inclusive('\n') {
+        let hide = serde_json::from_str::<Value>(line.trim_end()).ok().is_some_and(|v| v["type"] == "ask" && v["kind"].as_str().is_some_and(|k| kinds.contains(&k)));
+        if !hide {
+            out.push_str(line);
+        }
+    }
+    out
+}
+
+/// 그 카드가 결제·운영 카드인가(기록에 없으면 false — 답하기가 NotFound 로 거절한다)
+pub fn is_strict(log: &str, id: &str) -> bool {
+    log.lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .any(|r| r["type"] == "ask" && r["id"] == id && r["kind"].as_str().is_some_and(|k| STRICT_KINDS.contains(&k)))
+}
+
 /// 연결 요청 카드 줄 — 이름·테일넷·OS 는 이 기기 tailscale 이 말한 것(요청이 보낸 글이 아니다). until 이 지나면 화면이 '시간 지남'으로
 pub fn link_row(id: &str, p: &crate::peer_ask::LinkPeer, until_ms: u64, ts: &str) -> Value {
     let name: String = p.name.chars().filter(|c| !c.is_control()).take(64).collect();
@@ -466,7 +488,7 @@ mod tests {
 
     #[test]
     fn 연결_요청_카드_둘은_서로_지난_질문이_아니다() {
-        let peer = |name: &str| crate::peer_ask::LinkPeer { id: format!("n-{name}"), name: name.into(), os: "macOS".into(), ip: std::net::Ipv4Addr::new(100, 64, 0, 1), tailnet: "t".into() };
+        let peer = |name: &str| crate::peer_ask::LinkPeer { id: format!("n-{name}"), name: name.into(), os: "macOS".into(), ip: std::net::Ipv4Addr::new(100, 64, 0, 1), tailnet: "t".into(), chammo: None };
         let log = format!("{}\n{}", link_row("aa11bb22", &peer("A"), 0, "2026-10-21T00:00:00Z"), link_row("cc33dd44", &peer("B"), 0, "2026-10-21T00:00:01Z"));
         assert!(check(&log, "aa11bb22").is_ok(), "앞 기기 카드도 누를 수 있다");
         assert!(check(&log, "cc33dd44").is_ok());
@@ -564,7 +586,7 @@ mod tests {
 
     #[test]
     fn pe_연결_요청_카드_줄은_기기_이름과_테일넷() {
-        let p = crate::peer_ask::LinkPeer { id: "nA".into(), name: "office-mac\u{1b}".into(), os: "macOS".into(), ip: "100.64.0.2".parse().unwrap(), tailnet: "me@example.com".into() };
+        let p = crate::peer_ask::LinkPeer { id: "nA".into(), name: "office-mac\u{1b}".into(), os: "macOS".into(), ip: "100.64.0.2".parse().unwrap(), tailnet: "me@example.com".into(), chammo: None };
         let r = link_row("ab12cd34", &p, 1_800_000_300_000, "2027-01-15T08:00:00Z");
         assert_eq!((r["from"].as_str(), r["kind"].as_str(), r["yes"].as_str(), r["no"].as_str()), (Some(LINK_FROM), Some(LINK_KIND), Some("허용"), Some("거절")));
         let q = r["q"].as_str().unwrap();

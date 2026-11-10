@@ -7,7 +7,7 @@ import { teamStatus } from '../data/teamApi';
 import { peerAccount, type HereAccount } from '../domain/chammoHere';
 import { remoteAssistants, type RemoteAssistant } from '../domain/remoteChat';
 import { REMOTE_CHAT_EVENT, type RemoteChatTarget } from './chat/RemoteChat';
-import { peerView } from '../domain/peerDevices';
+import { connectLabel, peerView } from '../domain/peerDevices';
 import { IconChat, IconRefresh, IconUnlink } from './Icons';
 import { IconButton } from './kit/IconButton';
 import { tr } from '../i18n';
@@ -105,7 +105,7 @@ export function PeerSection({ title }: { title: string }) {
               {v.code && pairing !== d.id && (
                 <button className="peer-alt" disabled={busy} onClick={() => { setPairing(d.id); setCode(''); }}>{tr('코드로', 'Use a code')}</button>
               )}
-              {v.connect && <button className="btn pri su-row-act" disabled={busy} onClick={() => connect(d)}>{tr('연결', 'Connect')}</button>}
+              {v.connect && <button className="btn pri su-row-act" disabled={busy} onClick={() => connect(d)}>{connectLabel(d)}</button>}
               {wait && <button className="btn su-row-act" onClick={() => void remoteConnectCancel(d.id)}>{tr('취소', 'Cancel')}</button>}
               {v.unlink && (
                 <button className="ib danger su-row-act" aria-label={tr(`${d.name} 끊기`, `Unlink ${d.name}`)} title={tr('끊기', 'Unlink')} disabled={busy || wait} onClick={() => act(() => remoteUnpair(d.id))}><IconUnlink /></button>

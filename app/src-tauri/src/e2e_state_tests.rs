@@ -625,8 +625,9 @@ fn 바뀐_사람이_다시_들어와도_다른_사람에겐_보내고_그_사람
 }
 
 #[test]
-fn 다시_시작한_팀장의_초대로_들어온_사람은_사슬이_멀쩡해도_확인_전() {
-    // S7 — 팀장 철수(a2)가 다시 시작(pz) → 그 기기로 낸 초대로 민수(a3, 사슬 멀쩡)가 들어옴. 서버가 지어낸 팀장 초대로 가짜 사람을 믿게 하는 길
+fn 다시_시작한_팀장의_초대로_들어온_사람도_사슬이_멀쩡하면_받는다_tofu() {
+    // S7 — 팀장 철수(a2)가 다시 시작(pz) → 그 기기로 낸 초대로 민수(a3, 사슬 멀쩡)가 들어옴. 명부로는 '확인 전'(믿는 사슬로 못 이음)이지만
+    // 11-09 확인 절차가 불편하다는 말 — 처음 본 팀원은 믿는다(TOFU, ADR 0007 11-09). 확인 전 팀원 몫 열쇠가 안 넘어가 그 팀원의 보관함 파일이 잠겼다
     let (d, kc, r, k) = me("tainted-invite");
     let (p2, p3, pz) = (other(2), other(3), other(50));
     mutate(&d, |s| s.rooms.push(Room { id: "r3".into(), kind: "dm".into(), peer: "m3".into(), team: "t1".into(), ..Default::default() })).unwrap();
@@ -645,32 +646,52 @@ fn 다시_시작한_팀장의_초대로_들어온_사람은_사슬이_멀쩡해�
     r.always("GET", "/v0/accounts/a2/chain", 200, &json!({ "links": [g2, x] }).to_string());
     r.always("GET", "/v0/accounts/a3/chain", 200, &json!({ "links": [g3.clone()] }).to_string());
     r.always("GET", "/v0/teams/t1/log", 200, &json!({ "links": ls }).to_string());
-    let e = wrap(&d, &kc, &r, "r3", "c1", "민수야", false, now_ms()).unwrap_err();
-    assert!(e.contains("확인 전 멤버"), "{e}");
+    let ds = |body: &str| {
+        let v: Value = serde_json::from_str(body).unwrap();
+        let mut ds: Vec<_> = v["env"].as_array().unwrap().iter().map(|e| e["d"].as_str().unwrap().to_string()).collect();
+        ds.sort();
+        ds
+    };
+    let body = wrap(&d, &kc, &r, "r3", "c1", "민수야", false, now_ms()).expect("확인 전 팀원에게도 보낸다");
+    assert_eq!(ds(&body), vec!["d1", "q1"]);
+    assert!(load(&d).held.is_empty(), "멈춰 둔 말 없음");
     let st = relay::load_state(&d);
     let m = json!({ "room": "r3", "from": { "device": "q1", "account": "a3" }, "origin": "human", "body": sealed_from(&p3, "q1", &g3, "r3", "z1", "안녕", &k) });
-    assert!(matches!(unwrap(&d, &kc, &r, &st, &m), Unwrapped::Opened { ref note, .. } if note == "changed"), "확인 전 멤버의 말은 기록만");
-    // 내가 만든 단톡방(나·민수) — 민수 사슬이 멀쩡해도 확인 전이라 빼고, 받을 사람이 없으니 안 보낸다
+    assert!(matches!(unwrap(&d, &kc, &r, &st, &m), Unwrapped::Opened { ref note, ref text, .. } if note.is_empty() && text == "안녕"), "확인 전 팀원의 말도 그대로(참모에게 넘김)");
+    // 내가 만든 단톡방(나·민수) — 민수에게도 봉한다
     let mut l2 = ls.clone();
     l2.push(next(&k, "d1", &l2, json!({ "kind": "room", "room": "g1", "name": "둘", "members": ["m1", "m3"], "member": "m1", "account": "a1" })));
     mutate(&d, |s| s.rooms.push(Room { id: "g1".into(), kind: "group".into(), team: "t1".into(), name: "둘".into(), ..Default::default() })).unwrap();
     r.answer("/v0/teams/t1/log", 200, &json!({ "links": l2 }).to_string());
-    let e = wrap(&d, &kc, &r, "g1", "c3", "둘이", false, now_ms()).unwrap_err();
-    assert!(e.contains("받을 수 있는 사람이 없어"), "{e}");
-    // 보관함 — 확인 전 민수는 받는 사람도 올린 사람 확인(서명자)도 아니다
+    let body = wrap(&d, &kc, &r, "g1", "c3", "둘이", false, now_ms()).expect("단톡방도 보낸다");
+    assert_eq!(ds(&body), vec!["d1", "q1"]);
+    // 보관함 — 확인 전 민수도 받는 사람·올린 사람 확인(서명자) 둘 다, 빠진 사람 줄('보안 번호 확인 전이라…')엔 없다
     r.answer("/v0/teams/t1/log", 200, &json!({ "links": l2 }).to_string());
     let lp = locker_people(&d, &kc, &r, &relay::load_state(&d), "t1").unwrap();
-    assert!(!lp.signers.contains_key("q1") && lp.skipped.contains(&"민수".to_string()));
-    // 서버가 민수 다시 시작을 지어냄(바뀜) — 확인 전이던 사람의 처음 본 앞부분도 서명자로 안 쓴다(공격 리뷰 5)
+    assert!(lp.signers.contains_key("q1"), "{:?}", lp.signers.keys());
+    assert!(lp.recipients.iter().any(|x| x.device == "q1"));
+    assert_eq!(lp.skipped, vec!["철수".to_string()], "빠진 사람 줄엔 바뀐 철수만");
+    // 다시 시작해 바뀐 팀장 철수 — 저절로 받아들이기(e2e_cards::sync) 전엔 그대로 빠진다(ADR 0007 10-29 동작 그대로)
+    assert!(!lp.recipients.iter().any(|x| x.device == "pz" || x.device == "p1"));
+    // 서버가 민수 다시 시작을 지어냄(바뀜) — 처음 본 앞부분(q1)은 서명자로 남고, 새 기기(q9)는 받아들이기 전엔 받는 사람도 서명자도 아니다
     r.always.borrow_mut().retain(|x| x.1 != "/v0/accounts/a3/chain");
     r.always("GET", "/v0/accounts/a3/chain", 200, &json!({ "links": [g3.clone(), reset("a3", &g3, &other(61), "q9")] }).to_string());
     r.answer("/v0/teams/t1/log", 200, &json!({ "links": l2 }).to_string());
     let lp = locker_people(&d, &kc, &r, &relay::load_state(&d), "t1").unwrap();
-    assert!(!lp.signers.contains_key("q1") && !lp.signers.contains_key("q9"));
+    assert!(lp.signers.contains_key("q1") && !lp.signers.contains_key("q9"));
+    assert!(!lp.recipients.iter().any(|x| x.device == "q9" || x.device == "q1"));
+    assert_eq!(lp.skipped, vec!["철수".to_string(), "민수".to_string()], "바뀜은 빠진 사람 줄");
+    // 민수가 팀을 나감 — 확인 전이든 아니든 나간 사람은 받는 사람도 빠진 사람 줄도 아니다
+    let mut l3 = l2.clone();
+    l3.push(next(&p3, "q1", &l3, json!({ "kind": "leave", "member": "m3" })));
+    r.answer("/v0/teams/t1/log", 200, &json!({ "links": l3 }).to_string());
+    let lp = locker_people(&d, &kc, &r, &relay::load_state(&d), "t1").unwrap();
+    assert!(!lp.recipients.iter().any(|x| x.device == "q1" || x.device == "q9"));
+    assert_eq!(lp.skipped, vec!["철수".to_string()]);
 }
 
 #[test]
-fn 단톡방은_확인_전_사람만_빼고_확인_전_사람이_만든_방엔_안_보내고_고치지도_않는다() {
+fn 단톡방은_바뀐_사람만_빼고_확인_전_사람이_만든_방에도_보내되_고치지는_않는다() {
     // S4·S10 — 나(m1)·민수(m3)·다시 들어온 철수(m4, pz). 내가 만든 방 g1(셋) / 철수가 만든 방 g2(셋)
     let (d, kc, r, k) = me("rejoin-group");
     let (p2, p3, pz) = (other(2), other(3), other(50));
@@ -703,13 +724,16 @@ fn 단톡방은_확인_전_사람만_빼고_확인_전_사람이_만든_방엔_�
     let mut ds: Vec<_> = v["env"].as_array().unwrap().iter().map(|e| e["d"].as_str().unwrap().to_string()).collect();
     ds.sort();
     assert_eq!(ds, vec!["d1", "q1"]);
-    // 철수가 만든 방 — 받아들이기 전엔 안 보낸다(그 방에 누구를 넣었는지 믿을 수 없다)
-    let e = wrap(&d, &kc, &r, "g2", "c2", "x", false, now_ms()).unwrap_err();
-    assert_eq!(e, ROOM_UNCONFIRMED);
-    // 그 방에서 민수가 보낸 말 — 받되 기록만
+    // 철수가 만든 방(확인 전) — 그래도 보낸다(TOFU, ADR 0007 11-09). 바뀐 철수 기기엔 저절로 받아들이기 전이라 안 봉한다
+    let body = wrap(&d, &kc, &r, "g2", "c2", "x", false, now_ms()).expect("확인 전 방에도 보낸다");
+    let v: Value = serde_json::from_str(&body).unwrap();
+    let mut ds: Vec<_> = v["env"].as_array().unwrap().iter().map(|e| e["d"].as_str().unwrap().to_string()).collect();
+    ds.sort();
+    assert_eq!(ds, vec!["d1", "q1"]);
+    // 그 방에서 민수가 보낸 말 — 그대로 받는다
     let st = relay::load_state(&d);
     let m = json!({ "room": "g2", "from": { "device": "q1", "account": "a3" }, "origin": "human", "body": sealed_from(&p3, "q1", &g3, "g2", "z1", "응", &k) });
-    assert!(matches!(unwrap(&d, &kc, &r, &st, &m), Unwrapped::Opened { ref note, .. } if note == "changed"));
+    assert!(matches!(unwrap(&d, &kc, &r, &st, &m), Unwrapped::Opened { ref note, .. } if note.is_empty()));
     // 내 믿는 서명으로 이어 고치지 않는다(끼운 사람이 확인됨이 되는 길)
     let before = r.seen.borrow().iter().filter(|(m, _, _, _)| m == "POST").count();
     let e = crate::team_rooms::update_room(&d, &kc, &r, "g2", Some("새 이름"), &[], &[]).unwrap_err();

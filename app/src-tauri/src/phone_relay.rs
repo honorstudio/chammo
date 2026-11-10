@@ -557,7 +557,7 @@ fn grant_phone(h: &crate::device_link::Hello, st: &TeamState, gen: u64, devices:
     if LINK_OUT.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_none_or(|o| o.gen != gen) {
         return Err(crate::i18n::tr("허브 연결이 바뀌었어요 — 폰에서 다시 해 주세요", "The relay connection changed — try again from the phone").into());
     }
-    let p = crate::mobile_pair::Pairing { name: &h.name, home: false, prev: None, peer: false };
+    let p = crate::mobile_pair::Pairing { name: &h.name, home: false, prev: None, peer: false, chammo: None };
     let Some(token) = devices.pair_linked(&p, crate::mobile_pair::Relay { device: h.dev.clone(), x: tun::b64(&h.x) }, std::time::SystemTime::now()) else {
         let _ = reply(json!({ "step": "link5", "ok": false, "error": "pair" }));
         return Err("기기 줄을 못 만들었어요".into());

@@ -26,6 +26,7 @@ mod avatar;
 mod claude;
 #[cfg(test)]
 mod fake_claude;
+mod send_land;
 mod deep_link;
 mod claude_src;
 mod accounts;
@@ -60,6 +61,7 @@ mod harnitor;
 mod hq;
 mod hq_browser;
 mod i18n;
+mod outside;
 mod reader;
 mod thumbs;
 mod win_thumb;
@@ -96,6 +98,7 @@ mod mobile_pair;
 mod mobile_sends;
 mod mobile_wake;
 mod phone_gacha;
+mod peer_account;
 mod peer_ask;
 mod peer_cmd;
 mod peer_human;
@@ -192,6 +195,7 @@ mod notify_mac;
 mod platform;
 mod agent_browser;
 mod chrome_popup;
+mod native_bubble;
 mod agent_input;
 mod takeover;
 mod takeover_note;
@@ -921,6 +925,7 @@ fn main() {
             orch_bubble::orch_bubble_main,
             orch_bubble::bubble_screens,
             orch_bubble::bubble_place,
+            orch_bubble::bubble_view,
             orch_bubble::bubble_reveal,
             orch_bubble::bubble_wanted,
             orch_bubble::bubble_face,
@@ -1141,6 +1146,7 @@ fn main() {
             reader::list_dir,
             reader::list_md_deep,
             reader::save_attach,
+            outside::attach_given,
             reader::save_curation,
             video_prep::video_review_prep,
             reader::save_curation_state,

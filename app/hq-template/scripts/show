@@ -18,8 +18,9 @@ Point at a spot / 짚어 보여 주기 — options apply to the file right befor
 (PDF·slides: that page) and flashes it for a few seconds. --find works for any kind and beats --line.
 --box is an area inside an image as left,top,width,height ratios (0-1).
 
-Relative paths are resolved from the current folder. Missing files and files outside your home folder and the
-projects folders in Chammo settings are refused (the app won't open them either). Log: <data folder>/show.jsonl — {ts, path}. The app checks it
+Relative paths are resolved from the current folder. Missing files and files outside your home folder, the
+projects folders, the folders the user opened in Settings (Folders it may open) and the copies of files the user
+attached in chat (<data folder>/attach) are refused (the app won't open them either). Log: <data folder>/show.jsonl — {ts, path}. The app checks it
 every 0.7 s while it is running.
 """
 import datetime, json, os, re, sys, urllib.parse
@@ -73,27 +74,40 @@ def web_url(s):
 def user_roots(ddir, home=HOME):
     """Folders a file may come from — home, plus the projects folder (devRoot) and extra projects in Chammo settings.
     On Windows projects often live outside home (D:\\dev) — the first job's result was refused (2026-11-01 win-first H2).
-    A drive/disk top (/, D:\\) would open the whole disk, so it is skipped. Same rule as the app (reader::user_roots)"""
+    A drive/disk top (/, D:\\) would open the whole disk, so it is skipped. Same rule as the app (reader::user_roots).
+    Plus folders the person opened in Settings (openFolders — a D:\\ drive top is fine there, but never a folder that holds home:
+    /, C:\\, C:\\Users) and the copies of files the person attached (<data>/attach) — public issue #19 (work files on D:\\Desktop)"""
     roots = [home]
     try:
         with open(os.path.join(ddir, 'config.json'), encoding='utf-8') as f:
             cfg = json.load(f)
         cands = [cfg.get('devRoot')] + list(cfg.get('extraProjects') or [])
+        opened = list(cfg.get('openFolders') or [])
     except Exception:
-        cands = []
+        cands, opened = [], []
     for c in cands:
         if not isinstance(c, str) or not c.strip():
             continue
         r = os.path.realpath(os.path.expanduser(c.strip()))
-        if os.path.isdir(r) and os.path.dirname(r) != r and r not in roots:
+        if os.path.isdir(r) and os.path.dirname(r) != r and not inside(os.path.realpath(home), r) and r not in roots:
             roots.append(r)
+    h = os.path.realpath(home)
+    for c in opened:
+        if not isinstance(c, str) or not c.strip():
+            continue
+        r = os.path.realpath(os.path.expanduser(c.strip()))
+        if os.path.isdir(r) and not inside(h, r) and not inside(r, h) and r not in roots:
+            roots.append(r)
+    a = os.path.realpath(os.path.join(ddir, 'attach'))
+    if os.path.isdir(a) and not any(inside(a, r) for r in roots):
+        roots.append(a)
     return roots
 
 
 def inside(real, root):
-    """real 이 root 안(또는 root 자체)인가 — 윈도우는 대소문자를 안 가린다"""
+    """real 이 root 안(또는 root 자체)인가 — 윈도우는 대소문자를 안 가린다, 드라이브 맨 위(D:\\)도"""
     a, b = (os.path.normcase(real), os.path.normcase(root.rstrip('\\/') or root))
-    return a == b or a.startswith(b + os.sep)
+    return a == b or a.startswith(b.rstrip(os.sep) + os.sep) or (b.endswith(':') and a.startswith(b + os.sep))
 
 
 def resolve(p, cwd=None, home=HOME, roots=None):
@@ -183,7 +197,7 @@ def main(argv):
     for p, at in parse_args(argv):
         real = web_url(p) or resolve(p, roots=roots)
         if not real:
-            print(f'cannot open (missing, or outside home and the projects folder) / 못 띄움(없거나 홈·프로젝트 폴더 밖): {p}', file=sys.stderr); bad += 1; continue
+            print(f'cannot open (missing, or outside home, the projects folders and the folders opened in Settings › Assistant › Folders it may open) / 못 띄움(없거나 홈·프로젝트·설정에서 연 폴더 밖 — 사용자가 채팅에 붙이거나 설정에서 그 폴더를 열어 줘야 해): {p}', file=sys.stderr); bad += 1; continue
         with open(LOG, 'a', encoding='utf-8') as f:
             f.write(json.dumps(record(real, os.environ, os.getcwd(), datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'), at), ensure_ascii=False) + '\n')
         print(f'{shown_where(os.path.dirname(LOG))}: {real}' + (f'  (spot / 짚음: {json.dumps(at, ensure_ascii=False)})' if at else ''))

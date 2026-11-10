@@ -50,3 +50,13 @@ export function imeStep(inputType: string, prev: string, now: string, held: stri
   if (!hasNonAscii(prev + now)) return { send: null, held: null };
   return { send: toSequence(diffInput(prev, now)), held: null };
 }
+
+/**
+ * 이 터미널에 한글 다리를 걸지. 다리는 WKWebView(맥) 몫이다 — WebView2(윈도우, 크로미움)는 조합 이벤트를 제대로 보내서
+ * xterm 이 원래 처리하고, 다리까지 걸면 한글 키(keyCode 229)마다 xterm 조합 도우미와 다리가 같은 글자를 둘 다 보냈다
+ * (2026-11-09 윈도우 "키가 두 번씩"). debugMode = ime-debug.on 내용 — 'bridge' 낱말이 있으면 윈도우도 옛 동작(전후 비교용)
+ */
+export function imeBridgeOn(win: boolean, debugMode: string | null): boolean {
+  if (!win) return true;
+  return debugMode != null && /(^|\s)bridge(\s|$)/.test(debugMode);
+}

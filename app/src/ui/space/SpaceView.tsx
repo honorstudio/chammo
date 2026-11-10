@@ -15,7 +15,7 @@ import { addSpawned, dashToggle, leaveHomeFor, ownPick, screenBeforeHome, featur
 import { orchDocs, pinPaths, projectGroups, remapPins } from '../../domain/spaceTree';
 import { holdRelease, spaceSwapDelay } from '../../domain/switchHold';
 import { docKeepLimit } from '../../domain/docKeep';
-import { folderChip } from '../../domain/drop';
+import { folderChip, isAttachCopy } from '../../domain/drop';
 import { useDocKeep } from './docKeep';
 import { termTail } from '../../domain/termTail';
 import { starterLists } from '../../domain/starterLists';
@@ -119,6 +119,9 @@ import { orchDisplay } from '../orchLabels';
 import { RoutineList } from './RoutineList';
 import { railWidth } from '../../domain/sessionDock';
 import { SessionPage } from './SessionPage';
+import { DeadSessionPage } from './DeadSessionPage';
+import { deadTab, goneLightTabs, rememberTabSessions, type TabSess } from '../../domain/sessionTabs';
+import { tidyLight } from '../../domain/autoTidy';
 import { linksApi, lockerApi, LOCKER_CHAT_ATTACH, LOCKER_DROP, LOCKER_MOVE, useLockerLinks, useLockerTree } from './useLocker';
 import { linkDoc, mergeLinks } from '../../domain/lockerLinks';
 import type { LinkActs } from './LinksView';
@@ -346,6 +349,7 @@ export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onRe
   const screens = useRef(new Map<string, { pick: string; modal: DashFile | null; focus?: { path: string; at: ShowAt; key: string } | null; scroll?: number; sheet?: string[] }>());
   const now = useRef({ view: followed.view, pick, modal: null as DashFile | null, sheet: [] as string[] });
   const holds = useRef(new Map<string, LkHold>()); // 참모마다 열어 둔 탭 줄(domain/lockerTabs swapHold)
+  const tabSess = useRef(new Map<string, TabSess>()); // 세션 탭이 꺼진 뒤에도 이름을 알게 — 살아 있을 때 본 이름(domain/sessionTabs, 2026-11-10)
   // 탭 확대·축소·맞춤(2026-10-12 사용자) — 배율은 파일(경로)마다 기억(domain/tabZoom). 명령은 단축키·머리 단추·휠·핀치가 같은 길로
   const [tabZooms, setTabZooms] = useState<TabZooms>(() => { try { return parseTabZooms(localStorage.getItem(TAB_ZOOM_KEY)); } catch { return {}; } });
   useEffect(() => { try { localStorage.setItem(TAB_ZOOM_KEY, JSON.stringify(tabZooms)); } catch { /* 이번엔 된다 */ } }, [tabZooms]);
@@ -917,6 +921,7 @@ export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onRe
   // 도우미·프로젝트 밖 세션은 프로젝트 이름(=HQ 폴더 이름) 대신 세션 이름으로 — 'honor-orchestrator' 로만 떠서 누가 누군지 몰랐다(2026-10-02)
   const sideIds = new Set([...helpers, ...loose].map((x) => x.id));
   const cardName = (s: Session) => (sideIds.has(s.id) && s.name ? s.name : nameOf(s));
+  rememberTabSessions(tabSess.current, sessions, cardName, (s) => tidyLight(s, helpers));
   // 세션 브라우저(참모 브라우저 래퍼 상태) — 세션 칸·세션 화면·참모 대시보드가 브라우저 화면으로(2026-10-03 사용자)
   const lives = useAgentLives();
   // 사람이 끈 브라우저(프로필 → 그 크롬 pid) — 래퍼가 알아채기 전에도 탭 줄·칸에서 바로 뺀다(domain/browserDock stillClosed)
@@ -1247,6 +1252,22 @@ export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onRe
   const lockerLinks = useLockerLinks(lockerOrch ? { id: lockerOrch.id, session: lockerOrch.sessionId } : null, lockerAtRoot);
   const lkRef = useRef({ tree: lockerTree, hold: lkHold });
   lkRef.current = { tree: lockerTree, hold: lkHold };
+  // 꺼진 도우미·예약 세션 탭은 저절로 닫는다 — 참모가 끄고 다시 안 켜는 세션이라 남겨 두면 빈 탭만 쌓인다(2026-11-10). 프로젝트 세션 탭은 남겨 다시 켜기·닫기를 보인다
+  useEffect(() => {
+    const ids = new Set(sessions.map((s) => s.id));
+    for (const [o, h] of holds.current) {
+      const gone = goneLightTabs(h.tabs, ids, tabSess.current);
+      if (gone.length) holds.current.set(o, gone.reduce((x, t) => closeTab(x, t, '').hold, h));
+    }
+    const h = lkRef.current.hold;
+    const gone = h ? goneLightTabs(h.tabs, ids, tabSess.current) : [];
+    if (!h || !gone.length) return;
+    let hold = h;
+    let to: string | null = null;
+    for (const t of gone) { const r = closeTab(hold, t, to ?? now.current.pick); hold = r.hold; if (r.pick) to = r.pick; }
+    setLkHold(hold);
+    if (to) setPick(to, 'close');
+  }, [sessions]); // eslint-disable-line react-hooks/exhaustive-deps -- 세션 목록이 바뀔 때만
   // 그 참모 화면에 오면 프사 점을 지운다
   useEffect(() => {
     if (lockerOrchId && newFor.has(lockerOrchId)) setNewFor((x) => { const n = new Set(x); n.delete(lockerOrchId); return n; });
@@ -1300,7 +1321,7 @@ export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onRe
     const onChat = (e: Event) => {
       const d = (e as CustomEvent<{ session: string; paths: string[] }>).detail;
       const o = orchs.find((x) => x.id === d?.session);
-      const pasted = (d?.paths ?? []).filter((p) => /\/attach\/\d+-[^/]+$/.test(p));
+      const pasted = (d?.paths ?? []).filter(isAttachCopy); // 윈도우 \ 경로도(전엔 / 만 봐서 윈도우 사본이 보관함에 안 갔다)
       if (o && pasted.length) void lockerApi.put(lockerOwner(o), pasted).catch(() => {});
     };
     window.addEventListener(LOCKER_DROP, onDrop);
@@ -1700,12 +1721,15 @@ export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onRe
           if (p.startsWith('k:')) return null;
           if (p.startsWith('s:')) {
             // 세션 탭 — 점 + 이름(꺼졌으면 흐리게), 오른쪽 클릭 = 닫기·세션 끄기
+            // 꺼졌으면 살아 있을 때 본 이름 그대로(2026-11-10 — '꺼진 세션'으로 바뀌어 무슨 탭인지 몰랐다)
             const ss = sessions.find((x) => x.id === p.slice(2));
-            const nm = ss ? cardName(ss) : tr('꺼진 세션', 'Ended session');
+            const dead = ss ? null : deadTab(p.slice(2), tabSess.current, stopped);
+            const nm = ss ? cardName(ss) : dead?.name ?? tr('꺼진 세션', 'Ended session');
+            const wake = dead?.resume && onResume ? dead.resume : null;
             return (
-              <span key={p} className={`lk-tab sess ${on ? 'on' : ''} ${ss ? '' : 'gone'}`} role="tab" aria-selected={on} tabIndex={0} onClick={() => go(p)} title={ss ? `${nm} — ${ss.cwd}` : nm}
+              <span key={p} className={`lk-tab sess ${on ? 'on' : ''} ${ss ? '' : 'gone'}`} role="tab" aria-selected={on} tabIndex={0} onClick={() => go(p)} title={ss ? `${nm} — ${ss.cwd}` : tr(`${nm} — 꺼짐`, `${nm} — stopped`)}
                 onKeyDown={(e) => { if (e.key === 'Enter') go(p); }}
-                onContextMenu={act ? (e) => act.openMenu(e, [{ label: tr('탭 닫기', 'Close tab'), run: () => close(p) }, ...(ss ? [{ label: tr('세션 끄기', 'Stop session'), danger: true, sep: true, run: () => act.askStop(ss, nm, 'tab') }] : [])]) : undefined}>
+                onContextMenu={act ? (e) => act.openMenu(e, [{ label: tr('탭 닫기', 'Close tab'), run: () => close(p) }, ...(ss ? [{ label: tr('세션 끄기', 'Stop session'), danger: true, sep: true, run: () => act.askStop(ss, nm, 'tab') }] : wake ? [{ label: tr('다시 켜기', 'Resume'), run: () => onResume?.(wake) }] : [])]) : undefined}>
                 {ss && <span className={`lk-dot d-${dotKind(lineOf(ss, nm))}`} aria-hidden="true" />}<span>{nm}</span>
                 <IconButton size="s" label={tr('탭 닫기', 'Close tab')} onClick={(e) => { e.stopPropagation(); close(p); }}><IconClose /></IconButton>
               </span>
@@ -1914,6 +1938,18 @@ export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onRe
           path={home && cur.cwd.startsWith(home) ? `~${cur.cwd.slice(home.length)}` : cur.cwd}
           actions={<>{toolsBtn(root)}{browserBtn(root, g?.sessions.length ?? 1)}{onNewSession && g && <button className="cv-btn" onClick={() => onNewSession(g.root, g.name)}>{tr('새 세션', 'New session')}</button>}{seg}</>}
           body={sessionInner(cur)} lists={plists} onOpenStarter={() => setPick(`d:${root}/docs/starter.md`)} />
+      </>
+    ));
+  } else if (pick.startsWith('s:') && lockerOrch) {
+    // 꺼진 세션 탭(2026-11-10 — 고르면 '왼쪽 메뉴에서 골라 줘'만 떴다): 이름 + 다시 켜기(claude respawn, 같은 대화·번호라 켜지면 이 탭이 그대로 산다)·탭 닫기
+    const d = deadTab(pick.slice(2), tabSess.current, stopped);
+    const h = lkHold && lkHold.orch === lockerOrch.id ? lkHold : null;
+    const closeDead = () => { if (!h) return; const r = closeTab(h, pick, pick); setLkHold(r.hold); if (r.pick) setPick(r.pick, 'close'); };
+    main = lockerFrame(lockerOrch, (
+      <>
+        {lockerTabs(lockerOrch, !!lockerSide?.rootNew)}
+        <DeadSessionPage key={pick} name={d.name ?? tr('꺼진 세션', 'Ended session')} canResume={!!d.resume && !!onResume}
+          onResume={() => { if (d.resume) onResume?.(d.resume); }} onClose={closeDead} />
       </>
     ));
   } else {

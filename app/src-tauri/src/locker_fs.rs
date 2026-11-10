@@ -148,14 +148,38 @@ pub(crate) fn canon(p: &Path) -> PathBuf {
     std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
 }
 
-/// 넣어도 되는 파일인가 — 절대 경로·링크를 풀어도 홈 안 보통 파일. 데이터 폴더 안은 채팅 첨부(attach/)만. 이미 보관함 안이면 '옮기기'
+/// 넣어도 되는 파일인가 — 절대 경로·링크를 풀어도 홈 안(또는 채팅 첨부 attach/) 보통 파일. 데이터 폴더 안은 attach/ 만. 이미 보관함 안이면 '옮기기'
 pub fn check_add(p: &Path, ctx: &Ctx) -> Result<PathBuf, String> {
+    check(p, ctx, false)
+}
+
+/// 사람이 직접 준 파일(보관함·채팅에 끌어 놓기·파일 고르기) — 홈 밖(D:\Desktop)도 받는다, 사본으로 들어간다(decide).
+/// 나머지 규칙(절대 경로·폴더·데이터 폴더·이미 보관함 안)은 같다. 홈 밖을 다 막아 윈도우 D: 파일을 못 넣었다(공개 이슈 #19)
+pub fn check_given(p: &Path, ctx: &Ctx) -> Result<PathBuf, String> {
+    check(p, ctx, true)
+}
+
+/// 500MB 넘는 홈 밖 파일 거절 — 화면(채팅 첨부 오류)에 그대로 보이니 설정 언어로(QA 0.4.11 후보 8-4)
+pub(crate) fn big_outside_msg(lang: &str, p: &Path) -> String {
+    let head = crate::i18n::pick(
+        lang,
+        "500MB 넘는 홈 밖 파일은 보관함에 복사하지 않아 — 설정 › 참모 › 열어도 되는 폴더에서 그 폴더를 열면 바로가기로 들어가",
+        "Files over 500 MB outside your home folder aren't copied into the locker — open that folder in Settings › Assistant › Folders it may open and it goes in as a shortcut",
+    );
+    format!("{head}: {}", p.display())
+}
+
+fn check(p: &Path, ctx: &Ctx, given: bool) -> Result<PathBuf, String> {
     if !plain_abs(p) {
         return Err(format!("절대 경로만 넣을 수 있어: {}", p.display()));
     }
     let real = std::fs::canonicalize(p).map_err(|_| format!("없는 파일: {}", p.display()))?;
     let home = canon(ctx.home);
-    if !real.starts_with(&home) || real == home {
+    // 사람이 준 홈 밖 큰 파일 — 보관함엔 사본으로만 들어가니(decide) 통째 복사를 안 한다. 자리 잡은 곳(프로젝트·열어도 되는 폴더)이면 별칭이라 괜찮다
+    if given && !real.starts_with(&home) && !ctx.settled.iter().any(|s| real.starts_with(s) || real.starts_with(canon(s))) && std::fs::metadata(&real).is_ok_and(|m| m.is_file() && m.len() > BIG) {
+        return Err(big_outside_msg(&crate::config::current().language, p));
+    }
+    if real == home || (!given && !real.starts_with(&home) && real.parent() != Some(canon(ctx.data).join("attach").as_path())) {
         return Err(format!("홈 폴더 밖 파일은 못 넣어: {}", p.display()));
     }
     if !real.is_file() {
@@ -184,13 +208,15 @@ pub fn decide(real: &Path, len: u64, ctx: &Ctx) -> Home {
     if real.parent() == Some(canon(ctx.data).join("attach").as_path()) || real.parent() == Some(ctx.data.join("attach").as_path()) {
         return Home::Copy;
     }
-    if len > BIG {
-        return Home::Link;
-    }
-    if ctx.settled.iter().any(|s| real.starts_with(s) || real.starts_with(canon(s))) {
-        return Home::Link;
-    }
+    // 홈 밖(사람이 준 D:\Desktop 파일) — 자리 잡은 프로젝트(홈 밖 devRoot)가 아니면 늘 사본. 별칭은 참모·미리보기가 못 여는 곳을 가리킨다
     let h = canon(ctx.home);
+    let settled = ctx.settled.iter().any(|s| real.starts_with(s) || real.starts_with(canon(s)));
+    if !real.starts_with(&h) && !real.starts_with(ctx.home) && !settled {
+        return Home::Copy;
+    }
+    if len > BIG || settled {
+        return Home::Link;
+    }
     let transient = ["Downloads", "Desktop", "Pictures/Screenshots"].iter().any(|d| real.starts_with(join_rel(&h, d)) || real.starts_with(join_rel(ctx.home, d)));
     if transient {
         Home::Copy
@@ -322,7 +348,12 @@ pub struct Added {
 
 /// 한 파일 넣기 — rel 폴더(빈 글 = 보관함 맨 위)에, 이름이 겹치면 번호. 복사면 첫 판도 남긴다
 pub fn add(ctx: &Ctx, owner: &Path, rel: &str, src: &Path) -> Result<Added, String> {
-    let real = check_add(src, ctx)?;
+    add_from(ctx, owner, rel, src, false)
+}
+
+/// given = 사람이 직접 준 파일(화면 끌어 놓기·파일 고르기) — 홈 밖도 사본으로 받는다(check_given)
+pub fn add_from(ctx: &Ctx, owner: &Path, rel: &str, src: &Path, given: bool) -> Result<Added, String> {
+    let real = check(src, ctx, given)?;
     let folder = sub_dir(owner, rel)?;
     let shown = src.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     // 채팅 첨부·폰 사진은 <밀리초>-<원래 이름> — 앞 숫자는 뗀다
@@ -1385,7 +1416,13 @@ pub fn app_ctx() -> AppCtx {
     let c = crate::config::current();
     let mut dirs = vec![c.dev_root.clone(), c.hq_dir.clone()];
     dirs.extend(c.extra_projects.iter().cloned());
-    let settled = settled_of(&home, &dirs);
+    let mut settled = settled_of(&home, &dirs);
+    // 사람이 설정에서 연 폴더도 자리 잡은 곳 — 거기 파일은 홈 안 문서처럼 별칭으로(통째 복사 안 함)
+    for r in crate::outside::open_roots(&home, &c.open_folders, &home.to_string_lossy()) {
+        if !settled.contains(&r) {
+            settled.push(r);
+        }
+    }
     AppCtx { home, data, root, settled }
 }
 
@@ -1510,7 +1547,8 @@ pub fn tree_at(ctx: &Ctx, id: &str, name: &str, open: bool, configured: Option<&
     Ok(TreeView { dir: d.to_string_lossy().into_owned(), entries: tree_in(&d, Some(ctx.home)), started: true })
 }
 
-/// 끌어놓기·열기 버튼·채팅 첨부·폰 — folder(빈 글 = 보관함 맨 위)에 넣는다
+/// 끌어놓기·열기 버튼·채팅 첨부 — folder(빈 글 = 보관함 맨 위)에 넣는다. 화면에서 사람이 준 것만 오는 길이라 홈 밖도 사본으로(add_from given).
+/// 폰은 이 길이 아니다(add_for_name)
 #[tauri::command]
 pub fn locker_put(id: String, name: String, paths: Vec<String>, folder: Option<String>) -> serde_json::Value {
     let a = app_ctx();
@@ -1520,7 +1558,7 @@ pub fn locker_put(id: String, name: String, paths: Vec<String>, folder: Option<S
     };
     let (mut ok, mut errs) = (Vec::new(), Vec::new());
     for p in paths {
-        match add(&a.ctx(), &d, folder.as_deref().unwrap_or(""), Path::new(&p)) {
+        match add_from(&a.ctx(), &d, folder.as_deref().unwrap_or(""), Path::new(&p), true) {
             Ok(x) => ok.push(x),
             Err(e) => errs.push(e),
         }

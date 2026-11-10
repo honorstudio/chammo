@@ -429,6 +429,8 @@ struct View {
     pane_seen: Option<Instant>,
     /// 지금 탭 창 모양(자리·툴바·페이지 크기) — 칸이 그 창을 받는다
     geom: Option<crate::browser_pane::Geom>,
+    /// SCK 칸이 비추는 창 페이지 칸의 CSS 크기 — 칸 입력·참모 커서 환산용. meta 는 screencast 그림(흉내 크기)일 수 있어 따로
+    pane_meta: Option<crate::agent_input::Meta>,
     /// 헤드리스 크롬(가짜 화면 없는 맥, 6단계) — 칸은 창을 못 비추니 screencast 그림을 칸에 그린다
     headless: bool,
     /// 스페이스 칸이 screencast 그림을 받는다(pane_cast) — 헤드리스이거나, 비출 수 없는 창(가린·accessory 아닌 크롬)
@@ -595,6 +597,16 @@ pub fn pane_input(profile: &str, events: Vec<crate::agent_input::InputEv>) -> Re
     if crate::browser_pane::hands_on(&events) {
         crate::takeover::acted(profile);
     }
+    // 칸 그림(SCK)엔 크롬 자체 풍선도 비친다 — 그 위 누름은 페이지로 안 보내고 닫기 단추면 AX 로 누른다(src/native_bubble.rs, 11-09 번역 풍선).
+    // 그림 길(cast — screencast 는 페이지만 그린다)엔 풍선이 안 보이니 그대로 페이지로
+    let geom = with_workers(|ws| ws.get(profile).and_then(|w| w.view.lock().ok().filter(|v| !v.cast).and_then(|v| v.geom)));
+    // 창 목록·AX 는 크롬 프로세스 것 — live.pid 는 래퍼(지킴이)다. 누름이 있을 때만 찾는다(찾은 값은 캐시)
+    let pressing = events.iter().any(|e| matches!(e, crate::agent_input::InputEv::Mouse { ty, .. } if ty == "mousePressed"));
+    let chrome = if pressing && geom.is_some() { chrome_pid(live.port).unwrap_or(0) } else { 0 };
+    let events = crate::native_bubble::take(profile, chrome, geom, events);
+    if events.is_empty() {
+        return Ok(());
+    }
     let expect = with_workers(|ws| {
         let w = ws.get(profile)?;
         let v = w.view.lock().ok()?;
@@ -602,7 +614,7 @@ pub fn pane_input(profile: &str, events: Vec<crate::agent_input::InputEv>) -> Re
         let url = v.pages.iter().find(|p| p.id == t)?.url.clone();
         Some(Expect { target: t, url })
     });
-    agent_input(profile.to_string(), live.pid, expect, events);
+    send_input(profile.to_string(), live.pid, expect, events, true);
     Ok(())
 }
 
@@ -759,6 +771,8 @@ pub struct Tabs {
     signable: bool,
     /// 래퍼가 패스키를 보고 스스로 바꿨다(칸 '패스키 때문에 크롬 창에서 열었어' — 끝나면 저절로 돌아온다)
     signed_auto: bool,
+    /// 칸(SCK) 그림 위에 크롬 자체 창(풍선·펼침 목록·자동 완성 목록)이 떠 있다 — 칸 입력(CDP)으론 못 다뤄 칸이 '크롬에서 보기'를 띄운다(11-10 사용자)
+    native: bool,
 }
 
 /// 탭 띠 — CDP 로 본 탭들과 지금 보여 주는 탭
@@ -790,7 +804,11 @@ pub fn agent_tabs(profile: String) -> Tabs {
     let dialog = v.current.as_ref().and_then(|c| v.dialogs.get(c)).cloned();
     let dialog_tabs = v.pages.iter().filter(|p| v.dialogs.contains_key(&p.id)).map(|p| p.id.clone()).collect();
     let stuck = v.current.is_some() && v.stuck == v.current && dialog.is_none();
-    Tabs { pages: v.pages.clone(), current: v.current.clone(), pinned: v.pinned.is_some(), error: v.error.clone(), attached: v.attached, dialog, dialog_tabs, stuck, shown, chooser, reopened, dropped: v.dropped, popup: popup_now(&profile), popup_kind: popup_kind_now(&profile).to_string(), permission: perm_of(&v), fedcm: fedcm_of(&v), wrapper_dialog, framed: v.framed, hidden, headless: v.headless, desk: crate::win_desk::on_hidden_desk(v.headless, shown), signed, signable, signed_auto }
+    // 꺼내 둔 동안은 크롬에서 바로 다루니 안 본다. 그림 길(cast)은 페이지만 그려 크롬 자체 창이 안 보인다
+    let native = !shown
+        && !v.cast
+        && pid.zip(v.geom).is_some_and(|(p, g)| crate::native_bubble::open_in(&crate::chrome_popup::windows(p), p, crate::vdisplay::Rect { x: g.win[0], y: g.win[1], w: g.win[2], h: g.win[3] }));
+    Tabs { pages: v.pages.clone(), current: v.current.clone(), pinned: v.pinned.is_some(), error: v.error.clone(), attached: v.attached, dialog, dialog_tabs, stuck, shown, chooser, reopened, dropped: v.dropped, popup: popup_now(&profile), popup_kind: popup_kind_now(&profile).to_string(), permission: perm_of(&v), fedcm: fedcm_of(&v), wrapper_dialog, framed: v.framed, hidden, headless: v.headless, desk: crate::win_desk::on_hidden_desk(v.headless, shown), signed, signable, signed_auto, native }
 }
 
 /// 멈춘 탭(앱이 붙기 전에 뜬 대화상자) 답을 래퍼에 부탁 — 그 래퍼가 세션 도구를 붙잡는 래퍼(gate)일 때만. 사람 조작으로 센다
@@ -887,6 +905,11 @@ pub fn agent_pin(profile: String, target: Option<String>) {
 /// 모달에서 직접 조작 — 클릭·스크롤·키·글을 그 크롬 지금 탭에(CDP Input). 모양이 이상한 건 조용히 버린다
 #[tauri::command]
 pub fn agent_input(profile: String, pid: i32, expect: Option<Expect>, events: Vec<crate::agent_input::InputEv>) {
+    send_input(profile, pid, expect, events, false);
+}
+
+/// 사람 입력을 그 탭에 — pane 이면 SCK 칸(창 페이지 칸을 비춤)의 비율이라 창 페이지 칸 크기로 환산한다(그림 칸이면 그림 크기)
+fn send_input(profile: String, pid: i32, expect: Option<Expect>, events: Vec<crate::agent_input::InputEv>, pane: bool) {
     if !human_ok(&profile, pid) {
         return;
     }
@@ -902,7 +925,7 @@ pub fn agent_input(profile: String, pid: i32, expect: Option<Expect>, events: Ve
         v.dropped += 1;
         return;
     };
-    let meta = v.meta;
+    let meta = if pane { crate::browser_pane::input_meta(v.cast, v.pane_meta, v.meta) } else { v.meta };
     v.human_at = Some(Instant::now());
     for e in events.iter().take(200) {
         if let Some((m, p)) = crate::agent_input::to_cdp(e, meta) {
@@ -1250,7 +1273,7 @@ fn page_of(info: &serde_json::Value) -> Option<Page> {
 fn pane_tick(cdp: &mut Cdp, view: &Arc<Mutex<View>>, st: &mut St, target: &str, session: &str, want: crate::browser_pane::Want, live: &Live) {
     let mut buf = vec![];
     let win = cdp.call_for("Browser.getWindowForTarget", serde_json::json!({ "targetId": target }), None, Duration::from_secs(1), |m| buf.push(m.clone()));
-    let js = serde_json::json!({ "expression": "[innerWidth, innerHeight, outerWidth, outerHeight]", "returnByValue": true });
+    let js = serde_json::json!({ "expression": "[innerWidth, innerHeight, outerWidth, outerHeight, screen.width, screen.height]", "returnByValue": true });
     let ev = cdp.call_for("Runtime.evaluate", js, Some(session), Duration::from_millis(300), |m| buf.push(m.clone()));
     for m in buf {
         on_event(&m, view, st);
@@ -1259,15 +1282,21 @@ fn pane_tick(cdp: &mut Cdp, view: &Arc<Mutex<View>>, st: &mut St, target: &str, 
     let b = &w["bounds"];
     let n: Vec<f64> = e["result"]["value"].as_array().map(|a| a.iter().filter_map(|x| x.as_f64()).collect()).unwrap_or_default();
     let num = |k: &str| b[k].as_f64().unwrap_or(0.0);
-    if n.len() != 4 || num("width") <= 0.0 {
+    if n.len() != 6 || num("width") <= 0.0 {
         return;
     }
-    let g = crate::browser_pane::Geom { id: w["windowId"].as_i64().unwrap_or(0), win: [num("left"), num("top"), num("width"), num("height")], top: num("height") - n[1], inner: [n[0], n[1]] };
+    // 툴바 높이·페이지 칸은 창 기준으로 — 세션이 viewport 흉내(browser_resize)를 걸면 inner 가 창과 따로 논다(11-09 사용자 클릭 어긋남)
+    let probe = crate::browser_pane::Probe { win: [num("left"), num("top"), num("width"), num("height")], inner: [n[0], n[1]], outer: [n[2], n[3]], screen: [n[4], n[5]] };
+    let (g, css, sure) = crate::browser_pane::measure(w["windowId"].as_i64().unwrap_or(0), probe, st.top);
+    if sure {
+        st.top = Some(g.top);
+    }
     if let Ok(mut v) = view.lock() {
         v.geom = Some(g);
-        // 화면을 안 받는 칸(SCK)이라 입력 좌표 환산·참모 커서에 쓸 페이지 크기를 여기서
+        // SCK 칸이 그리는 창 페이지 칸의 CSS 크기 — 칸 입력 좌표 환산·참모 커서에(모달이 그림을 받는 중이어도 칸은 이걸로)
+        v.pane_meta = Some(css);
         if !st.casting {
-            v.meta = crate::agent_input::Meta { w: n[0], h: n[1] };
+            v.meta = css;
         }
     }
     let shown = chrome_pid(live.port).is_some_and(|p| shown().contains(&p));
@@ -1320,6 +1349,8 @@ struct St {
     snap_at: Option<Instant>,
     /// 마지막으로 창 크기를 맞춘 칸 크기 — 크롬이 거절해도(최소 크기) 0.5초마다 다시 안 보내게
     resized_for: Option<(f64, f64)>,
+    /// 마지막으로 믿을 만하게 잰 크롬 툴바 높이(점) — viewport 흉내 중엔 잴 수 없어 이걸 쓴다(browser_pane::measure)
+    top: Option<f64>,
     headless: bool,
     /// 지금 화면 받기가 칸 그림용(온 크기·q80)으로 켜졌나 — 칸 길이 바뀌면 다시 켠다
     cast_hi: bool,
@@ -1459,7 +1490,7 @@ fn on_event(m: &serde_json::Value, view: &Arc<Mutex<View>>, st: &mut St) {
             // 지금 보는 탭의 누름만 — 사람이 칸에서 막 누른 것(앱이 보낸 것)은 빼고
             if m["sessionId"].as_str() == st.session.as_deref() {
                 let p: serde_json::Value = m["params"]["payload"].as_str().and_then(|t| serde_json::from_str(t).ok()).unwrap_or_default();
-                let (human_at, meta) = view.lock().map(|v| (v.human_at, v.meta)).unwrap_or((None, Default::default()));
+                let (human_at, meta) = view.lock().map(|v| (v.human_at, crate::browser_pane::input_meta(v.cast, v.pane_meta, v.meta))).unwrap_or((None, Default::default()));
                 if let (true, Some((rx, ry))) = (crate::browser_pane::agent_press(human_at, Instant::now()), crate::browser_pane::cursor_ratio(p["x"].as_f64().unwrap_or(f64::NAN), p["y"].as_f64().unwrap_or(f64::NAN), meta)) {
                     crate::browser_pane::show_cursor(&st.profile, rx, ry);
                 }

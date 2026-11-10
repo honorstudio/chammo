@@ -149,7 +149,7 @@ pub fn read_book(bytes: &[u8]) -> Result<Book, String> {
 pub struct Opened { pub book: Book, pub stamp: String }
 
 pub fn sheet_file(path: &str) -> Result<std::path::PathBuf, String> {
-    let p = crate::reader::user_path(path).ok_or(crate::i18n::tr("홈 폴더나 프로젝트 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder or a project folder can be opened. The same message appears if the file is missing."))?;
+    let p = crate::reader::user_path(path).ok_or(crate::i18n::tr("홈·프로젝트 폴더나 설정 › 참모 › 열어도 되는 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder, a project folder or a folder added in Settings › Assistant › Folders it may open can be opened. The same message appears if the file is missing."))?;
     let ok = matches!(p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref(), Some("xlsx" | "xlsm"));
     if ok { Ok(p) } else { Err(crate::i18n::tr("엑셀(.xlsx) 파일만 열 수 있어", "Only Excel (.xlsx) files can be opened").into()) }
 }

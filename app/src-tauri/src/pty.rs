@@ -4,7 +4,7 @@
 use portable_pty::{native_pty_system, Child, MasterPty, PtySize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::State;
@@ -36,6 +36,25 @@ struct OpenView {
     screen: Option<Arc<Mutex<vt100::Parser>>>,
     /// 연 때 — 막 연 보기는 입력칸이 보여야 키를 받는다(takes_keys)
     opened: std::time::Instant,
+    /// 마지막으로 화면(출력)이 온 때(유닉스 ms, 0 = 아직) — 죽은 보기(dead_view) 가리기
+    last_out: Arc<AtomicU64>,
+}
+
+/// 유닉스 ms
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
+}
+
+/// 죽은 보기를 가르는 조용한 시간 — 넉넉히 5분. UserPromptSubmit 훅이 도는 동안 TUI 는 화면을 안 그린다(11-10 실측 '1/2 · 10s' 에서 멈춤,
+/// 훅이 18~21초 걸린 날도 있었다) — 짧게 잡으면 산 보기를 죽었다고 보고 새로 붙어 또 넣어 두 번 간다. 실제 죽은 보기는 81~90분이었다
+const DEAD_QUIET_MS: u64 = 300_000;
+
+/// 채팅이 친 말이 기록에 안 들어왔을 때 — 그 보기가 죽었나. 치기 전 5분 넘게 조용했고(last_out < started - DEAD_QUIET_MS) 친 뒤로도 출력이 0 이면 죽은 것:
+/// 살아 있는 TUI 는 친 글자를 바로 그리고(쉬는 중), 일하는 중엔 스피너를 늘 그린다. 2026-11-10 00:00·00:10 개발 담당 — 보기가 81~90분째
+/// 출력 0(quiet=4878448)인데 앱은 그 보기에 쳐서 말이 기록 어디에도 없이 사라졌다(사용자 '다시 보내기 눌러 보니 CLI 에 아예 안 들어가 있네').
+/// 사용자가 본 그 터미널(Perambulating… PostToolUse hook 1m 35s)도 90분 전 화면에 얼어 있던 것 — 세션은 그때 쉬고 있었다
+pub(crate) fn dead_view(last_out: u64, started: u64) -> bool {
+    last_out.saturating_add(DEAD_QUIET_MS) < started
 }
 
 /// 열린 터미널 보기가 어느 세션에 붙어 있나 — 윈도우는 claude attach 가 세션당 한 창만 붙게 해서,
@@ -149,6 +168,9 @@ fn dead(v: &OpenView) -> bool {
 
 /// 보기 출력 한 조각을 센다 — 윈도우면 Rust 쪽 화면(screen)에도 그린다
 fn feed_view(v: &OpenView, counter: &mut Visible, b: &[u8]) {
+    if !b.is_empty() {
+        v.last_out.store(now_ms(), Ordering::Relaxed);
+    }
     note_chunk(counter, &v.visible, &v.gone, &v.kick, b);
     if let Some(p) = &v.screen {
         counter.dim.feed(&mut p.lock().unwrap_or_else(|e| e.into_inner()), b);
@@ -371,6 +393,64 @@ pub(crate) fn attach_line(bin: &str, id: &str, win: bool) -> String {
     }
 }
 
+/// 터미널 포커스 나감(ESC[O). Claude Code(2.1.319~)는 포커스가 꺼짐→켜짐이 되면 1초 뒤 클립보드에 그림이 있나를 동기로 본다
+/// (clipboard-image-hint → Bun.Image.hasClipboardImage). 클립보드 그림을 '나중에 줄게'로 올린 앱이 답을 안 하면 그동안 세션이 통째로 멈춘다 —
+/// 2026-11-10 폰으로 보낸 짧은 말이 쉬는 참모 세션 둘에서 한 시간 넘게 멈췄다가 그 앱이 답하자 한꺼번에 들어갔다. claude attach 는 붙을 때마다
+/// 포커스 들어옴을 보내고(폰·스페이스 보내기·화면 읽기는 매번 새로 붙는다) 키를 넣어도 다시 켜진다 — 붙은 뒤와 앱이 넣는 키마다
+/// 나감을 넣어 그 1초 타이머를 지운다(with_focus_out).
+/// 첫 화면이 온 뒤에 넣는다 — 띄우자마자 넣은 바이트는 attach 가 raw 모드로 바꾸며 버린다(실측: 그때만 넣으면 그대로 멈춤).
+/// 일하는 세션에 넣어도 하던 일은 안 멈춘다(실측). 윈도우는 안 넣는다 — 가짜 콘솔이 ESC 를 Esc 키로 넘기면 하던 일이 멈춘다
+pub(crate) const FOCUS_OUT: &[u8] = b"\x1b[O";
+
+pub(crate) fn calm_focus(w: &mut dyn Write) {
+    if !cfg!(windows) {
+        let _ = w.write_all(FOCUS_OUT);
+    }
+}
+
+/// 앱이 넣는 키 뒤에 바로 포커스 나감 — 키도 포커스를 다시 켠다(실측: ESC[O 뒤 글을 치면 그 1초 뒤 다시 클립보드를 봄).
+/// 한 번의 쓰기로 붙인다 — 따로 쓰면 ESC 가 떨어져 Esc 키(하던 일 멈춤)로 읽힐 수 있다. 끝이 ESC 인 조각(Esc 키 자체)엔 안 붙인다.
+/// 앱이 치는 길(채팅 type_keys_seen·폰/스페이스 attach)만 — 사람이 터미널에 직접 치는 pty_write 는 그대로(붙여넣기 ESC[200~ 사이에 끼면 글이 깨진다)
+pub(crate) fn with_focus_out(keys: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if cfg!(windows) || keys.is_empty() || keys.ends_with(b"\x1b") {
+        std::borrow::Cow::Borrowed(keys)
+    } else {
+        std::borrow::Cow::Owned([keys, FOCUS_OUT].concat())
+    }
+}
+
+/// with_focus_out 를 모든 쓰기에 — 잠깐 붙는 길(claude::attach_new)이 치는 쪽에 감싸 준다
+pub(crate) struct Unfocus<'a>(pub &'a mut dyn Write);
+
+impl Write for Unfocus<'_> {
+    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+        self.0.write_all(&with_focus_out(b))?;
+        Ok(b.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
+/// 터미널 보기용 — 첫 화면이 오면 나감을 넣고 0.3초 뒤 한 번 더(첫 조각이 raw 로 바뀌기 전 그림일 때). 5초 안에 화면이 안 오면 그만
+fn calm_focus_when_drawn(w: SharedWriter, last_out: Arc<AtomicU64>) {
+    if cfg!(windows) {
+        return;
+    }
+    std::thread::spawn(move || {
+        let t = std::time::Instant::now();
+        while last_out.load(Ordering::Relaxed) == 0 {
+            if t.elapsed() > std::time::Duration::from_secs(5) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        calm_focus(&mut **w.lock().unwrap());
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        calm_focus(&mut **w.lock().unwrap());
+    });
+}
+
 #[tauri::command]
 pub fn pty_open(
     webview: tauri::Webview,
@@ -386,7 +466,8 @@ pub fn pty_open(
     let kick: Arc<Kick> = Default::default();
     // 세션 보기는 화면을 Rust 도 그린다 — 윈도우는 열린 보기로 칠 때 입력칸을 보려고, 맥은 채팅 탭 Enter 를 글이 보이자마자 넣으려고
     let screen = session_of(&command).is_some().then(|| Arc::new(Mutex::new(vt100::Parser::new(rows, cols, 0))));
-    let probe = OpenView { pty: 0, session: String::new(), writer: Arc::new(Mutex::new(Box::new(std::io::sink()))), visible: visible.clone(), gone: gone.clone(), kick: kick.clone(), pid: None, screen: screen.clone(), opened: std::time::Instant::now() };
+    let last_out = Arc::new(AtomicU64::new(0));
+    let probe = OpenView { pty: 0, session: String::new(), writer: Arc::new(Mutex::new(Box::new(std::io::sink()))), visible: visible.clone(), gone: gone.clone(), kick: kick.clone(), pid: None, screen: screen.clone(), opened: std::time::Instant::now(), last_out: last_out.clone() };
     let mut counter = Visible::default();
     let (master, writer, child) = spawn_pty(&command, cwd, cols, rows, move |b| {
         feed_view(&probe, &mut counter, b);
@@ -397,7 +478,8 @@ pub fn pty_open(
     let writer: SharedWriter = Arc::new(Mutex::new(writer));
     if let Some(session) = session_of(&command) {
         let pid = child.process_id();
-        OPEN.lock().unwrap().push(OpenView { pty: id, session, writer: writer.clone(), visible, gone, kick, pid, screen, opened: std::time::Instant::now() });
+        calm_focus_when_drawn(writer.clone(), last_out.clone());
+        OPEN.lock().unwrap().push(OpenView { pty: id, session, writer: writer.clone(), visible, gone, kick, pid, screen, opened: std::time::Instant::now(), last_out });
     }
     state.map.lock().unwrap().insert(id, Pty { master, writer, child, owner: webview.label().to_string() });
     Ok(id)
@@ -421,30 +503,61 @@ pub fn pty_write(state: State<Ptys>, id: u32, data: String) -> Result<(), String
 }
 
 /// 채팅이 창(pty)에 글을 친다 — 조각마다 6ms, enter_ms 가 있으면 그만큼 쉬고 Enter(뒤 0.15초까지 쥔다). 스페이스·카드 답장·폰(claude::attach_type_segs)과
-/// 같은 자물쇠를 잡아 한 입력칸에 섞이지 않는다 — JS 가 setTimeout 으로 따로 치던 때는 같은 순간이면 섞였다(2026-10-06 fix/chat-ghost 남은 것)
+/// 같은 자물쇠를 잡아 한 입력칸에 섞이지 않는다 — JS 가 setTimeout 으로 따로 치던 때는 같은 순간이면 섞였다(2026-10-06 fix/chat-ghost 남은 것).
+/// Enter 를 넣는 말은 그 세션 대화 기록(jsonl)에 들어왔나까지 본다(send_land, 2026-11-09 chat-send-stuck). again = '다시 보내기' — 입력칸에 남은 그 말이면 Enter 만
 #[tauri::command]
-pub async fn pty_type(state: State<'_, Ptys>, id: u32, keys: Vec<String>, enter_ms: Option<u64>) -> Result<(), String> {
+/// 돌려주는 'dead' = 그 칸 보기가 죽어 새로 붙어 넣었다 — 프론트가 칸을 다시 붙인다(PaneApi.reattach)
+pub async fn pty_type(state: State<'_, Ptys>, id: u32, keys: Vec<String>, enter_ms: Option<u64>, again: Option<bool>) -> Result<String, String> {
     let writer = state.map.lock().unwrap().get(&id).map(|p| p.writer.clone()).ok_or(crate::i18n::tr("없는 pty", "No such pty"))?;
-    let screen = OPEN.lock().unwrap().iter().find(|v| v.pty == id).and_then(|v| v.screen.clone());
+    let (screen, who, last_out, pid) = OPEN.lock().unwrap().iter().find(|v| v.pty == id).map(|v| (v.screen.clone(), v.session.clone(), Some(v.last_out.clone()), v.pid)).unwrap_or_default();
     #[cfg(debug_assertions)]
     log_write(id, &format!("{}{}", keys.concat(), if enter_ms.is_some() { "\r" } else { "" }));
     tauri::async_runtime::spawn_blocking(move || {
         settle_pty(id); // 자물쇠(type_keys_seen) 잡기 전에 — 기다리는 동안 다른 칸 치기를 막지 않게
         let chars: usize = keys.iter().map(|k| k.chars().count()).sum();
-        let note = type_keys_seen(&writer, &keys, enter_ms, screen.as_ref())?;
+        // 기록 자리는 자물쇠 밖에서 찾고(목록 읽기), 끝 길이는 자물쇠를 잡은 뒤 잰다(type_keys_seen)
+        let text = keys.concat();
+        let land = (enter_ms.is_some() && !crate::claude::slash_command(&text)).then(|| crate::send_land::Landing::for_session(&who, &text)).flatten();
+        let started = now_ms();
+        let note = type_keys_seen(&writer, &keys, enter_ms, screen.as_ref(), land, again.unwrap_or(false))?;
         // 이 길엔 로그가 없어 '전달 안 됨'을 못 가렸다(2026-11-05 개발 담당 18:13) — 글 없이 치기 결과만. seen=false 면 친 글이 입력칸에 한 번도 안 보인 것
         if let Some(n) = note {
-            let who = OPEN.lock().unwrap().iter().find(|v| v.pty == id).map(|v| v.session.clone()).unwrap_or_default();
-            crate::claude::log_out("chat-type", &format!("{who} chars={chars} seen={} left={} enters={} ms={}", n.seen, n.left, n.enters, n.ms));
+            let landed = n.landed.map_or("-".to_string(), |l| l.to_string());
+            crate::claude::log_out("chat-type", &format!("{who} chars={chars} seen={} left={} enters={} ms={} landed={landed} again={} land_enter={} retyped={}", n.seen, n.left, n.enters, n.ms, n.again, n.land_enter, n.retyped));
+            // 기록에 안 들어왔고 이 보기가 죽었다 — 새로 붙어(폰·스페이스 길, 기록으로 확인) 한 번만 다시 넣고, 죽은 attach 를 끝내 보기가 다시 붙게(TerminalPane onEnded)
+            let out = last_out.as_ref().map_or(u64::MAX, |l| l.load(Ordering::Relaxed));
+            if n.landed == Some(false) && dead_view(out, started) {
+                crate::claude::log_out("chat-dead-view", &format!("{who} quiet={}", started.saturating_sub(out)));
+                kill_view(pid);
+                return crate::claude::type_text_tagged(&who, &text.replace("\x1b\r", "\n"), "chat-fallback").map(|_| "dead".to_string());
+            }
         }
-        Ok(())
+        Ok(String::new())
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
+/// 죽은 보기의 claude attach 를 끝낸다 — 세션은 안 죽는다(attach 만 뗀다). 끝나면 채팅 칸이 '연결 끊김 → 다시 붙기'로 살아난다
+fn kill_view(pid: Option<u32>) {
+    // TERM 은 무시하고 KILL 은 커널에서 못 끝나기도 했다(11-10 85195 — 'E' 로 남음). 그래서 프론트가 EOF 를 안 기다리고 칸을 다시 붙인다
+    #[cfg(unix)]
+    if let Some(p) = pid {
+        std::thread::spawn(move || {
+            // SAFETY: 우리가 띄운 자식 claude attach 에 끝내기 신호만 보낸다
+            unsafe { libc::kill(p as i32, libc::SIGTERM) };
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            if crate::platform::pid_alive(p as i32) {
+                unsafe { libc::kill(p as i32, libc::SIGKILL) };
+            }
+        });
+    }
+    #[cfg(not(unix))]
+    let _ = pid;
+}
+
 pub(crate) fn type_keys(w: &SharedWriter, keys: &[String], enter_ms: Option<u64>) -> Result<(), String> {
-    type_keys_seen(w, keys, enter_ms, None).map(|_| ())
+    type_keys_seen(w, keys, enter_ms, None, None, false).map(|_| ())
 }
 
 /// 화면을 보며 보낸 치기의 결과 — 폰·스페이스 보내기와 같은 블랙박스(claude::SendNote: seen·left·enters·ms·paste…)
@@ -453,23 +566,29 @@ pub(crate) type TypeNote = crate::claude::SendNote;
 /// type_keys + 그 칸 화면 — 보내기 확인은 폰·스페이스와 같은 claude::send_watched(그림 읽는 중이면 끝난 뒤 치고, 친 글이 보이면 바로 Enter,
 /// 그 말이 입력칸에서 빠질 때까지 본다 — / 명령은 Enter 가 창에서 골라 버려서 한 번). 안 보이면(붙여넣은 글로 접힘·화면 없음) enter_ms.
 /// 윈도우는 가짜 콘솔이 글을 늦게 넘겨 예전 그대로(화면 안 봄).
+/// land 가 있으면 끝은 대화 기록으로 정한다(send_land::ensure_landed) — 안 들어왔으면 Enter 만 더, 그래도 안 되면 믿을 화면에서만 비우고 다시 친다.
+/// 입력칸에 이미 이 말이 그대로 있으면(앞 Enter 가 안 먹음) 또 치지 않고 Enter 만 — 다시 보내기(again)는 그 말을 담기만 해도. 다시 보내기인데
+/// 화면으로 입력칸을 못 보면(윈도우·엉킨 사본) Enter 먼저 넣고 기록에 들어오면 끝 — 남은 그 말에 같은 글을 겹쳐 쳤다(2026-11-09 사용자).
 /// 끝내 안 빠져도 실패로 돌려주지 않는다 — 채팅이 말을 입력칸 칸으로 되살리면 나중에 들어간 말을 또 보낸다. 남은 말은 채팅이 '입력칸에 걸려 있어요'로
-pub(crate) fn type_keys_seen(w: &SharedWriter, keys: &[String], enter_ms: Option<u64>, screen: Option<&Arc<Mutex<vt100::Parser>>>) -> Result<Option<TypeNote>, String> {
+pub(crate) fn type_keys_seen(w: &SharedWriter, keys: &[String], enter_ms: Option<u64>, screen: Option<&Arc<Mutex<vt100::Parser>>>, land: Option<crate::send_land::Landing>, again: bool) -> Result<Option<TypeNote>, String> {
     use std::time::Duration;
     let started = std::time::Instant::now();
     let _turn = crate::claude::typing_turn();
+    let land = land.map(crate::send_land::Landing::start);
     let tail = crate::claude::typed_echo(&keys.iter().map(|k| k.as_bytes().to_vec()).collect::<Vec<_>>());
     let look = screen.filter(|_| !cfg!(windows) && !tail.is_empty());
     let t = tail.as_str();
-    let peek = look.map(|p| move || crate::claude::peek_typed(p.lock().unwrap_or_else(|e| e.into_inner()).screen(), t));
+    let scr = |p: &Arc<Mutex<vt100::Parser>>| p.lock().unwrap_or_else(|e| e.into_inner()).screen().clone();
+    let peek = look.map(|p| move || crate::claude::peek_typed(&scr(p), t));
     let peek = peek.as_ref().map(|f| f as &dyn Fn() -> (bool, bool, bool));
-    let mut type_all = || -> std::io::Result<()> {
+    let type_all = || -> std::io::Result<()> {
         for k in keys {
-            w.lock().unwrap().write_all(k.as_bytes())?;
+            w.lock().unwrap().write_all(&with_focus_out(k.as_bytes()))?;
             std::thread::sleep(Duration::from_millis(6));
         }
         Ok(())
     };
+    let enter = || w.lock().unwrap().write_all(&with_focus_out(b"\r"));
     let Some(ms) = enter_ms else {
         // Enter 없이 치기만 — 그림을 읽는 중이면 끝난 뒤에(그 사이 친 글은 칩 앞에 낀다)
         if let Some(p) = peek {
@@ -479,11 +598,54 @@ pub(crate) fn type_keys_seen(w: &SharedWriter, keys: &[String], enter_ms: Option
         return Ok(None);
     };
     let mut note = TypeNote::default();
-    crate::claude::send_watched(&mut type_all, &mut || w.lock().unwrap().write_all(b"\r"), peek, Duration::from_millis(ms), !crate::claude::slash_command(&keys.concat()), &mut note).map_err(|e| e.to_string())?;
+    let watch = !crate::claude::slash_command(&keys.concat());
+    let landed = || land.as_ref().is_some_and(|l| l.landed());
+    let present = look.is_some_and(|p| {
+        let s = scr(p);
+        if again { crate::claude::input_holds(&s, &tail) } else { crate::claude::input_is(&s, &tail) }
+    });
+    // 다시 보내기인데 그 말이 입력칸에 안 보인다 — 화면 사본이 엉켰거나 느려 못 볼 뿐 남아 있을 수 있으니 Enter 먼저(빈 칸 Enter 는 아무 일도 안 한다).
+    // 입력칸에 다른 글이 보이면 안 한다 — 그 글이 나간다. 기록에 들어오면 끝, 아니면 그때 친다
+    let other = look.is_some_and(|p| crate::claude::input_has_text(&scr(p)));
+    if again && watch && land.is_some() && !present && !other {
+        note.enters += 1;
+        enter().map_err(|e| e.to_string())?;
+        if crate::claude::poll_until(crate::send_land::AGAIN_WAIT, landed) {
+            note.again = true;
+            note.landed = Some(true);
+            note.ms = started.elapsed().as_millis();
+            return Ok(Some(note));
+        }
+    }
+    note.again |= present;
+    crate::claude::send_watched(&mut || if present { Ok(()) } else { type_all() }, &mut || enter(), peek, Duration::from_millis(ms), watch, &mut note).map_err(|e| e.to_string())?;
+    if let Some(l) = land.as_ref().filter(|_| watch) {
+        // 입력칸에 그 말이 보이면 지울 글자 수(줄 수만큼 더) — 화면을 못 보면 None
+        let held = look.map(|p| {
+            move || {
+                let s = scr(p);
+                crate::claude::input_holds(&s, t).then(|| crate::claude::input_lines(&s).map_or(0, |b| b.iter().map(|x| x.chars().count()).sum::<usize>() + b.len()))
+            }
+        });
+        let trusted = note.seen;
+        let ok = crate::send_land::ensure_landed(
+            &|| l.landed(),
+            crate::send_land::Keys { enter: &mut || enter(), clear: &mut |n| w.lock().unwrap().write_all(&with_focus_out("\x7f".repeat(n).as_bytes())), retype: &mut || type_all() },
+            held.as_ref().map(|f| f as &dyn Fn() -> Option<usize>),
+            trusted,
+            crate::send_land::LAND_WAIT,
+            &mut note,
+        )
+        .map_err(|e| e.to_string())?;
+        note.landed = Some(ok);
+        if ok {
+            note.left = false;
+        }
+    }
     // Enter 를 받기 전에 다음 글이 붙지 않게 잠깐 더 쥔다(JS 로 칠 때 앞 Enter 와 다음 글 사이 0.15초 그대로)
     std::thread::sleep(Duration::from_millis(150));
     note.ms = started.elapsed().as_millis();
-    Ok(peek.map(|_| note))
+    Ok((peek.is_some() || note.landed.is_some()).then_some(note))
 }
 
 /// dev 검증용 — HONOR_ORCH_PTY_LOG=<파일> 이면 pty 로 보낸 글자를 한 줄씩(ms 시각·이스케이프) 남긴다. 디버그 빌드에만 있다
@@ -570,6 +732,58 @@ pub(crate) fn reap(mut child: Box<dyn Child + Send + Sync>) {
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn 앱이_넣는_키_뒤엔_한_번의_쓰기로_포커스_나감() {
+        use std::io::Write;
+        assert_eq!(&*super::with_focus_out(b"ab"), b"ab\x1b[O");
+        assert_eq!(&*super::with_focus_out(b"\r"), b"\r\x1b[O");
+        assert_eq!(&*super::with_focus_out(b"\x1b"), b"\x1b", "Esc 키 자체엔 안 붙인다(ESC ESC [O 로 읽힌다)");
+        assert_eq!(&*super::with_focus_out(b""), b"");
+        // 감싼 쓰기 — 조각마다 한 번에(쓰기 호출 수 = 조각 수)
+        struct Calls(Vec<Vec<u8>>);
+        impl std::io::Write for Calls {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.push(b.to_vec());
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut c = Calls(vec![]);
+        let mut u = super::Unfocus(&mut c);
+        u.write_all("ㄱㄱ".as_bytes()).unwrap();
+        u.write_all(b"\x1b\r").unwrap();
+        assert_eq!(c.0, vec![[&"ㄱㄱ".as_bytes()[..], super::FOCUS_OUT].concat(), b"\x1b\r\x1b[O".to_vec()]);
+    }
+
+    #[test]
+    fn 포커스_나감은_첫_화면이_온_뒤에_넣는다() {
+        // 띄우자마자 넣은 바이트는 claude attach 가 raw 모드로 바꾸며 버린다(2026-11-10 실측) — 화면이 오기 전엔 안 넣고, 오면 넣고 0.3초 뒤 한 번 더
+        use std::sync::atomic::{AtomicU64, Ordering};
+        struct Rec(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for Rec {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let got = Arc::new(Mutex::new(Vec::new()));
+        let w: super::SharedWriter = Arc::new(Mutex::new(Box::new(Rec(got.clone()))));
+        let last_out = Arc::new(AtomicU64::new(0));
+        super::calm_focus_when_drawn(w, last_out.clone());
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert!(got.lock().unwrap().is_empty(), "화면이 오기 전엔 안 넣는다");
+        last_out.store(super::now_ms(), Ordering::Relaxed);
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        assert_eq!(*got.lock().unwrap(), super::FOCUS_OUT, "첫 화면이 오면 바로");
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        assert_eq!(*got.lock().unwrap(), [super::FOCUS_OUT, super::FOCUS_OUT].concat(), "0.3초 뒤 한 번 더");
+    }
 
     #[test]
     fn 붙는_중인_보기는_다_붙을_때까지_기다려_그_보기를_쓴다() {
@@ -732,6 +946,7 @@ mod tests {
             pid: None,
             screen: screen.then(|| Arc::new(Mutex::new(vt100::Parser::new(24, 80, 0)))),
             opened: std::time::Instant::now(),
+            last_out: Default::default(),
         }
     }
 
@@ -819,7 +1034,7 @@ mod tests {
         let open = |id: u32, owner: &str| {
             let (master, writer, child) = spawn_pty("exec sleep 30", None, 80, 24, |_| true).unwrap();
             let writer: SharedWriter = Arc::new(Mutex::new(writer));
-            OPEN.lock().unwrap().push(OpenView { pty: id, session: format!("close-owned-{id}"), writer: writer.clone(), visible: Arc::new(AtomicUsize::new(0)), gone: Arc::new(AtomicBool::new(false)), kick: Default::default(), pid: None, screen: None, opened: std::time::Instant::now() });
+            OPEN.lock().unwrap().push(OpenView { pty: id, session: format!("close-owned-{id}"), writer: writer.clone(), visible: Arc::new(AtomicUsize::new(0)), gone: Arc::new(AtomicBool::new(false)), kick: Default::default(), pid: None, screen: None, opened: std::time::Instant::now(), last_out: Default::default() });
             let pid = child.process_id().unwrap() as i32;
             state.map.lock().unwrap().insert(id, Pty { master, writer, child, owner: owner.into() });
             pid
@@ -913,8 +1128,11 @@ mod tests {
         wait_echo(&keys, 200, None);
         assert!(t.elapsed() >= Duration::from_millis(200));
         // 치기는 글 다음 Enter
-        super::type_keys_seen(&w, &keys, Some(1), None).unwrap();
-        assert!(got.lock().unwrap().ends_with("둘째 줄도 있어\r".as_bytes()));
+        super::type_keys_seen(&w, &keys, Some(1), None, None, false).unwrap();
+        let raw = String::from_utf8(got.lock().unwrap().clone()).unwrap();
+        assert!(raw.replace("\x1b[O", "").ends_with("둘째 줄도 있어\r"), "{raw:?}");
+        // 앱이 넣는 키마다 포커스 나감이 붙는다(클립보드 멈춤 막기 — with_focus_out)
+        assert!(cfg!(windows) || raw.ends_with("둘째 줄도 있어\x1b[O\r\x1b[O"), "{raw:?}");
     }
 
     // fix/chat-ghost 남은 것 ①: 채팅 치기(JS)는 TYPE_LOCK 을 안 잡아 스페이스·카드 답장(send_text_to_session)과 같은 순간이면
@@ -940,7 +1158,7 @@ mod tests {
         wait.recv().unwrap();
         super::type_keys(&w, &vec!["B".to_string(); 10], Some(5)).unwrap();
         other.join().unwrap();
-        assert_eq!(String::from_utf8(got.lock().unwrap().clone()).unwrap(), format!("{}{}\r", "A".repeat(20), "B".repeat(10)));
+        assert_eq!(String::from_utf8(got.lock().unwrap().clone()).unwrap().replace("\x1b[O", ""), format!("{}{}\r", "A".repeat(20), "B".repeat(10)));
     }
 
     #[cfg(unix)]
@@ -1006,7 +1224,7 @@ mod tests {
 
     fn view(pty: u32, session: &str, visible: usize) -> super::OpenView {
         let w: Box<dyn std::io::Write + Send> = Box::new(Vec::<u8>::new());
-        super::OpenView { pty, session: session.into(), writer: std::sync::Arc::new(std::sync::Mutex::new(w)), visible: std::sync::Arc::new(visible.into()), gone: Default::default(), kick: Default::default(), pid: None, screen: None, opened: std::time::Instant::now() }
+        super::OpenView { pty, session: session.into(), writer: std::sync::Arc::new(std::sync::Mutex::new(w)), visible: std::sync::Arc::new(visible.into()), gone: Default::default(), kick: Default::default(), pid: None, screen: None, opened: std::time::Instant::now(), last_out: Default::default() }
     }
 
     fn kicked(v: super::OpenView) -> super::OpenView {
@@ -1122,16 +1340,16 @@ mod tests {
     // 그 사이 친 글은 칩 앞에 끼며 Enter 는 버린다(일회용 세션 4번 중 2번) — 말이 입력칸에 남아 '입력칸에 걸려 있어요'
     fn send_to(f: &crate::fake_claude::Fake, text: &str) {
         let w = f.writer();
-        super::type_keys_seen(&w, &[text.to_string()], Some(400), Some(&f.screen)).unwrap();
+        super::type_keys_seen(&w, &[text.to_string()], Some(400), Some(&f.screen), None, false).unwrap();
     }
 
     #[test]
     fn 그림을_읽는_중_버려진_enter_는_끝난_뒤_다시_넣는다() {
         use std::time::Duration;
         let f = crate::fake_claude::Fake::new(Some((Duration::from_millis(300), Duration::from_millis(1200))), false);
-        send_to(&f, "#img1 #img2 아카이빙 카페 심볼");
+        send_to(&f, "#img1 #img2 고양이 그림 하나");
         let (sent, _) = f.sent();
-        assert_eq!(sent, vec!["#img1 #img2 아카이빙 카페 심볼[Image #1] [Image #2]".to_string()], "한 번, 그림과 같이");
+        assert_eq!(sent, vec!["#img1 #img2 고양이 그림 하나[Image #1] [Image #2]".to_string()], "한 번, 그림과 같이");
     }
 
     #[test]
@@ -1160,8 +1378,102 @@ mod tests {
         let parser = Arc::new(Mutex::new(vt100::Parser::new(10, 40, 0)));
         parser.lock().unwrap().process(format!("{}\r\n❯ \r\n{}\r\n", "─".repeat(40), "─".repeat(40)).as_bytes());
         let w: super::SharedWriter = Arc::new(Mutex::new(Box::new(std::io::sink())));
-        let n = super::type_keys_seen(&w, &["사라지는 말".to_string()], Some(50), Some(&parser)).unwrap().unwrap();
+        let n = super::type_keys_seen(&w, &["사라지는 말".to_string()], Some(50), Some(&parser), None, false).unwrap().unwrap();
         assert_eq!((n.seen, n.left, n.enters), (false, false, 1), "Enter 는 한 번, 못 봤다고 남긴다");
+    }
+
+    // 2026-11-09 chat-send-stuck: 사용자 참모 업데이트 채팅이 저녁 내내 seen=false(화면 사본이 친 글을 못 봄) — Enter 한 번 넣고 '보냄'으로 끝나,
+    // 그 Enter 가 안 먹으면 말이 입력칸에 남았고 '다시 보내기'가 같은 글을 또 쳐서 쌓였다. 이제 끝은 대화 기록(jsonl)으로 본다
+    fn land_file(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("land-pty-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let p = d.join("s.jsonl");
+        std::fs::write(&p, "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"앞 말\"}}\n").unwrap();
+        p
+    }
+
+    fn send_land(f: &crate::fake_claude::Fake, text: &str, jsonl: Option<&std::path::Path>, again: bool) -> super::TypeNote {
+        let w = f.writer();
+        let land = jsonl.and_then(|p| crate::send_land::Landing::at(p.to_path_buf(), text));
+        super::type_keys_seen(&w, &[text.to_string()], Some(100), Some(&f.screen), land, again).unwrap().unwrap_or_default()
+    }
+
+    #[test]
+    fn 화면이_못_보는_칸에서_enter_가_안_먹으면_기록을_보고_enter_만_더() {
+        // 고치기 전 길(기록을 안 봄): Enter 한 번 넣고 끝 — 말이 입력칸에 남는다
+        let before = crate::fake_claude::Fake::new(None, false).blind().swallow_enters(1);
+        let n = send_land(&before, "이거 좀 바꿔볼래", None, false);
+        assert!(before.sent().0.is_empty(), "예전엔 사라졌다: {n:?}");
+        assert_eq!(before.input(), "이거 좀 바꿔볼래", "입력칸에 남음");
+        drop(before);
+        let p = land_file("blind");
+        let f = crate::fake_claude::Fake::new(None, false).blind().swallow_enters(1).with_jsonl(&p);
+        let n = send_land(&f, "이거 좀 바꿔볼래", Some(&p), false);
+        assert_eq!(f.sent().0, vec!["이거 좀 바꿔볼래".to_string()], "한 번 들어간다: {n:?}");
+        assert_eq!((n.landed, n.land_enter, n.retyped), (Some(true), true, false), "같은 글은 또 안 친다: {n:?}");
+    }
+
+    #[test]
+    fn enter_가_계속_안_먹으면_비우고_다시_친다_겹치지_않게() {
+        // 보이는 칸 — send_watched 가 Enter 세 번, 기록 확인이 한 번 더 — 넷 다 버려지면 지우고 다시 쳐서 Enter
+        let p = land_file("retype");
+        let f = crate::fake_claude::Fake::new(None, false).swallow_enters(4).with_jsonl(&p);
+        let n = send_land(&f, "#img1 .", Some(&p), false);
+        assert_eq!(f.sent().0, vec!["#img1 .".to_string()], "겹치지 않고 한 번: {n:?}");
+        assert!(n.retyped && n.landed == Some(true), "{n:?}");
+    }
+
+    #[test]
+    fn 죽은_보기는_치기_전에도_뒤에도_조용한_칸() {
+        // 2026-11-10 00:10 개발 담당: 보기가 90분째 출력 0 — 친 말이 사라졌다
+        let t = 1_000_000_000u64;
+        assert!(super::dead_view(t - 5_451_419, t), "90분 조용 + 친 뒤 출력 없음");
+        assert!(!super::dead_view(t + 300, t), "친 뒤 글자가 그려졌다 = 산 보기");
+        assert!(!super::dead_view(t - 5_000, t), "쉬는 세션 화면은 몇 초 가만할 수 있다");
+        assert!(!super::dead_view(t - 60_000, t), "훅이 도는 동안 TUI 는 화면을 안 그린다 — 1분은 산 보기");
+        assert!(!super::dead_view(u64::MAX, t), "보기를 못 찾으면 죽었다고 안 본다");
+        assert!(super::dead_view(0, t), "붙은 뒤 화면이 한 번도 안 온 보기");
+    }
+
+    #[test]
+    fn 바로_들어가면_enter_는_한_번() {
+        let p = land_file("plain");
+        let f = crate::fake_claude::Fake::new(None, false).with_jsonl(&p);
+        let n = send_land(&f, "ㄱㄱ", Some(&p), false);
+        assert_eq!(f.sent(), (vec!["ㄱㄱ".to_string()], 1));
+        assert_eq!((n.landed, n.land_enter, n.retyped), (Some(true), false, false), "{n:?}");
+    }
+
+    #[test]
+    fn 다시_보내기는_입력칸에_남은_그_말에_겹쳐_치지_않는다() {
+        // 보이는 칸: 남은 그 말이면 치지 않고 Enter 만
+        let p = land_file("again-seen");
+        let f = crate::fake_claude::Fake::new(None, false).with_input("#img1 .").with_jsonl(&p);
+        let n = send_land(&f, "#img1 .", Some(&p), true);
+        assert_eq!(f.sent().0, vec!["#img1 .".to_string()], "{n:?}");
+        assert!(n.again, "{n:?}");
+        drop(f);
+        // 못 보는 칸: Enter 먼저 — 기록에 들어오면 끝
+        let p = land_file("again-blind");
+        let f = crate::fake_claude::Fake::new(None, false).with_input("#img1 .").blind().with_jsonl(&p);
+        let n = send_land(&f, "#img1 .", Some(&p), true);
+        assert_eq!(f.sent().0, vec!["#img1 .".to_string()], "'#img1 .#img1 .' 로 겹치면 안 된다: {n:?}");
+        assert_eq!((n.again, n.landed), (true, Some(true)), "{n:?}");
+        drop(f);
+        // 못 보는 칸인데 입력칸이 비었으면 Enter 는 아무 일도 안 하고, 기록에 안 들어오니 그때 친다
+        let p = land_file("again-empty");
+        let f = crate::fake_claude::Fake::new(None, false).blind().with_jsonl(&p);
+        let n = send_land(&f, "#img1 .", Some(&p), true);
+        assert_eq!(f.sent().0, vec!["#img1 .".to_string()], "{n:?}");
+    }
+
+    #[test]
+    fn 보통_보내기도_입력칸에_같은_말이_그대로면_또_치지_않는다() {
+        let p = land_file("same");
+        let f = crate::fake_claude::Fake::new(None, false).with_input("응").with_jsonl(&p);
+        let n = send_land(&f, "응", Some(&p), false);
+        assert_eq!(f.sent().0, vec!["응".to_string()], "'응응' 이 아니라: {n:?}");
     }
 
     /// 실측(일회용 세션 필요, 2026-11-05 send-stuck): 그림 경로를 붙여넣고 GAP ms 뒤 앱 길(type_keys_seen)로 말 — 표식(PT…)을 찍으니
@@ -1190,11 +1502,290 @@ mod tests {
             w.lock().unwrap().write_all(format!("\x1b[200~{imgs} \x1b[201~").as_bytes()).unwrap();
             std::thread::sleep(Duration::from_millis(gap));
             let t = Instant::now();
-            super::type_keys_seen(&w, &[format!("#img1 #img2 아카이빙 카페 심볼 {mk} — 그림 색만 한 단어로")], Some(400), Some(&parser)).unwrap();
+            super::type_keys_seen(&w, &[format!("#img1 #img2 고양이 그림 하나 {mk} — 그림 색만 한 단어로")], Some(400), Some(&parser), None, false).unwrap();
             let left = crate::claude::input_holds(parser.lock().unwrap().screen(), &mk);
             eprintln!("MARK {mk} 치기 {:?} 남음 {left}", t.elapsed());
             std::thread::sleep(Duration::from_secs(20));
         }
+        let _ = child.kill();
+    }
+
+    /// 실측(일회용 세션 필요, 2026-11-09 chat-send-stuck): 채팅 탭 길(type_keys_seen + 칸 화면) 그대로 여러 모양의 말을 보내고
+    /// 화면·입력칸 읽기·블랙박스를 찍는다 — 기록(jsonl)에 들어갔나는 표식(CS…)으로 따로 센다.
+    /// CHATSEND_ID=<짧은 id> CHATSEND_CASES='short,multi,long,img,file,busy' CHATSEND_IMG=<그림> CHATSEND_FILE=<파일> CHATSEND_COLS=100
+    /// cargo test --bin honor-orchestrator pty::tests::실측_채팅_보내기 -- --ignored --exact --nocapture
+    #[test]
+    #[ignore]
+    fn 실측_채팅_보내기() {
+        use std::io::Write;
+        use std::time::{Duration, Instant};
+        let env = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.into());
+        let id = std::env::var("CHATSEND_ID").expect("CHATSEND_ID");
+        let (cols, rows) = (env("CHATSEND_COLS", "100").parse::<u16>().unwrap(), env("CHATSEND_ROWS", "40").parse::<u16>().unwrap());
+        let parser = Arc::new(Mutex::new(vt100::Parser::new(rows, cols, 0)));
+        let p2 = parser.clone();
+        let mut dim = crate::claude::DimAsItalic::default();
+        let (_m, writer, mut child) = super::spawn_pty(&super::attach_line(&crate::claude::claude_bin(), &id, false), None, cols, rows, move |b| {
+            dim.feed(&mut p2.lock().unwrap(), b);
+            true
+        })
+        .unwrap();
+        let w: super::SharedWriter = Arc::new(Mutex::new(writer));
+        std::thread::sleep(Duration::from_secs(4));
+        let dump = |tag: &str| {
+            let s = parser.lock().unwrap().screen().clone();
+            let body: Vec<String> = s.rows(0, cols).collect();
+            let keep: Vec<&String> = body.iter().filter(|l| !l.trim().is_empty()).collect();
+            if let Ok(d) = std::env::var("CHATSEND_DUMP") {
+                let _ = std::fs::write(format!("{d}/{}.txt", tag.replace(' ', "_")), body.join("\n"));
+            }
+            eprintln!("--- {tag} 입력칸={:?}\n{}", crate::claude::input_lines(&s), keep.iter().rev().take(14).rev().map(|l| format!("|{l}")).collect::<Vec<_>>().join("\n"));
+        };
+        dump("붙은 뒤");
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() % 100000;
+        let chunks = |t: &str| -> Vec<String> {
+            let mut out = Vec::new();
+            for (i, line) in t.split('\n').enumerate() {
+                if i > 0 { out.push("\x1b\r".to_string()); }
+                let cs: Vec<char> = line.chars().collect();
+                for c in cs.chunks(200) { out.push(c.iter().collect()); }
+            }
+            out
+        };
+        let send = |label: &str, text: String| {
+            let t = Instant::now();
+            let n = super::type_keys_seen(&w, &chunks(&text), Some(400), Some(&parser), crate::send_land::Landing::for_session(&id, &text), false).unwrap();
+            eprintln!("SEND {label} {:?} note={}", t.elapsed(), n.map_or("-".into(), |n| n.to_string()));
+        };
+        let paste = |path: &str| {
+            w.lock().unwrap().write_all(format!("\x1b[200~\"{path}\" \x1b[201~").as_bytes()).unwrap();
+        };
+        for case in env("CHATSEND_CASES", "short").split(',') {
+            let mk = format!("CS{stamp}{case}");
+            match case {
+                "short" => send(case, format!("{mk} .")),
+                "dot" => send(case, ".".into()),
+                // TUI 가 바쁜 동안(이벤트 루프 멈춤) 쳐진 글 + Enter — 세션 프로세스를 잠깐 세워 흉내 낸다(CHATSEND_PID, CHATSEND_STOP ms)
+                "lag" | "lagmulti" => {
+                    let pid = env("CHATSEND_PID", "");
+                    let stop_ms: u64 = env("CHATSEND_STOP", "1500").parse().unwrap();
+                    crate::platform::command("/bin/kill").args(["-STOP", &pid]).status().unwrap();
+                    let t = if case == "lag" { format!("{mk} 바쁠 때 친 말") } else { format!("{mk} 첫 줄\n둘째 줄") };
+                    let pid2 = pid.clone();
+                    let resume = std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_millis(stop_ms));
+                        crate::platform::command("/bin/kill").args(["-CONT", &pid2]).status().unwrap();
+                    });
+                    send(case, t);
+                    resume.join().unwrap();
+                }
+                "multi" => send(case, format!("{mk} 첫 줄\n둘째 줄\n셋째 줄")),
+                "long" => send(case, format!("{mk} {}", "길게 쓴 말이야 ".repeat(60))),
+                "img" => {
+                    paste(&env("CHATSEND_IMG", ""));
+                    std::thread::sleep(Duration::from_millis(400));
+                    send(case, format!("#img1 {mk} 이 그림 한 단어로"));
+                }
+                "file" => {
+                    paste(&env("CHATSEND_FILE", ""));
+                    std::thread::sleep(Duration::from_millis(400));
+                    send(case, format!("#file1 {mk} 이 파일 이름만"));
+                }
+                // 일하는 중에 그림 + 여러 줄 긴 말(11-09 회사 비서 캡처 모양) — 보낸 직후 화면을 덤프해 채팅 promptInput 에 넣어 본다
+                "busyimg" => {
+                    send("busyimg0", format!("{mk}0 1부터 150까지 숫자를 한 줄에 하나씩 써 줘(도구 없이)"));
+                    std::thread::sleep(Duration::from_millis(2500));
+                    paste(&env("CHATSEND_IMG", ""));
+                    std::thread::sleep(Duration::from_millis(400));
+                    send("busyimg1", format!("#img1 {mk}1 뭔가 이런 화면을 보여주는 느낌으로 업무를 해야도ㅅㄹ것 같거든?\n스페이스에서는 브라우저나 참모앱이 띄워져서 일을 하고 메모에 개인 기록도 해두고 참모랑 일하면서 참모가 막 오케스트레이션 하고 막 뭔말인지알지?"));
+                    std::thread::sleep(Duration::from_millis(1200));
+                    dump("busyimg 직후");
+                }
+                // 대기 말 빼기 실측 — 일하는 중 줄 선 말을 ↑ 로 입력칸에 꺼내 지우면 Claude 에 안 가나(11-09 사용자 'X 가 안 지워짐')
+                "dropq" => {
+                    let jsonl = env("CHATSEND_JSONL", "");
+                    let count = |m: &str| std::fs::read_to_string(&jsonl).unwrap_or_default().lines().filter(|l| l.contains(m) && l.contains("\"type\":\"user\"")).count();
+                    let ops = || std::fs::read_to_string(&jsonl).unwrap_or_default().lines().filter(|l| l.contains("queue-operation")).rev().take(4).map(|l| l.chars().take(140).collect::<String>()).collect::<Vec<_>>();
+                    send("dropq0", format!("{mk}0 이번만 예외야: Bash 도구로 sleep 25 를 실행한 뒤 받음이라고 답해"));
+                    std::thread::sleep(Duration::from_millis(6000));
+                    send("dropq1", format!("{mk}1 빼낼 말"));
+                    std::thread::sleep(Duration::from_millis(800));
+                    dump("dropq 줄 섬");
+                    w.lock().unwrap().write_all(b"\x1b[A").unwrap();
+                    std::thread::sleep(Duration::from_millis(800));
+                    dump("dropq 위 화살표 뒤");
+                    eprintln!("OPS {:?}", ops());
+                    let n = crate::claude::input_lines(parser.lock().unwrap().screen()).map_or(0, |b| b.concat().chars().count());
+                    w.lock().unwrap().write_all("\x7f".repeat(n + 8).as_bytes()).unwrap();
+                    std::thread::sleep(Duration::from_millis(800));
+                    dump("dropq 지운 뒤");
+                    std::thread::sleep(Duration::from_millis(25000));
+                    eprintln!("DROPQ 빼낸 말 기록={} (0 이어야)", count(&format!("{mk}1")));
+                    eprintln!("OPS {:?}", ops());
+                }
+                "busy" => {
+                    send("busy0", format!("{mk}0 1부터 120까지 숫자를 한 줄에 하나씩 써 줘(도구 없이)"));
+                    std::thread::sleep(Duration::from_millis(2500));
+                    dump("일하는 중");
+                    send("busy1", format!("{mk}1 ."));
+                    std::thread::sleep(Duration::from_millis(1500));
+                    send("busy2", format!("{mk}2 #img1 이거 좀 바꿔볼래"));
+                }
+                // 턴이 끝나는 순간 경합(chammo#18) — 짧게 답할 말을 보내고 d ms 뒤 다음 말. 기록에 몇 번 들어갔나 센다
+                "race" | "raceimg" => {
+                    let jsonl = env("CHATSEND_JSONL", "");
+                    let count = |m: &str| std::fs::read_to_string(&jsonl).unwrap_or_default().lines().filter(|l| l.contains(m) && (l.contains("\"type\":\"user\"") || l.contains("enqueue"))).count();
+                    for d in env("CHATSEND_DELAYS", "2000,2500,3000,3500,4000,4500,5000,6000").split(',') {
+                        let d: u64 = d.parse().unwrap();
+                        send("race-a", format!("{mk}a{d} 받음"));
+                        std::thread::sleep(Duration::from_millis(d));
+                        if case == "raceimg" {
+                            paste(&env("CHATSEND_IMG", ""));
+                            std::thread::sleep(Duration::from_millis(150));
+                        }
+                        send("race-b", format!("{mk}b{d} 응"));
+                        std::thread::sleep(Duration::from_millis(9000));
+                        let left = crate::claude::input_lines(parser.lock().unwrap().screen()).unwrap_or_default().concat();
+                        eprintln!("RACE d={d} a={} b={} 입력칸={left:?}", count(&format!("{mk}a{d}")), count(&format!("{mk}b{d}")));
+                        if !left.trim().is_empty() {
+                            w.lock().unwrap().write_all(b"\r").unwrap();
+                            std::thread::sleep(Duration::from_millis(6000));
+                        }
+                    }
+                }
+                _ => continue,
+            }
+            std::thread::sleep(Duration::from_millis(env("CHATSEND_GAP", "6000").parse().unwrap()));
+            dump(&format!("{case} 뒤"));
+        }
+        let _ = child.kill();
+    }
+
+    /// E2E(진짜 세션 하나, 2026-11-09 chat-send-stuck · chammo#18): 채팅 탭 길(type_keys_seen + 칸 화면 + 기록 확인)로 보내고,
+    /// 대화 기록(jsonl)에 그 말이 정확히 한 번·겹친 글 없이 들어갔나를 본다 — ① 보통 ② TUI 가 3초 멈춘 동안(느린 참모 흉내, SIGSTOP)
+    /// ③ Enter 가 안 먹고 입력칸에 남은 말 + 다시 보내기 ④ 같은데 화면 사본 없이(윈도우·엉킨 사본) ⑤ 일하는 중(대기열).
+    /// 일회용 세션: cd <팀 밖 신뢰 폴더> && claude --bg --dangerously-skip-permissions --model haiku -n e2e-send "어떤 말이 와도 '받음' 한 단어로만 답해"
+    /// E2E_SEND_ID=<짧은 id> E2E_SEND_PID=<agents 의 pid> cargo test --bin honor-orchestrator pty::tests::e2e_보낸_말은_기록에_한_번 -- --ignored --exact --nocapture
+    #[test]
+    #[ignore]
+    fn e2e_보낸_말은_기록에_한_번() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::time::{Duration, Instant};
+        let id = std::env::var("E2E_SEND_ID").expect("E2E_SEND_ID");
+        let pid = std::env::var("E2E_SEND_PID").expect("E2E_SEND_PID");
+        let (cols, rows) = (100u16, 40u16);
+        let parser = Arc::new(Mutex::new(vt100::Parser::new(rows, cols, 0)));
+        let p2 = parser.clone();
+        let mut dim = crate::claude::DimAsItalic::default();
+        // E2E_LAZY_CLIP=1 — 보기가 붙는 동안 클립보드 그림 주인이 답을 안 한다(2026-11-10 멈춤 모양). ① 이 끝나면 놓는다
+        let mut clip = std::env::var("E2E_LAZY_CLIP").ok().map(|_| crate::fake_claude::LazyClip::hang(15));
+        let last_out = Arc::new(AtomicU64::new(0));
+        let lo = last_out.clone();
+        let (_m, writer, mut child) = super::spawn_pty(&super::attach_line(&crate::claude::claude_bin(), &id, false), None, cols, rows, move |b| {
+            lo.store(super::now_ms(), Ordering::Relaxed);
+            dim.feed(&mut p2.lock().unwrap(), b);
+            true
+        })
+        .unwrap();
+        let w: super::SharedWriter = Arc::new(Mutex::new(writer));
+        super::calm_focus_when_drawn(w.clone(), last_out); // 앱 터미널 보기(pty_open)와 같이
+        let t0 = Instant::now();
+        while crate::claude::input_lines(parser.lock().unwrap().screen()).is_none() && t0.elapsed() < Duration::from_secs(15) {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let sid = crate::send_land::session_id_in(&crate::claude::agents_json().unwrap(), &id).expect("sessionId");
+        let jsonl = crate::claude::transcript_path(&sid).expect("기록 파일");
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() % 100000;
+        // 그 표식이 든 사람 말(user 글·대기열 enqueue)의 글들 — 대기열로 간 말은 enqueue 와 user 두 줄이라 사람 말 줄만 센다
+        let users = |mk: &str| -> Vec<String> {
+            std::fs::read_to_string(&jsonl).unwrap().lines().filter(|l| l.contains(mk)).filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()).filter(|v| v["type"] == "user").map(|v| match &v["message"]["content"] {
+                serde_json::Value::String(s) => s.clone(),
+                c => c.as_array().into_iter().flatten().filter_map(|x| x["text"].as_str()).collect::<Vec<_>>().join("|"),
+            }).collect()
+        };
+        let idle = || {
+            let t = Instant::now();
+            while t.elapsed() < Duration::from_secs(60) {
+                crate::claude::forget_agents();
+                let s = crate::claude::agents_json().unwrap_or_default();
+                if serde_json::from_str::<serde_json::Value>(&s).ok().and_then(|v| v.as_array().cloned()).unwrap_or_default().iter().any(|a| a["id"] == id.as_str() && a["status"] == "idle") {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(500));
+            }
+        };
+        let send = |text: &str, again: bool, screen: bool| -> super::TypeNote {
+            // 목록 읽기(claude agents)가 바쁜 맥에서 한 번씩 실패한다 — 그땐 앱도 확인만 건너뛴다. 시험은 다시 묻는다
+            let land = (0..5).find_map(|_| crate::send_land::Landing::for_session(&id, text).or_else(|| {
+                crate::claude::forget_agents();
+                std::thread::sleep(Duration::from_millis(500));
+                None
+            }));
+            assert!(land.is_some(), "기록 자리를 찾아야 한다");
+            let n = super::type_keys_seen(&w, &[text.to_string()], Some(400), screen.then_some(&parser), land, again).unwrap();
+            let n = n.unwrap_or_default();
+            eprintln!("SEND {text:?} again={again} screen={screen} → {n}");
+            n
+        };
+        let check = |mk: &str, text: &str| {
+            let t = Instant::now();
+            while users(mk).is_empty() && t.elapsed() < Duration::from_secs(20) {
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            std::thread::sleep(Duration::from_secs(2));
+            let got = users(mk);
+            eprintln!("CHECK {mk} → {got:?}");
+            assert_eq!(got.len(), 1, "{mk}: 정확히 한 번 — {got:?}");
+            assert!(crate::send_land::land_norm(&got[0]).matches(&crate::send_land::land_norm(text)).count() == 1, "{mk}: 겹친 글 없이 — {got:?}");
+        };
+        // ① 보통
+        idle();
+        let mk = format!("E2E{stamp}a");
+        let n = send(&format!("{mk} 보통 말"), false, true);
+        assert_eq!(n.landed, Some(true));
+        check(&mk, &format!("{mk} 보통 말"));
+        if let Some(c) = clip.take() {
+            assert!(!c.was_asked(), "보기가 붙어도 세션이 클립보드를 보지 않아야(포커스 나감)");
+        }
+        // ② TUI 가 3초 멈춘 동안 — 화면 사본은 친 글을 못 보지만 기록으로 끝을 안다(다시 치지 않는다)
+        idle();
+        let mk = format!("E2E{stamp}b");
+        crate::platform::command("/bin/kill").args(["-STOP", &pid]).status().unwrap();
+        let pid2 = pid.clone();
+        let go = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(3000));
+            crate::platform::command("/bin/kill").args(["-CONT", &pid2]).status().unwrap();
+        });
+        let n = send(&format!("{mk} 바쁠 때 친 말"), false, true);
+        go.join().unwrap();
+        assert!(!n.retyped, "느린 TUI 에 다시 치면 두 번 간다: {n:?}");
+        check(&mk, &format!("{mk} 바쁠 때 친 말"));
+        // ③ Enter 가 안 먹어 입력칸에 남은 말(Enter 없이 쳐 둠) → 다시 보내기
+        idle();
+        let mk = format!("E2E{stamp}c");
+        let text = format!("{mk} 남은 말");
+        super::type_keys_seen(&w, &[text.clone()], None, Some(&parser), None, false).unwrap();
+        std::thread::sleep(Duration::from_millis(800));
+        let n = send(&text, true, true);
+        assert!(n.again, "남은 그 말이면 치지 않는다: {n:?}");
+        check(&mk, &text);
+        // ④ 같은데 화면 사본 없이 — Enter 먼저, 기록에 들어오면 끝
+        idle();
+        let mk = format!("E2E{stamp}d");
+        let text = format!("{mk} 남은 말 화면 없이");
+        super::type_keys_seen(&w, &[text.clone()], None, Some(&parser), None, false).unwrap();
+        std::thread::sleep(Duration::from_millis(800));
+        let n = send(&text, true, false);
+        assert_eq!((n.again, n.landed), (true, Some(true)), "{n:?}");
+        check(&mk, &text);
+        // ⑤ 일하는 중 — 대기열(enqueue)로 들어가도 들어간 것
+        idle();
+        let mk = format!("E2E{stamp}e");
+        send(&format!("{mk}0 1부터 60까지 숫자를 한 줄에 하나씩 써 줘(도구 없이)"), false, true);
+        std::thread::sleep(Duration::from_millis(1500));
+        let n = send(&format!("{mk}1 일하는 중에 보낸 말"), false, true);
+        assert_eq!(n.landed, Some(true), "대기열도 들어간 것: {n:?}");
+        check(&format!("{mk}1"), &format!("{mk}1 일하는 중에 보낸 말"));
         let _ = child.kill();
     }
 }

@@ -305,7 +305,7 @@ pub fn answer_knock(k: &Knock, hub_key: &str, devices: &Devices, add: impl FnOnc
         Ok(id) => id,
         Err(e) => return json!({ "ok": false, "error": "relay", "detail": e }),
     };
-    let p = Pairing { name: &k.name, home: k.home, prev: k.prev.as_deref(), peer: false };
+    let p = Pairing { name: &k.name, home: k.home, prev: k.prev.as_deref(), peer: false, chammo: None };
     match devices.pair_relay(&k.code, &p, Relay { device: relay.clone(), x: tun::b64(&k.x) }, now) {
         Some(token) => json!({ "ok": true, "token": token, "device": relay, "mac": mac }),
         None => {

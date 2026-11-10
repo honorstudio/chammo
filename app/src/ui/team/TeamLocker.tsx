@@ -570,7 +570,7 @@ export function TeamLocker({ teamId, team, people, follow, onFollow, tail, icon,
         {err && <div className="tmx-none">{err}</div>}
         {note && <div className="tmx-hint tlk-note" role="alert" onClick={() => setNote('')}>{note}</div>}
         {!trash && !room && keyWaitNote(lockedFiles(shown?.items ?? []), 'file') && <div className="tmx-hint">{keyWaitNote(lockedFiles(shown?.items ?? []), 'file')}</div>}
-        {!!v?.skipped.length && !trash && <div className="tmx-hint">{tr(`${v.skipped.join(', ')} — 보안 번호 확인 전이라 새 파일을 아직 못 받아요`, `${v.skipped.join(', ')} can't receive new files until their security number is confirmed`)}</div>}
+        {!!v?.skipped.length && !trash && <div className="tmx-hint">{tr(`${v.skipped.join(', ')} — 아직 새 파일을 못 받아요`, `${v.skipped.join(', ')} can't receive new files yet`)}</div>}
 
         {(tiles.length > 0 || folderIn) && (
           <div className="lk-fgrid tlk-fgrid">

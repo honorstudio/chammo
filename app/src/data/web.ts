@@ -185,6 +185,8 @@ export const listSessionsRaw = makeTagTail((since, signal) => getText(`/api/sess
 /** 계정 칸 — 이름·요금제·사용량·쉬는 때만(맥이 이메일·토큰을 안 낸다). 읽기는 domain/phoneAccounts readPhoneAccounts */
 /** 짝지은 다른 기기의 카드(ADR 0011) — 이 맥이 거쳐 읽고, 누른 답은 이 맥이 사람 길로 그 기기에 넘긴다 */
 export const readPeerCards = () => getJson<import('../domain/remoteCards').PeerCardsRow[]>('/api/peer-cards');
+/** 이 폰 줄의 계정 확인(11-09) — 옛 맥은 404 */
+export const readPhoneAccount = () => getJson<import('../domain/phoneAccount').PhoneAccount>('/api/phone-account');
 /** 새 기기 허용 숫자 넣기(chammo-relay ADR 0007) — 숫자는 이 폰이 붙은 컴퓨터가 셈하고 폰은 넣기만 */
 export const phoneNumber: NumberApi = {
   open: (dev) => post<unknown>('/api/device-number', { dev, op: 'open' }).then(parseCardOpen),

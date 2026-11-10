@@ -202,6 +202,10 @@ pub struct Config {
     pub extra_projects: Vec<String>,
     /// 보관함 프로젝트 목록에서 뺀 폴더들(`~/…` 모양) — 목록에서만 숨긴다, 폴더·세션은 그대로('뺀 것'에서 되돌림, 2026-11-01 사용자)
     pub hidden_projects: Vec<String>,
+    /// 홈 밖이어도 참모 도구(show·locker·sheet)와 앱 미리보기가 열어도 되는 폴더·드라이브(`D:\Desktop`·`D:\`) — 화면에선 사람이 설정에서 더한다.
+    /// 참모도 config.json 을 고칠 수 있어 코드로 막지는 못한다(extraProjects 와 같은 수준, 안내문이 '사람에게 열어 달라'고 한다).
+    /// 홈을 품은 폴더(/·C:\·C:\Users)는 안 받는다(outside::open_roots). 윈도우 사용자는 일 파일을 D: 에 둔다(공개 이슈 #19)
+    pub open_folders: Vec<String>,
     pub github_user: String,
     /// 음성 모드로 읽을 명령. 글자를 마지막 인자로 받는다
     pub tts_command: String,
@@ -240,6 +244,7 @@ pub fn default_config(home: &str, data: &Path, lang: &str, exists: impl Fn(&str)
         hq_dir: under(&data, "hq"),
         extra_projects: Vec::new(),
         hidden_projects: Vec::new(),
+        open_folders: Vec::new(),
         github_user: String::new(),
         tts_command: "say".into(),
         memo_dir: under(&data, "memo"),
@@ -261,6 +266,7 @@ pub fn owner_config() -> Config {
         hq_dir: "~/Desktop/dev/honor-orchestrator".into(),
         extra_projects: Vec::new(),
         hidden_projects: Vec::new(),
+        open_folders: Vec::new(),
         github_user: "honorstudio".into(),
         tts_command: "~/bin/local-say".into(),
         memo_dir: "~/.config/holo/memo".into(),

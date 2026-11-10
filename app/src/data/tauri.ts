@@ -52,6 +52,8 @@ export type Config = {
   extraProjects: string[];
   /** 보관함 프로젝트 목록에서 뺀 폴더들(`~/…` 모양) — 목록에서만 숨긴다 */
   hiddenProjects?: string[];
+  /** 홈 밖이어도 참모 도구·미리보기가 열어도 되는 폴더·드라이브(사람이 설정에서만 더한다, 공개 이슈 #19) */
+  openFolders?: string[];
   hqDir: string;
   githubUser: string;
   ttsCommand: string;
@@ -140,7 +142,9 @@ export const writePty = (id: number, data: string) => invoke<void>('pty_write', 
 /** 앱이 세션에 글 치기 — 조각마다 6ms, enterMs 면 쉬고 Enter. Rust 가 TYPE_LOCK 을 잡아 다른 치기 길과 안 섞인다(끝나면 풀린다) */
 /** 보내기 블랙박스 한 줄(notify.log chat-send) — 글 내용을 넣지 않는다 */
 export const chatSendLog = (line: string) => { void invoke<void>('chat_send_log', { line }).catch(() => {}); };
-export const typePty = (id: number, keys: string[], enterMs?: number) => invoke<void>('pty_type', { id, keys, enterMs: enterMs ?? null });
+/** again = '다시 보내기' — Rust 가 입력칸에 남은 그 말이면 같은 글을 또 치지 않고 Enter 만(화면을 못 보면 Enter 먼저 넣고 기록으로 확인) */
+/** 돌려주는 'dead' = 그 칸 보기가 죽어 있었다(세션엔 새로 붙어 넣었다) — 칸을 다시 붙인다(PaneApi.reattach) */
+export const typePty = (id: number, keys: string[], enterMs?: number, again?: boolean) => invoke<string>('pty_type', { id, keys, enterMs: enterMs ?? null, again: again ?? null });
 export const resizePty = (id: number, cols: number, rows: number) => invoke<void>('pty_resize', { id, cols, rows });
 export const closePty = (id: number) => invoke<void>('pty_close', { id });
 /** 창이 뜰 때 한 번 — 이 창이 지난번(location.reload 전)에 열어 둔 pty 를 닫는다(React 정리가 안 돌아 attach 자식이 남았다) */

@@ -1,5 +1,6 @@
 import { tr } from '../i18n';
 import { IS_WIN } from './reader';
+import { pathKey } from './paths';
 // 환경 점검 판단 — Claude Code 버전이 확인된 범위인가, 설정을 끝내도 되나
 // Chammo 는 Claude Code 의 백그라운드 세션 기능(--bg·agents --json·attach)에 기댄다. 확인한 범위는 2.1.280 이상의 2.1.x
 
@@ -329,6 +330,20 @@ export function addExtraProject(list: string[], picked: string, devRoot: string,
   if (p.startsWith(root + '/')) return { list, note: 'inside' };
   if (list.some((x) => tildify(x.replace(/^~(?=\/|$)/, home), home) === p)) return { list, note: 'dup' };
   return { list: [...list, p] };
+}
+
+/** 열어도 되는 폴더(설정 › 참모)에 하나 더하기 — 공개 이슈 #19(윈도우 일 파일은 D:\Desktop). 앱 outside::open_roots 와 같은 규칙:
+ *  홈을 품은 곳(/·C:\·C:\Users)은 디스크 통째라 안 받고, 홈 안은 이미 열려 있다. 다른 드라이브 맨 위(D:\)는 받는다. 경로는 고른 모양 그대로 */
+export function addOpenFolder(list: string[], picked: string, home: string): { list: string[]; note?: 'dup' | 'inside' | 'holds-home' } {
+  const raw = picked.trim();
+  if (!raw) return { list };
+  const k = pathKey(raw);
+  const h = pathKey(home);
+  const within = (a: string, b: string) => a === b || a.startsWith(`${b}/`);
+  if (within(h, k)) return { list, note: 'holds-home' };
+  if (within(k, h)) return { list, note: 'inside' };
+  if (list.some((x) => pathKey(x) === k)) return { list, note: 'dup' };
+  return { list: [...list, raw] };
 }
 
 /** 점검의 Claude 로그인 줄 */

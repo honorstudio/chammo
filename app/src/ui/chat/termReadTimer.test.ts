@@ -48,6 +48,6 @@ describe('가만히 있을 땐 화면을 덜 읽는다(11-06 perf-bench 가만�
     expect(chat).toMatch(/useEffect\(\(\) => \{ stirred\.current = Date\.now\(\); \}, \[draft, attached, pending\.length, pollMs\]\);/);
   });
   it('일 표시(첨부·위 줄 글·선택 창·붙이는 중·요약 중)가 있으면 바쁨', () => {
-    expect(chat).toMatch(/busyRef\.current = attached\.length > 0 \|\| !!termText \|\| !!dialog \|\| pasting \|\| compacting;/);
+    expect(chat).toMatch(/busyRef\.current = attached\.length > 0 \|\| !!termRead \|\| !!dialog \|\| pasting \|\| compacting;/); // 화면에서 읽은 그대로(낡은 읽기도 바쁨 — 0.4초로 다시 읽어 금방 바로잡는다)
   });
 });

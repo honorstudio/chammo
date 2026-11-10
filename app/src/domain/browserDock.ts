@@ -38,15 +38,28 @@ export const browserKey = (profile: string) => `b:${profile}`;
 export const browserOfPick = (pick: string) => (pick.startsWith('b:') ? pick.slice(2) : null);
 
 /** 칸 더보기 차례 — 헤드리스면 '크롬에서 보기'(창이 없다) 대신 회색 안내 한 줄. 끄기는 늘 맨 안쪽(사람용 하나, 보통은 참모·세션이 끈다) */
-export type PaneMenuKey = 'chrome' | 'headless' | 'desk' | 'unshow' | 'signed' | 'unsigned' | 'copy' | 'close';
-/** win = 윈도우 숨은 데스크톱 상태(agent_tabs desk·shown) — 숨은 화면이면 회색 안내 + '보이는 창으로 열기', 꺼냈으면 '숨은 화면으로 돌려놓기' */
+export type PaneMenuKey = 'chrome' | 'headless' | 'desk' | 'signed' | 'unsigned' | 'copy' | 'close';
+/** win = 윈도우 숨은 데스크톱 상태(agent_tabs desk·shown) — 숨은 화면이면 회색 안내 + '보이는 창으로 열기', 꺼냈으면 메뉴엔 없고 툴바 '칸으로 돌려놓기'(backToPane) */
 export type DeskState = { desk: boolean; shown: boolean };
 /** mac = 패스키 탈출구(agent_tabs signable·signed, 2026-10-28) — ad-hoc 사본엔 맥 패스키가 없어 '이번만 구글 크롬으로 열기', 바꿔 뒀으면 '참모 브라우저로 돌아가기' */
 export type SignedState = { signable: boolean; signed: boolean; auto?: boolean };
 export function paneMenuKeys(headless: boolean, hasUrl: boolean, win?: DeskState, mac?: SignedState): PaneMenuKey[] {
-  const first: PaneMenuKey[] = headless ? ['headless'] : win?.shown ? ['unshow'] : win?.desk ? ['desk', 'chrome'] : ['chrome'];
+  const first: PaneMenuKey[] = headless ? ['headless'] : win?.shown ? [] : win?.desk ? ['desk', 'chrome'] : ['chrome'];
   const signed: PaneMenuKey[] = headless || !mac ? [] : mac.signed ? ['unsigned'] : mac.signable ? ['signed'] : [];
   return [...first, ...signed, ...(hasUrl ? (['copy'] as const) : []), 'close'];
+}
+
+/** 칸 툴바에 '크롬에서 보는 중' + '칸으로 돌려놓기'(agent_hide)를 둘까 — 크롬 창을 꺼내 둔 동안(사람이 '크롬에서 보기'로 연 것도, 2026-11-09 사용자).
+ *  칸에서 못 누르는 드문 크롬 자체 풍선은 꺼내서 크롬에서 닫고 여기로 돌아온다. 윈도우 '숨은 화면으로 돌려놓기' 메뉴도 이리로 옮김 */
+export function backToPane(shown: boolean, headless: boolean): boolean {
+  return shown && !headless;
+}
+
+/** 칸에 '크롬이 띄운 창' + '크롬에서 보기' 한 줄을 둘까(2026-11-10 사용자) — 칸 그림엔 크롬 자체 창(계정·카드 저장 풍선, 펼침 목록, 자동 완성 목록)이 비치는데
+ *  칸 누름·키는 페이지로만 가서 못 다룬다(맥 마우스 이벤트도 크롬이 안 받는다). 꺼내서 크롬에서 다루고 툴바 '칸으로 돌려놓기'(backToPane)로 돌아온다.
+ *  native = agent_tabs.native(Rust 가 창 목록으로 본다). 꺼낸 동안·헤드리스·네 차례 카드가 떠 있으면 안 띄운다(카드가 먼저) */
+export function nativeLine(native: boolean, shown: boolean, headless: boolean, hasCard: boolean): boolean {
+  return native && !shown && !headless && !hasCard;
 }
 
 /** 사람 차례 카드에 '보이는 창에서 열기'를 둘까 — 윈도우 숨은 데스크톱에서 세션이 부른 때만(패스키·Windows Hello·OS 파일 창은 숨은 화면에선 사람이 못 본다) */

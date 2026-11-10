@@ -998,6 +998,11 @@ body > .dash-preview:not(.placed) { transition: none !important; }
 .sp-n { color: var(--text-3); font-weight: 500; }
 .sp-link { all: unset; cursor: pointer; margin-left: auto; font-size: 11.5px; font-weight: 500; color: var(--text-3); }
 .sp-link:hover { color: var(--text); }
+/* 꺼진 세션 탭(2026-11-10) — 가운데에 이름 + 한 줄 + 아이콘 둘(다시 켜기·탭 닫기) */
+.sp-dead { margin: auto; padding: 40px 16px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
+.sp-dead-name { font-size: 16px; color: var(--text); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-dead-line { font-size: 13px; color: var(--text-3); }
+.sp-dead-acts { display: flex; gap: 8px; margin-top: 6px; }
 .sp-box ul { margin: 0; padding: 0 0 0 14px; display: flex; flex-direction: column; gap: 4px; color: var(--text-2); line-height: 1.45; }
 .sp-box li.doing { color: var(--text); font-weight: 600; }
 .sp-box em { font-style: normal; color: var(--text-3); margin-left: 6px; }

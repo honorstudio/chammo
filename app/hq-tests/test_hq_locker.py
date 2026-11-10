@@ -30,9 +30,11 @@ class Rules(unittest.TestCase):
         fx = json.loads(RULES.read_text(encoding='utf-8'))
         self.assertEqual(fx['big'], locker.BIG)
         home, data = '/h', '/h/.chammo'
-        settled = [os.path.join(home, s) for s in fx['settled']]
+        at = lambda p: (os.path.join(data, 'attach', p[len('@attach/'):]) if p.startswith('@attach/')
+                        else os.path.join('/out', p[len('@out/'):]) if p.startswith('@out/') else os.path.join(home, p))
+        settled = [at(s) for s in fx['settled']]
         for p, size, want in fx['decide']:
-            real = os.path.join(data, 'attach', p[len('@attach/'):]) if p.startswith('@attach/') else os.path.join(home, p)
+            real = at(p)
             self.assertEqual(locker.decide(real, size, home, data, settled), want, p)
         for name, fb, want in fx['names']:
             self.assertEqual(locker.safe_name(name, fb), want, name)
@@ -97,6 +99,30 @@ class Cli(unittest.TestCase):
             self.assertEqual(code, 1, a)
             self.assertTrue(err.startswith('locker: '), err)
         self.assertEqual([n for n in os.listdir(self.mine) if not n.startswith('.') and not os.path.isdir(os.path.join(self.mine, n))], [])
+
+    def test_설정에서_연_폴더와_홈_밖_프로젝트는_넣고_나머지_홈_밖은_이유와_거절(self):
+        # 공개 이슈 #19 — 참모 길은 사람이 연 폴더(openFolders)·홈 밖 devRoot 까지만. 둘 다 자리 잡은 곳이라 바로가기(통째 복사 안 함, 앱과 같다)
+        base = os.path.dirname(self.home)
+        D, dev = os.path.join(base, 'D'), os.path.join(base, 'dev')
+        put(os.path.join(D, 'Desktop', '매출 11월.xlsx'), '엑셀')
+        put(os.path.join(dev, 'shop', 'cut.png'), 'c')
+        put(os.path.join(base, 'other', 'x.pdf'), 'x')
+        put(os.path.join(self.data, 'config.json'), json.dumps({'devRoot': dev, 'openFolders': [D, base, '/', self.home]}))
+        code, out, err = self.run_('add', os.path.join(D, 'Desktop', '매출 11월.xlsx'), os.path.join(dev, 'shop', 'cut.png'))
+        self.assertEqual(code, 0, err)
+        got = os.path.join(self.mine, '매출 11월.xlsx')
+        self.assertEqual(os.readlink(got), os.path.join(D, 'Desktop', '매출 11월.xlsx'), '열어 둔 폴더 파일은 바로가기')
+        self.assertEqual(pathlib.Path(got).read_text(encoding='utf-8'), '엑셀')
+        self.assertEqual(os.readlink(os.path.join(self.mine, 'cut.png')), os.path.join(dev, 'shop', 'cut.png'), 'devRoot 는 바로가기')
+        code, _, err = self.run_('add', os.path.join(base, 'other', 'x.pdf'))
+        self.assertEqual(code, 1)
+        self.assertIn('Settings', err)
+        self.assertIn('열어도 되는 폴더', err)
+        self.assertEqual(locker.open_of(self.home, self.data), [D], '홈을 품은 곳·맨 위·홈 자체는 안 받는다')
+        # devRoot 가 홈을 품은 곳이면(scripts/app project add C:\\Users 같은) 그 아래 홈 밖 파일은 안 받는다
+        put(os.path.join(self.data, 'config.json'), json.dumps({'devRoot': base, 'extraProjects': ['/']}))
+        code, _, err = self.run_('add', os.path.join(base, 'other', 'x.pdf'))
+        self.assertEqual(code, 1, err)
 
     def test_주인을_모르면_멈추고_to_로_고른다(self):
         put(os.path.join(self.home, 'Downloads', 'a.md'), '# a')

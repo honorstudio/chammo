@@ -14,7 +14,7 @@ fn send(f: &Fake, text: &str) -> (std::io::Result<()>, SendNote) {
     let look = || f.screen.lock().unwrap().screen().clone();
     let mut g = wr.lock().unwrap();
     let mut note = SendNote::default();
-    let r = type_into("t", &mut **g, Some(&shown), Some(&look), &typed_segs(text), &mut note);
+    let r = type_into("t", &mut **g, Some(&shown), Some(&look), &typed_segs(text), None, &mut note);
     (r, note)
 }
 
@@ -85,7 +85,7 @@ fn 끝내_입력칸에서_안_빠지면_실패로_돌려준다() {
     let shown = p.screen().clone();
     let look = || shown.clone();
     let mut note = SendNote::default();
-    let r = type_into("t", &mut Rec(got.clone()), Some(&shown), Some(&look), &typed_segs(text), &mut note);
+    let r = type_into("t", &mut Rec(got.clone()), Some(&shown), Some(&look), &typed_segs(text), None, &mut note);
     assert!(r.is_err(), "실패여야 폰이 '전달 안 됨' + 다시 보내기를 띄운다");
     assert!(note.left && note.enters == 3, "{note:?}");
     assert_eq!(String::from_utf8_lossy(&got.lock().unwrap()), "\r\r\r", "같은 말이 남아 있으면 다시 치지 않고 Enter 만");
@@ -98,7 +98,7 @@ fn 선택_창이_떠_있으면_치지_않고_실패() {
     let shown = p.screen().clone();
     let look = || shown.clone();
     let mut note = SendNote::default();
-    let r = type_into("t", &mut Rec(got.clone()), Some(&shown), Some(&look), &typed_segs("1 이거 보내"), &mut note);
+    let r = type_into("t", &mut Rec(got.clone()), Some(&shown), Some(&look), &typed_segs("1 이거 보내"), None, &mut note);
     assert!(r.is_err());
     assert!(note.dialog, "{note:?}");
     assert!(got.lock().unwrap().is_empty(), "한 글자도 안 친다");
@@ -125,7 +125,7 @@ fn 친_글을_못_본_말은_화면_모양을_남긴다_글_내용_없이() {
     let shown = p.screen().clone();
     let look = || shown.clone();
     let mut note = SendNote::default();
-    let r = type_into("t", &mut Rec(got.clone()), Some(&shown), Some(&look), &typed_segs(text), &mut note);
+    let r = type_into("t", &mut Rec(got.clone()), Some(&shown), Some(&look), &typed_segs(text), None, &mut note);
     assert!(r.is_ok(), "못 봐도 전처럼 믿는다 — '미안 오락가락해서'는 seen=false 인데 들어갔다");
     assert!(!note.seen);
     assert_eq!(note.shape, "box:0:5>box:0:5", "{note:?}");
@@ -140,13 +140,13 @@ fn 입력칸이_없는_화면도_갈린다_그림자_없이_빈_화면도() {
     let shown = p.screen().clone();
     let look = || shown.clone();
     let mut note = SendNote::default();
-    let _ = type_into("t", &mut Rec(got), Some(&shown), Some(&look), &typed_segs("말"), &mut note);
+    let _ = type_into("t", &mut Rec(got), Some(&shown), Some(&look), &typed_segs("말"), None, &mut note);
     assert_eq!(note.shape, "nobox:0:1>nobox:0:1", "{note:?}");
     let (empty, got2) = still("");
     let blank = empty.screen().clone();
     let look2 = || blank.clone();
     let mut n2 = SendNote::default();
-    let _ = type_into("t", &mut Rec(got2), Some(&blank), Some(&look2), &typed_segs("말"), &mut n2);
+    let _ = type_into("t", &mut Rec(got2), Some(&blank), Some(&look2), &typed_segs("말"), None, &mut n2);
     assert_eq!(n2.shape, "nobox:0:0>nobox:0:0", "화면을 하나도 못 받은 attach: {n2:?}");
 }
 
@@ -157,4 +157,102 @@ fn 친_글을_봤으면_줄이_늘지_않는다() {
     assert!(note.seen);
     assert_eq!(note.shape, "");
     assert!(!note.to_string().contains("shape"), "{note}");
+}
+
+/// E2E(진짜 일회용 세션, 2026-11-10 phone-send-lost): 폰·스페이스 길(attach_type_noted — 매번 새로 붙는다)로 보낼 때
+/// 클립보드 그림 주인이 답을 안 해도(2026-11-10 쉬는 세션이 한 시간 넘게 멈춘 모양) 쉬는 세션·일하는 세션 모두 기록에 정확히 한 번, 바로 들어간다.
+/// 고치기 전: 붙은 지 1초 뒤 Claude 가 클립보드를 동기로 봐 세션이 멈추고 landed=false — 주인이 끝날 때까지 기록에 없음.
+/// 일회용 세션: cd <팀 밖 신뢰 폴더> && claude --bg --dangerously-skip-permissions --model haiku -n e2e-send "어떤 말이 와도 '받음' 한 단어로만 답해"
+/// E2E_SEND_ID=<짧은 id> cargo test --bin honor-orchestrator claude::phone_send_tests::e2e_폰_길_클립보드_주인이_멈춰도_기록에_한_번 -- --ignored --exact --nocapture
+#[test]
+#[ignore]
+fn e2e_폰_길_클립보드_주인이_멈춰도_기록에_한_번() {
+    use crate::fake_claude::LazyClip;
+    use std::time::Instant;
+    let id = std::env::var("E2E_SEND_ID").expect("E2E_SEND_ID");
+    let sid = crate::send_land::session_id_in(&super::agents_json().unwrap(), &id).expect("sessionId");
+    let jsonl = super::transcript_path(&sid).expect("기록 파일");
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() % 100000;
+    // 그 표식이 든 사람 말(user) 줄의 글 — 대기열로 간 말은 enqueue 와 user 두 줄이라 user 만 센다
+    let users = |mk: &str| -> Vec<String> {
+        std::fs::read_to_string(&jsonl).unwrap().lines().filter(|l| l.contains(mk)).filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()).filter(|v| v["type"] == "user").filter_map(|v| v["message"]["content"].as_str().map(str::to_string)).collect()
+    };
+    let idle = || {
+        let t = Instant::now();
+        while t.elapsed() < Duration::from_secs(90) {
+            super::forget_agents();
+            let s = super::agents_json().unwrap_or_default();
+            if serde_json::from_str::<serde_json::Value>(&s).ok().and_then(|v| v.as_array().cloned()).unwrap_or_default().iter().any(|a| a["id"] == id.as_str() && a["status"] == "idle") {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+    };
+    let send = |text: &str| -> (Result<(), String>, SendNote, Duration) {
+        let t = Instant::now();
+        let (r, n) = super::attach_type_noted(&id, &typed_segs(text));
+        eprintln!("SEND {text:?} {:?} → {r:?} {n}", t.elapsed());
+        (r, n, t.elapsed())
+    };
+    // 앱 터미널 보기(xterm)가 사람이 다른 데로 가면 포커스 나감을 보낸다 — 그 뒤에 붙는 attach 가 꺼짐→켜짐 전환을 만든다(진짜 앱 모양).
+    // 세션이 이미 켜짐이면 전환이 없어 클립보드를 안 본다(고치기 전에도 통과해 버린다)
+    let blur = || {
+        let got = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let g2 = got.clone();
+        let (_m, w, child) = crate::pty::spawn_pty(&crate::pty::attach_line(&super::claude_bin(), &id, false), None, 100, 40, move |_| {
+            g2.store(true, std::sync::atomic::Ordering::Relaxed);
+            true
+        })
+        .unwrap();
+        let t = Instant::now();
+        while !got.load(std::sync::atomic::Ordering::Relaxed) && t.elapsed() < Duration::from_secs(8) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        std::thread::sleep(Duration::from_millis(400));
+        let mut w = w;
+        crate::pty::calm_focus(&mut *w);
+        std::thread::sleep(Duration::from_millis(500));
+        crate::pty::reap(child);
+    };
+    let once = |mk: &str, text: &str| {
+        let t = Instant::now();
+        while users(mk).is_empty() && t.elapsed() < Duration::from_secs(30) {
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        std::thread::sleep(Duration::from_secs(2));
+        let got = users(mk);
+        eprintln!("CHECK {mk} → {got:?}");
+        assert_eq!(got, vec![text.to_string()], "{mk}: 정확히 한 번, 겹친 글 없이");
+    };
+    // ① 쉬는 세션 — 주인이 25초 답을 안 한다. 그동안 들어가야 한다(늦게 들어가면 사람이 '다시 보내기'를 눌러 두 번 간다)
+    idle();
+    let mk = format!("PS{stamp}a");
+    let text = format!("{mk} ㄱㄱ");
+    {
+        blur();
+        let clip = LazyClip::hang(25);
+        let (r, n, took) = send(&text);
+        assert!(r.is_ok(), "{r:?}");
+        assert_eq!(n.landed, Some(true), "주인이 답을 안 하는 동안 기록에 들어가야: {n}");
+        assert!(took < Duration::from_secs(8), "바로: {took:?}");
+        once(&mk, &text);
+        assert!(!clip.was_asked(), "세션이 클립보드를 보지 않아야(포커스 나감)");
+    }
+    // ② 일하는 세션 — 대기열로 들어가도 들어간 것, 끝난 뒤 한 번
+    idle();
+    let mk = format!("PS{stamp}b");
+    let (r, _, _) = send(&format!("{mk}0 1부터 80까지 숫자를 한 줄에 하나씩 써 줘(도구 없이)"));
+    assert!(r.is_ok());
+    std::thread::sleep(Duration::from_millis(1500));
+    let text = format!("{mk}1 일하는 중 ㄱㄱ");
+    {
+        blur();
+        let clip = LazyClip::hang(25);
+        let (r, n, took) = send(&text);
+        assert!(r.is_ok(), "{r:?}");
+        assert_eq!(n.landed, Some(true), "대기열도 들어간 것: {n}");
+        assert!(took < Duration::from_secs(8), "바로: {took:?}");
+        once(&format!("{mk}1"), &text);
+        assert!(!clip.was_asked(), "세션이 클립보드를 보지 않아야(포커스 나감)");
+    }
 }

@@ -1,6 +1,6 @@
 {
-  "_": "보관함 넣기 규칙 표 — 앱(locker_fs.rs decide·safe_name)과 scripts/locker(파이썬)가 같은 표로 시험한다. 경로는 가짜 홈 기준, @attach 는 <데이터>/attach",
-  "settled": ["Desktop/dev"],
+  "_": "보관함 넣기 규칙 표 — 앱(locker_fs.rs decide·safe_name)과 scripts/locker(파이썬)가 같은 표로 시험한다. 경로는 가짜 홈 기준, @attach 는 <데이터>/attach, @out 은 홈 밖(윈도우 D: 드라이브 자리, 공개 이슈 #19)",
+  "settled": ["Desktop/dev", "@out/dev"],
   "big": 524288000,
   "decide": [
     ["Downloads/a.pdf", 10, "copy"],
@@ -12,7 +12,11 @@
     ["Downloads/촬영본.mov", 524288001, "link"],
     ["@attach/1-big.mov", 524288001, "copy"],
     ["Desktop/작업/old.key", 10, "copy"],
-    ["Music/a.mp3", 10, "link"]
+    ["Music/a.mp3", 10, "link"],
+    ["@out/Desktop/매출.xlsx", 10, "copy"],
+    ["@out/Desktop/촬영본.mov", 524288001, "copy"],
+    ["@out/dev/shop/cut.png", 10, "link"],
+    ["@out/dev/shop/big.mov", 524288001, "link"]
   ],
   "names": [
     ["../위험", "id", "-위험"],

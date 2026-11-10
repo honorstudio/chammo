@@ -173,17 +173,31 @@ pub fn roots_from(home: &Path, dev_root: &str, extra: &[String], home_str: &str)
         }
         let Ok(real) = Path::new(&crate::config::expand(home_str, c.trim())).canonicalize() else { continue };
         let real = crate::platform::clean_path(real);
-        if real.is_dir() && real.parent().is_some() && !out.contains(&real) {
+        // 홈을 품은 곳(/Users·C:\Users)은 디스크 통째와 같다 — 맨 위처럼 안 받는다(outside::open_roots 와 같은 규칙)
+        let holds_home = home.canonicalize().map(crate::platform::clean_path).is_ok_and(|h| h.starts_with(&real));
+        if real.is_dir() && real.parent().is_some() && !holds_home && !out.contains(&real) {
             out.push(real);
         }
     }
     out
 }
 
-/// 지금 설정 기준 user 폴더들(roots_from)
+/// 지금 설정 기준 user 폴더들(roots_from) + 사람이 설정에서 연 폴더(openFolders) + 사람이 붙인 사본(<데이터>/attach — 데이터 폴더가 홈 밖이어도).
+/// scripts/show user_roots 와 같은 규칙(공개 이슈 #19)
 pub fn user_roots() -> Vec<PathBuf> {
     let c = crate::config::current();
     let mut out = roots_from(&home(), &c.dev_root, &c.extra_projects, &crate::platform::home());
+    for r in crate::outside::open_roots(&home(), &c.open_folders, &crate::platform::home()) {
+        if !out.contains(&r) {
+            out.push(r);
+        }
+    }
+    if let Ok(a) = crate::config::data_file("attach").canonicalize() {
+        let a = crate::platform::clean_path(a);
+        if !out.iter().any(|r| a.starts_with(r)) {
+            out.push(a);
+        }
+    }
     // 내 메모는 데이터 폴더가 홈 밖(CHAMMO_HOME)이어도 문서 페이지로 연다
     if let Ok(notes) = crate::notes::dir().canonicalize() {
         let notes = crate::platform::clean_path(notes);
@@ -595,7 +609,7 @@ pub fn forget(label: &str) {
 /// 마크다운·글 파일 원문 (홈 폴더 안만)
 #[tauri::command]
 pub fn read_doc_text(path: String) -> Result<String, String> {
-    let p = user_path(&path).ok_or(tr("홈 폴더나 프로젝트 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder or a project folder can be opened. The same message appears if the file is missing."))?;
+    let p = user_path(&path).ok_or(tr("홈·프로젝트 폴더나 설정 › 참모 › 열어도 되는 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder, a project folder or a folder added in Settings › Assistant › Folders it may open can be opened. The same message appears if the file is missing."))?;
     read_utf8(&p)
 }
 
@@ -632,7 +646,7 @@ pub fn stamp_of(p: &Path) -> Option<String> {
 /// 열어 둔 문서의 도장 — 지워졌거나 이름이 바뀌었으면 오류
 #[tauri::command]
 pub fn doc_stamp(path: String) -> Result<String, String> {
-    let p = user_path(&path).ok_or(tr("홈 폴더나 프로젝트 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder or a project folder can be opened. The same message appears if the file is missing."))?;
+    let p = user_path(&path).ok_or(tr("홈·프로젝트 폴더나 설정 › 참모 › 열어도 되는 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder, a project folder or a folder added in Settings › Assistant › Folders it may open can be opened. The same message appears if the file is missing."))?;
     stamp_of(&p).ok_or_else(|| tr("파일을 못 읽었어", "Could not read the file").into())
 }
 
@@ -664,7 +678,7 @@ pub(crate) fn tmp_beside(p: &Path) -> std::path::PathBuf {
 /// 돌려주는 값 = 쓴 뒤 파일 도장
 #[tauri::command]
 pub fn write_doc_text(path: String, text: String, expected: Option<String>) -> Result<String, String> {
-    let p = user_path(&path).ok_or(tr("홈 폴더나 프로젝트 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder or a project folder can be opened. The same message appears if the file is missing."))?;
+    let p = user_path(&path).ok_or(tr("홈·프로젝트 폴더나 설정 › 참모 › 열어도 되는 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder, a project folder or a folder added in Settings › Assistant › Folders it may open can be opened. The same message appears if the file is missing."))?;
     if !editable(&p) {
         return Err(tr("마크다운·글 파일만 고칠 수 있어", "Only Markdown and text files can be edited").into());
     }
@@ -682,7 +696,7 @@ pub fn keep_doc_version(path: String, text: String, tag: Option<String>) -> Resu
             let q = Path::new(&path);
             Some(user_path(q.parent()?.to_str()?)?.join(q.file_name()?))
         })
-        .ok_or(tr("홈 폴더나 프로젝트 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder or a project folder can be opened. The same message appears if the file is missing."))?;
+        .ok_or(tr("홈·프로젝트 폴더나 설정 › 참모 › 열어도 되는 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder, a project folder or a folder added in Settings › Assistant › Folders it may open can be opened. The same message appears if the file is missing."))?;
     let dir = history_dir(&p).ok_or(tr("history 폴더를 못 만들었어", "Could not create the history folder"))?;
     // 분마다 한 장(같은 분이면 새 판으로 덮는다 — 파일이 없는 동안 칠 때마다 쌓이지 않게). 이름은 keep_history 와 같은 분 단위로 시작해
     // 오래된 것부터 지우는 정렬(이름 순)에서 제자리에 선다
@@ -797,7 +811,7 @@ pub async fn office_html(path: String) -> Result<String, String> {
     if !cfg!(target_os = "macos") {
         return Err(mac_only_preview());
     }
-    let p = user_path(&path).ok_or(tr("홈 폴더나 프로젝트 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder or a project folder can be opened. The same message appears if the file is missing."))?;
+    let p = user_path(&path).ok_or(tr("홈·프로젝트 폴더나 설정 › 참모 › 열어도 되는 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder, a project folder or a folder added in Settings › Assistant › Folders it may open can be opened. The same message appears if the file is missing."))?;
     tauri::async_runtime::spawn_blocking(move || {
         let out = crate::platform::command("/usr/bin/textutil").args(["-convert", "html", "-stdout"]).arg(&p).output().map_err(|e| e.to_string())?;
         if !out.status.success() { return Err(String::from_utf8_lossy(&out.stderr).into_owned()); }
@@ -810,7 +824,7 @@ pub async fn office_html(path: String) -> Result<String, String> {
 /// PDF 원본 바이트 — 미리보기(pdf.js)가 페이지를 직접 그려 페이지로 가고 글을 반짝인다(짚어 보여 주기). 홈 안만
 #[tauri::command]
 pub fn read_doc_bytes(path: String) -> Result<tauri::ipc::Response, String> {
-    let p = user_path(&path).ok_or(tr("홈 폴더나 프로젝트 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder or a project folder can be opened. The same message appears if the file is missing."))?;
+    let p = user_path(&path).ok_or(tr("홈·프로젝트 폴더나 설정 › 참모 › 열어도 되는 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder, a project folder or a folder added in Settings › Assistant › Folders it may open can be opened. The same message appears if the file is missing."))?;
     std::fs::read(p).map(tauri::ipc::Response::new).map_err(|e| e.to_string())
 }
 
@@ -836,7 +850,7 @@ pub async fn page_doc(path: String) -> Result<String, String> {
     if !cfg!(target_os = "macos") {
         return Err(mac_only_preview());
     }
-    let p = user_path(&path).ok_or(tr("홈 폴더나 프로젝트 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder or a project folder can be opened. The same message appears if the file is missing."))?;
+    let p = user_path(&path).ok_or(tr("홈·프로젝트 폴더나 설정 › 참모 › 열어도 되는 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder, a project folder or a folder added in Settings › Assistant › Folders it may open can be opened. The same message appears if the file is missing."))?;
     tauri::async_runtime::spawn_blocking(move || {
         let dir = page_doc_dir(&crate::config::data_file("page-doc"), &p);
         let find = || -> Option<PathBuf> {
@@ -927,7 +941,7 @@ pub async fn ql_thumb(path: String, px: Option<u32>) -> Result<String, String> {
     if !cfg!(any(target_os = "macos", windows)) {
         return Err(mac_only_preview());
     }
-    let p = user_path(&path).ok_or(tr("홈 폴더나 프로젝트 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder or a project folder can be opened. The same message appears if the file is missing."))?;
+    let p = user_path(&path).ok_or(tr("홈·프로젝트 폴더나 설정 › 참모 › 열어도 되는 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder, a project folder or a folder added in Settings › Assistant › Folders it may open can be opened. The same message appears if the file is missing."))?;
     // 카드는 480(2배 화면 240칸), 리더(크게 보기)는 1600 — 카드가 1600 PNG 를 풀어 그리던 걸 줄였다(2026-11-01)
     let px = thumb_px(px);
     tauri::async_runtime::spawn_blocking(move || {
@@ -1157,7 +1171,7 @@ fn read_show_tail() -> String {
 /// 스페이스 편집기에 넣은 그림 — 문서 옆 assets/ 에 저장하고 문서 기준 상대 경로를 돌려준다(md 에 그대로 적힌다)
 #[tauri::command]
 pub fn save_asset(doc_path: String, name: String, bytes: Vec<u8>) -> Result<String, String> {
-    let doc = user_path(&doc_path).ok_or(tr("홈 폴더나 프로젝트 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder or a project folder can be opened. The same message appears if the file is missing."))?;
+    let doc = user_path(&doc_path).ok_or(tr("홈·프로젝트 폴더나 설정 › 참모 › 열어도 되는 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder, a project folder or a folder added in Settings › Assistant › Folders it may open can be opened. The same message appears if the file is missing."))?;
     let dir = doc.parent().ok_or("no parent")?.join("assets");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let file = asset_name(&name, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0));
@@ -1169,7 +1183,7 @@ pub fn save_asset(doc_path: String, name: String, bytes: Vec<u8>) -> Result<Stri
 /// 앱 창이 파일 끌기를 먼저 가로채서 편집기(BlockNote)가 못 받았다(2026-10-01 사용자)
 #[tauri::command]
 pub fn copy_asset(doc_path: String, src: String) -> Result<String, String> {
-    let doc = user_path(&doc_path).ok_or(tr("홈 폴더나 프로젝트 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder or a project folder can be opened. The same message appears if the file is missing."))?;
+    let doc = user_path(&doc_path).ok_or(tr("홈·프로젝트 폴더나 설정 › 참모 › 열어도 되는 폴더 안의 파일만 열 수 있어요. 파일이 없어도 같은 안내가 나와요.", "Only files inside the home folder, a project folder or a folder added in Settings › Assistant › Folders it may open can be opened. The same message appears if the file is missing."))?;
     copy_asset_into(&doc, Path::new(&src), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0))
 }
 
@@ -1191,8 +1205,20 @@ pub fn save_attach(name: String, bytes: Vec<u8>) -> Result<String, String> {
     let dir = crate::config::data_file("attach");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let file = asset_name(&name, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0));
-    let p = dir.join(file);
-    std::fs::write(&p, bytes).map_err(|e| e.to_string())?;
+    // 같은 밀리초에 같은 이름(여러 장 붙여넣기)이면 덮어쓰지 않고 옆 이름 — create_new 라 있는 자리엔 안 쓴다
+    let mut p = dir.join(&file);
+    let mut n = 1;
+    let mut f = loop {
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&p) {
+            Ok(f) => break f,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && n < 100 => {
+                p = dir.join(format!("{n}-{file}"));
+                n += 1;
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    };
+    std::io::Write::write_all(&mut f, &bytes).map_err(|e| e.to_string())?;
     Ok(p.to_string_lossy().into_owned())
 }
 

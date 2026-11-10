@@ -3,7 +3,7 @@
 // 예약 판을 열면 시트는 예약 담당 참모로(domain/mobile routineOrch)
 import { MemoTab } from './MemoTab';
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { getEnv, getPushLast, listBrowsers, listSessionsRaw, NoKeyError, phoneDiag, readShowLog, readTasksSince, routinesList, teamViaMac, type MobileEnv } from '../../data/web';
+import { getEnv, getPushLast, listBrowsers, listSessionsRaw, NoKeyError, phoneDiag, readPhoneAccount, readShowLog, readTasksSince, routinesList, teamViaMac, type MobileEnv } from '../../data/web';
 import { PhoneTeam, usePhoneTeam } from './PhoneTeam';
 import { chatFiles, showOwnerOf, type ChatFile } from '../../domain/chatFiles';
 import { titleOf } from '../../domain/reader';
@@ -25,7 +25,7 @@ import { askRef } from '../refBus';
 import { ModelChipRow, VoiceMode } from './ComposerExtras';
 import { usePhoneVoice } from './usePhoneVoice';
 import { MessageList } from './MessageList';
-import { DirectCards, PeerCards, PhoneAskCards, usePhoneDirect } from './DirectCards';
+import { DirectCards, PeerCards, PhoneAccountNote, PhoneAskCards, usePhoneDirect } from './DirectCards';
 import { askPlaced } from '../../domain/agentAsk';
 import { askName as browserAskName } from '../../domain/agentBrowser';
 import { needsAnswer } from '../../domain/directAsk';
@@ -47,6 +47,7 @@ import { orchVars } from '../../domain/orchTheme';
 import { useMobileChat } from './useMobileChat';
 import { useOrchAsks } from './useOrchAsks';
 import { useMemoPoll, usePoll } from './usePoll';
+import { hidePayGates, type PhoneAccount } from '../../domain/phoneAccount';
 import { useViewport, type Viewport } from './useViewport';
 import { BrandMark } from '../avatar';
 import { BOOT_LIMIT_MS, bootDiag, failWord, envFromCache, envIsWin, ENV_KEY, splashDeadline, splashDone, type BootBase } from '../../domain/boot';
@@ -79,14 +80,14 @@ const sameEnv = (a: MobileEnv | null, b: MobileEnv) => !!a && JSON.stringify(a) 
 type View = 'dash' | 'routines' | 'sessions' | 'office';
 /** 사무실(방 그림·도트 팩)은 열 때만 받는다 — 메인 묶음이 안 커지게 */
 const PhoneOffice = lazy(() => import('./PhoneOffice'));
-type SpaceProps = { far?: { devices: FarPick[]; onPick: (d: FarPick) => void }; orch: Session; orchs: Session[]; sessions: Session[]; events: TaskEvent[]; waiting: Waiting[]; waitSent: WaitSent; ask: { lead: string; q: string } | null; ctx: Record<string, Ctx>; env: MobileEnv; snap: Snap; setSnap: (s: Snap) => void; onPick: (id: string) => void; onTalk: (id: string) => void; onStopped: (id: string) => void; wake: Wake; lives: Live[]; push: Push; view: View; setView: (v: View) => void; vp: Viewport; stateAt: number; lines: Record<string, string>; jump: Jump | null };
+type SpaceProps = { far?: { devices: FarPick[]; onPick: (d: FarPick) => void }; orch: Session; orchs: Session[]; sessions: Session[]; events: TaskEvent[]; waiting: Waiting[]; waitSent: WaitSent; ask: { lead: string; q: string } | null; ctx: Record<string, Ctx>; env: MobileEnv; snap: Snap; setSnap: (s: Snap) => void; onPick: (id: string) => void; onTalk: (id: string) => void; onStopped: (id: string) => void; wake: Wake; lives: Live[]; push: Push; view: View; setView: (v: View) => void; vp: Viewport; stateAt: number; lines: Record<string, string>; jump: Jump | null; acct: PhoneAccount | null };
 /** 눌린 알림이 시킨 것 — n 이 바뀔 때마다 한 번(같은 참모면 OrchSpace 가 그대로라 시트를 여기서 닫는다) */
 type Jump = { n: number; card?: string; picker?: boolean };
 
 /** 입력칸 최대 높이 — 7줄(16px 글자 기준 176px)과 보이는 화면 26%(반 시트의 40%) 중 작은 쪽 */
 const inputMax = (h: number) => Math.min(176, Math.round(h * 0.26));
 
-function OrchSpace({ far, orch, orchs, sessions, events, waiting, waitSent, ask, ctx, env, snap, setSnap, onPick, onTalk: talkTo, onStopped, wake, lives, push, view, setView, vp, stateAt, lines, jump }: SpaceProps) {
+function OrchSpace({ far, orch, orchs, sessions, events, waiting, waitSent, ask, ctx, env, snap, setSnap, onPick, onTalk: talkTo, onStopped, wake, lives, push, view, setView, vp, stateAt, lines, jump, acct }: SpaceProps) {
   const [picker, setPicker] = useState(false);
   // 알림이 짚은 카드 — 결정(w:)은 채팅 끝에 그 카드를 따로, 직접 카드(d:)는 이미 채팅 끝에 있어 펼친다. 보던 시트·파일은 닫는다(2026-10-23)
   const [jumped, setJumped] = useState<string | null>(null);
@@ -168,6 +169,7 @@ function OrchSpace({ far, orch, orchs, sessions, events, waiting, waitSent, ask,
           onRef={(who, text) => askRef(orch.id, { kind: 'chat', who, text })} />
         {/* 직접 답하기 카드 — 맡긴 세션이 본인 승인을 기다릴 때(채팅 끝, 입력칸 바로 위) */}
         <PhoneAskCards asks={browserAsks} sessions={sessions} focus={jumped?.startsWith('b:') ? jumped : undefined} />
+        <PhoneAccountNote a={acct} />
         <DirectCards mine={direct} sessions={sessions} focus={jumped?.startsWith('d:') ? jumped.slice(2) : undefined} />
         {jumpedWait && <div className="m-direct"><WaitCard w={jumpedWait} orchs={orchs} sent={waitSent} card={jumped!} /></div>}
         {orch.id === orchs[0]?.id && <PeerCards />}
@@ -226,7 +228,9 @@ export function MobileApp() {
   const events = useMemo(() => parseTaskLog(taskLog), [taskLog]);
   const { asks, lines } = useOrchAsks(orchs);
   // 폰에서 답한 결정 카드는 맥 기록이 따라올 때까지 숨긴다 — 칩 숫자·시트가 같이(waitSent)
-  const waitingRaw = useMemo(() => waitingList(orchs, asks, events), [orchs, asks, events]);
+  // 이 폰 줄의 계정 확인 상태 — 직통 줄이면 결제 관문 물음도 결제 카드처럼 숨기고 한 줄 안내(PhoneAccountNote, QA 0.4.11 문제 2-1)
+  const acct = usePoll<PhoneAccount | null>(() => readPhoneAccount().catch(() => null), 10000, null);
+  const waitingRaw = useMemo(() => hidePayGates(waitingList(orchs, asks, events), acct), [orchs, asks, events, acct]);
   const waitSent = useWaitSent(waitingRaw);
   const waiting = useMemo(() => shownWaiting(waitingRaw, waitSent), [waitingRaw, waitSent]);
   const [error, setError] = useState<string | null>(null);
@@ -460,7 +464,7 @@ export function MobileApp() {
           onPaste={(text) => { askRef(orch.id, { kind: 'chat', who: tr('내 메모', 'My notes'), text, plain: true }); setTab('orch'); }} /> : tab === 'team'
           ? <PhoneTeam kb={vp.kb} api={teamViaMac} t={team} orch={{ id: orch.id, name: orch.name || env.assistantName }} open={teamRoom} />
           : <OrchSpace key={orch.id} far={farDevs.length ? { devices: farDevs, onPick: setFar } : undefined} orch={orch} orchs={orchs} sessions={sessions} events={events} waiting={waiting} waitSent={waitSent} ask={asks[orch.id] ?? null} ctx={ctx} env={env} snap={snap} setSnap={setSnap} vp={pageVp} stateAt={stateAt} lines={lines}
-            view={view} setView={setView} onPick={go} onTalk={talkTo} onStopped={stopped} wake={wake} lives={lives} push={push} jump={jump} />}
+            view={view} setView={setView} onPick={go} onTalk={talkTo} onStopped={stopped} wake={wake} lives={lives} push={push} jump={jump} acct={acct} />}
       </div>
       {!vp.kb && (
         <nav ref={tabBar} className="m-tabbar" role="tablist" aria-label={tr('화면', 'Screens')}>

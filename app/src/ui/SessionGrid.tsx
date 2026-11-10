@@ -10,7 +10,7 @@ import { enterTask, escPlan, typeQueue } from '../domain/chatQueue';
 import { HOLD_MAX, LINK_WAIT, paneLinks } from '../domain/paneLinks';
 import { linkNotice, slowLinks } from '../domain/busyGate';
 import { useBusy } from './busyNow';
-import { sendOnLink, type AttachPhase, type LinkState } from '../domain/attachExit';
+import { deadPane, sendOnLink, type AttachPhase, type LinkState } from '../domain/attachExit';
 import { AdoptCard } from './AdoptCard';
 import { statusKind } from '../domain/statusMark';
 import { sessionStatus, type ActivityStatus } from '../domain/status';
@@ -108,7 +108,7 @@ const retakes = new Map<string, () => void>();
 /** 붙은 보기에 치는 데 쓰는 최대 — 긴 글도 몇 초면 끝난다. 넘기면 버리고 다음 말로(채팅은 입력을 되살린다, 2026-10-24 윈도우 '어떤 말도 안 감') */
 const TYPE_TIMEOUT = 30_000;
 /** 다 쳤으면 true, 못 쳤으면(보기가 안 붙음·치기 거절·시간 넘김) false */
-function typeAndSend(id: string, text: string, enter = true): Promise<boolean> {
+function typeAndSend(id: string, text: string, enter = true, again = false): Promise<boolean> {
   // 블랙박스 — 이 길엔 로그가 없어 '전달 안 됨'이 어디서 멈췄는지 못 가렸다(2026-11-05). 글 내용은 안 남긴다
   const asked = Date.now();
   const note = (s: string) => chatSendLog(`${id} ${s}`);
@@ -123,14 +123,16 @@ function typeAndSend(id: string, text: string, enter = true): Promise<boolean> {
     // 아직 붙는 중이면(attach 안내 줄뿐·맥이 바빠 목록을 못 읽음) 더 기다린다 — 80초에 버려 '전달 안 됨'이 떴다(2026-10-26 부팅 직후). 끊김이 굳으면 drop 으로 바로 놓인다
     const api = await links.wait(id, LINK_WAIT, () => { const st = linkNow.get(id); return (st === 'attaching' || st === 'reattaching') && Date.now() - from < HOLD_MAX; });
     note(`type quiet=${api.quiet?.() ?? '-'} waited=${Date.now() - asked}`);
-    await api.type(typedChunks(text), enter ? enterDelay(text.length, IS_WIN) : undefined);
+    const r = await api.type(typedChunks(text), enter ? enterDelay(text.length, IS_WIN) : undefined, again || undefined);
+    // 칸 보기가 죽어 있었다 — 세션엔 Rust 가 새로 붙어 넣었다(기록 확인). 칸을 다시 붙인다(EOF 가 안 와 저절로는 안 붙는다)
+    if (r === 'dead') { note('dead-view reattach'); api.reattach?.(); }
   }, HOLD_MAX + LINK_WAIT + TYPE_TIMEOUT).then(() => { note(`ok ms=${Date.now() - asked}`); return true; }, (e: unknown) => { note(`fail ${e instanceof Error ? e.message : String(e)} ms=${Date.now() - asked}`); return false; });
 }
 
 /** 입력칸 지우기(백스페이스 n개) — 앞 글을 치는 중이면 그 뒤에. 지운 뒤 칠 글은 typeAndSend 가 다시 이 뒤에 줄 선다 */
 function clearInput(id: string, api: PaneApi | undefined, n: number) {
   if (!api) return;
-  void typing.push(id, () => api.type(['\x7f'.repeat(n)]));
+  void typing.push(id, () => api.type(['\x7f'.repeat(n)]).then(() => {}));
 }
 
 /** 세션에 Esc 한 번 — Claude 는 쉴 때 Esc 두 번을 '입력칸 지우기'로 받아 걸린 말이 흔적 없이 지워졌다. 거른 건 false(domain/chatQueue escPlan) */
@@ -138,7 +140,7 @@ function escOnce(id: string, api: PaneApi | undefined): boolean {
   const now = Date.now();
   if (!api || !escPlan(now, escAt.get(id) ?? 0, typing.busyUntil(id))) return false;
   escAt.set(id, now);
-  void typing.push(id, () => api.type(['\x1b']));
+  void typing.push(id, () => api.type(['\x1b']).then(() => {}));
   return true;
 }
 const cumulative = (fr: number[]) => {
@@ -167,6 +169,23 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
     if (!r.ok) void pickLog(`--- ${new Date().toISOString()} ${s.name} want=${JSON.stringify(want)} why=${r.why}\n${(r.screen ?? []).join('\n')}`).catch(() => {});
     return r;
   };
+  // 죽은 보기 다시 붙이기 — 일하는 세션인데 칸이 오래 출력 0(deadPane). attach 가 세션 소켓이 끊긴 채 안 끝나면 EOF 가 안 와
+  // '다시 붙기'가 안 돌고, 앱은 그 칸을 live 로 보고 쳐서 말이 사라졌다(2026-11-10 개발 담당 90분). 같은 칸은 2분에 한 번만
+  const revived = useRef(new Map<string, number>());
+  useEffect(() => {
+    const t = window.setInterval(() => {
+      const now = Date.now();
+      for (const [id, api] of panes.current) {
+        const s = sessionsRef.current.find((x) => x.id === id);
+        const q = api.quiet?.() ?? -1;
+        if (!s || !api.reattach || !deadPane(s.state, q) || now - (revived.current.get(id) ?? 0) < 120_000) continue;
+        revived.current.set(id, now);
+        chatSendLog(`${id} dead-view reattach quiet=${q}`);
+        api.reattach();
+      }
+    }, 15_000);
+    return () => window.clearInterval(t);
+  }, []);
   // 폰 입력창 모델 칩(App appctl modelPick) — 이 격자에 그 세션 창이 있을 때만
   useEffect(() => {
     const on = (e: Event) => {
@@ -439,8 +458,8 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
                           link={linkOf[id]}
                           pickModel={(want) => pickFor(id, s, want)}
                           state={s.state}
-                          send={(text) => {
-                            const sent = typeAndSend(id, text);
+                          send={(text, again) => {
+                            const sent = typeAndSend(id, text, true, again);
                             last.current = id;
                             onFocusSession?.(id);
                             return sent;

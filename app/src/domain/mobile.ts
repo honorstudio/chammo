@@ -329,8 +329,8 @@ export function waitAnswer(w: Waiting, answer: string): string | null {
 /** 카드 열쇠 — 결정은 일 id, 그 밖은 참모·종류·시각(시트를 다시 열어도 같은 카드로 알아본다) */
 export const waitKey = (w: Waiting) => (w.kind === 'decide' && w.taskId ? `task:${w.taskId}` : `${w.kind}:${w.orch}:${w.ts}`);
 
-/** 폰에서 답한 카드(열쇠 → 답·보낸 때). fail = 결정 기록이 실패해 되돌림(카드가 다시 보이고 그 답을 채워 둔다) */
-export type WaitSent = Record<string, { a: string; at: number; fail?: boolean }>;
+/** 폰에서 답한 카드(열쇠 → 답·보낸 때). fail = 결정 기록이 실패해 되돌림(카드가 다시 보이고 그 답을 채워 둔다), why = 실패 이유 한 줄(없으면 '다시 눌러') */
+export type WaitSent = Record<string, { a: string; at: number; fail?: boolean; why?: string }>;
 
 /** 답한 결정 카드는 맥 기록(answer)이 따라올 때까지 숨긴다. 참모 물음 카드는 남겨 '보냈어요'(참모가 일을 시작하면 빠진다) */
 export const shownWaiting = (list: Waiting[], sent: WaitSent) => list.filter((w) => w.kind !== 'decide' || !sent[waitKey(w)] || !!sent[waitKey(w)]!.fail);
@@ -349,10 +349,11 @@ export const dupAnswer = (sent: WaitSent, key: string, answer: string, now: numb
   return !!p && !p.fail && p.a === answer.trim() && now - p.at <= WAIT_DUP_MS;
 };
 
-/** 결정 답 기록 실패 — not waiting(이미 답함·다른 데서 답함)·too soon(방금 보냄)은 숨긴 채 글을 안 보낸다, 나머지(끊김·502)는 되돌려 다시 */
-export function answerFail(message: string): 'gone' | 'soon' | 'retry' {
+/** 결정 답 기록 실패 — not waiting(이미 답함·다른 데서 답함)·too soon(방금 보냄)은 숨긴 채 글을 안 보낸다,
+ *  account(직통 폰 줄이라 결제 관문 답이 막힘 — 다시 눌러도 안 된다)는 되돌려 이유를 보이고, 나머지(끊김·502)는 되돌려 다시 */
+export function answerFail(message: string): 'gone' | 'soon' | 'account' | 'retry' {
   const m = message.trim();
-  return m === 'not waiting' ? 'gone' : m === 'too soon' ? 'soon' : 'retry';
+  return m === 'not waiting' ? 'gone' : m === 'too soon' ? 'soon' : m.startsWith('account:') ? 'account' : 'retry';
 }
 
 /** 이미 켜진 참모를 눌렀을 때(서버 already) — 오류가 아니다, 그 참모로 옮긴다 */

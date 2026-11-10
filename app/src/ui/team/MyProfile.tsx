@@ -18,7 +18,7 @@ export function atOf(el: Element, width = 260): At {
   return window.innerHeight - r.bottom > 380 ? { left, top: r.bottom + 6 } : { left, bottom: Math.max(8, window.innerHeight - r.top + 6) };
 }
 
-function Card({ at, onClose, children, label }: { at: At; onClose: () => void; children: React.ReactNode; label: string }) {
+export function Card({ at, onClose, children, label }: { at: At; onClose: () => void; children: React.ReactNode; label: string }) {
   useEffect(() => {
     const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', k);

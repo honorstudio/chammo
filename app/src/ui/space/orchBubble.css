@@ -106,7 +106,7 @@ html.obd-root, html.obd-root body, html.obd-root #root { margin: 0; height: 100%
 .obd-badge.obb-badge { position: absolute; }
 html.obd-root .obb-fan { position: absolute; }
 /* 묻는 참모 배너 — 배지 옆, 누르면 그 참모 대화창(눌리는 버튼이라 pointer-events 를 막지 않는다) */
-.obd-peek { position: absolute; display: grid; grid-template-columns: 1fr auto; column-gap: 8px; align-items: center; min-height: 52px; box-sizing: border-box; padding: 7px 8px 7px 12px; border: 0; border-radius: 12px;
+.obd-peek { position: absolute; animation: obd-in .14s ease-out; display: grid; grid-template-columns: 1fr auto; column-gap: 8px; align-items: center; min-height: 52px; box-sizing: border-box; padding: 7px 8px 7px 12px; border: 0; border-radius: 12px;
   background: var(--surface); color: var(--text-2, var(--text)); font: inherit; font-size: 12px; line-height: 1.4; text-align: left; cursor: pointer; box-shadow: 0 6px 16px rgba(0, 0, 0, .16), 0 0 0 1px var(--line); }
 .obd-peek b { grid-column: 1; color: var(--text); font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .obd-peek span { grid-column: 1; }
@@ -137,7 +137,9 @@ html.obd-root .obb-fan { position: absolute; }
 .obd-tip { position: absolute; z-index: calc(var(--z-popover) + 1); transform: translateX(-50%); white-space: nowrap; font-size: 11px; font-weight: 600; color: var(--text); background: var(--surface); border-radius: 6px; padding: 2px 7px; box-shadow: 0 2px 8px rgba(0, 0, 0, .14), 0 0 0 1px var(--line); pointer-events: none; }
 .obb-fo.hot .obb-fn { opacity: 1; }
 .obd-who { flex: none; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 650; color: var(--text); }
-.obd-name { position: absolute; transform: translate(-50%, -100%); white-space: nowrap; font-size: 11.5px; font-weight: 650; color: var(--text); background: var(--surface); border-radius: 7px; padding: 2px 8px; box-shadow: 0 2px 8px rgba(0, 0, 0, .14), 0 0 0 1px var(--line); pointer-events: none; }
+/* 배너·별명은 살짝 나타난다 — 맥 창이 배지 칸에서 무대로 커지는 한 박자(IPC) 동안 잘린 첫 그림이 안 보이게(11-10) */
+@keyframes obd-in { from { opacity: 0; } }
+.obd-name { position: absolute; animation: obd-in .14s ease-out; transform: translate(-50%, -100%); white-space: nowrap; font-size: 11.5px; font-weight: 650; color: var(--text); background: var(--surface); border-radius: 7px; padding: 2px 8px; box-shadow: 0 2px 8px rgba(0, 0, 0, .14), 0 0 0 1px var(--line); pointer-events: none; }
 .obd-name.down { transform: translate(-50%, 0); }
 /* 대화창 안 채팅 칸 — 메인 '고른 칸' 진한 테두리는 칸이 하나뿐인 대화창엔 필요 없다(테두리째 대화창 둘레로 보였다) */
 .obd-body .pane, .obd-body .pane:focus-within { border-color: transparent; box-shadow: none; border-radius: 0; }

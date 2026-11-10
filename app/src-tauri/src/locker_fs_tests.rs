@@ -126,6 +126,58 @@ fn check_refuses_escapes() {
     assert!(check_add(&d.join("in.txt"), &w.ctx()).is_err());
 }
 
+/// 공개 이슈 #19 — 윈도우 사용자가 D:\Desktop 파일을 보관함·채팅에 끌어 놓으면 '홈 폴더 밖 파일은 못 넣어'로 막혔다.
+/// 사람이 준 파일(화면 길 locker_put)은 홈 밖도 사본으로, 참모·폰 길(check_add)은 그대로 막는다
+#[test]
+fn 사람이_준_홈_밖_파일은_사본으로_넣고_다른_길은_그대로_막는다() {
+    let w = W::new("given");
+    let out = tmp("given-D");
+    let f = out.join("Desktop/매출 11월.xlsx");
+    put(&f, "엑셀");
+    assert!(check_add(&f, &w.ctx()).unwrap_err().contains("홈 폴더 밖"), "참모·폰 길은 그대로");
+    assert_eq!(check_given(&f, &w.ctx()).unwrap(), std::fs::canonicalize(&f).unwrap());
+    let d = owner_dir(&w.root, "s-1", "운영").unwrap();
+    assert!(add(&w.ctx(), &d, "", &f).is_err());
+    let a = add_from(&w.ctx(), &d, "", &f, true).unwrap();
+    assert!(!a.link, "홈 밖은 별칭이 아니라 사본");
+    assert_eq!(a.path, d.join("매출 11월.xlsx"));
+    assert!(std::fs::symlink_metadata(&a.path).unwrap().is_file());
+    assert_eq!(std::fs::read_to_string(&f).unwrap(), "엑셀", "원본은 그대로");
+    // 사람이 줘도 나머지 규칙은 같다 — 폴더·없는 파일·상대 경로·데이터 폴더·홈 자체
+    assert!(check_given(&out.join("Desktop"), &w.ctx()).is_err());
+    assert!(check_given(&out.join("없음.xlsx"), &w.ctx()).is_err());
+    assert!(check_given(Path::new("Desktop/a.xlsx"), &w.ctx()).is_err());
+    assert!(check_given(&out.join("Desktop/../Desktop/매출 11월.xlsx"), &w.ctx()).is_err());
+    put(&w.data.join("config.json"), "{}");
+    assert!(check_given(&w.data.join("config.json"), &w.ctx()).is_err(), "데이터 폴더는 사람이 줘도 attach 만");
+    assert!(check_given(&w.home, &w.ctx()).is_err());
+    // 홈 밖 큰 파일은 통째 복사하지 않는다(희소 파일) — 자리 잡은 곳(열어 둔 폴더)이면 바로가기라 받는다
+    let big = out.join("Desktop/촬영본.mov");
+    std::fs::File::create(&big).unwrap().set_len(BIG + 1).unwrap();
+    assert!(check_given(&big, &w.ctx()).unwrap_err().contains("500MB"));
+    let opened = [w.dev.clone(), out.clone()];
+    let c = Ctx { home: &w.home, data: &w.data, root: &w.root, settled: &opened };
+    assert!(check_given(&big, &c).is_ok());
+    assert_eq!(decide(&std::fs::canonicalize(&big).unwrap(), BIG + 1, &c), Home::Link);
+    assert_eq!(decide(&std::fs::canonicalize(&f).unwrap(), 10, &c), Home::Link, "열어 둔 폴더 파일은 홈 안 문서처럼 바로가기");
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// 시험판처럼 데이터 폴더가 홈 밖(CHAMMO_HOME=C:\chammo-qa\data)이어도 채팅 첨부 사본은 넣는다 — 폰 사진·붙여 넣은 그림 길
+#[test]
+fn 데이터_폴더가_홈_밖이어도_첨부_사본은_넣는다() {
+    let w = W::new("attach-out");
+    let data = tmp("attach-out-data");
+    std::fs::create_dir_all(data.join("attach")).unwrap();
+    let c = Ctx { home: &w.home, data: &data, root: &w.root, settled: &[] };
+    put(&data.join("attach/1-phone.jpg"), "p");
+    assert!(check_add(&data.join("attach/1-phone.jpg"), &c).is_ok());
+    assert_eq!(decide(&data.join("attach/1-phone.jpg"), 1, &c), Home::Copy);
+    put(&data.join("keys.json"), "k");
+    assert!(check_add(&data.join("keys.json"), &c).is_err());
+    let _ = std::fs::remove_dir_all(&data);
+}
+
 #[test]
 fn decide_by_where_it_came_from() {
     let w = W::new("dec");
@@ -511,14 +563,17 @@ fn rules_match_shared_fixture() {
     let fx: serde_json::Value = serde_json::from_str(include_str!("locker_rules.fixture.json")).unwrap();
     assert_eq!(fx["big"].as_u64(), Some(BIG));
     let w = W::new("fx");
-    let settled: Vec<PathBuf> = fx["settled"].as_array().unwrap().iter().map(|s| w.home.join(s.as_str().unwrap())).collect();
+    let out = w.home.parent().unwrap().join(format!("{}-out", w.home.file_name().unwrap().to_string_lossy()));
+    let at = |p: &str| match (p.strip_prefix("@attach/"), p.strip_prefix("@out/")) {
+        (Some(n), _) => w.data.join("attach").join(n),
+        (_, Some(n)) => out.join(n),
+        _ => w.home.join(p),
+    };
+    let settled: Vec<PathBuf> = fx["settled"].as_array().unwrap().iter().map(|s| at(s.as_str().unwrap())).collect();
     let c = Ctx { home: &w.home, data: &w.data, root: &w.root, settled: &settled };
     for row in fx["decide"].as_array().unwrap() {
         let (p, len, want) = (row[0].as_str().unwrap(), row[1].as_u64().unwrap(), row[2].as_str().unwrap());
-        let real = match p.strip_prefix("@attach/") {
-            Some(n) => w.data.join("attach").join(n),
-            None => w.home.join(p),
-        };
+        let real = at(p);
         let got = if decide(&real, len, &c) == Home::Copy { "copy" } else { "link" };
         assert_eq!(got, want, "{p}");
     }
@@ -1162,4 +1217,14 @@ fn 이름의_보이지_않는_글자를_뺀다() {
         assert_eq!(safe_name_for("\u{202e}", "빈", win), "빈", "다 빠지면 대신 이름");
         assert_eq!(safe_name_for("회의록 v2.final.pdf", "_", win), "회의록 v2.final.pdf");
     }
+}
+
+#[test]
+fn 큰_홈_밖_파일_거절_문구는_설정_언어로() {
+    // QA 0.4.11 후보 8-4 — 영어 화면에서도 한국어로 나왔다(같은 뜻의 채팅 쪽 outside.rs 는 한·영 둘 다)
+    let p = std::path::Path::new("/Volumes/ext/sample.mov");
+    let en = big_outside_msg("en", p);
+    assert!(en.starts_with("Files over 500 MB") && en.ends_with("/Volumes/ext/sample.mov"), "{en}");
+    assert!(!en.chars().any(|c| ('가'..='힣').contains(&c)), "{en}");
+    assert!(big_outside_msg("ko", p).starts_with("500MB 넘는 홈 밖 파일은"));
 }

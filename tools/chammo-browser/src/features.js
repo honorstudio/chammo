@@ -37,6 +37,12 @@ function featureArgs(platform = process.platform) {
 // 플레이라이트가 끄는 HttpsUpgrades 와는 다른 길이고, 158 에선 기능 스위치(HttpsFirstBalancedModeAutoEnable)가 바이너리에서 빠져 실행 인자로는 못 끈다.
 // 설정 칸 https_first_balanced_mode_enabled=false 하나로 풀린다(맥 베타 158 실측 — 정식 156 은 원래 안 막음). 정식도 158 이 되면 같은 일이라 채널과 상관없이 넣는다.
 // 사람이 크롬 설정에서 켠 것(균형 true·엄격 https_only_mode_enabled true)은 그대로
+//
+// 또 크롬 자체 제안 풍선 끄기(2026-11-09 사용자 번역 풍선) — 칸 그림(SCK)엔 브라우저 창에 붙은 풍선까지 보이는데 칸 누름은 CDP 로 페이지에만 가서
+// 'Google 번역 · 영어/한국어 · ⋮ · X' 풍선을 못 닫았다. 플레이라이트가 넣는 --disable-features=Translate 는 크롬 베타 158 에서 안 먹는다(실측 — 영어 페이지에 '이 페이지를 번역하시겠습니까?' 창 237x87).
+// 설정 칸 translate.enabled=false 면 안 뜬다(실측). 같은 부류로 비밀번호 저장 제안(로그인은 CLAUDE.local.md 칸으로 한다)과 다운로드 풍선도 끈다 — OFFERS 목록.
+// 비밀번호는 저장 제안만 끈다: 이미 저장된 것 채우기·사이트 로그인 유지(쿠키)는 그대로. 주소·카드 자동 완성은 끄지 않는다(사용자 11-10 — 끄면 자동 완성 목록도 사라진다,
+// 카드 저장 풍선은 칸의 '크롬에서 보기' 길로). 사람이 크롬 설정에서 켠 것(칸이 true)은 안 건드린다
 const fs = require('fs');
 const path = require('path');
 
@@ -51,10 +57,34 @@ const notifyUnset = (prefs) => {
   return v !== BLOCK && v !== ALLOW;
 };
 
+/** 끄는 제안 풍선 — [설정 칸 경로, 무엇]. 칸이 비었을 때만 false 를 넣는다(사람이 켠 true·이미 끈 false 는 그대로) */
+const OFFERS = [
+  [['translate', 'enabled'], '번역 제안(이 페이지를 번역하시겠습니까?)'],
+  [['credentials_enable_service'], '비밀번호 저장 제안'],
+  [['download_bubble', 'partial_view_enabled'], '다운로드가 끝나면 뜨는 풍선'],
+];
+
+/** 아직 사람이 안 고른(칸이 boolean 이 아닌) 제안들 */
+const offersUnset = (prefs) => OFFERS.filter(([keys]) => {
+  let v = prefs;
+  for (const k of keys) v = isObj(v) ? v[k] : undefined;
+  return typeof v !== 'boolean';
+});
+
+/** 그 제안 칸에 false — 가는 길의 칸이 객체가 아니면 객체로 바꾼다 */
+function offerOff(prefs, keys) {
+  let o = prefs;
+  for (const k of keys.slice(0, -1)) {
+    if (!isObj(o[k])) o[k] = {};
+    o = o[k];
+  }
+  o[keys[keys.length - 1]] = false;
+}
+
 /** https 균형 모드를 끌 자리인가 — 사람이 아직 안 고른 프로필(칸 없음)이고 엄격 모드도 안 켰으면 */
 const httpsUnset = (prefs) => typeof prefs.https_first_balanced_mode_enabled !== 'boolean' && prefs.https_only_mode_enabled !== true;
 
-/** profileDir/Default/Preferences 에 signin.interception_enabled=false + 알림 기본 차단 + https 균형 모드 끔 — 'set'·'already'·'running'(안 씀)·'bad'(깨진 파일, 안 씀)·'error'. 던지지 않는다 */
+/** profileDir/Default/Preferences 에 signin.interception_enabled=false + 알림 기본 차단 + https 균형 모드 끔 + 제안 풍선(OFFERS) 끔 — 'set'·'already'·'running'(안 씀)·'bad'(깨진 파일, 안 씀)·'error'. 던지지 않는다 */
 function quietSignin(profileDir, { running = false } = {}) {
   if (running) return 'running';
   const file = path.join(profileDir, 'Default', 'Preferences');
@@ -67,8 +97,10 @@ function quietSignin(profileDir, { running = false } = {}) {
       if (!isObj(prefs)) return 'bad';
     }
     const signinOff = isObj(prefs.signin) && prefs.signin.interception_enabled === false;
-    if (signinOff && !notifyUnset(prefs) && !httpsUnset(prefs)) return 'already';
+    const offers = offersUnset(prefs);
+    if (signinOff && !notifyUnset(prefs) && !httpsUnset(prefs) && !offers.length) return 'already';
     if (httpsUnset(prefs)) prefs.https_first_balanced_mode_enabled = false;
+    for (const [keys] of offers) offerOff(prefs, keys);
     prefs.signin = { ...(isObj(prefs.signin) ? prefs.signin : {}), interception_enabled: false };
     if (notifyUnset(prefs)) {
       const prof = isObj(prefs.profile) ? prefs.profile : {};
@@ -133,4 +165,4 @@ async function dismissSigninBubble(port, WS = globalThis.WebSocket, limitMs = 50
   }
 }
 
-module.exports = { PLAYWRIGHT_DISABLED, KEYCHAIN_ARGS, featureArgs, quietSignin, dismissSigninBubble, BUBBLE_URL };
+module.exports = { PLAYWRIGHT_DISABLED, KEYCHAIN_ARGS, featureArgs, quietSignin, dismissSigninBubble, BUBBLE_URL, OFFERS };

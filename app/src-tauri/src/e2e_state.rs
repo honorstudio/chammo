@@ -515,10 +515,11 @@ pub fn audience(dir: &Path, kc: &dyn Store, http: &dyn Http, room: &str) -> Resu
     let roster = roster_with(dir, kc, http, &st, &r.team, h.as_ref())?;
     let my_acc = st.account.as_ref().map(|a| a.id.clone()).unwrap_or_default();
     if r.kind == "group" {
-        // 단톡방 — 받을 사람은 서명된 명부의 방 사람(서버 방 목록이 아니라). 바뀜·갈림·준비 전인 사람은 그 사람만 빼고 보낸다(결정 5)
+        // 단톡방 — 받을 사람은 서명된 명부의 방 사람(서버 방 목록이 아니라). 바뀜·갈림·준비 전인 사람은 그 사람만 빼고 보낸다(결정 5).
+        // 명부 '확인 전'(믿는 사슬로 못 이은 고리 — 다시 시작한 팀장의 초대·핀 뒤 뺀 기기 서명)은 거르지 않는다 — 처음 본 팀원은 믿는다(TOFU, ADR 0007 11-09)
         let others: Vec<_> = group_peers(&roster, &st, &r)?.into_iter().filter(|p| p.account != my_acc).collect();
         let mut sent_to = 0;
-        for peer in others.iter().filter(|p| p.confirmed) {
+        for peer in &others {
             if let Trust::Ok(pc) = chain_fresh(dir, kc, http, &st, &peer.account, h.as_ref())? {
                 a.to.extend(recipients(&pc));
                 a.peers.insert(peer.account.clone(), pc.head());
@@ -543,10 +544,6 @@ pub fn audience(dir: &Path, kc: &dyn Store, http: &dyn Http, room: &str) -> Resu
             Trust::Forked => return Err(format!("{} 의 기기 사슬이 갈려 보여 — 보내지 않았어(서버를 의심)", peer.display_name)),
             Trust::NoChain => return Err(format!("{} 은(는) 아직 종단 암호 준비 전이라 보내지 않았어 — 그 사람이 새 판으로 로그인해야 해", peer.display_name)),
             Trust::Unconfirmed(_) => return Err("상대 사슬을 확인하지 못했어".into()),
-        }
-        // 확인 전 멤버(확인 전 팀장의 초대로 들어옴 등) — 사슬이 괜찮아도 받아들이기 전엔 안 보낸다(계획 e2e-recover §9 S7)
-        if !peer.confirmed {
-            return Err(format!("{} 은(는) 아직 확인 전 멤버라 보내지 않았어 — 팀장 보안 번호를 받아들이면 보내요", peer.display_name));
         }
     }
     a.roster = roster.head();
@@ -589,19 +586,10 @@ fn seal_inner(dir: &Path, kc: &dyn Store, http: &dyn Http, room: &str, cid: &str
     e2e_envelope::seal(&keys, &meta, &inner, &a.to).map_err(|e| format!("봉투를 못 만들었어: {e:?}"))
 }
 
-/// 단톡방 사람(팀에서 안 빠진) — 명부 room 고리에서만. 명부에 그 방이 없거나 내가 방 사람이 아니면 못 쓴다
-pub(crate) const ROOM_UNCONFIRMED: &str = "이 팀챗은 보안 번호가 바뀐 사람이 만들거나 고쳐서 — 받아들이기 전엔 보내지 않아";
-
-/// 보내기·방 고치기용 — 확인 전 방(확인 전 사람이 만들거나 고친 방)은 받아들이기 전까지 안 쓴다
+/// 단톡방 사람(팀에서 안 빠진) — 명부 room 고리에서만. 명부에 그 방이 없거나 내가 방 사람이 아니면 못 쓴다.
+/// 확인 전 방(확인 전 사람이 만들거나 고친 방)도 보내고 받는다 — 방 고리는 그 방 사람 사슬 기기 서명이라 서버 혼자선 못 끼운다(TOFU, ADR 0007 11-09).
+/// 방 고치기(team_rooms::update_room)만 확인된 방 사람에서 이어 서명한다
 fn group_peers<'a>(roster: &'a Roster, st: &TeamState, r: &relay::Room) -> Result<Vec<&'a e2e_roster::RosterMember>, String> {
-    if roster.rooms.get(&r.id).is_some_and(|x| !x.confirmed) {
-        return Err(ROOM_UNCONFIRMED.into());
-    }
-    group_peers_any(roster, st, r)
-}
-
-/// 받기용 — 확인 전 방도 방 사람은 본다(받은 말엔 note 를 단다)
-fn group_peers_any<'a>(roster: &'a Roster, st: &TeamState, r: &relay::Room) -> Result<Vec<&'a e2e_roster::RosterMember>, String> {
     let room = roster.rooms.get(&r.id).ok_or("이 팀챗은 서명된 팀 명부에 없어 — 보내지·받지 않아")?;
     let me = st.teams.iter().find(|t| t.id == r.team).map(|t| t.member_id.as_str()).unwrap_or("");
     if !room.members.iter().any(|m| m == me) {
@@ -649,12 +637,7 @@ pub fn locker_people(dir: &Path, kc: &dyn Store, http: &dyn Http, st: &TeamState
         }
         let got = if m.active { chain_fresh(dir, kc, http, st, &m.account, h.as_ref())? } else { chain_of(dir, kc, http, st, &m.account, false)? };
         match got {
-            // 확인 전 멤버 — 받는 사람도 올린 사람 확인도 아니다(받아들이기 전, 계획 e2e-recover §9)
-            Trust::Ok(_) if !m.confirmed => {
-                if m.active {
-                    p.skipped.push(m.display_name.clone());
-                }
-            }
+            // 명부 '확인 전'이어도 사슬이 멀쩡하면 받는 사람·올린 사람 확인 둘 다(TOFU, ADR 0007 11-09 — 확인 전 팀원 몫 열쇠가 안 넘어가 그 팀원의 보관함 파일이 잠겼다)
             Trust::Ok(c) => {
                 add_signers(&mut p.signers, &c.ever);
                 if m.active {
@@ -662,8 +645,8 @@ pub fn locker_people(dir: &Path, kc: &dyn Store, http: &dyn Http, st: &TeamState
                 }
             }
             Trust::Changed(_) => {
-                // 바뀐 사람의 믿었던 앞부분 — 확인된 멤버였을 때만(확인 전 멤버의 처음 본 앞부분을 서명자로 쓰지 않게, 공격 리뷰 5)
-                if let Some(c) = trusted_chain(dir, &m.account).filter(|_| m.confirmed) {
+                // 바뀐 사람의 믿었던(처음 본) 앞부분 — 그 앞 기기가 올린 파일은 연다(TOFU, ADR 0007 11-09). 바뀐 뒤 새 기기는 저절로 받아들인 뒤에
+                if let Some(c) = trusted_chain(dir, &m.account) {
                     add_signers(&mut p.signers, &c.ever);
                 }
                 if m.active {
@@ -721,7 +704,6 @@ fn unwrap_as(dir: &Path, kc: &dyn Store, http: &dyn Http, st: &TeamState, m: &Va
     }
     // 보낸 계정이 이 방에 맞아야 — 내 기기끼리 방은 내 계정, 팀 방은 명부상 그 상대(또는 내 다른 기기)(리뷰 B 높음 4)
     let mut roster_head_ok = true;
-    let mut doubtful = false;
     if own {
         if account != my_acc {
             return Unwrapped::Failed("account".into());
@@ -730,7 +712,7 @@ fn unwrap_as(dir: &Path, kc: &dyn Store, http: &dyn Http, st: &TeamState, m: &Va
         let found = |roster: &Roster| {
             // 단톡방은 명부의 방 사람 중 하나, DM 은 그 상대
             let sender = if r.kind == "group" {
-                group_peers_any(roster, st, &r).ok().and_then(|ps| ps.into_iter().find(|p| p.account == account).cloned())
+                group_peers(roster, st, &r).ok().and_then(|ps| ps.into_iter().find(|p| p.account == account).cloned())
             } else {
                 roster.members.get(&r.peer).filter(|p| p.active && p.account == account).cloned()
             };
@@ -753,8 +735,7 @@ fn unwrap_as(dir: &Path, kc: &dyn Store, http: &dyn Http, st: &TeamState, m: &Va
         if account != my_acc && sender.is_none() {
             return Unwrapped::Failed("account".into());
         }
-        // 확인 전 사람이 보냈거나 확인 전 방이면 받되 기록만(넘기지 않음) — 받아들이기 전(계획 e2e-recover §9 S13)
-        doubtful = sender.is_some_and(|p| !p.confirmed) || (r.kind == "group" && roster.rooms.get(&r.id).is_some_and(|x| !x.confirmed));
+        // 명부 '확인 전' 사람·방의 말도 그대로 받는다(TOFU, ADR 0007 11-09) — 바뀜(사슬 신원이 바뀜)·갈림만 아래 사슬 판정이 note 를 단다
         roster_head_ok = head_ok;
     }
     // 같은 봉투를 새 seq 로 다시 넣기 거르기(리뷰 B 중간 6)
@@ -810,8 +791,6 @@ fn unwrap_as(dir: &Path, kc: &dyn Store, http: &dyn Http, st: &TeamState, m: &Va
     });
     if !c.hashes.contains(&meta.head) || !mine_ok || !roster_head_ok {
         note = "fork".into();
-    } else if doubtful && note.is_empty() {
-        note = "changed".into();
     }
     // 거르기 목록에서 버린 뒤 다시 넣기 막기 — 그만큼 오래된 봉투는 안 받는다. 적기에 실패하면 받지 않는다(다시 넣기 거름이 빠지니)
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);

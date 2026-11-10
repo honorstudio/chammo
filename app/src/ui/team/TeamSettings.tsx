@@ -4,7 +4,7 @@
 import { Fragment, useContext, useEffect, useRef, useState } from 'react';
 import { teamDelete, teamFeed, teamInvite, teamInvites, teamLeave, teamRemove, teamRename, teamRevokeInvites, teamSetPerms, teamTransfer, type OpenInvite, type TeamView } from '../../data/teamApi';
 import { teamIconSet } from '../../data/teamProfileApi';
-import type { SafetyPerson } from '../../domain/e2eSafety';
+import { safetyFlag, type SafetyPerson } from '../../domain/e2eSafety';
 import { personColor } from '../../domain/teamChat';
 import { lookNames, lookOf, statusLine } from '../../domain/teamProfile';
 import { canDeleteTeam, canDo, deleteAsk, leaveNote, memberRows, menuFor, PERM_CHIPS, switchTargets } from '../../domain/teamSettings';
@@ -12,7 +12,7 @@ import { tr } from '../../i18n';
 import { IconClose, IconCopy, IconMore, IconPencil } from '../Icons';
 import { IconButton } from '../kit/IconButton';
 import { Confirm, ContextMenu, type MenuItem } from '../OrchDialogs';
-import { SafetyPanel, SafetyState } from '../e2e/Safety';
+import { MemberCard } from './MemberCard';
 import { atOf, MyProfileCard, TeamIconCard, usePick, type At } from './MyProfile';
 import { Person, TeamMarkIcon } from './TeamFaces';
 import { ProfilesCtx } from './useProfiles';
@@ -53,9 +53,9 @@ export function TeamSettings({ view: given, onClose, onChanged, follow }: {
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   useEffect(() => { if (canInvite) void teamInvites(view.teamId).then(setInvites, () => setInvites(null)); }, [canInvite, link, view.teamId]);
-  // 보안 번호(시안 e2e-safety v1) — 멤버 줄 '확인됨'·번호 보기
+  // 보안 번호 — 평소엔 안 보이고 바뀐 사람 줄에만 한 줄, 비교는 팀원 자세히 보기 안에(11-09 사용자 "너무 복잡")
   const [safety, setSafety] = useState<SafetyPerson[]>([]);
-  const [numberOf, setNumberOf] = useState<string | null>(null);
+  const [about, setAbout] = useState<{ id: string; at: At; compare: boolean } | null>(null);
   const loadSafety = () => void teamFeed(1).then((f) => setSafety(f.safety ?? []), () => {});
   useEffect(loadSafety, []);
   const { board, reload } = useContext(ProfilesCtx);
@@ -113,7 +113,6 @@ export function TeamSettings({ view: given, onClose, onChanged, follow }: {
   const rowMenu = (r: (typeof rows)[number]): MenuItem[] => [
     ...(r.canPerms ? [{ label: tr('권한', 'Permissions'), run: () => setPermsOf((x) => (x === r.id ? null : r.id)) }] : []),
     ...(r.canTransfer ? [{ label: tr('팀장 넘기기', 'Hand over ownership'), run: () => setAsk({ kind: 'transfer', id: r.id, name: r.name }) }] : []),
-    ...(sp(r.id) ? [{ label: tr('보안 번호 보기', 'View safety number'), run: () => setNumberOf(r.id) }] : []),
     ...(r.canRemove ? [{ label: tr('팀에서 빼기', 'Remove'), danger: true, run: () => setAsk({ kind: 'remove', id: r.id, name: r.name }) }] : []),
   ];
   if (agentEdit) {
@@ -172,11 +171,13 @@ export function TeamSettings({ view: given, onClose, onChanged, follow }: {
         {rows.map((r) => {
           const l = lookOf(board, r.id, r.name);
           const sub = statusLine(l) || [r.devices.join(' · '), r.me && view.deliverTo ? tr(`받는 참모 ${seenName(view.deliverTo)}`, `assistant ${seenName(view.deliverTo)}`) : ''].filter(Boolean).join(' · ');
+          const sp1 = sp(r.id);
+          const flag = !r.me && sp1 ? safetyFlag(sp1, Date.now()) : null;
           const items = rowMenu(r);
           const who = (
             <>
-              <b>{l.name}{r.me && <span className="tmx-tag">{tr('나', 'me')}</span>}{r.badge && <span className="tmx-tag">{r.badge === 'owner' ? tr('팀장', 'owner') : r.badge === 'all' ? tr('전체 권한', 'full access') : tr('매니저', 'manager')}</span>}{sp(r.id) && <SafetyState p={sp(r.id)!} />}</b>
-              {sub && <span>{sub}</span>}
+              <b>{l.name}{r.me && <span className="tmx-tag">{tr('나', 'me')}</span>}{r.badge && <span className="tmx-tag">{r.badge === 'owner' ? tr('팀장', 'owner') : r.badge === 'all' ? tr('전체 권한', 'full access') : tr('매니저', 'manager')}</span>}</b>
+              {flag ? <span className="sn-flag">{flag}</span> : sub && <span>{sub}</span>}
             </>
           );
           // 칩 하나 누르기 — 누르는 즉시 칩을 바꾸고(낙관적) 서버는 뒤에서. 저장 중엔 그 줄 칩만 잠그고, 실패면 되돌리고 한 줄(10-31 사용자 승인 —
@@ -201,7 +202,7 @@ export function TeamSettings({ view: given, onClose, onChanged, follow }: {
               <Person name={l.name} color={personColor(r.name)} size={30} photo={l.photo} status={l.status} />
               {r.me
                 ? <button className="tmp-who" aria-haspopup="dialog" aria-label={tr(`내 프로필 — ${statusLine(l) || '상태 정하기'}`, `My profile — ${statusLine(l) || 'set a status'}`)} onClick={(e) => setMine(atOf(e.currentTarget))}>{who}</button>
-                : <span className="tmp-who">{who}</span>}
+                : <button className="tmp-who" aria-haspopup="dialog" onClick={(e) => setAbout({ id: r.id, at: atOf(e.currentTarget), compare: !!flag })}>{who}</button>}
               {items.length > 0 && (
                 <IconButton className="tmp-more" label={tr(`${l.name} 더보기`, `More for ${l.name}`)} aria-haspopup="menu"
                   onClick={(e) => { const b = e.currentTarget.getBoundingClientRect(); setMore({ x: Math.round(b.left), y: Math.round(b.bottom + 4), items }); }}><IconMore /></IconButton>
@@ -211,7 +212,6 @@ export function TeamSettings({ view: given, onClose, onChanged, follow }: {
           </Fragment>);
         })}
       </ul>
-      {numberOf && sp(numberOf) && <SafetyPanel p={sp(numberOf)!} teamName={view.team} onDone={() => { setNumberOf(null); loadSafety(); }} />}
       {!canInvite && <span className="tmx-hint">{tr('초대 링크는 팀장이나 초대 권한을 받은 사람이 만들어요', 'Only a team owner or someone with the Invite permission can make invite links.')}</span>}
 
       <span className="tmx-fl">{tr('요금제 · 사용량', 'Plan · usage')}</span>
@@ -233,6 +233,14 @@ export function TeamSettings({ view: given, onClose, onChanged, follow }: {
       {err && <span className="tmx-hint" role="alert">{err}</span>}
       {confirm}
       {more && <ContextMenu x={more.x} y={more.y} items={more.items} onClose={() => setMore(null)} />}
+      {about && (() => {
+        const r = rows.find((x) => x.id === about.id);
+        if (!r) return null;
+        const l = lookOf(board, r.id, r.name);
+        const role = r.badge === 'owner' ? tr('팀장', 'owner') : r.badge === 'all' ? tr('전체 권한', 'full access') : r.badge ? tr('매니저', 'manager') : tr('팀원', 'member');
+        return <MemberCard name={l.name} color={personColor(r.name)} photo={l.photo} status={l.status} sub={[role, statusLine(l) || r.devices.join(' · ')].filter(Boolean).join(' · ')} p={sp(r.id)}
+          at={about.at} compare={about.compare} onClose={() => setAbout(null)} onDone={() => { setAbout(null); loadSafety(); }} />;
+      })()}
       {mine && <MyProfileCard me={myLook} rosterName={view.me} sub={`${view.team} · ${owner ? tr('팀장', 'owner') : tr('팀원', 'member')}`} at={mine} onClose={() => setMine(null)} onSaved={reload} />}
       {iconAt && iconSrc && <TeamIconCard src={iconSrc} at={iconAt} onClose={() => { setIconAt(null); setIconSrc(''); }} onPicked={(d) => run(teamIconSet(view.teamId, d), () => reload())} />}
     </div>

@@ -28,6 +28,47 @@ impl Geom {
     }
 }
 
+/// 페이지에서 잰 값(CSS 점) — 창 자리(CDP Browser.getWindowForTarget), innerWidth/Height, outerWidth/Height, screen.width/height
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Probe {
+    pub win: [f64; 4],
+    pub inner: [f64; 2],
+    pub outer: [f64; 2],
+    pub screen: [f64; 2],
+}
+
+/// 툴바 높이를 아직 못 쟀을 때 — 맥 크롬 탭 줄 + 주소창(크롬 베타 158 실측 87, 북마크 줄 없음)
+pub const DEFAULT_TOP: f64 = 87.0;
+/// 이보다 높은 툴바는 없다고 본다 — 탭 줄 + 주소창 + 북마크 줄 + 알림 띠 하나 정도
+const MAX_TOP: f64 = 240.0;
+
+/// 페이지 viewport 흉내 중인가 — 플레이라이트 setViewportSize(세션 browser_resize)는 화면 크기도 viewport 로 바꾼다(11-09 실측 screen = inner).
+/// 툴바가 숨은 전체 화면은 창 = 페이지 = 화면이라 같아 보여도 흉내가 아니다
+pub fn emulated(p: &Probe) -> bool {
+    let same = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).abs() <= 0.5 && (a[1] - b[1]).abs() <= 0.5;
+    same(p.screen, p.inner) && !same(p.outer, p.inner)
+}
+
+/// 창 모양 재기 → (창 모양, 칸 입력 환산에 쓸 페이지 칸 CSS 크기, 툴바를 믿을 만하게 쟀나).
+/// 툴바·페이지 칸은 창 점으로 — 흉내 중엔 inner 가 창과 따로 놀아(1280x900 흉내 = 창 880 보다 큰 900) 툴바가 0 으로 잘리고
+/// 칸이 창 전체를 그린 채 누름은 흉내 크기로 환산돼 아래로 밀렸다(11-09 사용자). 흉내 페이지는 툴바 밑 왼쪽 위에 1:1 로 그려진다(실측 캡처).
+/// 확대·축소(⌘-)면 창 점 = CSS × 배율(outerWidth / innerWidth). 흉내 중이거나 셈이 이상하면 마지막으로 믿은 툴바(last_top)
+pub fn measure(id: i64, p: Probe, last_top: Option<f64>) -> (Geom, crate::agent_input::Meta, bool) {
+    let zoom = if p.inner[0] > 0.0 { p.outer[0] / p.inner[0] } else { 1.0 };
+    let top = p.outer[1] - p.inner[1] * zoom;
+    let sure = !emulated(&p) && zoom.is_finite() && (0.25..=5.0).contains(&zoom) && (-1.0..=MAX_TOP).contains(&top);
+    let (top, zoom) = if sure { (top.max(0.0), zoom) } else { (last_top.unwrap_or(DEFAULT_TOP), 1.0) };
+    let page = [p.win[2].max(0.0), (p.win[3] - top).max(0.0)];
+    let g = Geom { id, win: p.win, top, inner: page };
+    (g, crate::agent_input::Meta { w: page[0] / zoom, h: page[1] / zoom }, sure)
+}
+
+/// 칸 입력·참모 커서를 페이지 좌표로 바꿀 크기 — 그림 칸이면 그림(screencast) 크기, SCK 칸이면 비추는 창 페이지 칸.
+/// 모달·폰이 같이 열려 screencast 가 돌면 meta 가 흉내 크기라 SCK 칸 누름이 그걸로 환산됐다
+pub fn input_meta(cast: bool, pane: Option<crate::agent_input::Meta>, meta: crate::agent_input::Meta) -> crate::agent_input::Meta {
+    if cast { meta } else { pane.unwrap_or(meta) }
+}
+
 /// 크기를 바꾼 뒤 이만큼 손 뗀 채여야 바꾼다 — 끄는 동안 매번 바꾸면 크롬이 다시 그리느라 칸이 깜빡인다
 pub const SETTLE: std::time::Duration = std::time::Duration::from_millis(300);
 
@@ -178,6 +219,99 @@ mod tests {
         assert!(!resize_due(Want { at: now, ..w }, &g(), false, false, now), "끄는 중(손 안 뗌)");
         assert!(!resize_due(Want { w: 1401.5, h: 879.0, ..w }, &g(), false, false, now), "2점 안쪽은 같다");
         assert!(!resize_due(Want { w: 120.0, h: 90.0, ..w }, &g(), false, false, now), "접힌 칸 크기로 줄이지 않는다");
+    }
+
+    /// 칸이 크롬 창 (x, y)점(창 왼쪽 위 기준)을 눌렀을 때 페이지에 가는 자리 — Swift BrowserMirror(pageRect·ratio) → agent_input::to_cdp 와 같은 셈
+    fn page_of(g: &Geom, css: crate::agent_input::Meta, x: f64, y: f64) -> (f64, f64) {
+        let top = g.top.clamp(0.0, (g.win[3] - 2.0).max(0.0));
+        let (rx, ry) = (x / g.win[2], (y - top) / (g.win[3] - top));
+        (rx * css.w, ry * css.h)
+    }
+
+    /// 실측(11-09 크롬 베타 158, 가짜 화면 2배) — 창 1400x880, 툴바 87
+    fn probe(inner: [f64; 2], screen: [f64; 2]) -> Probe {
+        Probe { win: [-3366.0, 986.0, 1400.0, 880.0], inner, outer: [1400.0, 880.0], screen }
+    }
+
+    #[test]
+    fn 평소엔_툴바는_창_높이_빼기_페이지_높이() {
+        let (g, css, sure) = measure(7, probe([1400.0, 793.0], [1920.0, 1200.0]), None);
+        assert_eq!((g.top, g.inner), (87.0, [1400.0, 793.0]));
+        assert_eq!((css.w, css.h), (1400.0, 793.0));
+        assert!(sure);
+        // 빨간 표시(페이지 200,300) = 창 (200, 87+300) — 실측 캡처 자리
+        assert_eq!(page_of(&g, css, 220.0, 407.0), (220.0, 320.0));
+    }
+
+    #[test]
+    fn 세션이_viewport_흉내를_걸어도_툴바와_페이지_칸은_창_그대로() {
+        // 11-09 사용자 캡처 — 세션 browser_resize(1280x900) = 플레이라이트 setViewportSize. innerHeight 900 > 창 880 이라 툴바가 0 으로 잘려
+        // 칸이 크롬 창 전체를 그렸고, 누름은 창 전체 비율 × 900 으로 가서 아래로 밀렸다
+        let p = probe([1280.0, 900.0], [1280.0, 900.0]);
+        assert!(emulated(&p));
+        let (g, css, sure) = measure(7, p, Some(87.0));
+        assert!(!sure, "흉내 중 잰 값은 툴바로 안 믿는다");
+        assert_eq!((g.top, g.inner), (87.0, [1400.0, 793.0]), "흉내 중엔 마지막으로 믿은 툴바");
+        assert_eq!((css.w, css.h), (1400.0, 793.0), "흉내 페이지는 툴바 밑 왼쪽 위에 1:1(실측 캡처)");
+        assert_eq!(page_of(&g, css, 220.0, 407.0), (220.0, 320.0), "표시를 누르면 표시에");
+        // 고치기 전 셈 — 툴바 0(창 전체) · 흉내 크기 → 같은 누름이 페이지 (201, 416) 로 갔다(96px 아래)
+        let old = Geom { top: (880.0f64 - 900.0).max(0.0), inner: [1280.0, 900.0], ..g };
+        let (_, oy) = page_of(&old, crate::agent_input::Meta { w: 1280.0, h: 900.0 }, 220.0, 407.0);
+        assert!((oy - 320.0) > 90.0, "고치기 전엔 아래로 밀렸다: {oy}");
+        // 믿은 툴바가 아직 없으면 맥 크롬 기본값
+        assert_eq!(measure(7, p, None).0.top, DEFAULT_TOP);
+        // 작은 흉내(600x400)도 같다
+        assert_eq!(measure(7, probe([600.0, 400.0], [600.0, 400.0]), Some(87.0)).0.inner, [1400.0, 793.0]);
+    }
+
+    #[test]
+    fn 페이지_확대_축소면_css_는_창_점_나누기_배율() {
+        // ⌘- 90% — 페이지 css 는 창 점 / 0.9, 툴바는 그대로
+        let (g, css, sure) = measure(7, probe([1400.0 / 0.9, 793.0 / 0.9], [1920.0 / 0.9, 1200.0 / 0.9]), None);
+        assert!(sure);
+        assert!((g.top - 87.0).abs() < 0.01 && (g.inner[1] - 793.0).abs() < 0.01, "{g:?}");
+        assert!((css.w - 1555.6).abs() < 0.1 && (css.h - 881.1).abs() < 0.1, "{css:?}");
+        let (x, y) = page_of(&g, css, 200.0 * 0.9, 87.0 + 300.0 * 0.9);
+        assert!((x - 200.0).abs() < 0.01 && (y - 300.0).abs() < 0.01, "확대해도 누른 자리 = 페이지 자리: {x},{y}");
+    }
+
+    #[test]
+    fn 전체_화면은_툴바_0_이상한_값은_안_믿는다() {
+        // 맥 전체 화면에서 툴바가 숨으면 창 = 화면 = 페이지
+        let full = Probe { win: [0.0, 0.0, 1920.0, 1200.0], inner: [1920.0, 1200.0], outer: [1920.0, 1200.0], screen: [1920.0, 1200.0] };
+        assert!(!emulated(&full));
+        let (g, _, sure) = measure(7, full, Some(87.0));
+        assert_eq!((g.top, sure), (0.0, true));
+        // 전체 화면 + 툴바 보임(맥 '전체 화면에서 툴바 항상 보기')
+        let bar = Probe { inner: [1920.0, 1113.0], ..full };
+        assert_eq!(measure(7, bar, Some(87.0)).0.top, 87.0);
+        // 흉내가 화면 크기를 안 바꾼 모양(다른 도구) — 셈이 툴바 범위 밖이면 안 믿고 마지막 값
+        let odd = probe([1280.0, 1000.0], [1920.0, 1200.0]);
+        let (g, _, sure) = measure(7, odd, Some(87.0));
+        assert_eq!((g.top, sure), (87.0, false));
+        // 창 크기를 바꾼 뒤(칸 크기로 맞춤)도 툴바는 그대로, 페이지 칸 = 창 - 툴바
+        let small = Probe { win: [-3366.0, 986.0, 800.0, 687.0], inner: [800.0, 600.0], outer: [800.0, 687.0], screen: [1920.0, 1200.0] };
+        assert_eq!(measure(7, small, None).0.inner, [800.0, 600.0]);
+    }
+
+    #[test]
+    fn 흉내_중에도_칸_크기_맞춤은_창_페이지_칸으로_한_번() {
+        // 고치기 전엔 inner 가 흉내 크기라 맞춘 뒤에도 늘 '다르다'였고, 툴바를 0 으로 더해 창이 툴바만큼 작아졌다
+        let (g, ..) = measure(7, probe([1280.0, 900.0], [1280.0, 900.0]), Some(87.0));
+        let now = Instant::now();
+        let want = Want { w: 1400.0, h: 793.0, at: now - Duration::from_secs(1) };
+        assert!(!resize_due(want, &g, false, false, now), "이미 칸 크기");
+        let vd = crate::vdisplay::Rect { x: -3390.0, y: 956.0, w: 1920.0, h: 1200.0 };
+        assert_eq!(fit_bounds(Want { w: 1318.0, h: 780.0, ..want }, &g, vd), [-3390.0, 956.0, 1318.0, 867.0]);
+    }
+
+    #[test]
+    fn 칸_입력은_sck_면_창_페이지_칸_그림_칸이면_그림_크기() {
+        use crate::agent_input::Meta;
+        let (pane, cast) = (Meta { w: 1400.0, h: 793.0 }, Meta { w: 1280.0, h: 900.0 });
+        assert_eq!(input_meta(false, Some(pane), cast), pane, "모달이 그림을 받는 중이어도 SCK 칸은 창 페이지 칸");
+        assert_eq!(input_meta(true, Some(pane), cast), cast, "그림 칸은 그림 크기");
+        assert_eq!(input_meta(false, None, cast), cast, "아직 못 쟀으면 아는 값");
     }
 
     #[test]

@@ -3,7 +3,7 @@
 // 폰 연결 스위치(폰을 받나)는 이 칸에 — 11-01 사용자: 테일스케일 없이 도는 게 기본이라 맨 아래 접힘에 숨기지 않는다.
 // 테일넷으로 직접 잇기(옛 폰 QR·다른 기기 참모)는 맨 아래 '테일스케일이 있는 분만' 접힘 — 있으면 쓰는 덤
 import { invoke } from '@tauri-apps/api/core';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { chammoHere, teamDeviceRename, teamDeviceRevoke, teamLogout, teamStatus, type TeamView } from '../data/teamApi';
 import { hereOthers, type HereAccount } from '../domain/chammoHere';
 import { mobileApi, type EntryQr } from '../data/tauri';
@@ -17,7 +17,9 @@ import { phoneReachHint } from './phoneReach';
 import { BetaTag } from './kit/BetaTag';
 import { desktopNumber, NumberEntry, outsideHint, useCardNumber } from './e2e/NumberEntry';
 import { NumberWait } from './e2e/NumberWait';
-import { remoteApi, remoteSaved, remoteUnpair } from '../data/remote';
+import { remoteApi, remoteDevices, remoteSaved, remoteUnpair } from '../data/remote';
+import { tailscaleNeedsLook } from '../domain/peerDevices';
+import { phoneGroups } from '../domain/mobileDevices';
 import { remoteAssistants, type RemoteAssistant } from '../domain/remoteChat';
 import { REMOTE_CHAT_EVENT, type RemoteChatTarget } from './chat/RemoteChat';
 import { peerLink, peerLinkError, type PeerPending } from '../domain/peerLink';
@@ -37,6 +39,9 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
   // 허용 대기 줄에서 '허용'을 누르면 그 자리에서 숫자 넣기(사슬 있는 계정) 또는 예전처럼 허용·거절
   const [numbering, setNumbering] = useState<string | null>(null);
   const [fold, setFold] = useState(false);
+  // 멈춘 짝·계정 확인이 안 된 직통 폰 줄이 있으면 '테일스케일이 있는 분만' 칸을 저절로 펼친다(QA 0.4.11 문제 3-3) — 사람이 한 번 누르면 그 뒤론 그대로
+  const touched = useRef(false);
+  const toggleFold = () => { touched.current = true; setFold((f) => !f); };
   const [phoneOff, setPhoneOff] = useState(false);
   // 폰 추가 QR — 입구 주소만. 카메라는 늘 사파리로 열어서, 짝 코드를 실으면 사파리가 써 버려 홈 화면 앱엔 안 남는다(10-24 사용자)
   const [entry, setEntry] = useState<EntryQr | null>(null);
@@ -57,13 +62,16 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
   const load = () => {
     void teamStatus().then(setV, (e: unknown) => setErr(String(e)));
     void invoke<string>('direct_log').then(setLog, () => {});
-    void mobileApi.status().then((m) => setPhoneOff(!!m.off), () => {});
+    void mobileApi.status().then((m) => { setPhoneOff(!!m.off); if (tailscaleNeedsLook([], phoneGroups(m.devices ?? []))) openFold(); }, () => {});
     void invoke<string>('e2e_self_step').then(setStep, () => {});
     loadPeer();
   };
+  const openFold = () => { if (!touched.current) setFold(true); };
   useEffect(() => {
     load();
     loadHere();
+    // 짝 목록은 테일넷을 묻는 길이라 열 때 한 번만
+    void remoteDevices().then((o) => { if (tailscaleNeedsLook(o.devices, [])) openFold(); }, () => {});
     // 다른 기기에서 허용·거절하면 앱이 목록을 다시 받는다(1분·알림) — 화면도 따라가게
     const t = window.setInterval(load, 5000);
     return () => window.clearInterval(t);
@@ -266,7 +274,7 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
       <section className="su-sec">
         <div className="su-sec-head">
           <div className="su-title"><h2 className="dm-fold-h">{tr('테일스케일이 있는 분만', 'Only if you use Tailscale')}</h2><BetaTag /></div>
-          <IconButton size="l" tone="line" label={fold ? tr('접기', 'Collapse') : tr('펼치기', 'Expand')} pressed={fold} onClick={() => setFold(!fold)}>{fold ? <IconChevronUp /> : <IconChevronDown />}</IconButton>
+          <IconButton size="l" tone="line" label={fold ? tr('접기', 'Collapse') : tr('펼치기', 'Expand')} pressed={fold} onClick={toggleFold}>{fold ? <IconChevronUp /> : <IconChevronDown />}</IconButton>
         </div>
         {!fold && <span className="su-hint">{tr('테일스케일을 이미 쓰는 분을 위한 예전 연결 방법이에요.', 'Older connection methods for people who already use Tailscale.')}</span>}
       </section>

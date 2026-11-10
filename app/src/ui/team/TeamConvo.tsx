@@ -4,7 +4,8 @@
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { forgetTeamThumb, teamClipFiles, teamFileAttach, teamFileOpen, teamFileSave, teamFileThumb, teamHumanSay, teamPickFiles, teamUploadProgress, teamViewing, type HeldMsg, type SayExtra } from '../../data/teamApi';
 import { rekeyNotices, rekeyText, slotNotices, type SafetyPerson } from '../../domain/e2eSafety';
-import { SafetyPanel } from '../e2e/Safety';
+import { MemberCard } from './MemberCard';
+import { atOf, type At } from './MyProfile';
 import '../e2e/e2e.css';
 import { toMineText, unseenCount, atQuery, dayLabel, pasteName, pasteTakes, handoffText, lineOf, mentionList, mentionParts, mentionsMe, personColor, reactionsOf, roomItems, sayTarget, stamp, withMyReacts, type Convo, type MentionPick, type Reaction, type TeamFile, type TeamItem } from '../../domain/teamChat';
 import { tr } from '../../i18n';
@@ -187,17 +188,22 @@ export function TeamConvo({ convo, items, team, myName, handed, onRead, onHanded
   const [note, setNote] = useState('');
   const peer = safety?.find((p) => p.member === convo.peer);
   const stopped = !!peer && (peer.state === 'changed' || peer.state === 'forked');
-  const [check, setCheck] = useState(false);
-  // 보안 번호가 바뀌어 저절로 받아들인 사람 — 그 때 자리에 회색 줄(사용자 10-29 '팀원 바뀜은 묻지 않는다'), 번호 비교는 누를 때만
+  // 보안 번호가 바뀌어 저절로 받아들인 사람 — 그 때 자리에 회색 줄(사용자 10-29 '팀원 바뀜은 묻지 않는다'), 번호 비교는 누를 때만 팀원 자세히 보기로(11-09 — 대화 안에 큰 판을 펼치지 않는다)
   const rekeys = slotNotices(lines.map((it) => it.at), rekeyNotices(safety, group ? (convo.members ?? []) : convo.peer ? [convo.peer] : []));
-  const [cmp, setCmp] = useState<string | null>(null);
+  const [cmp, setCmp] = useState<{ p: SafetyPerson; at: At } | null>(null);
+  const openCmp = (e: React.MouseEvent<HTMLElement>, p: SafetyPerson) => {
+    const at = atOf(e.currentTarget); // 업데이터 밖에서 — 업데이터가 돌 땐 currentTarget 이 이미 null(E2E 가 잡음)
+    setCmp((c) => (c?.p.account === p.account ? null : { p, at }));
+  };
   const rekeyLine = (p: SafetyPerson) => (
-    <div key={`rk-${p.account}`}>
-      <div className="tmx-sys"><span className="tmx-pill">{rekeyText(p.name)}
-        <button aria-expanded={cmp === p.account} onClick={() => setCmp((c) => (c === p.account ? null : p.account))}>{tr('번호 비교', 'Compare number')}</button></span></div>
-      {cmp === p.account && <SafetyPanel p={p} teamName={team} readOnly={phone} onDone={() => { setCmp(null); onSent(); }} />}
-    </div>
+    <div key={`rk-${p.account}`} className="tmx-sys"><span className="tmx-pill">{rekeyText(p.name)}
+      <button aria-haspopup="dialog" aria-expanded={cmp?.p.account === p.account} onClick={(e) => openCmp(e, p)}>{tr('번호 비교', 'Compare number')}</button></span></div>
   );
+  const cmpCard = cmp && (() => {
+    const p = safety?.find((x) => x.account === cmp.p.account) ?? cmp.p;
+    const l = lookOf(board, p.member, p.name);
+    return <MemberCard name={l.name} color={personColor(p.name)} photo={l.photo} status={l.status} sub={team} p={p} at={cmp.at} compare readOnly={phone} onClose={() => setCmp(null)} onDone={() => { setCmp(null); onSent(); }} />;
+  })();
   const paused = (held ?? []).filter((h) => h.room && h.room === convo.room);
   // 바뀜·갈림 말 — 펼친 줄(seq)
   const [opened, setOpened] = useState<Record<number, boolean>>({});
@@ -496,15 +502,16 @@ export function TeamConvo({ convo, items, team, myName, handed, onRead, onHanded
         {onFiles && <IconButton label={tr('이 대화 파일', 'Files in this chat')} onClick={onFiles}><IconFolder /></IconButton>}
         {detach && <IconButton label={tr('이 대화 따로 창으로', 'Open this chat in its own window')} onClick={detach}><IconWindowOut /></IconButton>}
       </header>
+      {/* 팀원 자세히 보기 — 대화 스크롤 칸 밖(칸의 빈 데 누르기·입력칸 포커스가 카드 클릭을 먹지 않게) */}
+      {cmpCard}
       {/* 빈 데를 누르면 입력칸으로 — 참모 채팅과 같은 판단(글 고르기·단추·링크는 그대로). 폰은 키보드가 튀어나와 뺀다 */}
       <div className="tmx-msgs" onClick={phone ? undefined : openWebLink} ref={list}
         onMouseUp={phone ? undefined : (e) => { const t = e.target as HTMLElement; if (clickFocusesInput({ interactive: !!t.closest('button, a, input, textarea, select, summary, [contenteditable="true"], [role="button"]'), selected: window.getSelection()?.toString() ?? '' })) input.current?.focus(); }} onScroll={measure} onWheel={hand} onTouchMove={hand} onKeyDown={hand} onPointerDown={hand}>
         <div className="tmx-msgs-in" ref={inner}>
         {stopped && peer && (
-          <div className="tmx-sys"><span className="tmx-pill"><b>{peer.state === 'forked' ? tr(`${convo.name}의 기기 목록이 다르게 보여요`, `${convo.name}'s device list looks different`) : tr(`${convo.name}의 보안 번호가 바뀌었어요`, `${convo.name}'s safety number changed`)}</b>
-            <button aria-expanded={check} onClick={() => setCheck((c) => !c)}>{tr('확인', 'Check')}</button></span></div>
+          <div className="tmx-sys"><span className="tmx-pill"><b>{peer.state === 'forked' ? tr(`${convo.name}의 기기 목록이 달라요`, `${convo.name}'s device list differs`) : tr(`${convo.name}의 기기가 바뀌었어요`, `${convo.name}'s device changed`)}</b>
+            <button aria-haspopup="dialog" aria-expanded={cmp?.p.account === peer.account} onClick={(e) => openCmp(e, peer)}>{tr('확인', 'Check')}</button></span></div>
         )}
-        {stopped && peer && check && <SafetyPanel p={peer} teamName={team} readOnly={phone} onDone={() => { setCheck(false); onSent(); }} />}
         {lines.length === 0 && !sending.length && <div className="tmx-empty">{group ? tr(`${convo.name} 팀챗에 첫 말을 보내 봐요`, `Say hi in ${convo.name}`) : tr(`${convo.name}에게 첫 말을 보내 봐요`, `Say hi to ${convo.name}`)}</div>}
         {lines.map((it, i) => {
           const rk = rekeys.before[i]?.map(rekeyLine);

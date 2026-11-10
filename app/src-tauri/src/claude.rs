@@ -988,6 +988,20 @@ mod typed_tests {
             assert!(b == b"\x1b\r" || !b.iter().any(|c| c.is_ascii_control()), "줄바꿈 조각 말고는 제어 바이트가 없다: {b:?}");
         }
     }
+    // 256 바이트로 자르면 한글(3바이트) 한 글자가 두 조각에 걸쳐 따로 쓰여, 받는 쪽이 '�' 로 읽었다 — 앱이 참모 입력칸에 넣은 [앱] 줄이
+    // 깨진 채 들어가 채팅 말풍선이 기록과 짝을 못 지어 '전달 안 됨 + 다시 보내기'로 남았다(2026-11-10 참모-2 기록: 149자 중 2자가 U+FFFD)
+    #[test]
+    fn 긴_글은_글자_경계에서_자른다() {
+        let line = format!("[앱] {}", "오래 멈춘 목표 — 사용자가 정할 거면 ask · ".repeat(12));
+        for segs in [super::typed_segs(&line), super::attach_segs(super::reply_text(&line))] {
+            assert!(segs.len() > 2, "여러 조각");
+            for seg in &segs {
+                assert!(seg.len() <= 256, "조각은 256 바이트 안");
+                assert!(std::str::from_utf8(seg).is_ok(), "조각마다 온전한 글자: {seg:?}");
+            }
+            assert_eq!(segs.concat(), line.as_bytes());
+        }
+    }
     #[test]
     fn 글자는_그대로_둔다_한글_이모지_탭() {
         let joined = |t: &str| super::typed_segs(t).concat();
@@ -2231,11 +2245,31 @@ pub(crate) fn press_keys(id: &str, keys: &str) -> Result<(), String> {
 }
 
 /// 글을 사람이 치듯 넣고 0.4초 쉬었다가 Enter(따로). 결정 대기함 답장·참모 입력칸 전달
-fn attach_type(id: &str, text: &[u8]) -> Result<(), String> {
-    attach_type_segs(id, &text.chunks(256).map(<[u8]>::to_vec).collect::<Vec<_>>())
+fn attach_type(id: &str, text: Vec<u8>) -> Result<(), String> {
+    attach_type_segs(id, &attach_segs(text))
 }
 
-/// 여러 줄 글을 치는 조각들 — 줄마다 글(256 바이트씩) + 줄바꿈 Option+Enter(ESC CR 는 한 조각으로: 따로 가면 Esc 로 먹혀 멈춘다)
+/// 치는 글 조각 — 256 바이트 안, 글자 경계에서(한 글자가 두 조각에 걸치면 받는 쪽이 '�' 로 읽는다)
+pub(crate) fn attach_segs(text: Vec<u8>) -> Vec<Vec<u8>> {
+    utf8_chunks(&String::from_utf8_lossy(&text), 256)
+}
+
+/// max 바이트 안에서 글자 경계로 자른 조각들(max 는 4 이상 — 한 글자가 4바이트까지)
+fn utf8_chunks(s: &str, max: usize) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    while start < s.len() {
+        let mut end = (start + max).min(s.len());
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        out.push(s.as_bytes()[start..end].to_vec());
+        start = end;
+    }
+    out
+}
+
+/// 여러 줄 글을 치는 조각들 — 줄마다 글(256 바이트 안, 글자 경계에서) + 줄바꿈 Option+Enter(ESC CR 는 한 조각으로: 따로 가면 Esc 로 먹혀 멈춘다)
 /// 글 안의 CR·ESC 같은 제어 글자는 키로 치지 않는다 — CR 은 Enter, ESC 는 제어열이라 글 하나로 여러 번 보내거나 입력칸을 조작한다(보안 점검 C-1, 2026-11-07).
 /// CR 은 줄바꿈으로 모으고 나머지는 뺀다(폰 /api/send 와 같은 선 — 줄바꿈·탭만 남긴다)
 pub(crate) fn typed_segs(text: &str) -> Vec<Vec<u8>> {
@@ -2245,7 +2279,7 @@ pub(crate) fn typed_segs(text: &str) -> Vec<Vec<u8>> {
         if i > 0 {
             out.push(b"\x1b\r".to_vec());
         }
-        out.extend(line.as_bytes().chunks(256).map(<[u8]>::to_vec));
+        out.extend(utf8_chunks(line, 256));
     }
     out
 }
@@ -2325,7 +2359,7 @@ fn plain_row(screen: &vt100::Screen, row: u16) -> String {
 }
 
 /// 입력칸 본문 줄들(앞뒤 공백·빈 줄 뺀) — 입력칸을 못 찾으면 None(선택 창·아직 안 그려진 화면)
-fn input_lines(screen: &vt100::Screen) -> Option<Vec<String>> {
+pub(crate) fn input_lines(screen: &vt100::Screen) -> Option<Vec<String>> {
     let (_, cols) = screen.size();
     let lines: Vec<String> = screen.rows(0, cols).collect();
     // 입력칸과 테두리는 맨 앞 칸부터 — 들여 쓴 확인 창 줄(' ❯ 1. Yes')은 입력칸이 아니다
@@ -2471,9 +2505,12 @@ fn attach_type_segs(id: &str, segs: &[Vec<u8>]) -> Result<(), String> {
 /// attach_type_segs + 블랙박스(SendNote) — 붙지 못했으면 note 는 빈 채로
 fn attach_type_noted(id: &str, segs: &[Vec<u8>]) -> (Result<(), String>, SendNote) {
     crate::pty::settle_view(id); // 자물쇠 잡기 전에 — 기다리는 동안 다른 칸 치기를 막지 않게
+    // 기록 자리는 자물쇠 밖에서 찾는다(목록 읽기) — 끝 길이는 type_into 가 칠 때 잰다
+    let text = String::from_utf8_lossy(&segs.concat()).into_owned();
+    let land = (!slash_command(&text)).then(|| crate::send_land::Landing::for_session(id, &text)).flatten();
     let _turn = typing_turn();
     let mut note = SendNote::default();
-    let r = attach_do(id, |w, screen, look| type_into(id, w, screen, look, segs, &mut note)).map(|_| ());
+    let r = attach_do(id, |w, screen, look| type_into(id, w, screen, look, segs, land, &mut note)).map(|_| ());
     (r, note)
 }
 
@@ -2482,6 +2519,9 @@ impl std::fmt::Display for SendNote {
         write!(f, "seen={} left={} enters={} ms={} paste={} stash={} again={} dialog={}", self.seen, self.left, self.enters, self.ms, self.paste, self.stash, self.again, self.dialog)?;
         if !self.shape.is_empty() {
             write!(f, " shape={}", self.shape)?;
+        }
+        if let Some(l) = self.landed {
+            write!(f, " landed={l} land_enter={} retyped={}", self.land_enter, self.retyped)?;
         }
         Ok(())
     }
@@ -2501,6 +2541,12 @@ pub(crate) struct SendNote {
     pub again: bool,
     pub dialog: bool,
     pub shape: String,
+    /// 그 말이 대화 기록에 들어왔나(send_land) — None = 기록으로 못 가림(기록 파일을 못 찾음·경로뿐인 말·/ 명령)
+    pub landed: Option<bool>,
+    /// 기록에 안 들어와 Enter 만 한 번 더 넣었나
+    pub land_enter: bool,
+    /// 그래도 안 들어와 입력칸을 비우고 다시 쳤나
+    pub retyped: bool,
 }
 
 /// 글 내용 없는 화면 모양 '입력칸 있나:입력칸 글자 수:글 있는 줄 수' — 줄 0 = attach 가 화면을 못 받음, nobox = 다른 창·전환 중,
@@ -2597,9 +2643,11 @@ pub(crate) fn dialog_open(s: &vt100::Screen) -> bool {
 
 /// 붙은 화면에 글을 치고 Enter — attach_type_segs 의 몸통(시험이 가짜 화면으로 부른다). 끝내 입력칸에 남거나 선택 창이면 Err —
 /// 폰이 '전달 안 됨' + 다시 보내기를 띄운다(다시 보내면 남은 같은 말은 또 치지 않고 Enter 만)
-pub(crate) fn type_into(id: &str, w: &mut dyn std::io::Write, screen: Option<&vt100::Screen>, look: Look, segs: &[Vec<u8>], note: &mut SendNote) -> std::io::Result<()> {
+/// land 가 있으면 끝은 대화 기록으로 정한다(send_land::ensure_landed — 안 들어왔으면 Enter 만 더, 그래도 안 되면 믿을 화면에서만 비우고 다시 친다)
+pub(crate) fn type_into(id: &str, w: &mut dyn std::io::Write, screen: Option<&vt100::Screen>, look: Look, segs: &[Vec<u8>], land: Option<crate::send_land::Landing>, note: &mut SendNote) -> std::io::Result<()> {
     use std::time::Duration;
     let started = std::time::Instant::now();
+    let land = land.map(crate::send_land::Landing::start);
     let tail = typed_echo(segs);
     let now_screen = look.map(|f| f());
     let cur = now_screen.as_ref().or(screen);
@@ -2626,6 +2674,7 @@ pub(crate) fn type_into(id: &str, w: &mut dyn std::io::Write, screen: Option<&vt
     let w = std::cell::RefCell::new(w);
     let t = tail.as_str();
     let peek = look.filter(|_| !t.is_empty()).map(|f| move || peek_typed(&f(), t));
+    let watch = !overlaps && !slash_command(&String::from_utf8_lossy(&segs.concat()));
     let r = send_watched(
         &mut || {
             if !left_over {
@@ -2639,7 +2688,7 @@ pub(crate) fn type_into(id: &str, w: &mut dyn std::io::Write, screen: Option<&vt
         &mut || w.borrow_mut().write_all(b"\r"),
         peek.as_ref().map(|f| f as &dyn Fn() -> (bool, bool, bool)),
         ENTER_MAX,
-        !overlaps && !slash_command(&String::from_utf8_lossy(&segs.concat())),
+        watch,
         note,
     );
     // 화면을 못 보면 Enter 를 받았는지도 모르니 예전처럼 0.7초 — 너무 일찍 떼면 attach 가 Enter 를 넘기기 전에 끝난다
@@ -2651,6 +2700,37 @@ pub(crate) fn type_into(id: &str, w: &mut dyn std::io::Write, screen: Option<&vt
         note.shape = format!("{before}>{}", look.map_or("?".to_string(), |f| screen_shape(&f())));
     }
     r?;
+    if let Some(l) = land.as_ref().filter(|_| watch) {
+        let held = look.filter(|_| !t.is_empty()).map(|f| {
+            move || {
+                let s = f();
+                input_holds(&s, t).then(|| input_lines(&s).map_or(0, |b| b.iter().map(|x| x.chars().count()).sum::<usize>() + b.len()))
+            }
+        });
+        let ok = crate::send_land::ensure_landed(
+            &|| l.landed(),
+            crate::send_land::Keys {
+                enter: &mut || w.borrow_mut().write_all(b"\r"),
+                clear: &mut |n| w.borrow_mut().write_all("\x7f".repeat(n).as_bytes()),
+                retype: &mut || {
+                    for chunk in segs {
+                        w.borrow_mut().write_all(chunk)?;
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Ok(())
+                },
+            },
+            held.as_ref().map(|f| f as &dyn Fn() -> Option<usize>),
+            note.seen,
+            crate::send_land::LAND_WAIT,
+            note,
+        )?;
+        note.landed = Some(ok);
+        if ok {
+            note.left = false;
+        }
+        note.ms = started.elapsed().as_millis();
+    }
     if note.left {
         // 데스크톱 채팅의 같은 상태 이름 그대로 — 폰 말풍선 아래에 이 글 + 다시 보내기(다시 보내면 남은 그 말에 Enter 만)
         return Err(std::io::Error::other(crate::i18n::tr("입력칸에 걸려 있어요", "Stuck in the terminal input")));
@@ -2766,9 +2846,17 @@ fn attach_new(id: &str, write: impl FnOnce(&mut dyn std::io::Write, Option<&vt10
         }
     } else {
         // 맥: 입력칸이 보이면 바로(실측 수백 ms) — 예전엔 늘 1.5초를 먼저 쉬었다. 입력칸 없는 화면은 예전처럼 1.5초 뒤 글자가 있으면(최대 8초)
+        // 첫 화면이 오면 바로 포커스 나감 — 붙을 때 온 포커스 들어옴의 1초 클립보드 확인을 지운다(pty::FOCUS_OUT)
         let started = std::time::Instant::now();
         let limit = ATTACH_SETTLE + Duration::from_millis(6_500);
+        let mut calmed = false;
         while !attach_ready(parser.lock().unwrap().screen(), started.elapsed()) && started.elapsed() < limit {
+            if !calmed && got.load(Ordering::Relaxed) > 0 {
+                calmed = true;
+                if let Some(w) = slot.lock().unwrap().0.as_mut() {
+                    crate::pty::calm_focus(&mut **w);
+                }
+            }
             std::thread::sleep(Duration::from_millis(20));
         }
     }
@@ -2796,7 +2884,12 @@ fn attach_new(id: &str, write: impl FnOnce(&mut dyn std::io::Write, Option<&vt10
     let shown = parser.lock().unwrap().screen().clone();
     let look = || parser.lock().unwrap().screen().clone();
     let r = match slot.lock().unwrap().0.as_mut() {
-        Some(w) => write(&mut **w, Some(&shown), Some(&look)).map_err(|e| e.to_string()),
+        Some(w) => {
+            // 화면이 첫 조각에 바로 다 왔으면 위 기다림을 안 돌았다 — 치기 전에 한 번 더(이미 나감이면 아무 일 없다)
+            crate::pty::calm_focus(&mut **w);
+            // 치는 키마다 뒤에 포커스 나감 — 키가 포커스를 다시 켜면 1초 뒤 또 클립보드를 본다
+            write(&mut crate::pty::Unfocus(&mut **w), Some(&shown), Some(&look)).map_err(|e| e.to_string())
+        }
         None => Err("no writer".into()),
     };
     trace("kill");
@@ -2836,7 +2929,7 @@ pub async fn send_to_session(id: String, text: String) -> Result<(), String> {
     let keys = reply_text(&line);
     // 답장이 어디로 갔는지 남긴다 — "알림에 답했는데 안 갔다"(2026-09-30)를 기록으로 가리려고
     let who = id.clone();
-    let r = tauri::async_runtime::spawn_blocking(move || attach_type(&id, &keys))
+    let r = tauri::async_runtime::spawn_blocking(move || attach_type(&id, keys))
         .await
         .map_err(|e| e.to_string())
         .and_then(|r| r);

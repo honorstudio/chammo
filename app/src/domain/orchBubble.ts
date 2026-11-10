@@ -211,6 +211,18 @@ export function deskFrame(box: Rect, badge: Rect, screens: Screen[], ext: { w: n
   };
 }
 
+/** 바탕 배지 맥 창 = 한 판(deskFrame)의 지금 보일 칸(판 기준 px) — 판(웹뷰)은 그대로 두고 창만 줄이고 키운다(11-10 사용자 "늘 이 정도 영역을 차지").
+ *  rest = 배지 상자 + 여백, stage = 무대(부채·배너 자리), open = 판 전체. 판 안 그림이 안 움직여 창 크기가 바뀌어도 배지가 안 튄다 */
+export type DeskMode = 'rest' | 'stage' | 'open';
+export function deskView(f: { win: Rect; box: Pt; side: Side }, mode: DeskMode, ext: { w: number; h: number }, pad = DESK_PAD, size = 88): Rect {
+  if (mode === 'open') return { x: 0, y: 0, w: f.win.w, h: f.win.h };
+  const r = mode === 'rest'
+    ? padRect({ x: f.box.x, y: f.box.y, w: size, h: size }, pad)
+    : padRect({ x: f.box.x - (f.side.x < 0 ? ext.w : 0), y: f.box.y - (f.side.y < 0 ? ext.h : 0), w: size + ext.w, h: size + ext.h }, pad);
+  const x = clamp(r.x, 0, f.win.w), y = clamp(r.y, 0, f.win.h);
+  return { x, y, w: clamp(r.x + r.w, x, f.win.w) - x, h: clamp(r.y + r.h, y, f.win.h) - y };
+}
+
 // ── v3 N(사용자 10-28 "이게 맞는 듯") — 원형 하나·얼굴 하나, 아래 숫자 알약, 올리면 부채 ──
 type Pip = string | null | undefined;
 const urgentPip = (p: Pip) => p === 'ask' || p === 'new';

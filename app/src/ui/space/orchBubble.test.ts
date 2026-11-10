@@ -152,7 +152,7 @@ describe('바탕 배지(앱을 내려도 — 10-28 사용자)', () => {
     expect(desk).not.toMatch(/useEffect\(\(\) => \{[^\n]*peek[^\n]*toBadge/);
   });
   it('무대 쪽이 바뀌어 창 자리와 웹뷰 안 배지 자리가 같이 바뀔 땐 배지를 감춘 채 옮기고 다 그린 뒤 보인다(한 프레임 어긋남이 안 보이게)', () => {
-    expect(desk).toMatch(/if \(flip\) \{ setHide\(true\); await paint\(\); \}[\s\S]{0,200}await place\(f\.win, false, 0\);[\s\S]{0,120}setFrame\(f\);[\s\S]{0,120}if \(flip\) \{ await paint\(\); setHide\(false\); \}/);
+    expect(desk).toMatch(/if \(flip\) \{ setHide\(true\); await paint\(\); \}[\s\S]{0,200}await place\(f\.win, false, 0, viewOf\(f, modeRef\.current\)\);[\s\S]{0,120}setFrame\(f\);[\s\S]{0,120}if \(flip\) \{ await paint\(\); setHide\(false\); \}/);
     expect(desk).toContain('const flip = f.box.x !== frameRef.current.box.x || f.box.y !== frameRef.current.box.y;'); // 창 안 배지 자리가 바뀔 때만
     expect(css).toMatch(/\.obd-wrap\.hide \{[^}]*visibility: hidden/);
   });
@@ -197,13 +197,13 @@ describe('바탕 배지(앱을 내려도 — 10-28 사용자)', () => {
 describe('대화창 톡 열림·닫힘(10-28 사용자 "눌러서 채팅하는 작은 창 애니메이션으로 팝업")', () => {
   const desk = src('./DeskBubble.tsx');
   it('열 때: 접힌 대화창(from)을 먼저 그리고 펼친다(in) — 창은 이미 대화창 자리까지 품은 한 판이라 키 창만 된다', () => {
-    expect(desk).toMatch(/if \(grow\) setAnim\('from'\);[\s\S]{0,300}if \(grow\) await paint\(\);[\s\S]{0,200}await place\(f\.win, true, 0\);[\s\S]{0,200}setAnim\('in'\)/);
+    expect(desk).toMatch(/if \(grow\) setAnim\('from'\);[\s\S]{0,300}if \(grow\) await paint\(\);[\s\S]{0,200}await place\(f\.win, true, 0, viewOf\(f, 'open'\)\);[\s\S]{0,200}setAnim\('in'\)/);
   });
   it('이미 열린 대화창의 키우기·참모 바꾸기는 다시 톡 하지 않는다', () => {
     expect(desk).toContain('const grow = !openRef.current;');
   });
   it('닫을 때: 배지 쪽으로 접고(out) 대화창만 내린 뒤 키를 내려놓는다 — 창은 같은 판 그대로, 배지는 한 번도 안 감춘다', () => {
-    expect(desk).toMatch(/setAnim\('out'\)[\s\S]{0,300}POP_MS\.close[\s\S]{0,300}setAnim\('gone'\);\s*setOpen\(false\);[\s\S]{0,300}await place\(s\?\.win \?\? frameRef\.current\.win, false, 0\);\s*await toBadge\(true\)/);
+    expect(desk).toMatch(/setAnim\('out'\)[\s\S]{0,300}POP_MS\.close[\s\S]{0,300}setAnim\('gone'\);\s*setOpen\(false\);[\s\S]{0,300}await place\(s\?\.win \?\? frameRef\.current\.win, false, 0, viewOf\(frameRef\.current, 'rest'\)\);[^\n]*\n\s*await toBadge\(true\)/);
   });
   it('열기·접기에 배지를 감추거나 다시 붙이지 않는다(11-05 사용자 "펼칠 때·닫힐 때 깜빡" — 감췄다 보이는 게 깜빡임) — 배지는 닫혀도 열려도 같은 button 하나', () => {
     expect(css).not.toMatch(/\.a-(from|gone) \.obd-wrap/);
@@ -270,7 +270,7 @@ describe('바탕 배지 물결·그림자가 창 끝에서 안 잘린다(10-28 �
     expect(desk).toContain('const boxOff = frame.box;');
     expect(desk).not.toMatch(/place\(\{ x: (p|side)\./); // 상자 창을 맨 place 로 놓지 않는다
     expect(desk).toContain("<div className={`obd-wrap${hide ? ' hide' : ''}`} style={{ inset: DESK_PAD }}");
-    expect(desk).toMatch(/await place\(f\.win, true, 0\)/); // 대화창도 같은 판(배지 상자 여백은 그 안에)
+    expect(desk).toMatch(/await place\(f\.win, true, 0, viewOf\(f, 'open'\)\)/); // 대화창도 같은 판(배지 상자 여백은 그 안에)
   });
 });
 
@@ -549,7 +549,7 @@ describe('열린 동안 배지를 끌면 대화창째 옮긴다(10-31 사용자 
   });
   it('놓으면 열린 창이 배지 화면 밖으로 나간 만큼 통째로 당기고(openKeep), 당긴 자리로 배지 자리를 기억', () => {
     expect(desk).toContain('const to = openRef.current ? openKeep(s.win, frameRef.current.box, s.screens, DESK) : null;');
-    expect(desk).toContain('if (to) await place({ ...s.win, ...to }, true, 0);');
+    expect(desk).toContain("if (to) await place({ ...s.win, ...to }, true, 0, viewOf(frameRef.current, 'open'));");
     expect(desk).toContain('const w0 = to ? { ...s.win, ...to } : s.win;');
   });
   it('커서 — 끌 수 있는 배지는 손(grab), 끄는 중엔 잡은 손(grabbing)', () => {
@@ -561,5 +561,33 @@ describe('열린 동안 배지를 끌면 대화창째 옮긴다(10-31 사용자 
     expect(desk).toContain('const badgeAt: [number, number, number, number] = [P + off.x, P + off.y, 52, 52];');
     expect(desk).toContain('{ hot: [...(pop ? [[pop.x, pop.y, pop.w, pop.h]] : []), ...(frame.badge ? [badgeAt] : [])], hover: [] }');
     expect(badge).toContain('style={{ left: off.x, top: off.y,');
+  });
+});
+
+describe('바탕 배지 창 크기 = 판의 보일 칸(11-10 사용자 "참모 배지가 항상 이 정도 영역을 차지 … 크기가 변해야 하는 거 아님?")', () => {
+  const desk = src('./DeskBubble.tsx');
+  it('놓을 때마다 판과 함께 지금 보일 칸을 넘긴다 — 배지만이면 배지 칸, 부채·배너는 무대, 대화창은 판 전체', () => {
+    expect(desk).toContain("const mode: DeskMode = open ? 'open' : (fanShown || peek) && !dragging ? 'stage' : 'rest';");
+    expect(desk).toContain("invoke('bubble_place', { x: r.x, y: r.y, w: r.w, h: r.h, key, radius, view: [view.x, view.y, view.w, view.h] })");
+    expect(desk).toMatch(/useLayoutEffect\(\(\) => \{ if \(frame\.win\.w > 0 && !open && !openingRef\.current\) void invoke\('bubble_view'/);
+    expect(desk.match(/await place\(|void place\(/g)?.length).toBe(desk.match(/place\([^;]*viewOf\(/g)?.length); // 칸 없이 놓는 곳이 없다
+  });
+  it('Rust: 맥은 창 = 보일 칸, 웹뷰 = 판 크기 그대로 칸만큼 비켜 — 둘을 한 화면 갱신에(웹 그림을 다시 안 그려 배지가 안 튄다)', () => {
+    expect(rust).toContain('disableScreenUpdatesUntilFlush');
+    expect(rust).toContain('setAutoresizingMask: 0usize');
+    // 창 위로 삐져나간 웹뷰를 웹킷이 '가려진 위 여백'으로 잡으면 화면 높이가 108 로 줄어 배지가 화면 밖(실측) — 자동 여백 끄기
+    expect(rust).toContain('_setAutomaticallyAdjustsContentInsets: Bool::NO');
+    expect(rust).toContain('setObscuredContentInsets: objc2_foundation::NSEdgeInsets { top: 0.0, left: 0.0, bottom: 0.0, right: 0.0 }');
+    expect(rust).toMatch(/setFrame: r\(a\), display: false\];\s*let _: \(\) = msg_send!\[web, setFrame: r\(b\)\];/);
+    expect(mainRs).toContain('orch_bubble::bubble_view,');
+  });
+  it('Rust: 화면이 받는 창 자리·마우스 자리는 판 기준(받는 자리·올림 자리가 판 기준)', () => {
+    expect(rust).toContain('win: rect_of(&window).map(|r| plate_of(&r, shape()))');
+    expect(rust).toContain('let p = local(m, &win).map(|_| (m.0 - plate.x, m.1 - plate.y));');
+  });
+  it('배너·별명은 살짝 나타난다 — 창이 커지는 한 박자 동안 잘린 그림이 안 보이게', () => {
+    expect(css).toMatch(/\.obd-peek \{[^}]*animation: obd-in/);
+    expect(css).toMatch(/\.obd-name \{[^}]*animation: obd-in/);
+    expect(css).toMatch(/@keyframes obd-in \{ from \{ opacity: 0; \} \}/);
   });
 });

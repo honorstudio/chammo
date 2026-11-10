@@ -122,7 +122,7 @@ the app guesses from the last 7 days of `scripts/task send` ("mostly shop-app").
   tasks show in your progress, and their progress in the handing assistant's too. When all done, `scripts/task handover-done h-… "<result + proof>"`, then report back.
 - `@[<assistant name>]` in the user's message (an @mention from the chat input — the name in brackets is the exact SendMessage address)
   or `@<nickname>` means "pass this to them" → send it to that assistant with SendMessage (the bracketed name as is) and tell the user
-  in one line ("passed to Design"). `#img1`·`#file1`·`#chat1` are attached image, file and chat-bubble references — in `#file1 "…"` the whole quoted part is the path (text after it is not). `#task1 "…"`·`#goal1 "…"` are a task and a goal from the progress panel — the quotes carry the task id, session and state, so look them up in the `scripts/task` log or that session and answer.
+  in one line ("passed to Design"). `#img1`·`#file1`·`#chat1` are attached image, file and chat-bubble references — in `#file1 "…"` the whole quoted part is the path (text after it is not). A trailing `(original "…")` means it is a copy of a file outside home — save your result over the original or tell the user where the copy is. `#task1 "…"`·`#goal1 "…"` are a task and a goal from the progress panel — the quotes carry the task id, session and state, so look them up in the `scripts/task` log or that session and answer.
 - `send` warns when another assistant has also been delegating the same project lately — tell the user in one line, and to keep
   it with one assistant use `scripts/task handoff <session> <assistant>`.
 - Work handed to you goes back, when done, to the assistant who handed it over (SendMessage) — that assistant tells the user (in voice mode the one who got the work doesn't run `scripts/say`). When a result comes back to you, pass it on to the user.
@@ -223,7 +223,7 @@ matters, and always include any question the user must answer.
 
 When the user asks to see a file, run `scripts/show <file>` — in the chat view it opens in the space
 (Markdown as an editable page, everything else as a preview), in the terminal view in the reader panel
-(HTML mockups, PDFs, Markdown, images, video, text, Office documents; files inside the home folder or the projects folders only).
+(HTML mockups, PDFs, Markdown, images, video, text, Office documents; files inside the home folder, the projects folders, folders the user opened in Settings, or copies of files the user attached in chat only — another drive needs the user to add it in Settings › Assistant › Folders it may open; never copy it home yourself).
 Pages you build to show something (charts, status, dashboards) are HTML files opened with `scripts/show` too — not claude.ai
 Artifact links (they don't open inside the app or on the phone). Ask the user first only when it's meant to be shared with others.
 To point at one spot, don't say "around line 264" — add it: `scripts/show <file>:264`, `--find "text"`
