@@ -29,7 +29,7 @@ export function nextPhase(p: Phase, s: Step): Phase {
   return { kind: 'get', got: cur.got + s.got, total: cur.total };
 }
 
-const KEEP: [string, string] = ['끝나면 저절로 다시 켜져요. 그동안 앱을 끄지 마세요.', 'it restarts by itself. Please keep the app open.'];
+const KEEP: [string, string] = ['끝나면 자동으로 다시 켜져요. 그동안 앱을 끄지 마세요.', 'it restarts by itself. Please keep the app open.'];
 
 /** 받는 중·설치 중 띠 문구 [한글, 영어]. idle·failed 는 띠가 따로 쓴다 */
 export function installNote(p: Phase, ver: string): [string, string] {

@@ -21,7 +21,7 @@ export function LoginCard({ need, claude, fontSize }: { need: LoginNeed; claude?
       <div className="login-card-where">{t.where}</div>
       {open && (
         <div className="login-card-term">
-          <TerminalPane key="login-card" command={setupCommand('login', { claude }, tr('끝났어요. 멈춘 세션은 저절로 이어서 해요.', 'Done. Stopped sessions will continue on their own.'))}
+          <TerminalPane key="login-card" command={setupCommand('login', { claude }, tr('끝났어요. 멈춘 세션은 자동으로 이어서 해요.', 'Done. Stopped sessions will continue on their own.'))}
             title={tr('Claude 로그인', 'Claude sign-in')} subtitle={tr('브라우저에서 로그인하고 돌아오세요', 'Sign in in the browser, then come back')} fontSize={fontSize} />
         </div>
       )}
@@ -44,7 +44,7 @@ export function ClaudeMissingCard({ fontSize }: { fontSize: number }) {
       <div className="login-card-where">{t.where}</div>
       {open && (
         <div className="login-card-term">
-          <TerminalPane key="claude-missing" command={setupCommand('install', {}, tr('끝났어요. 세션 목록이 저절로 돌아와요.', 'Done. Your session list will come back on its own.'), undefined, undefined, winSetupNotes())}
+          <TerminalPane key="claude-missing" command={setupCommand('install', {}, tr('끝났어요. 세션 목록이 자동으로 돌아와요.', 'Done. Your session list will come back on its own.'), undefined, undefined, winSetupNotes())}
             title={tr('Claude Code 설치', 'Install Claude Code')} subtitle={tr('설치가 끝날 때까지 기다려 주세요.', 'Please wait until it finishes.')} fontSize={fontSize} />
         </div>
       )}

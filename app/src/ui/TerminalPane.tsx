@@ -309,7 +309,7 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
       let asking = false;
       let gone = false;
       linkRef.current?.('reattaching');
-      term.write(`\r\n\x1b[2m${tr('[앱] 세션 연결이 끊겼어 — 살아 있으면 다시 붙어', '[app] Lost the session link — reattaching if it is still running')}\x1b[0m\r\n`);
+      term.write(`\r\n\x1b[2m${tr('[앱] 세션 연결이 끊겼어 — 살아 있으면 다시 연결해', '[app] Lost the session link — reattaching if it is still running')}\x1b[0m\r\n`);
       let next = 0;
       relink = setInterval(() => {
         if (asking || disposed || Date.now() < next) return;

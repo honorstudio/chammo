@@ -84,6 +84,10 @@ export function DeskBubble() {
   const [ctxs, setCtxs] = useState<Record<string, Ctx>>({});
   const openRef = useRef(open);
   const draggedRef = useRef(false);
+  // 옮김 사건 뒤 0.3초 기다리는 '놓음' 처리 — 끌기를 시작하면 지운다. 부채가 펴질 때 창 크기가 바뀐 사건이 0.3초 안에 시작한 끌기를
+  // '다 놓았다'로 받아 끄는 도중에 판을 다시 놓았다(11-11 실측: 배지가 커서보다 40px 어긋남)
+  const movedT = useRef(0);
+  const startDrag = () => { window.clearTimeout(movedT.current); draggedRef.current = true; void invoke('bubble_drag'); };
   openRef.current = open;
   const who = roster.find((o) => o.id === (open ? pick ?? face : face)) ?? null;
   // 펼치는 쪽(화면 가운데 쪽) — 판을 놓을 때 정해진다(toBadge). hide = 창 안 배지 자리가 바뀌어 창 자리와 같이 옮기는 동안
@@ -151,10 +155,9 @@ export function DeskBubble() {
     // 다시 띄우기(앱 창 보임·bubbleDesk 켬) — 지금 모양 그대로 다시 놓고 보인다(대화창은 안 닫음, 배너면 배너 창)
     w.__bubbleShow = () => { void settle().then(() => invoke('bubble_reveal')).catch(() => {}); };
     // 끌어 옮김 — 다 놓은 뒤(사건이 잦다). 배지를 끌었든 대화창 머리를 끌었든 배지 상자 자리를 기억(열린 동안은 대화창과 같이 옮겨진 배지)
-    let t = 0;
     w.__bubbleMoved = () => {
-      window.clearTimeout(t);
-      t = window.setTimeout(() => {
+      window.clearTimeout(movedT.current);
+      movedT.current = window.setTimeout(() => {
         if (!draggedRef.current) return; // 앱이 놓은 자리(bubble_place)도 옮김 사건이 온다 — 사람이 끈 것만 기억
         draggedRef.current = false;
         // 끝에 걸쳐 놓았으면 저장은 끝까지만(비율 0~1) — 배지는 놓자마자 화면 안으로 다 보이게 당긴다(대화창은 접을 때)
@@ -175,7 +178,7 @@ export function DeskBubble() {
     void invoke<boolean>('bubble_wanted').then((on) => { if (on) w.__bubbleShow?.(); }).catch(() => {});
     // 모니터를 빼거나 해상도가 바뀌면 — 배지일 때 3초마다 제자리 확인
     const iv = window.setInterval(() => { if (!draggingRef.current && !openRef.current && !fanRef.current && !peekRef.current && !document.hidden) void toBadge().catch(() => {}); }, 3000);
-    return () => { window.clearInterval(iv); delete w.__bubbleShow; delete w.__bubbleMoved; delete w.__bubbleHover; delete w.__bubbleMouse; };
+    return () => { window.clearInterval(iv); window.clearTimeout(movedT.current); delete w.__bubbleShow; delete w.__bubbleMoved; delete w.__bubbleHover; delete w.__bubbleMouse; };
   }, [toBadge]);
 
   // 그릴 얼굴이 없으면(터미널 뷰·다른 기기 보는 중) 창을 내린다 — 빈 투명 창이 바탕 클릭을 먹는다. 생기면 다시 띄울 때면 보인다
@@ -275,10 +278,9 @@ export function DeskBubble() {
     const p = press.current;
     if (!p || p.dragged || !(e.buttons & 1) || !isDrag(e.screenX - p.x, e.screenY - p.y)) return;
     p.dragged = true;
-    draggedRef.current = true;
     draggingRef.current = true;
-    setDragging(true); // 부채·배너는 숨기되 창 크기는 그대로(끄는 창을 바꾸지 않는다)
-    void invoke('bubble_drag'); // 맥·윈도우 창 끌기 그대로 — 놓으면 __bubbleMoved
+    setDragging(true); // 부채·배너는 접고 창은 배지 칸으로 — 맥 끌기(Rust follow)는 판 기준이라 칸이 바뀌어도 배지가 커서와 같이 간다
+    startDrag(); // 맥·윈도우 창 끌기 — 놓으면 __bubbleMoved
   };
   // 열기·접기는 click 으로 — 창 끌기(bubble_drag)를 하면 놓음이 맥·윈도우 끌기에 먹혀 click 이 안 온다. 접근성 누르기(AXPress)도 click 만 보낸다. 끈 뒤 click 이면 true
   const pressed = () => { const p = press.current; press.current = null; return !!p?.dragged; };
@@ -448,7 +450,7 @@ export function DeskBubble() {
             onPointerDown={(e) => void startGrip(e, g)} onPointerMove={moveGrip} onPointerUp={endGrip} onPointerCancel={endGrip} />
         ));
       })()}
-      <div className="obb-head obd-head" onPointerDown={(e) => { if (e.button === 0 && !(e.target as Element).closest('button')) { draggedRef.current = true; void invoke('bubble_drag'); } }}>
+      <div className="obb-head obd-head" onPointerDown={(e) => { if (e.button === 0 && !(e.target as Element).closest('button')) { startDrag(); } }}>
         <div className="obb-faces" role="tablist" aria-label={tr('참모 고르기', 'Pick an assistant')}>
           {roster.map((o) => (
             <button key={o.id} type="button" role="tab" aria-selected={o.id === who.id} className={`obb-face${o.id === who.id ? ' on' : ''}`} data-hot data-tip={nick(o.label)}

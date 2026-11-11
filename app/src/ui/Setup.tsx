@@ -95,7 +95,7 @@ const features = (): [FeatureSwitch, string, string][] => [
 
 const ANIM_CHOICES = (): [Animation, string][] => [['auto', tr('자동', 'Auto')], ['reduce', tr('줄이기', 'Reduce')], ['off', tr('끄기', 'Off')]];
 const ANIM_HINT = (): Record<Animation, string> => ({
-  auto: tr(`${josa(machine(), "이", "가")} 바쁘면 저절로 줄여요`, `Reduces on its own when this ${machine()} is busy`),
+  auto: tr(`${josa(machine(), "이", "가")} 바쁘면 자동으로 줄여요`, `Reduces on its own when this ${machine()} is busy`),
   reduce: tr('도는 움직임은 멈추고 전환만 짧게', 'Stops looping motion, keeps transitions short'),
   off: tr('움직임 없이 바로 바뀌어요', 'Changes instantly, no motion'),
 });

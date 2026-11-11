@@ -331,7 +331,7 @@ pub fn hello_chammo(t: &Target, send: &SendFn) -> Result<Option<String>, String>
 }
 
 /// 상대가 Chammo 계정 기기 id 를 안 알려 줌 — 옛 판이거나 로그인 안 함
-const NO_CHAMMO: &str = "그 기기의 Chammo 가 옛 판이거나 로그인 전이에요 — 그 기기를 업데이트하고 이 기기와 같은 Chammo 계정으로 로그인한 뒤 다시 해 주세요";
+const NO_CHAMMO: &str = "그 기기의 Chammo 가 이전 버전이거나 로그인 전이에요 — 그 기기를 업데이트하고 이 기기와 같은 Chammo 계정으로 로그인한 뒤 다시 해 주세요";
 
 /// 짝짓기 — 그 기기 Chammo 기기 id 를 묻고(hello), 같은 계정 증명(peer_account::Bind)을 붙여 /api/pair 에 코드를 낸다.
 /// 받은 열쇠는 키체인에, 기기는 목록에(그 기기 id 와 함께). 예전엔 옛 판(400)이면 코드만 다시 냈는데 그러면 그 기기에 폰 줄로 남아 막는다(11-09)
@@ -350,7 +350,7 @@ pub fn pair(kc: &dyn Store, dir: &Path, peer: &TsPeer, code: &str, my_name: &str
         401 => return Err("연결 코드가 틀렸거나 10분이 지났어요. 그 기기에서 새 코드를 만들어 주세요".into()),
         403 if crate::peer_account::paused(&text).is_some() => return Err(crate::peer_account::bind_word(crate::peer_account::Verdict::Other).into()),
         403 => return Err("그 기기가 연결을 막았어요(주소가 안 맞음)".into()),
-        s => return Err(format!("그 기기가 짝짓기를 못 했어요({s})")),
+        s => return Err(format!("그 기기가 연결을 못 했어요({s})")),
     }
     let v = serde_json::from_slice::<serde_json::Value>(&r.body).unwrap_or_default();
     let token = v["token"].as_str().map(str::to_string).filter(|t| hex64(t)).ok_or("그 기기가 준 열쇠 모양이 이상해요")?;
@@ -441,7 +441,7 @@ fn connect_inner(l: &Link, me_id: &str, peer: &TsPeer, req: &str, send: &SendFn,
         400 => return Err(NO_CHAMMO.into()),
         403 if crate::peer_account::paused(&text).is_some() => return Err(crate::peer_account::bind_word(crate::peer_account::Verdict::Other).into()),
         403 if text.starts_with("unconfirmed") => return Err("그 기기가 이 기기를 확인하지 못했어요. 두 기기 모두 Chammo를 켜 두고 다시 해 주세요".into()),
-        403 => return Err("같은 테일스케일 계정 기기끼리만 이어져요".into()),
+        403 => return Err("같은 테일스케일 계정 기기끼리만 연결돼요".into()),
         429 => return Err("연결 요청이 너무 잦아요 — 10분쯤 뒤에 다시".into()),
         501 => return Err("그 기기의 Chammo가 옛 버전이라 연결을 받을 수 없어요. 그 기기를 업데이트해 주세요".into()),
         s => return Err(format!("그 기기가 연결 요청을 못 받았어요({s})")),
@@ -526,7 +526,7 @@ fn call_any(kc: &dyn Store, dir: &Path, id: &str, here: Option<Ipv4Addr>, method
         }
     }
     let list = load(dir);
-    let Some(i) = list.iter().position(|s| s.id == id) else { return Err("짝지은 기기가 아니에요".into()) };
+    let Some(i) = list.iter().position(|s| s.id == id) else { return Err("연결된 기기가 아니에요".into()) };
     let ip = here.ok_or("테일넷에 그 기기가 안 보여요(꺼짐·지워짐·다른 계정)")?;
     let token = kc.get(&service(), id).map_err(|e| format!("{STORE_WORD}에서 열쇠를 못 읽었어요({e:?})"))?.ok_or("pair")?;
     let t = Target { ip, port: list[i].port };

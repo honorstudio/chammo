@@ -24,7 +24,7 @@ export function unreachStep(s: Unreach, r: { ok: boolean; startedAt: number; now
 export function netText(e: unknown): string {
   const name = e instanceof Error || e instanceof DOMException ? e.name : '';
   if (name === 'OfflineError') return tr(`${machine()}에서 Chammo 를 켜 주세요`, `Open Chammo on your ${machine()}`);
-  if (name === 'TrustError') return tr('이 폰 연결이 풀렸어요. 다시 이어 주세요', 'This phone got disconnected. Please reconnect');
-  if (e instanceof TypeError) return tr('연결이 잠깐 끊겼어요. 저절로 다시 붙어요', 'Connection dropped for a moment. Reconnecting automatically');
+  if (name === 'TrustError') return tr('이 폰 연결이 풀렸어요. 다시 연결해 주세요', 'This phone got disconnected. Please reconnect');
+  if (e instanceof TypeError) return tr('연결이 잠깐 끊겼어요. 자동으로 재연결해요', 'Connection dropped for a moment. Reconnecting automatically');
   return e instanceof Error || e instanceof DOMException ? e.message : String(e);
 }

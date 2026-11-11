@@ -342,7 +342,7 @@ export function MobileApp() {
           // 왜 못 받았나 — 폰 글은 맥에 안 남으니 낱말로 모았다가 받으면 한 줄(/api/diag)
           fails += 1;
           why = failWord(err, lim.late());
-          return { ok: false, at, err: lim.late() ? new Error(tr(`${machine()} 답을 기다리고 있어요. 저절로 다시 해요`, `Waiting for your ${machine()}. Retrying automatically`)) : err };
+          return { ok: false, at, err: lim.late() ? new Error(tr(`${machine()} 답을 기다리고 있어요. 자동으로 다시 해요`, `Waiting for your ${machine()}. Retrying automatically`)) : err };
         }
       },
       apply: (g) => {
@@ -427,8 +427,8 @@ export function MobileApp() {
       <div className="m-center m-unreach">
         <BrandMark size={64} className="m-brand" />
         <p>{tr('이 폰 연결이 풀렸어요', 'This phone got disconnected')}</p>
-        <p className="m-unreach-why">{tr('다시 로그인하면 바로 이어져요', 'Sign in again to reconnect')}</p>
-        <button type="button" className="m-send" onClick={() => void unlinkPhone().finally(() => location.replace('/pair'))}>{tr('다시 잇기', 'Reconnect')}</button>
+        <p className="m-unreach-why">{tr('다시 로그인하면 바로 연결돼요', 'Sign in again to reconnect')}</p>
+        <button type="button" className="m-send" onClick={() => void unlinkPhone().finally(() => location.replace('/pair'))}>{tr('재연결', 'Reconnect')}</button>
         <button type="button" className={retrying ? 'm-icon m-retrying' : 'm-icon'} disabled={retrying} onClick={retry} aria-label={tr('다시 시도', 'Try again')} title={tr('다시 시도', 'Try again')}><IconRefresh /></button>
       </div>,
     );

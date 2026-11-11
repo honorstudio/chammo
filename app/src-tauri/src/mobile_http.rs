@@ -2715,7 +2715,7 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         return match gate.devices.pair_with(&b.code, &p, std::time::SystemTime::now()) {
             Some(token) if b.peer => Resp::json(&serde_json::json!({ "token": token, "proof": proof })),
             Some(token) => Resp::json(&serde_json::json!({ "token": token })),
-            None => Resp::text(401, "짝짓기 코드가 틀렸거나 10분이 지났어요 — 컴퓨터 Chammo 설정 > 기기 관리에서 QR 을 새로 만들어 주세요"),
+            None => Resp::text(401, "연결 코드가 틀렸거나 10분이 지났어요 — 컴퓨터 Chammo 설정 > 기기 관리에서 QR 을 새로 만들어 주세요"),
         };
     }
     // 다른 기기 참모 연결(코드 없이, peer_ask) — 열쇠 없이 받지만 열쇠는 되묻기 + 이 기기 사람의 카드 허용을 지나야 생긴다

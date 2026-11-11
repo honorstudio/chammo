@@ -403,7 +403,7 @@ export function ReaderView({ surface, actions, send, sendTo }: { surface: string
           {kind === 'md' && s.active && (
             <button className={editing[s.active] ? 'on' : ''} onClick={() => { const p = s.active!; setEditing((e) => ({ ...e, [p]: !e[p] })); if (editing[p]) setNonce((n) => n + 1); }}
               aria-label={editing[s.active] ? tr('다 고침', 'Done') : tr('고치기', 'Edit')} aria-pressed={!!editing[s.active]}
-              title={editing[s.active] ? tr('다 고침 — 보기로, 고친 건 저장돼 있어', 'Done — back to view, edits are saved') : tr(`고치기 — 노션처럼, 저장은 저절로, 고친 건 모아서 ${assistant()}에게`, 'Edit like Notion — saves automatically; send edits to the assistant together')}>
+              title={editing[s.active] ? tr('다 고침 — 보기로, 고친 건 저장돼 있어', 'Done — back to view, edits are saved') : tr(`고치기 — 노션처럼, 저장은 자동으로, 고친 건 모아서 ${assistant()}에게`, 'Edit like Notion — saves automatically; send edits to the assistant together')}>
               {editing[s.active] ? <IconCheck /> : <IconPencil />}
             </button>
           )}

@@ -141,7 +141,7 @@ export function MobileSection({ title, onAccount }: { title: string; onAccount?:
               {entry.qrSvg && <img className="su-qr" alt={tr('폰 추가 QR', 'Add phone QR')} src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(entry.qrSvg)}`} />}
               <div className="su-mobile-side">
                 <b>{tr('폰 카메라로 찍어 주세요', 'Scan with the phone camera')}</b>
-                <span className="su-hint">{tr('홈 화면 앱에서 구글로 로그인하고 이 컴퓨터를 고르면 중계로 다시 붙어요. 붙은 뒤 옛 줄은 끊어 주세요',
+                <span className="su-hint">{tr('홈 화면 앱에서 구글로 로그인하고 이 컴퓨터를 고르면 중계로 다시 연결돼요. 연결된 뒤 목록의 예전 항목은 끊어 주세요',
                   'Sign in with Google in the Home Screen app and pick this computer to reconnect through the relay. Then disconnect the old row')}</span>
                 <div className="su-inline"><IconButton size="l" tone="line" label={tr('닫기', 'Close')} onClick={() => setEntry(null)}><IconClose /></IconButton></div>
               </div>

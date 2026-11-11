@@ -91,7 +91,7 @@ export function tileTitle(r: DrawerRow): string {
     parts.push(r.installed);
     if (r.size) parts.push(sizeText(r.size));
     parts.push(r.used ? tr(`마지막 사용 ${r.used}`, `last used ${r.used}`) : tr('아직 안 씀', 'not used yet'));
-    if (r.newer && r.latest) parts.push(tr(`새 판 ${r.latest}`, `new ${r.latest}`));
+    if (r.newer && r.latest) parts.push(tr(`새 버전 ${r.latest}`, `new ${r.latest}`));
   } else if (tileUnavailable(r)) {
     parts.push(tr(`받을 수 없음 — ${oneLang(r.unavailable ?? '')}`, `unavailable — ${oneLang(r.unavailable ?? '')}`));
   } else {

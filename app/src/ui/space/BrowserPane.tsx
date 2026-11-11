@@ -29,7 +29,7 @@ export function paneNote(answer: string): { text: string; settings: boolean } | 
     case 'live': return null;
     case 'no-permission': return { text: tr('화면 기록 권한이 한 번 필요해요. 이 브라우저 창만 찍어요. 허용한 뒤 Chammo를 다시 켜 주세요(맥 규칙)', 'Screen Recording permission is needed once. Only this browser window is captured. Restart Chammo after allowing it (a macOS rule).'), settings: true };
     case 'no-window': return { text: tr('브라우저 창을 못 찾았어 — 세션이 다시 쓰면 이어져', 'Could not find the browser window — it resumes when the session uses it again'), settings: false };
-    case 'stopped': return { text: tr('브라우저 화면이 멈췄어 — 다시 붙는 중', 'The browser screen stopped — reconnecting'), settings: false };
+    case 'stopped': return { text: tr('브라우저 화면이 멈췄어 — 다시 연결하는 중', 'The browser screen stopped — reconnecting'), settings: false };
     default: return { text: tr('브라우저 화면 받는 중…', 'Connecting to the browser…'), settings: false };
   }
 }

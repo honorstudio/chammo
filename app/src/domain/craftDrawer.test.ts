@@ -14,7 +14,7 @@ describe('앱 서랍', () => {
   it('올렸을 때 — 깔린 건 판·크기·마지막 사용, 안 깐 건 받을 크기', () => {
     expect(tileTitle(row({ installed: '0.7.0', size: 79 * 1024 * 1024, used: '2026-10-15' }))).toBe('GridCraft · 표 계산 · 0.7.0 · 79MB · 마지막 사용 2026-10-15');
     expect(tileTitle(row())).toBe('GridCraft · 표 계산 · 0.7.0 · 받기 23MB');
-    expect(tileTitle(row({ installed: '0.6.0', latest: '0.7.0', newer: true }))).toContain('새 판 0.7.0');
+    expect(tileTitle(row({ installed: '0.6.0', latest: '0.7.0', newer: true }))).toContain('새 버전 0.7.0');
     // 깐 판이 더 새것(받아 둔 확인이 묵음·개발판)이면 '새 판'이 아니다 — 판 비교는 scripts/craft 가 숫자로(newer)
     expect(tileTitle(row({ installed: '0.13.5', latest: '0.13.1', newer: false }))).not.toContain('새 판');
   });

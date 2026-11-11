@@ -98,7 +98,7 @@ pub fn with_e2e(st: &TeamState, last: u64, m: &Value, opened: &crate::e2e_state:
             v["at"] = Value::from(*at);
         }
         // 암호 없이 온 말 — 받지 않는다(R8 암호 전용). 버리지 않고 사람에게 알린다
-        Unwrapped::Failed(why) if why == "plain" => v["body"] = Value::from("(암호 없이 온 말 — 받지 않았어요. 보낸 쪽 앱이 옛 판이면 업데이트하면 돼요)"),
+        Unwrapped::Failed(why) if why == "plain" => v["body"] = Value::from("(암호 없이 온 말 — 받지 않았어요. 보낸 쪽 앱이 이전 버전이면 업데이트하면 돼요)"),
         Unwrapped::Failed(why) if why == "too-old" => v["body"] = Value::from("(30일 넘게 지난 봉투라 받지 않았어요 — 오래 꺼져 있던 기기의 밀린 말이거나 보낸 기기 시계가 틀렸을 수 있어요)"),
         Unwrapped::Failed(why) if why == "future" => v["body"] = Value::from("(보낸 시각이 하루 넘게 미래인 봉투라 받지 않았어요 — 보낸 기기 시계가 틀렸을 수 있어요)"),
         Unwrapped::Failed(_) => v["body"] = Value::from("(종단 암호 — 이 기기에서 못 연 말)"),

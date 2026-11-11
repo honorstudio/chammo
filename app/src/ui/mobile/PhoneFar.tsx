@@ -109,7 +109,7 @@ export function PhoneFar({ t, devices, self, onPick, vp }: { t: FarPick; devices
         </div>
         <div className="m-far-body">
           {cut ? (
-            <div className="m-far-empty"><b>{tr(`${t.name}에 안 닿아요`, `Can't reach ${t.name}`)}</b><span>{tr('그 기기의 Chammo 가 꺼졌거나 잠자기예요. 켜지면 저절로 이어져요', 'Chammo on that device is off or asleep. It reconnects by itself when it\'s back')}</span></div>
+            <div className="m-far-empty"><b>{tr(`${t.name}에 안 닿아요`, `Can't reach ${t.name}`)}</b><span>{tr('그 기기의 Chammo 가 꺼졌거나 절전 중이에요. 켜지면 자동으로 연결돼요', 'Chammo on that device is off or asleep. It reconnects by itself when it\'s back')}</span></div>
           ) : tab === 'home' ? (
             <>
               {cards.map((c) => <DirectCardView key={c.card.id} c={c.card} name={c.name} onAnswer={peerCardAnswer(t.id)} />)}

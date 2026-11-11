@@ -67,7 +67,7 @@ fn 오류_글은_account_머리로_오가고_화면_한_줄이_있다() {
     assert_eq!(paused("  account:other  "), Some("other"));
     assert_eq!(paused("pair"), None);
     assert!(word("other").contains("계정이 바뀌어 연결이 멈췄어요"));
-    assert!(word("unbound").contains("다시 짝짓기"));
+    assert!(word("unbound").contains("재연결"));
 }
 
 #[test]

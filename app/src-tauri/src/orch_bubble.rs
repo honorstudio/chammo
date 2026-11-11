@@ -141,12 +141,52 @@ pub fn plate_from_cocoa(f: [f64; 4], h0: f64, view: [f64; 4]) -> (f64, f64) {
     (f[0] - view[0], h0 - (f[1] + f[3]) - view[1])
 }
 
-/// 창에 할 일 — 판째 놓기, 또는 지금 판 그대로 칸만 바꾸기
+/// 끄는 동안 판 자리 = 끌기 시작의 판 + 커서가 움직인 만큼. 창 원점이 아니라 판 기준이라 끄는 사이 칸(부채 → 배지)이 바뀌어도 배지가 커서와 같이 간다
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn follow_plate(plate0: (f64, f64), m0: (f64, f64), m: (f64, f64)) -> (f64, f64) {
+    (plate0.0 + m.0 - m0.0, plate0.1 + m.1 - m0.1)
+}
+
+/// 창에 할 일 — 판째 놓기, 지금 판 그대로 칸만 바꾸기, 또는 지금 칸 그대로 판만 옮기기(끌기)
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 #[derive(Clone, Copy)]
 enum Set {
     Place((f64, f64), Shape),
     View([f64; 4]),
+    Move((f64, f64)),
+}
+
+/// 맥: 주 화면 높이(화면 좌표 아래 0 ↔ 위 0 바꾸기) — 메인 스레드에서
+#[cfg(target_os = "macos")]
+unsafe fn main_h0() -> Option<f64> {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    let screens: *mut AnyObject = msg_send![objc2::class!(NSScreen), screens];
+    let first: *mut AnyObject = if screens.is_null() { std::ptr::null_mut() } else { msg_send![screens, firstObject] };
+    if first.is_null() {
+        return None;
+    }
+    let f: objc2_foundation::NSRect = msg_send![first, frame];
+    Some(f.size.height)
+}
+
+/// 맥: 지금 판 자리(위 0 논리 점) — 창 프레임과 SHAPE 를 메인 스레드에서 한 번에 읽는다(칸 바꾸기 apply 도 메인 스레드라 둘이 어긋난 순간을 안 본다)
+#[cfg(target_os = "macos")]
+fn plate_now(w: &tauri::WebviewWindow) -> Option<(f64, f64)> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    w.with_webview(move |wv| unsafe {
+        use objc2::msg_send;
+        use objc2::runtime::AnyObject;
+        let win = wv.ns_window() as *mut AnyObject;
+        let (Some(h0), Some(s)) = (main_h0(), shape()) else { return };
+        if win.is_null() {
+            return;
+        }
+        let f: objc2_foundation::NSRect = msg_send![win, frame];
+        let _ = tx.send(plate_from_cocoa([f.origin.x, f.origin.y, f.size.width, f.size.height], h0, s.view));
+    })
+    .ok()?;
+    rx.recv_timeout(Duration::from_millis(500)).ok()
 }
 
 /// 판·칸을 창에 — 맥은 메인 스레드에서 그 순간의 창 자리로 판 자리를 읽고(앞 놓기가 아직 줄에 있어도 어긋나지 않게) 창 프레임과 웹뷰 프레임을 한 번에,
@@ -162,14 +202,16 @@ fn apply(window: &tauri::WebviewWindow, set: Set) {
             if win.is_null() || web.is_null() {
                 return;
             }
-            let screens: *mut AnyObject = msg_send![objc2::class!(NSScreen), screens];
-            let first: *mut AnyObject = if screens.is_null() { std::ptr::null_mut() } else { msg_send![screens, firstObject] };
-            if first.is_null() {
-                return;
-            }
-            let h0 = { let f: NSRect = msg_send![first, frame]; f.size.height };
+            let Some(h0) = main_h0() else { return };
             let (plate, s) = match set {
                 Set::Place(p, s) => (p, s),
+                // 그 순간의 칸으로 창 자리만 — 끄는 사이 칸이 바뀌어도(부채 → 배지) 판이 커서를 따라간다. 웹뷰는 칸 그대로라 안 건드린다
+                Set::Move(p) => {
+                    let Some(s) = shape() else { return };
+                    let (a, _) = mac_frames(p, s, h0, false);
+                    let _: () = msg_send![win, setFrame: NSRect::new(NSPoint::new(a[0], a[1]), NSSize::new(a[2], a[3])), display: false];
+                    return;
+                }
                 Set::View(v) => {
                     let Some(cur) = shape() else { return };
                     let next = Shape { view: fit_view(Some(v), cur.w, cur.h), ..cur };
@@ -319,19 +361,20 @@ pub fn bubble_drag(app_handle: tauri::AppHandle, window: tauri::WebviewWindow) {
     let _ = w.start_dragging();
 }
 
-/// 맥: 왼쪽 단추를 누르고 있는 동안 창 = 처음 창 자리 + 커서가 움직인 만큼(8ms 마다), 놓으면 옮김 한 번
+/// 맥: 왼쪽 단추를 누르고 있는 동안 판 = 처음 판 + 커서가 움직인 만큼(8ms 마다), 놓으면 옮김 한 번.
+/// 창 원점이 아니라 판으로 — 끌기 시작에 화면이 부채 칸을 배지 칸으로 줄이면 창 원점이 판 안에서 바뀌어, 처음 창 원점으로 놓으면 배지가 그 차이만큼 튀었다(11-11)
 #[cfg(target_os = "macos")]
 fn follow(w: tauri::WebviewWindow) {
     if FOLLOWING.swap(true, Ordering::SeqCst) {
         return;
     }
     std::thread::spawn(move || {
-        if let (Some(win), Some(m0)) = (rect_of(&w), mouse(1.0)) {
+        if let (Some(plate0), Some(m0)) = (plate_now(&w), mouse(1.0)) {
             let mut last = m0;
             while button_down() {
                 if let Some(m) = mouse(1.0).filter(|m| *m != last) {
                     last = m;
-                    let _ = w.set_position(tauri::LogicalPosition::new(win.x + m.0 - m0.0, win.y + m.1 - m0.1));
+                    apply(&w, Set::Move(follow_plate(plate0, m0, m)));
                 }
                 std::thread::sleep(Duration::from_millis(8));
             }
@@ -818,6 +861,30 @@ mod tests {
         let win = Screen { id: String::new(), x: 1300.0, y: 800.0, w: 108.0, h: 108.0 };
         assert_eq!(plate_of(&win, Some(s)), Screen { id: String::new(), x: 1038.0, y: 328.0, w: 370.0, h: 580.0 });
         assert_eq!(plate_of(&win, None), win, "아직 놓기 전 = 창 그대로");
+    }
+
+    // 11-11 사용자 "참모 뱃지가 정상 드래그가 안됨 튀어나감" — 부채를 편 채(칸 344×258) 끌면 끌기 시작에 칸이 배지(108×108)로 줄었는데
+    // follow 가 처음 창 원점(부채 칸) + 커서 이동으로 창을 놓아 배지가 두 칸 원점 차이(실측 -236,-150)만큼 튀었다
+    #[test]
+    fn 끌기_중_칸이_바뀌어도_배지는_커서만큼만_간다() {
+        let (h0, plate0, box_) = (2156.0, (-2072.0, 1417.0), (262.0 + 18.0, 472.0 + 10.0));
+        let stage = Shape { w: 370.0, h: 580.0, view: [26.0, 322.0, 344.0, 258.0] };
+        let rest = Shape { view: [262.0, 472.0, 108.0, 108.0], ..stage };
+        let (m0, m) = ((-1536.0, 2082.0), (-1776.0, 1922.0));
+        // 끌기 시작 = 부채 칸 창에서 판을 읽는다
+        let (f0, _) = mac_frames(plate0, stage, h0, false);
+        assert_eq!(plate_from_cocoa(f0, h0, stage.view), plate0);
+        // 끄는 동안 칸이 배지로 줄어도 판 = 처음 판 + 커서 이동 → 배지 화면 자리도 커서만큼
+        for s in [stage, rest] {
+            let (f, _) = mac_frames(follow_plate(plate0, m0, m), s, h0, false);
+            let p = plate_from_cocoa(f, h0, s.view);
+            assert_eq!((p.0 + box_.0, p.1 + box_.1), (plate0.0 + box_.0 + m.0 - m0.0, plate0.1 + box_.1 + m.1 - m0.1));
+        }
+        // 고치기 전: 창 원점(부채 칸) + 이동을 배지 칸 창에 대면 판이 두 칸 원점 차이만큼 어긋났다
+        let old = [f0[0] + m.0 - m0.0, 0.0, 0.0, 0.0];
+        assert_eq!(old[0] - rest.view[0] - (plate0.0 + m.0 - m0.0), stage.view[0] - rest.view[0]);
+        // 커서가 그대로면 판도 그대로
+        assert_eq!(follow_plate(plate0, m0, m0), plate0);
     }
 
     #[test]

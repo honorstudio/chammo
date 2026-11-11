@@ -49,7 +49,7 @@ describe('다시 잇기 — 이미 있는 계정 로그인 길로', () => {
   });
   it('입구: 풀린 폰엔 다시 잇기, 누르면 /pair(계정 로그인·숫자 확인)', () => {
     expect(main).toContain('e instanceof TrustError');
-    expect(main).toContain("'다시 잇기'");
+    expect(main).toContain("'재연결'");
     expect(main).toMatch(/unlinkPhone\(\)\.finally\(\(\) => location\.replace\('\/pair'\)\)/);
   });
   it('폰 화면: TrustError 면 전용 화면, 받으면 풀린다', () => {
@@ -67,6 +67,7 @@ describe('다시 잇기 — 이미 있는 계정 로그인 길로', () => {
     expect(t).toContain('풀렸어요');
     expect(t).not.toContain('QR');
     expect(t).not.toContain('저절로');
+    expect(t).not.toContain('자동으로');
   });
 });
 

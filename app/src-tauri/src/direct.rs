@@ -194,7 +194,7 @@ pub const LINK_FROM: &str = "@link";
 /// 텔레그램(밖의 중계)·참모(appctl 엔 길 자체가 없다)·다른 기기 참모 열쇠(/api/direct-answer 403)로는 못 누른다
 pub fn link_pick(pick: &Pick, by: &str) -> Result<bool, Refuse> {
     if by != "desktop" && by != "phone" {
-        return Err(Refuse::Bad(crate::i18n::tr("기기 연결은 앱이나 짝지은 폰 카드에서만 허용해요", "Device links are approved only in the app or a paired phone").into()));
+        return Err(Refuse::Bad(crate::i18n::tr("기기 연결은 앱이나 연결된 폰 카드에서만 허용해요", "Device links are approved only in the app or a paired phone").into()));
     }
     match pick {
         Pick::Yes => Ok(true),
@@ -208,7 +208,7 @@ pub fn link_pick(pick: &Pick, by: &str) -> Result<bool, Refuse> {
 /// 그게 B 가 아님을 가를 길이 없다(리뷰 11-01 ⑤). 폰이 없으면 A 앞에서
 pub fn peer_link_pick(pick: &Pick, by: &str) -> Result<bool, Refuse> {
     if by != "desktop" && by != "phone" {
-        return Err(Refuse::Bad(crate::i18n::tr("이 컴퓨터 연결은 이 컴퓨터나 이 컴퓨터와 짝지은 폰에서만 허용해요", "Allow this link on this computer or a phone paired with it").into()));
+        return Err(Refuse::Bad(crate::i18n::tr("이 컴퓨터 연결은 이 컴퓨터나 이 컴퓨터와 연결된 폰에서만 허용해요", "Allow this link on this computer or a phone paired with it").into()));
     }
     link_pick(pick, by)
 }

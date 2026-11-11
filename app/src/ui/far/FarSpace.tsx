@@ -54,7 +54,7 @@ export function FarSpace({ t, data, status, paused, onRepaired, cards, onAgent, 
       ) : cut ? (
         <div className="far-empty">
           <b>{tr(`${t.name}에 안 닿아요`, `Can't reach ${t.name}`)}</b>
-          <span>{tr('그 기기의 Chammo 가 꺼졌거나 잠자기예요. 켜지면 저절로 이어져요', 'Chammo on that device is off or asleep. It reconnects on its own')}</span>
+          <span>{tr('그 기기의 Chammo 가 꺼졌거나 절전 중이에요. 켜지면 자동으로 연결돼요', 'Chammo on that device is off or asleep. It reconnects on its own')}</span>
           <button className="ib line" aria-label={tr('다시 시도', 'Try again')} title={tr('다시 시도', 'Try again')} onClick={data.again}><IconRefresh /></button>
         </div>
       ) : tab === 'home' ? (
@@ -123,7 +123,7 @@ function FarPaused({ t, paused, onRepaired }: { t: FarTarget; paused: NonNullabl
       <span>{wait ? tr('그 기기에서 허용을 기다려요', 'Waiting for that device to allow') : pausedText(paused)}</span>
       {canRepair(paused) && (wait
         ? <button className="btn" onClick={() => void remoteConnectCancel(t.dev)}>{tr('취소', 'Cancel')}</button>
-        : <button className="btn pri" onClick={repair}>{tr('다시 짝짓기', 'Pair again')}</button>)}
+        : <button className="btn pri" onClick={repair}>{tr('재연결', 'Pair again')}</button>)}
       {err && <span className="su-error">{err}</span>}
     </div>
   );

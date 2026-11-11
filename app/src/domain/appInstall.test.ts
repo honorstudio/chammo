@@ -15,10 +15,10 @@ describe('nextPhase — 받기 단계', () => {
 
 describe('installNote — 띠 문구 [한글, 영어]', () => {
   it('받는 중엔 퍼센트와 끄지 말라는 한 줄', () => {
-    expect(installNote({ kind: 'get', got: 250, total: 1000 }, '9.8.7')[0]).toBe('Chammo 9.8.7 받는 중 25% — 끝나면 저절로 다시 켜져요. 그동안 앱을 끄지 마세요.');
+    expect(installNote({ kind: 'get', got: 250, total: 1000 }, '9.8.7')[0]).toBe('Chammo 9.8.7 받는 중 25% — 끝나면 자동으로 다시 켜져요. 그동안 앱을 끄지 마세요.');
   });
   it('크기를 모르면 퍼센트 없이', () => {
-    expect(installNote({ kind: 'get', got: 5, total: null }, '9.8.7')[0]).toBe('Chammo 9.8.7 받는 중 — 끝나면 저절로 다시 켜져요. 그동안 앱을 끄지 마세요.');
+    expect(installNote({ kind: 'get', got: 5, total: null }, '9.8.7')[0]).toBe('Chammo 9.8.7 받는 중 — 끝나면 자동으로 다시 켜져요. 그동안 앱을 끄지 마세요.');
   });
   it('설치 중', () => {
     expect(installNote({ kind: 'install' }, '9.8.7')[1]).toBe('Installing Chammo 9.8.7 — it restarts by itself. Please keep the app open.');

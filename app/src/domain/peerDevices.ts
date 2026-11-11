@@ -24,9 +24,9 @@ export type PeerView = {
 
 /** 계정 때문에 멈춘 짝의 한 줄(Rust peer_account::word 와 같은 말) */
 export function pausedText(p: RemoteDevice['paused']): string {
-  if (p === 'nologin') return tr('이 기기가 Chammo 에 로그인하지 않아 연결이 멈췄어요 — 로그인한 뒤 다시 짝짓기', 'Paused because this device is signed out of Chammo — sign in, then pair again');
-  if (p === 'unknown') return tr('Chammo 계정을 확인하지 못해 연결이 멈췄어요 — 인터넷을 확인하고 다시 짝짓기', "Paused because the Chammo account couldn't be checked — check the internet, then pair again");
-  return tr('계정이 바뀌어 연결이 멈췄어요 — 다시 짝짓기', 'Paused because the account changed — pair again');
+  if (p === 'nologin') return tr('이 기기가 Chammo 에 로그인하지 않아 연결이 멈췄어요 — 로그인한 뒤 재연결해 주세요', 'Paused because this device is signed out of Chammo — sign in, then pair again');
+  if (p === 'unknown') return tr('Chammo 계정을 확인하지 못해 연결이 멈췄어요 — 인터넷을 확인하고 재연결해 주세요', "Paused because the Chammo account couldn't be checked — check the internet, then pair again");
+  return tr('계정이 바뀌어 연결이 멈췄어요 — 재연결해 주세요', 'Paused because the account changed — pair again');
 }
 
 /** waiting = 이 기기가 그 기기에 연결을 요청하고 허용을 기다리는 중 */
@@ -57,7 +57,7 @@ type Paused = NonNullable<RemoteDevice['paused']>;
 const PAUSED: readonly Paused[] = ['unbound', 'other', 'nologin', 'unknown'];
 
 /** 연결 단추 이름 — 계정 때문에 멈춘 짝은 줄 글('… — 다시 짝짓기')과 같은 말(QA 0.4.11 문제 3-1) */
-export const connectLabel = (d: RemoteDevice) => (d.status === 'account' ? tr('다시 짝짓기', 'Pair again') : tr('연결', 'Connect'));
+export const connectLabel = (d: RemoteDevice) => (d.status === 'account' ? tr('재연결', 'Pair again') : tr('연결', 'Connect'));
 
 /** 기기 보기(Far)에서 그 기기가 계정 때문에 멈췄나 — 고를 때 받은 목록 상태(account) 또는 읽기 오류 'account:<코드>'(Rust remote.rs).
  *  꺼진 기기('켜지면 저절로 이어져요')와 달리 기다려도 안 풀린다(문제 3-2). 아니면 null */

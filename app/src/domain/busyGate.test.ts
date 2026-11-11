@@ -126,14 +126,14 @@ describe('linkNotice — 채팅 칸 위 한 줄(사람 말로)', () => {
     expect(linkNotice({ link: 'attaching', phase: 'starting', busy: 'ok' })).toContain('켜지는 중');
   });
   it('끊겨 다시 붙는 중 — 목록을 못 읽는 중이면 그렇게', () => {
-    expect(linkNotice({ link: 'reattaching', busy: 'ok' })).toContain('다시 붙는 중');
+    expect(linkNotice({ link: 'reattaching', busy: 'ok' })).toContain('다시 연결하는 중');
     expect(linkNotice({ link: 'reattaching', listUnknown: true, busy: 'busy' })).toContain('세션 목록');
   });
   it('굳은 끊김은 다시 보내 달라고', () => {
     expect(linkNotice({ link: 'gone', busy: 'ok' })).toContain('다시 보내');
     // 다른 창에 쫓겨난 끊김(윈도우)은 꺼진 게 아니다 — 보내면 되찾는다고(sendOnLink retake)
     const kicked = linkNotice({ link: 'gone', kicked: true, busy: 'ok', who: '참모' })!;
-    expect(kicked).toContain('다시 붙어서');
+    expect(kicked).toContain('다시 연결돼서');
     expect(kicked).toContain('참모');
     expect(kicked).not.toContain('꺼진');
   });

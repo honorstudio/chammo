@@ -668,7 +668,7 @@ pub(crate) fn slow_down(key: &str, v: &Value, now: std::time::Instant) {
     SLOW.lock().unwrap_or_else(|e| e.into_inner()).insert(key.to_string(), now + std::time::Duration::from_secs(secs));
 }
 
-pub(crate) const SLOW_DOWN: &str = "중계 서버가 요청이 너무 잦다고 잠시 쉬래요 — 1분쯤 뒤 저절로 다시 해요";
+pub(crate) const SLOW_DOWN: &str = "중계 서버가 요청이 너무 잦다고 잠시 쉬래요 — 1분쯤 뒤 자동으로 다시 해요";
 
 // ── 사람 말 몫(10-28 22:53 429 — 사용자 맥에서 사람이 친 DM 이 '잠시 쉬래요'로 못 나감) — 서버는 열쇠마다 10분 칸에 nonce 300개(chammo-relay NONCE_CAP).
 //    앱이 같은 칸(10분 단위로 자른 시각)을 따라 세고, 배경 요청(목록·사슬·명부·소켓 다시 붙기·폴링)은 BG_CAP 에서 멈춰 나머지를 사람 말 보내기에 남긴다.
@@ -1062,7 +1062,7 @@ fn server_clock_ms(http: &dyn Http, server: &str) -> Option<u64> {
 pub(crate) fn why(code: u16, v: &Value) -> String {
     match (code, v["error"].as_str().unwrap_or("")) {
         (401, _) => "중계 서버가 서명을 거절했어(이 기기 시계가 5분 넘게 틀렸거나 기기가 끊겼어)".into(),
-        (400, "roles_off") => "중계 서버가 아직 매니저 권한을 안 켰어 — 팀 기기가 다 새 판이 된 뒤 켜요".into(),
+        (400, "roles_off") => "중계 서버가 아직 매니저 권한을 안 켰어 — 팀 기기가 다 새 버전이 된 뒤 켜요".into(),
         (400, "use_transfer") => "팀장은 '팀장 넘기기'로만 바꿔".into(),
         (403, "owner_only") => "전체 권한은 팀장만 주고 뺏어".into(),
         (403, "rank") => "같거나 높은 사람의 권한은 못 바꿔".into(),

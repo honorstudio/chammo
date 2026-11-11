@@ -117,14 +117,14 @@ async function open(link: RelayLink) {
     location.replace(homeUrl(location.search));
   } catch (e) {
     if (e instanceof TrustError) {
-      return screen('이 폰 연결이 풀렸어요', '다시 로그인하면 바로 이어져요.', [
-        { label: '다시 잇기', primary: true, run: () => void unlinkPhone().finally(() => location.replace('/pair')) },
+      return screen('이 폰 연결이 풀렸어요', '다시 로그인하면 바로 연결돼요.', [
+        { label: '재연결', primary: true, run: () => void unlinkPhone().finally(() => location.replace('/pair')) },
         { label: '다시 해 보기', run: () => void open(link) },
       ]);
     }
     const off = e instanceof OfflineError;
     // 글은 소넷(11-04) — 망 오류(TypeError)는 속 글 대신 한 줄, 그 밖(서비스 워커 없음 등)은 할 일이 담긴 글 그대로
-    screen(off ? '아직 꺼져 있어요' : '연결하지 못했어요', off ? `${link.macName ?? '컴퓨터'}에서 Chammo 를 켜면 저절로 이어져요` : e instanceof TypeError ? '연결이 잠깐 끊겼어요. 다시 눌러 주세요' : (e as Error).message, [{ label: '다시', primary: true, run: () => void open(link) }]);
+    screen(off ? '아직 꺼져 있어요' : '연결하지 못했어요', off ? `${link.macName ?? '컴퓨터'}에서 Chammo 를 켜면 자동으로 연결돼요` : e instanceof TypeError ? '연결이 잠깐 끊겼어요. 다시 눌러 주세요' : (e as Error).message, [{ label: '다시', primary: true, run: () => void open(link) }]);
     if (off) setTimeout(() => void open(link), RETRY_MS);
   }
 }
@@ -138,14 +138,14 @@ const BAD: Record<string, string> = {
 /** 짝짓기 링크 — 다른 컴퓨터로 바꾸면 먼저 묻고, 짝지을 때마다 새 열쇠(보안 검토 A·D) */
 async function pairNow(hash: string, relay: string | undefined, confirmed = false) {
   const plan = planPair(hash, relay, readLink(), confirmed);
-  if (plan.kind === 'bad') return screen('이 QR 로는 못 짝지어요', BAD[plan.why]!);
+  if (plan.kind === 'bad') return screen('이 QR 로는 연결할 수 없어요', BAD[plan.why]!);
   if (plan.kind === 'confirm') {
-    return screen('다른 컴퓨터로 바꿀까요?', `지금은 ${plan.from} 와 짝지어 있어요. 바꾸면 이 폰에 받아 둔 화면과 열쇠가 지워지고 새 QR 의 컴퓨터와 다시 짝지어요.`, [
+    return screen('다른 컴퓨터로 바꿀까요?', `지금은 ${plan.from} 와 연결되어 있어요. 바꾸면 이 폰에 받아 둔 화면과 열쇠가 지워지고 새 QR 의 컴퓨터와 다시 연결해요.`, [
       { label: '바꾸기', primary: true, run: () => void pairNow(hash, relay, true) },
       { label: '그대로 두기', run: () => location.replace('/pair') },
     ]);
   }
-  screen('짝짓는 중', '컴퓨터 Chammo 가 이 폰을 확인하고 있어요.', [], true);
+  screen('연결 중', '컴퓨터 Chammo 가 이 폰을 확인하고 있어요.', [], true);
   try {
     const prev = plan.sendPrev ? store.get(TOKEN_KEY) : null;
     if (plan.wipeAll) await wipeAll();
@@ -175,7 +175,7 @@ async function mine(relay: string, acc: Account) {
     const list = (Array.isArray(r.json.computers) ? r.json.computers : []) as Computer[];
     const pcs = list.filter((c) => c && typeof c.id === 'string' && typeof c.name === 'string' && keyShape(c.tunnelPub));
     const at = typeof r.json.autoAt === 'number' ? new Date(r.json.autoAt) : null;
-    const auto = at ? ` ${at.getMonth() + 1}/${at.getDate()} ${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}까지 거절이 없으면 저절로 허용돼요.` : '';
+    const auto = at ? ` ${at.getMonth() + 1}/${at.getDate()} ${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}까지 거절이 없으면 자동으로 허용돼요.` : '';
     const title = pending ? '다른 기기에서 허용을 기다려요' : pcs.length ? '어느 컴퓨터를 열까요?' : '열 컴퓨터가 없어요';
     // 같은 폰의 다른 브라우저(아이폰 사파리 ↔ 홈 화면 앱) 로그인이 계정에 따로 있다 — 중계가 대기 폰에만 알려 준다
     const twin = pending && r.json.samePhone === true ? ' 하루 사이에 같은 종류 폰이 계정에 또 들어왔어요 — 이 폰 사파리 로그인이었다면 컴퓨터 기기 관리에서 빼 주세요.' : '';

@@ -18,7 +18,7 @@ export async function saveClipFiles(files: File[], save: Save = saveAttach): Pro
     const ext = (f.type.split('/')[1] ?? 'png').replace('jpeg', 'jpg').replace(/[^a-z0-9]/gi, '') || 'png';
     const name = f.name && f.name !== 'image.png' ? f.name : `pasted.${ext}`;
     if (f.size > PASTE_MAX) {
-      bad.push({ from: name, error: tr(`30MB 넘는 파일은 붙여넣을 수 없어요. 채팅 칸에 끌어다 놓아 주세요: ${name}`, `Files over 30 MB can't be pasted. Drag them into the chat instead: ${name}`) });
+      bad.push({ from: name, error: tr(`30MB 넘는 파일은 붙여넣을 수 없어요. 채팅창에 끌어다 놓아 주세요: ${name}`, `Files over 30 MB can't be pasted. Drag them into the chat instead: ${name}`) });
       continue;
     }
     try {

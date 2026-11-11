@@ -55,7 +55,7 @@ const ROOM_WHY = () => tr('대화 파일 보기엔 못 올려요 — 팀 보관�
 const NOT_HERE = () => tr('여기엔 못 놓아요 — 팀 보관함 칸이나 폴더 칩에 놓아 줘', "Can't drop here — use the team locker or a folder chip");
 /** 다른 창의 팀 파일을 놓는 자리 — 띠 참모 얼굴(채팅 칸은 chatDropAt) · 못 놓은 자리면 보낸 창에 한 줄 */
 const ORCH_SPOT = '[data-orch-drop]';
-const TEAM_MISS = () => tr('참모에게 주려면 참모 얼굴이나 참모 채팅 칸에 놓아 줘', 'To give it to an assistant, drop it on their face or chat');
+const TEAM_MISS = () => tr('참모에게 주려면 참모 얼굴이나 참모 채팅창에 놓아 줘', 'To give it to an assistant, drop it on their face or chat');
 
 /** 이름 표 자리 — 커서 오른쪽 아래, 창 끝에 닿으면 창 안으로 당긴다(아래 끝이면 커서 위로). 이유 줄이 붙으면 표가 커서 잘렸다 */
 export function ghostAt(x: number, y: number, w = 0, h = 0, vw = window.innerWidth, vh = window.innerHeight): [number, number] {

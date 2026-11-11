@@ -130,7 +130,7 @@ export function paneWantsPeek(x: { pressedAt: number | undefined; now: number; m
 export function signedLine(mac?: SignedState): string | null {
   if (!mac?.signed) return null;
   return mac.auto
-    ? tr('패스키 때문에 크롬 창에서 열었어 — 끝나면 저절로 돌아와', 'Opened in a Chrome window for the passkey — it comes back on its own when done')
+    ? tr('패스키 때문에 크롬 창에서 열었어 — 끝나면 자동으로 돌아와', 'Opened in a Chrome window for the passkey — it comes back on its own when done')
     : tr('구글 크롬으로 열어 뒀어', 'Opened in Google Chrome');
 }
 

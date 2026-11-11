@@ -9,13 +9,13 @@ const WAIT_MS = 60_000;
 const enc = new TextEncoder();
 
 export const KNOCK_ERRORS: Record<string, string> = {
-  code: '짝짓기 코드가 틀렸거나 10분이 지났어요 — 컴퓨터 Chammo 설정 > 기기 관리에서 QR 을 새로 만들어 주세요',
+  code: '연결 코드가 틀렸거나 10분이 지났어요 — 컴퓨터 Chammo 설정 > 기기 관리에서 QR 을 새로 만들어 주세요',
   relay: '컴퓨터가 이 폰을 중계에 못 들였어요 — 컴퓨터가 Chammo 계정에 로그인돼 있는지 봐 주세요',
   offline: '컴퓨터 Chammo 가 꺼져 있어요 — 켜고 QR 을 다시 찍어 주세요',
   timeout: '컴퓨터가 답이 없어요 — 컴퓨터 Chammo 가 켜져 있는지 보고 다시 해 주세요',
   net: '중계 서버에 못 붙었어요 — 인터넷 연결을 봐 주세요',
   refused: '컴퓨터가 이 QR 을 못 열었어요 — 컴퓨터 Chammo 에서 QR 을 새로 만들어 주세요',
-  key: '짝짓기 확인이 맞지 않아요 — QR 을 새로 만들어 다시 찍어 주세요',
+  key: '연결 확인이 맞지 않아요 — QR 을 새로 만들어 다시 찍어 주세요',
   held: '컴퓨터 Chammo 에서 이 폰 연결을 허용해 주세요 — 허용한 뒤 같은 QR 을 다시 열면 돼요',
 };
 
@@ -42,6 +42,6 @@ export async function knockPair(p: PairLink, o: { home: boolean; prev: string | 
     };
   });
   const v = JSON.parse(new TextDecoder().decode(await open(k.x.privateKey, unb64(k.xPub), unb64(reply)))) as { ok?: boolean; error?: string; token?: string; device?: string; mac?: { name?: string } };
-  if (!v.ok || typeof v.token !== 'string' || typeof v.device !== 'string') throw new Error(KNOCK_ERRORS[v.error ?? ''] ?? `짝짓기 실패 (${v.error ?? '?'})`);
+  if (!v.ok || typeof v.token !== 'string' || typeof v.device !== 'string') throw new Error(KNOCK_ERRORS[v.error ?? ''] ?? `연결 실패 (${v.error ?? '?'})`);
   return { token: v.token, link: { relay: p.relay, mac: p.mac, macX: p.macX, device: v.device, macName: v.mac?.name } };
 }

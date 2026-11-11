@@ -92,10 +92,10 @@ export function linkNotice(o: { link: LinkState | undefined; phase?: AttachPhase
     case undefined: case 'live': return null;
     case 'gone':
       // 다른 창에 쫓겨남(윈도우) — 세션은 산다. 보내면 칸이 되찾는다(attachExit sendOnLink)
-      if (o.kicked) return tr(`${who} 연결은 한 번에 한 곳만 돼서 다른 창이 열면 끊겨 — 그냥 말을 보내면 여기로 다시 붙어서 가`, `Only one connection per ${who} works at a time, so another window can drop this one — just send, and it reconnects here`);
+      if (o.kicked) return tr(`${who} 연결은 한 번에 한 곳만 돼서 다른 창이 열면 끊겨 — 그냥 말을 보내면 여기로 다시 연결돼서 가`, `Only one connection per ${who} works at a time, so another window can drop this one — just send, and it reconnects here`);
       return tr('세션이 꺼진 것 같아 — 다시 켜지면 안 간 말을 다시 보내 줘', 'The session seems to have stopped — send again once it is back');
     case 'reattaching':
-      if (!o.listUnknown) return tr('세션 연결이 끊겨서 다시 붙는 중 — 보낸 말은 붙으면 바로 가', 'Lost the session link — reattaching; your message goes as soon as it is back');
+      if (!o.listUnknown) return tr('세션 연결이 끊겨서 다시 연결하는 중 — 보낸 말은 연결되면 바로 가', 'Lost the session link — reattaching; your message goes as soon as it is back');
       return o.busy === 'ok'
         ? tr(`Claude Code가 응답하지 않아 세션 목록을 못 읽고 있어요. ${then}`, `Claude Code is not answering, so the session list is unreadable. ${then}`)
         : `${busyLead(o.busy)}${tr(`세션 목록을 못 읽는 중 — ${then}`, `the session list is not coming back yet — ${then}`)}`;
@@ -120,5 +120,5 @@ export function listErrorText(err: string, fails: number, busy: Busy, missing = 
   if (fails < 2) return null;
   return busy === 'ok'
     ? tr('Claude Code 관리 프로그램이 응답이 없어 세션 목록을 못 받는 중 — 세션은 그대로 돌고 있을 수 있어, 잠시 기다려 줘', 'Claude Code is not answering, so the session list is stuck — sessions may still be running, give it a moment')
-    : `${busyLead(busy)}${tr('세션 목록을 늦게 받는 중 — 한가해지면 저절로 돌아와(세션은 그대로 돌고 있어)', 'the session list is slow — it comes back on its own (sessions keep running)')}`;
+    : `${busyLead(busy)}${tr('세션 목록을 늦게 받는 중 — 한가해지면 자동으로 돌아와(세션은 그대로 돌고 있어)', 'the session list is slow — it comes back on its own (sessions keep running)')}`;
 }

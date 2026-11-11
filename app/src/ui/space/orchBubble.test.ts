@@ -177,7 +177,9 @@ describe('바탕 배지(앱을 내려도 — 10-28 사용자)', () => {
   });
   it('맥 끌기는 창이 커서를 직접 따라간다 — 맥 창 끌기(performDrag)는 위쪽이 메뉴줄에서 멈춰 한 판 창이면 배지를 화면 위쪽으로 못 끈다(11-05 아이맥 실측)', () => {
     expect(rust).toMatch(/#\[cfg\(target_os = "macos"\)\]\s*follow\(w\);\s*#\[cfg\(not\(target_os = "macos"\)\)\]\s*let _ = w\.start_dragging\(\);/); // 윈도우는 창 끌기 그대로
-    expect(rust).toMatch(/while button_down\(\) \{[\s\S]{0,300}w\.set_position\(tauri::LogicalPosition::new\(win\.x \+ m\.0 - m0\.0, win\.y \+ m\.1 - m0\.1\)\)/);
+    // 판 기준(11-11 사용자 "튀어나감") — 처음 창 원점으로 놓으면 끌기 시작에 칸이 부채 → 배지로 줄어든 차이만큼 배지가 튀었다
+    expect(rust).toMatch(/if let \(Some\(plate0\), Some\(m0\)\) = \(plate_now\(&w\), mouse\(1\.0\)\)[\s\S]{0,200}while button_down\(\) \{[\s\S]{0,300}apply\(&w, Set::Move\(follow_plate\(plate0, m0, m\)\)\)/);
+    expect(rust).toMatch(/Set::Move\(p\) => \{\s*let Some\(s\) = shape\(\) else \{ return \};\s*let \(a, _\) = mac_frames\(p, s, h0, false\);/); // 그 순간의 칸으로 창을 놓는다(메인 스레드)
     expect(rust).toMatch(/pub fn moved\(app: &tauri::AppHandle\) \{\s*if FOLLOWING\.load\(Ordering::SeqCst\) \{\s*return;/); // 끄는 중엔 자리 저장·제자리 확인을 안 깨운다
     expect(rust).toContain('let pass = !FOLLOWING.load(Ordering::SeqCst) &&'); // 끄는 중 커서가 받는 자리를 벗어나도 놓음이 바탕 앱으로 안 샌다
   });
@@ -281,7 +283,7 @@ describe('열린 동안 배지는 제자리, 대화창은 끌어 옮긴다(10-28
     expect(desk).toContain('...(frame.badge ? [badgeAt] : [])'); // 대화창이 배지를 덮으면(키우기) 받는 자리에서 뺀다
   });
   it('대화창 머리 빈 곳을 끌면 맥 창 끌기(단추 위는 아님) — 놓으면 같이 옮겨진 배지 자리를 기억', () => {
-    expect(desk).toMatch(/className="obb-head obd-head"[^>]*onPointerDown=\{\(e\) => \{ if \(e\.button === 0 && !\(e\.target as Element\)\.closest\('button'\)\) \{ draggedRef\.current = true; void invoke\('bubble_drag'\)/);
+    expect(desk).toMatch(/className="obb-head obd-head"[^>]*onPointerDown=\{\(e\) => \{ if \(e\.button === 0 && !\(e\.target as Element\)\.closest\('button'\)\) \{ startDrag\(\); \}/);
     expect(desk).toContain('const b = { x: w0.x + frameRef.current.box.x, y: w0.y + frameRef.current.box.y };');
   });
 });
@@ -545,7 +547,11 @@ describe('열린 동안 배지를 끌면 대화창째 옮긴다(10-31 사용자 
     expect(badge).toContain('onPointerDown={grab}');
     expect(badge).toContain('onPointerMove={drag}');
     expect(badge).toMatch(/onClick=\{\(\) => \{ if \(!pressed\(\)\) void openPop\(!open\); \}\}/);
-    expect(desk).toMatch(/const drag = \(e: React\.PointerEvent\) => \{[\s\S]{0,200}isDrag\(e\.screenX - p\.x, e\.screenY - p\.y\)[\s\S]{0,300}void invoke\('bubble_drag'\)/);
+    expect(desk).toMatch(/const drag = \(e: React\.PointerEvent\) => \{[\s\S]{0,200}isDrag\(e\.screenX - p\.x, e\.screenY - p\.y\)[\s\S]{0,400}startDrag\(\);/);
+  });
+  it('끌기를 시작하면 걸려 있던 놓음 처리(옮김 사건 0.3초 뒤)를 지운다 — 부채가 펴진 창 크기 사건이 끄는 도중 판을 다시 놓았다(11-11 실측 40px)', () => {
+    expect(desk).toContain("const startDrag = () => { window.clearTimeout(movedT.current); draggedRef.current = true; void invoke('bubble_drag'); };");
+    expect(desk).toMatch(/w\.__bubbleMoved = \(\) => \{\s*window\.clearTimeout\(movedT\.current\);\s*movedT\.current = window\.setTimeout\(/);
   });
   it('놓으면 열린 창이 배지 화면 밖으로 나간 만큼 통째로 당기고(openKeep), 당긴 자리로 배지 자리를 기억', () => {
     expect(desk).toContain('const to = openRef.current ? openKeep(s.win, frameRef.current.box, s.screens, DESK) : null;');

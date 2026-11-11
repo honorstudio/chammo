@@ -49,7 +49,7 @@ export function RemoteChat({ target, fontSize }: { target: RemoteChatTarget; fon
   const mark = (e: React.SyntheticEvent) => { trustedAt.current = e.nativeEvent.isTrusted ? Date.now() : 0; };
   // 못 보냈으면 false — ChatView 가 친 글을 입력칸에 되살린다(2026-11-01 ux-daily M12, 비었던 입력칸)
   const send = useCallback((text: string): Promise<boolean> => {
-    if (!sendAllowed(trustedAt.current, Date.now())) { setErr(tr('이 칸에서 직접 친 말만 보내요 — 다시 쳐 줘', 'Only what you type here is sent — type it again')); return Promise.resolve(false); } // 앱이 저절로 다시 보내는 길은 안 간다
+    if (!sendAllowed(trustedAt.current, Date.now())) { setErr(tr('이 창에서 직접 친 말만 보내요 — 다시 쳐 줘', 'Only what you type here is sent — type it again')); return Promise.resolve(false); } // 앱이 저절로 다시 보내는 길은 안 간다
     trustedAt.current = 0;
     if (sayTooOld(target.version)) { setErr(tooOld); return Promise.resolve(false); } // 옛 판은 보내 봐야 '그 길 없음'으로 튕긴다(10-26 영상 PC 0.3.9)
     return invoke('remote_human_say', { id: dev, to: agent, text }).then(() => { setErr(null); return true; }, (e: unknown) => { setErr(oldSayError(String(e)) ? tooOld : tr(`못 보냈어요 — ${String(e)}`, `Not sent — ${String(e)}`)); return false; });

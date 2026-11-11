@@ -194,7 +194,7 @@ fn md3_옛판_상대와는_짝짓지_않는다_코드만_다시_내지_않는다
         assert_eq!(r.path, "/api/hello", "코드를 안 낸다");
         ok(200, r#"{"app":"chammo","proto":1,"version":"0.4.9"}"#)
     }, &Fb).unwrap_err();
-    assert!(e.contains("옛 판"), "{e}");
+    assert!(e.contains("이전 버전"), "{e}");
     assert!(kc.val(SERVICE, "nIMAC").is_none() && load(&dir).is_empty());
 }
 

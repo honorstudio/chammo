@@ -133,7 +133,7 @@ export function CraftDrawer({ running: keys, all = keys, open, openMenu, browser
       {bOpening && <span className="cd-sub">{tr('여는 중', 'Opening')}</span>}
     </div>
   );
-  const refreshLabel = tr('새 판 확인', 'Check for new versions');
+  const refreshLabel = tr('업데이트 확인', 'Check for new versions');
   const retryLabel = tr('다시 시도', 'Try again');
   // 자리표시는 기억도 오류도 없을 때(처음 읽는 중)만 — 읽기가 실패하면 오류 한 줄 + 다시 시도
   const view = drawerView(rows, err);
@@ -149,8 +149,8 @@ export function CraftDrawer({ running: keys, all = keys, open, openMenu, browser
       {ask && (
         <div className="cd-ask">
           <span>{running.includes(ask.app)
-            ? tr(`${ask.name} 지울까? 열려 있으면 저장하고 끈 뒤, 앱·받은 파일·설정·작업 폴더를 휴지통으로 보내요(되살릴 수 있어요)`, `Remove ${ask.name}? It's open — it will be saved and closed, then the app, downloads, settings and work folder go to the Trash (recoverable)`)
-            : tr(`${ask.name} 지울까? 앱·받은 파일·설정·작업 폴더를 휴지통으로 보내요(되살릴 수 있어요)`, `Remove ${ask.name}? The app, downloads, settings and work folder go to the Trash (recoverable)`)}</span>
+            ? tr(`${ask.name} 지울까? 열려 있으면 저장하고 끈 뒤, 앱·받은 파일·설정·작업 폴더를 휴지통으로 보내요(복원할 수 있어요)`, `Remove ${ask.name}? It's open — it will be saved and closed, then the app, downloads, settings and work folder go to the Trash (recoverable)`)
+            : tr(`${ask.name} 지울까? 앱·받은 파일·설정·작업 폴더를 휴지통으로 보내요(복원할 수 있어요)`, `Remove ${ask.name}? The app, downloads, settings and work folder go to the Trash (recoverable)`)}</span>
           <span className="cd-sp" />
           <button className="cd-btn" onClick={() => setAsk(null)}>{tr('취소', 'Cancel')}</button>
           <button className="cd-btn danger" onClick={() => remove(ask)}>{tr('지우기', 'Remove')}</button>

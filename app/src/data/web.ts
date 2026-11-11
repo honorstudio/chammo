@@ -131,7 +131,7 @@ async function timed<T>(path: string, signal: AbortSignal | undefined, body: (r:
   let t: ReturnType<typeof setTimeout>;
   const check = () => {
     const v = readCheck({ elapsed: Date.now() - t0, sinceRx: relay && !direct ? Date.now() - tunnelFor(relay).lastRx : Infinity, relay: !!relay && !direct });
-    if (v === 'abort') c.abort(new DOMException(tr('연결이 느려요. 저절로 다시 받아요', 'Connection is slow. Retrying automatically'), 'AbortError'));
+    if (v === 'abort') c.abort(new DOMException(tr('연결이 느려요. 자동으로 다시 받아요', 'Connection is slow. Retrying automatically'), 'AbortError'));
     else t = setTimeout(check, v);
   };
   t = setTimeout(check, READ_LIMIT_MS);

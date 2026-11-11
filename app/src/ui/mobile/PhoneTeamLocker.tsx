@@ -195,7 +195,7 @@ export function PhoneTeamLocker({ api, teamId, onOpen, chats, say, onChatSent }:
       {ask?.kind === 'chat' && <ChatSheet chats={chatTargets(chats ?? [])} onClose={() => setAsk(null)} onPick={(c, at) => { const it = ask.item; setAsk(null); sendChat(it, c, at); }} />}
       {ask?.kind === 'rm-folder' && (
         <BottomSheet label={tr('폴더 지우기', 'Delete folder')} kind="card" title={tr(`${baseOf(ask.key)} 지우기`, `Delete ${baseOf(ask.key)}`)} onClose={() => setAsk(null)}>
-          <p className="m-tlk-ask">{tr(`안의 파일 ${ask.n}개도 휴지통으로 가요 — 30일 안엔 휴지통에서 되살릴 수 있어요`, `The ${ask.n} files inside go to the trash too — you can restore them from the trash within 30 days`)}</p>
+          <p className="m-tlk-ask">{tr(`안의 파일 ${ask.n}개도 휴지통으로 가요 — 30일 안엔 휴지통에서 복원할 수 있어요`, `The ${ask.n} files inside go to the trash too — you can restore them from the trash within 30 days`)}</p>
           <div className="m-new-row">
             <button type="button" className="m-btn" onClick={() => setAsk(null)}>{tr('취소', 'Cancel')}</button>
             <button type="button" className="m-send" onClick={() => { const k = ask.key; run({ op: 'folder-trash', from: k }, () => setPlace(parentOf(k))); setAsk(null); }}>{tr('휴지통으로', 'Move to trash')}</button>
@@ -227,7 +227,7 @@ function MenuSheet({ menu, trash, chat = false, onClose, onPick }: { menu: Menu;
   const title = menu.kind === 'file' ? nameOf(menu.item) : baseOf(menu.key);
   // 팀챗에 보내기 = 파일만(잠긴 파일·폴더·휴지통엔 없다)
   const send: [Act, string][] = chat && menu.kind === 'file' ? [['chat', tr('팀챗에 보내기', 'Send to a team chat')]] : [];
-  const acts: [Act, string][] = trash ? [['restore', tr('되살리기', 'Restore')]] : menu.kind === 'file' && menu.item.why ? [['trash', tr('휴지통으로', 'Move to trash')]] : [...send, ['rename', tr('이름 바꾸기', 'Rename')], ['move', tr('옮기기', 'Move')], ['trash', tr('휴지통으로', 'Move to trash')]];
+  const acts: [Act, string][] = trash ? [['restore', tr('복원', 'Restore')]] : menu.kind === 'file' && menu.item.why ? [['trash', tr('휴지통으로', 'Move to trash')]] : [...send, ['rename', tr('이름 바꾸기', 'Rename')], ['move', tr('옮기기', 'Move')], ['trash', tr('휴지통으로', 'Move to trash')]];
   return (
     <BottomSheet label={title} kind="card" title={title} armMs={450} onClose={onClose}>
       {({ close, armed }) => acts.map(([a, label]) => <button key={a} type="button" className="m-menu-item" onClick={() => { if (armed) { close(); onPick(a); } }}>{label}</button>)}

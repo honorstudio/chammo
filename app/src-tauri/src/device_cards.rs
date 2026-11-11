@@ -90,7 +90,7 @@ pub fn peer_link_row(id: &str, name: &str, dev: &str, sas: u32, until_ms: u64, t
     let name = clean(name, 64);
     json!({
         "ts": ts, "type": "ask", "id": id, "from": crate::direct::LINK_FROM, "cwd": "", "kind": crate::direct::LINK_KIND, "sub": PEER_LINK_SUB, "dev": dev,
-        "q": crate::i18n::tr(&format!("{name} 이 이 컴퓨터와 이어지려 해요. 숫자가 같을 때만 허용해요"), &format!("{name} wants to connect to this computer. Allow only if the numbers match.")),
+        "q": crate::i18n::tr(&format!("{name} 이 이 컴퓨터와 연결하려고 해요. 숫자가 같을 때만 허용해요"), &format!("{name} wants to connect to this computer. Allow only if the numbers match.")),
         "code": crate::device_link::sas_text(sas),
         "detail": crate::i18n::tr("숫자가 다르면 누가 끼어든 것이니 거절해요", "If the numbers differ, someone is in the middle, so decline."),
         "what": crate::i18n::tr("컴퓨터 연결 허용", "Allow computer link"),

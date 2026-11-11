@@ -211,7 +211,7 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
                   <div key={r.id} className="su-row dev-row dm-peer">
                     <div className="su-row-text">
                       <b title={r.name}>{r.name}{r.me && <span className="dm-me">{tr('이 기기', 'This device')}</span>}</b>
-                      <span><i className={`dm-dot${r.online ? ' on' : ''}${r.pending ? ' wait' : ''}`} />{r.meta}{pl.mode === 'linked' ? tr(' · 이어짐', ' · Linked') : pl.mode === 'pending' ? tr(' · 확인 중', ' · Checking') : ''}</span>
+                      <span><i className={`dm-dot${r.online ? ' on' : ''}${r.pending ? ' wait' : ''}`} />{r.meta}{pl.mode === 'linked' ? tr(' · 연결됨', ' · Linked') : pl.mode === 'pending' ? tr(' · 확인 중', ' · Checking') : ''}</span>
                     </div>
                     {pl.mode === 'connect' && !v?.pending && <button className="btn pri su-row-act" disabled={busy} onClick={(e) => connectPeer(e, r.id)}>{tr('연결', 'Connect')}</button>}
                     {pl.mode === 'pending' && <button className="btn su-row-act" onClick={() => void invoke('peer_relay_clear', { hub: r.id }).then(loadPeer)}>{tr('취소', 'Cancel')}</button>}

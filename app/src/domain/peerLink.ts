@@ -18,7 +18,7 @@ export function peerLink(row: { id: string; me: boolean; pending: boolean; onlin
 /** Rust peer_pair 오류 갈래 → 사람이 읽는 한 줄(소넷 문구). 모르는 건 그대로 */
 export function peerLinkError(code: string, name: string): string {
   switch (code) {
-    case 'old': return tr(`${name} 의 Chammo 가 옛 판이에요. 업데이트한 뒤 다시 시도해 주세요`, `Chammo on ${name} is out of date. Update it, then try again.`);
+    case 'old': return tr(`${name} 의 Chammo 가 이전 버전이에요. 업데이트한 뒤 다시 시도해 주세요`, `Chammo on ${name} is out of date. Update it, then try again.`);
     case 'declined': return tr('연결이 거절됐어요', 'The connection was declined.');
     case 'offline': return tr(`${name} 의 Chammo 가 꺼져 있어요. 켠 뒤 다시 눌러 주세요`, `Chammo on ${name} is off. Turn it on, then try again.`);
     case 'timeout': return tr('10분 안에 허용되지 않아 연결을 멈췄어요', 'Not allowed within 10 minutes, so the connection was cancelled.');

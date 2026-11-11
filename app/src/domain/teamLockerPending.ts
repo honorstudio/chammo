@@ -54,7 +54,7 @@ export function failText(op: LockerOp, why: string): string {
     : op.k === 'folder' ? (op.to ? tr(`'${op.from}' 폴더 이름을 못 바꿨어요`, `Couldn't rename folder '${op.from}'`) : tr(`'${op.from}' 폴더를 못 지웠어요`, `Couldn't delete folder '${op.from}'`))
     : op.k === 'meta' ? (op.name !== undefined ? tr('이름을 못 바꿨어요', "Couldn't rename") : op.folder ? tr(`'${op.folder}' 폴더로 못 옮겼어요`, `Couldn't move to '${op.folder}'`) : tr('맨 위로 못 옮겼어요', "Couldn't move to the top"))
     : op.verb === 'trash' ? tr('휴지통으로 못 옮겼어요', "Couldn't move to the trash")
-    : op.verb === 'restore' ? tr('못 되살렸어요', "Couldn't restore")
+    : op.verb === 'restore' ? tr('복원하지 못했어요', "Couldn't restore")
     : tr('영구로 못 지웠어요', "Couldn't delete forever");
   return `${what} — ${why.replace(/^Error:\s*/, '')}`;
 }

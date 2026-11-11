@@ -555,7 +555,7 @@ def mode_args(argv):
 
 
 def push_subs(data):
-    """지금 짝지어 있는 기기의 푸시 구독 수 — 앱(push.rs live_subs)과 같은 셈"""
+    """지금 연결된 기기의 푸시 구독 수 — 앱(push.rs live_subs)과 같은 셈"""
     def load(name):
         try:
             with open(os.path.join(data, name), encoding='utf-8') as f:

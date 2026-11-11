@@ -948,7 +948,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
       )}
       {pasteFile && (
         <div className="chat-hint chat-dup" role="status">
-          <span>{tr('파일은 붙여넣기로 못 붙여요 — 채팅 칸에 끌어다 놓아 주세요', "Files can't be pasted — drag them into the chat instead")}</span>
+          <span>{tr('파일은 붙여넣기로 못 붙여요 — 채팅창에 끌어다 놓아 주세요', "Files can't be pasted — drag them into the chat instead")}</span>
         </div>
       )}
       {attachErr && (

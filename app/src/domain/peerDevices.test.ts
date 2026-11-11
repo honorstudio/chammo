@@ -37,10 +37,10 @@ describe('peerView — 줄 상태는 연결됨 / 연결 안 됨 둘', () => {
 
 describe('peerView — 같은 Chammo 계정이 아니라 멈춘 짝(11-09 보안)', () => {
   it('상대가 로그아웃·다른 계정 → 연결 멈춤 · 한 줄 · 다시 짝짓기(연결) + 끊기', () => {
-    expect(peerView(D({ status: 'account', paused: 'other' }), false)).toEqual({ word: '연결 멈춤', extra: '계정이 바뀌어 연결이 멈췄어요 — 다시 짝짓기', connect: true, unlink: true, code: false });
+    expect(peerView(D({ status: 'account', paused: 'other' }), false)).toEqual({ word: '연결 멈춤', extra: '계정이 바뀌어 연결이 멈췄어요 — 재연결해 주세요', connect: true, unlink: true, code: false });
   });
   it('계정이 안 묶인 옛 짝도 같은 한 줄', () => {
-    expect(peerView(D({ status: 'account', paused: 'unbound' }), false).extra).toBe('계정이 바뀌어 연결이 멈췄어요 — 다시 짝짓기');
+    expect(peerView(D({ status: 'account', paused: 'unbound' }), false).extra).toBe('계정이 바뀌어 연결이 멈췄어요 — 재연결해 주세요');
   });
   it('이 기기가 로그아웃 → 로그인부터(연결 단추 없음)', () => {
     expect(peerView(D({ status: 'account', paused: 'nologin' }), false)).toMatchObject({ word: '연결 멈춤', connect: false, unlink: true });
@@ -53,7 +53,7 @@ describe('peerView — 같은 Chammo 계정이 아니라 멈춘 짝(11-09 보안
 
 describe('계정 때문에 멈춘 짝 — QA 0.4.11 문제 3-1·3-2·3-3', () => {
   it('3-1 단추 이름은 줄 글과 같은 "다시 짝짓기", 보통 짝은 "연결"', () => {
-    expect(connectLabel(D({ status: 'account', paused: 'other' }))).toBe('다시 짝짓기');
+    expect(connectLabel(D({ status: 'account', paused: 'other' }))).toBe('재연결');
     expect(connectLabel(D({ status: 'pair', paired: false }))).toBe('연결');
   });
   it('3-2 기기 보기에서 멈춘 짝은 꺼진 기기와 따로 — 목록 상태 또는 읽기 오류 account:<코드>', () => {

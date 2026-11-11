@@ -33,15 +33,15 @@ describe('연결 오류 → 화면 글', () => {
   class OfflineError extends TypeError { override name = 'OfflineError'; }
   class TrustError extends TypeError { override name = 'TrustError'; }
   it('망 오류(Load failed·허브 글)는 잠깐 끊김 한 줄', () => {
-    expect(netText(new TypeError('Load failed'))).toBe('연결이 잠깐 끊겼어요. 저절로 다시 붙어요');
-    expect(netText(new TypeError('허브에 못 붙었어요'))).toBe('연결이 잠깐 끊겼어요. 저절로 다시 붙어요');
+    expect(netText(new TypeError('Load failed'))).toBe('연결이 잠깐 끊겼어요. 자동으로 재연결해요');
+    expect(netText(new TypeError('허브에 못 붙었어요'))).toBe('연결이 잠깐 끊겼어요. 자동으로 재연결해요');
   });
   it('컴퓨터 꺼짐·확인 실패는 할 일 한 가지', () => {
     expect(netText(new OfflineError('x'))).toBe('맥에서 Chammo 를 켜 주세요');
-    expect(netText(new TrustError('x'))).toBe('이 폰 연결이 풀렸어요. 다시 이어 주세요');
+    expect(netText(new TrustError('x'))).toBe('이 폰 연결이 풀렸어요. 다시 연결해 주세요');
   });
   it('이미 사람 말로 만든 오류(느림·답 없음)·서버 글은 그대로', () => {
-    expect(netText(new DOMException('연결이 느려요. 저절로 다시 받아요', 'AbortError'))).toBe('연결이 느려요. 저절로 다시 받아요');
+    expect(netText(new DOMException('연결이 느려요. 자동으로 다시 받아요', 'AbortError'))).toBe('연결이 느려요. 자동으로 다시 받아요');
     expect(netText(new Error('HTTP 500'))).toBe('HTTP 500');
   });
 });

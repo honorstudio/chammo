@@ -338,7 +338,7 @@ fn 종단_암호_쓰던_상대의_평문은_버리지_않고_옛_판이라고_�
     let (a, rec) = with_e2e(&st(), 0, &msg(3, "m2", "agent", "옛 판에서 보낸 말"), &Unwrapped::Failed("plain".into()));
     assert_eq!(a, Action::Blocked("e2e".into()));
     assert_eq!(rec.note, "e2e-plain");
-    assert!(rec.body.contains("옛 판") && !rec.body.contains("옛 판에서 보낸 말"), "본문은 안 보이고 까닭만: {}", rec.body);
+    assert!(rec.body.contains("이전 버전") && !rec.body.contains("옛 판에서 보낸 말"), "본문은 안 보이고 까닭만: {}", rec.body);
 }
 
 #[test]

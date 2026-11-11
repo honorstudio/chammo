@@ -387,7 +387,7 @@ export function TeamConvo({ convo, items, team, myName, handed, onRead, onHanded
     if (ready.length || atts.length) { setErr(tr('내 참모에게 보내는 말엔 파일을 못 붙여요 — 파일을 빼거나 참모 이름을 지워 줘', "Files can't go to your assistant from here — remove them or the assistant mention")); return; }
     const body = toMineText(t, o.label, convo.name);
     if (!body) { setErr(tr(`${o.label}에게 보낼 말이 비었어요`, `Nothing to send to ${o.label}`)); return; }
-    if (!trustedAt.current) { setErr(tr('이 칸에서 직접 친 말만 보내요 — 다시 쳐 줘', 'Only what you type here is sent — type it again')); return; }
+    if (!trustedAt.current) { setErr(tr('이 창에서 직접 친 말만 보내요 — 다시 쳐 줘', 'Only what you type here is sent — type it again')); return; }
     trustedAt.current = 0;
     const id = Date.now() + Math.random();
     setText('');
@@ -421,7 +421,7 @@ export function TeamConvo({ convo, items, team, myName, handed, onRead, onHanded
       return extra.files || extra.re ? say(sayTarget(convo), b.text, trustedAt.current, extra) : say(sayTarget(convo), b.text, trustedAt.current);
     });
     trustedAt.current = 0;
-    if (ps.some((p) => !p)) { setErr(tr('이 칸에서 직접 친 말만 보내요 — 다시 쳐 줘', 'Only what you type here is sent — type it again')); return; }
+    if (ps.some((p) => !p)) { setErr(tr('이 창에서 직접 친 말만 보내요 — 다시 쳐 줘', 'Only what you type here is sent — type it again')); return; }
     const ids = batches.map(() => Date.now() + Math.random());
     setSending((s) => [...s, ...batches.map((b, i) => ({ id: ids[i]!, text: b.text || b.files.map((a) => a.name).join(', ') }))]);
     setText('');

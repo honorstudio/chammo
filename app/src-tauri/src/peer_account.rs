@@ -62,9 +62,9 @@ pub const PREFIX: &str = "account:";
 /// 화면 한 줄(앱·scripts/peer)
 pub fn word(code: &str) -> &'static str {
     match code {
-        "nologin" => "이 기기가 Chammo 에 로그인하지 않아 연결이 멈췄어요 — 로그인한 뒤 다시 짝짓기",
-        "unknown" => "Chammo 계정을 확인하지 못해 연결이 멈췄어요 — 인터넷을 확인하고 다시 짝짓기",
-        _ => "계정이 바뀌어 연결이 멈췄어요 — 다시 짝짓기",
+        "nologin" => "이 기기가 Chammo 에 로그인하지 않아 연결이 멈췄어요 — 로그인한 뒤 재연결해 주세요",
+        "unknown" => "Chammo 계정을 확인하지 못해 연결이 멈췄어요 — 인터넷을 확인하고 재연결해 주세요",
+        _ => "계정이 바뀌어 연결이 멈췄어요 — 재연결해 주세요",
     }
 }
 
@@ -457,7 +457,7 @@ impl Binder for RealBinder {
 /// 짝지을 때 실패 이유(사람이 읽는)
 pub fn bind_word(v: Verdict) -> &'static str {
     match v {
-        Verdict::NoLogin => "이 기기가 Chammo 에 로그인해야 다른 기기와 이어져요",
+        Verdict::NoLogin => "이 기기가 Chammo 에 로그인해야 다른 기기와 연결돼요",
         Verdict::Unknown => "Chammo 계정을 확인하지 못했어요 — 인터넷을 확인하고 다시 해 주세요",
         _ => "그 기기는 이 기기와 같은 Chammo 계정의 컴퓨터가 아니에요 — 같은 계정으로 로그인한 뒤 다시 해 주세요",
     }

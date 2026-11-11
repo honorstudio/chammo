@@ -85,7 +85,7 @@ export function PeerSection({ title }: { title: string }) {
         <IconButton size="l" tone="line" label={tr('다시 찾기', 'Look again')} disabled={busy} onClick={load}><IconRefresh /></IconButton>
       </div>
       <p className="su-hint">
-        {tr('같은 테일스케일 계정 기기의 참모와 이어요. 연결을 누르면 그 기기에 허용 카드가 떠요.',
+        {tr('같은 테일스케일 계정 기기의 참모와 연결해요. 연결을 누르면 그 기기에 허용 카드가 떠요.',
           'Link with Chammo on your other devices on the same Tailscale account. Press Connect and allow it on that device.')}
       </p>
       <div className="su-rows">
@@ -124,7 +124,7 @@ export function PeerSection({ title }: { title: string }) {
                 <div className="su-inline peer-code">
                   <input autoFocus autoComplete="off" spellCheck={false} placeholder="0123 4567 89ab …" aria-label={tr(`${d.name} 연결 코드`, `${d.name} connect code`)}
                     value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && code.trim()) act(() => remotePair(d.id, code)); if (e.key === 'Escape') setPairing(null); }} />
-                  <button className="btn pri" disabled={busy || !code.trim()} onClick={() => act(() => remotePair(d.id, code))}>{tr('짝짓기', 'Pair')}</button>
+                  <button className="btn pri" disabled={busy || !code.trim()} onClick={() => act(() => remotePair(d.id, code))}>{tr('연결하기', 'Pair')}</button>
                   <span className="su-hint">{tr('그 기기 설정 > 기기 관리 > 폰의 연결 코드', 'The connect code from that device’s Settings > Devices > Phone')}</span>
                 </div>
               )}
