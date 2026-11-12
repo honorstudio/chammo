@@ -1,7 +1,7 @@
 // 팀 메신저 '해결' 다음 '해결해결'(10-28 팀원) — 한글을 치다 Enter 로 보내면 비운 입력칸에 방금 보낸 글이 통째로 되살아나
 // 다음 말에 붙어 나갔다. 맥 웹뷰(WebKit)는 조합을 끝내는 Enter 를 compositionend 뒤에 isComposing=false·keyCode 229 로 준다
 import { describe, expect, it } from 'vitest';
-import { echoOfSent, enterAction } from './enterSend';
+import { echoOfSent, enterAction, insertNewline } from './enterSend';
 
 const k = (key: string, keyCode: number, isComposing = false, shiftKey = false) => ({ key, keyCode, isComposing, shiftKey });
 
@@ -33,12 +33,31 @@ describe('echoOfSent — 보낸 글이 입력칸에 되살아났나', () => {
   it('보낸 게 없으면 아니다', () => expect(echoOfSent('해결', '', null, 1100)).toBe(false));
 });
 
+// 공개 이슈 #24 '팀 채팅 입력에서 줄바꿈이 안 된다': 카톡 PC 처럼 Ctrl+Enter 로 줄을 바꾸면 보내기로 갔다(참모 채팅의 Ctrl/⌘+Enter 는 '끊고 보내기'라 그대로)
+describe('팀챗 Ctrl·Alt+Enter = 줄바꿈', () => {
+  const k = { key: 'Enter', keyCode: 13, isComposing: false, shiftKey: false };
+  it('팀챗에선 Ctrl+Enter·Alt+Enter 가 줄바꿈', () => {
+    expect(enterAction({ ...k, ctrlKey: true, ctrlNewline: true })).toBe('newline');
+    expect(enterAction({ ...k, altKey: true, ctrlNewline: true })).toBe('newline');
+  });
+  it('그냥 Enter 는 보내기, Shift+Enter 는 입력칸 기본 줄바꿈', () => {
+    expect(enterAction({ ...k, ctrlNewline: true })).toBe('send');
+    expect(enterAction({ ...k, shiftKey: true, ctrlKey: true, ctrlNewline: true })).toBe('skip');
+  });
+  it('조합 중 Ctrl+Enter 는 손대지 않는다', () => expect(enterAction({ ...k, isComposing: true, ctrlKey: true, ctrlNewline: true })).toBe('skip'));
+  it('참모 채팅(ctrlNewline 없음)은 Ctrl+Enter 가 그대로 보내기(끊고 보내기는 화면이 가른다)', () => expect(enterAction({ ...k, ctrlKey: true })).toBe('send'));
+  it('줄바꿈 넣기 — 커서 자리에, 고른 글은 바꾼다', () => {
+    expect(insertNewline('가나다', 1, 1)).toEqual({ text: '가\n나다', at: 2 });
+    expect(insertNewline('가나다', 1, 3)).toEqual({ text: '가\n', at: 2 });
+  });
+});
+
 import teamConvo from '../ui/team/TeamConvo.tsx?raw';
 import chatView from '../ui/chat/ChatView.tsx?raw';
 
 describe('보내기 칸 연결 — 팀 메신저·참모 채팅', () => {
   it.each([['팀 메신저', teamConvo], ['참모 채팅', chatView]])('%s: Enter 는 enterAction 으로 가르고 229 는 다음 차례, 되살아난 글은 버린다', (_, src) => {
-    expect(src).toMatch(/enterAction\(\{ key: e\.key, keyCode: e\.keyCode, isComposing: e\.nativeEvent\.isComposing, shiftKey: e\.shiftKey(, phone)? \}\)/);
+    expect(src).toMatch(/enterAction\(\{ key: e\.key, keyCode: e\.keyCode, isComposing: e\.nativeEvent\.isComposing, shiftKey: e\.shiftKey(, phone[^}]*)? \}\)/);
     expect(src).toMatch(/setTimeout\(\(\) => (sendNow|submitNow)\.current\(/);
     expect(src).toMatch(/echoOfSent\(e\.target\.value, (text|draft), lastSent\.current, Date\.now\(\)\)/);
     expect(src).not.toContain("e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {");

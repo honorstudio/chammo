@@ -47,12 +47,14 @@ export function RemoteChat({ target, fontSize }: { target: RemoteChatTarget; fon
   }, [api, agent]);
 
   const mark = (e: React.SyntheticEvent) => { trustedAt.current = e.nativeEvent.isTrusted ? Date.now() : 0; };
-  // 못 보냈으면 false — ChatView 가 친 글을 입력칸에 되살린다(2026-11-01 ux-daily M12, 비었던 입력칸)
-  const send = useCallback((text: string): Promise<boolean> => {
+  // 못 보냈으면 false — ChatView 가 친 글을 입력칸에 되살린다(2026-11-01 ux-daily M12, 비었던 입력칸).
+  // 받았으면 'inflight' — 그 기기는 받자마자 202 로 답하고 뒤에서 친다('입력칸에서 빠짐'을 알려 주는 판은 아직 없다). 그 기기 훅이 느리면
+  // 기록이 늦게 붙어 30초에 거짓 '전달 안 됨'이 떴다 — 채팅 칸과 같이 180초까지 보내는 중(domain/chatQueue INFLIGHT_LOST_AFTER, 2026-11-13)
+  const send = useCallback((text: string): Promise<boolean | 'inflight'> => {
     if (!sendAllowed(trustedAt.current, Date.now())) { setErr(tr('이 창에서 직접 친 말만 보내요 — 다시 쳐 줘', 'Only what you type here is sent — type it again')); return Promise.resolve(false); } // 앱이 저절로 다시 보내는 길은 안 간다
     trustedAt.current = 0;
     if (sayTooOld(target.version)) { setErr(tooOld); return Promise.resolve(false); } // 옛 판은 보내 봐야 '그 길 없음'으로 튕긴다(10-26 영상 PC 0.3.9)
-    return invoke('remote_human_say', { id: dev, to: agent, text }).then(() => { setErr(null); return true; }, (e: unknown) => { setErr(oldSayError(String(e)) ? tooOld : tr(`못 보냈어요 — ${String(e)}`, `Not sent — ${String(e)}`)); return false; });
+    return invoke('remote_human_say', { id: dev, to: agent, text }).then(() => { setErr(null); return 'inflight' as const; }, (e: unknown) => { setErr(oldSayError(String(e)) ? tooOld : tr(`못 보냈어요 — ${String(e)}`, `Not sent — ${String(e)}`)); return false; });
   }, [dev, agent, target.version, tooOld]);
 
   return (

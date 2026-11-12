@@ -27,6 +27,8 @@ struct St {
     swallow: usize,
     /// 보낸 말을 대화 기록처럼 한 줄씩(type user) 적는 파일
     jsonl: Option<std::path::PathBuf>,
+    /// 기록에 적기까지 늦춤 — UserPromptSubmit 훅이 도는 동안 입력칸은 비는데 기록은 훅이 끝난 뒤에 붙는다(11-13 시험 세션 실측 31초)
+    hook: Duration,
     /// 화면 사본이 입력칸 글을 못 본다(엉킨·늦은 사본 — 사용자 참모 업데이트 저녁 내내 seen=false)
     blind: bool,
     /// 그림 읽기가 걸린 칸 — 첫 키가 들어오는 순간 시계를 건다(paste_start). 만들 때 걸면 병렬 시험에서 스레드가 늦을 때
@@ -66,7 +68,15 @@ fn tick(st: &Arc<Mutex<St>>, screen: &Arc<Mutex<vt100::Parser>>) {
             } else {
                 let t = std::mem::take(&mut s.input);
                 if !t.trim().is_empty() {
-                    record(&s.jsonl, &t);
+                    if s.hook.is_zero() {
+                        record(&s.jsonl, &t);
+                    } else {
+                        let (path, text, hook) = (s.jsonl.clone(), t.clone(), s.hook);
+                        std::thread::spawn(move || {
+                            std::thread::sleep(hook);
+                            record(&path, &text);
+                        });
+                    }
                     s.sent.push(t);
                 }
             }
@@ -92,7 +102,7 @@ fn tick(st: &Arc<Mutex<St>>, screen: &Arc<Mutex<vt100::Parser>>) {
 impl Fake {
     /// paste 가 Some((멈춤, 읽는 시간)) 이면 지금 막 그림을 붙여넣은 칸
     pub fn new(paste: Option<(Duration, Duration)>, defer: bool) -> Fake {
-        let st = St { input: String::new(), pending: Vec::new(), paste_start: None, frozen: paste.map_or(Duration::ZERO, |p| p.0), pasting: paste.map_or(Duration::ZERO, |p| p.1), defer, deferred: false, sent: Vec::new(), enters: 0, swallow: 0, jsonl: None, blind: false, armed: paste.is_some() };
+        let st = St { input: String::new(), pending: Vec::new(), paste_start: None, frozen: paste.map_or(Duration::ZERO, |p| p.0), pasting: paste.map_or(Duration::ZERO, |p| p.1), defer, deferred: false, sent: Vec::new(), enters: 0, swallow: 0, jsonl: None, hook: Duration::ZERO, blind: false, armed: paste.is_some() };
         let turn = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
         let f = Fake { screen: Arc::new(Mutex::new(vt100::Parser::new(12, 60, 0))), st: Arc::new(Mutex::new(st)), _one_at_a_time: turn };
         f.tick(); // 붙여넣기 앞 화면 — 멈춘 동안엔 이 화면 그대로
@@ -102,6 +112,12 @@ impl Fake {
     /// 보낸 말을 이 파일에 기록처럼 적는다
     pub fn with_jsonl(self, p: &std::path::Path) -> Fake {
         self.st.lock().unwrap().jsonl = Some(p.to_path_buf());
+        self
+    }
+
+    /// 받은 말을 기록에 적기까지 이만큼 늦춘다(느린 UserPromptSubmit 훅)
+    pub fn hook(self, d: Duration) -> Fake {
+        self.st.lock().unwrap().hook = d;
         self
     }
 

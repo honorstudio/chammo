@@ -517,3 +517,13 @@ describe('열린 대화창째 배지를 끌어 옮긴다 — 놓으면 배지가
     expect(openKeep({ x: -999, y: -999, w: 460, h: 568 }, box, [], 88)).toBeNull();
   });
 });
+
+// 공개 이슈 #27(윈도우, 추정): 배지 창은 판 크기(약 344×258)인데 CSS(orchBubble.css)가 오기 전엔 styles.css 의 body 바탕(--bg)이 그려져
+// 투명해야 할 판이 흰 네모로 보일 틈이 있다 — 페이지 자체를 처음부터 투명으로
+import bubbleHtml from '../../bubble.html?raw';
+describe('바탕 배지 페이지 처음부터 투명', () => {
+  it('html·body 바탕 transparent 를 페이지에 직접', () => {
+    expect(bubbleHtml).toContain('<html lang="ko" style="background: transparent">');
+    expect(bubbleHtml).toContain('<body style="background: transparent">');
+  });
+});

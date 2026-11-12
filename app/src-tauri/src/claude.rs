@@ -2287,6 +2287,11 @@ pub(crate) fn typed_segs(text: &str) -> Vec<Vec<u8>> {
 /// 여러 줄 글 보내기(스페이스 → 참모). 결정 대기함 답장과 같이 치고 0.4초 뒤 Enter
 #[tauri::command]
 pub async fn send_text_to_session(id: String, text: String) -> Result<(), String> {
+    send_text_noted(id, text).await.map(|_| ())
+}
+
+/// send_text_to_session + 치기 결과(pty::type_outcome — 'inflight' = 입력칸에서 빠졌는데 기록엔 아직, 훅이 도는 중). 바탕 대화창이 쓴다
+pub(crate) async fn send_text_noted(id: String, text: String) -> Result<&'static str, String> {
     if text.trim().is_empty() {
         return Err(crate::i18n::tr("빈 글", "Empty text").into());
     }
@@ -2296,7 +2301,7 @@ pub async fn send_text_to_session(id: String, text: String) -> Result<(), String
     let (r, note) = tauri::async_runtime::spawn_blocking(move || attach_type_noted(&id, &segs)).await.unwrap_or_else(|e| (Err(e.to_string()), SendNote::default()));
     // ok 는 '그 말이 입력칸에서 빠졌다'(Enter 를 받음)까지 본 것 — 예전 ok 는 '쳤다'뿐이라 12:12 그림 말이 ok 로 남고 사라졌다(2026-11-06)
     log_out("space-send", &format!("{who} {} {note} {chars}", if r.is_ok() { "ok" } else { "fail" }));
-    r
+    r.map(|_| crate::pty::type_outcome(&note))
 }
 
 /// 직접 답하기 카드 답 치기 — send_text_to_session 과 같은 길인데 친 글을 로그에 안 남긴다(사람이 카드에 쓴 글, 2026-10-03 QA)

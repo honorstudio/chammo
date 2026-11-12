@@ -4,7 +4,7 @@
 // 시간 순서대로 그대로 돌린다. 새 증상이 나오면 고치기 전에 여기 한 줄(장면)을 먼저 더한다.
 import { describe, expect, it } from 'vitest';
 import { appendChat, enterDelay, escUnsends, type ChatItem } from './chat';
-import { absorbedAt, againPlan, applyQueueOps, autoEnterTarget, DUP_CONFIRM, emptyQueue, LOST_AFTER, newPending, pendAct, pendingState, PENDING_MS, resent, waitingOf, type QueueState } from './chatQueue';
+import { absorbedAt, againPlan, applyQueueOps, autoEnterTarget, DUP_CONFIRM, emptyQueue, INFLIGHT_LOST_AFTER, LOST_AFTER, markInflight, newPending, pendAct, pendingState, PENDING_MS, resent, waitingOf, type QueueState } from './chatQueue';
 
 const T0 = Date.parse('2026-10-10T12:00:00Z');
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -27,6 +27,7 @@ const peer = (text: string, at: number) => user(`<cross-session-message from="ud
 
 type Step =
   | { send: string } // 채팅 보내기(앱이 친 [앱] 줄도 chat-pending 으로 같은 길)
+  | { inflight: true } // 앱 치기(pty_type)가 'inflight' 를 돌려줌 — 친 글이 입력칸에서 빠졌는데 기록엔 아직(훅이 도는 중)
   | { typed: string; ago: number } // 앱이 다 친 뒤 알림(sendToSession) — 치기 시작한 때(ago ms 전)를 같이 넘긴다
   | { wait: number }
   | { log: string[] } // 세션 기록에 붙은 줄(기록 읽기 = appendChat + applyQueueOps)
@@ -37,7 +38,7 @@ type Step =
   | { esc: boolean } // 채팅 Esc 가 방금 보낸 말을 거둬들이게 되나(그럼 안 넘긴다 — domain/chat escUnsends)
   | { bubbles: string[] }; // 기록에서 그린 내 말풍선들
 
-type Sim = { now: number; pending: { text: string; at: number; since?: number }[]; items: ChatItem[]; queue: QueueState; term: string; warned: { text: string; at: number } | null; lastSent: string };
+type Sim = { now: number; pending: { text: string; at: number; since?: number; inflight?: boolean }[]; items: ChatItem[]; queue: QueueState; term: string; warned: { text: string; at: number } | null; lastSent: string };
 
 function run(steps: Step[]): void {
   const s: Sim = { now: T0, pending: [], items: [], queue: emptyQueue, term: '', warned: null, lastSent: '' };
@@ -50,6 +51,7 @@ function run(steps: Step[]): void {
     const where = `${i + 1}번째 ${JSON.stringify(step)}`;
     if ('send' in step) { s.pending.push(newPending(step.send, s.items, s.now)); s.lastSent = step.send; }
     else if ('typed' in step) { s.pending.push(newPending(step.typed, s.items, s.now - step.ago)); s.lastSent = step.typed; }
+    else if ('inflight' in step) s.pending = markInflight(s.pending, s.pending[s.pending.length - 1]!.at);
     else if ('wait' in step) s.now += step.wait;
     else if ('log' in step) { const c = step.log.join('\n'); s.items = appendChat(s.items, c); s.queue = applyQueueOps(s.queue, c); }
     else if ('term' in step) s.term = step.term;
@@ -93,6 +95,13 @@ const FLOW: [string, Step[]][] = [
       { wait: 2000 }, { log: [user(A, LOST_AFTER + 1500)] }, { see: [] }]],
   ['안 갔어요로 보인 뒤 첫 기록이 옛 시각으로 늦게 붙어도 — 다시 보낸 말풍선이 그 기록으로 사라진다',
     [{ send: A }, { wait: LOST_AFTER + 1000 }, { see: [`${A}=lost/again`] }, { again: 'send' }, { wait: 1000 }, { log: [user(A, 200)] }, { see: [] }]],
+  ['훅이 30초 넘게 걸림(11-09 앱 보내기 62번) — 친 글이 입력칸에서 빠졌으면(inflight) 30초가 지나도 보내는 중, 다시 보내기 단추 없음, 늦게 붙은 기록으로 사라진다',
+    [{ send: A }, { inflight: true }, { wait: LOST_AFTER + 1000 }, { see: [`${A}=sending`] }, { wait: 30_000 }, { see: [`${A}=sending`] },
+      { log: [user(A, 300)] }, { see: [] }]],
+  ['inflight 여도 끝없이 기다리진 않는다 — 넉넉히(가장 느린 훅 156초보다) 지나면 안 갔어요 + 다시 보내기',
+    [{ send: A }, { inflight: true }, { wait: INFLIGHT_LOST_AFTER + 1000 }, { see: [`${A}=lost/again`] }]],
+  ['다시 보낸 말도 inflight 를 다시 받는다 — 다시 보낸 시각부터 센다',
+    [{ send: A }, { wait: LOST_AFTER + 1000 }, { see: [`${A}=lost/again`] }, { again: 'send' }, { inflight: true }, { wait: LOST_AFTER + 1000 }, { see: [`${A}=sending`] }]],
   ['두 번 누름 — 이미 간 말을 입력칸 다시 보내기로 또 누르면 처음엔 막고, 곧 한 번 더면 보내고, 오래 지나 누르면 또 막는다',
     [{ send: A }, { wait: 3000 }, { log: [user(A, 300)] }, { see: [] }, { again: 'warn' }, { wait: 2000 }, { again: 'send' },
       { wait: DUP_CONFIRM + 1000 }, { again: 'warn' }]],

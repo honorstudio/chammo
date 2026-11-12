@@ -523,7 +523,7 @@ fn mouse(k: f64) -> Option<(f64, f64)> {
 
 /// 바탕 대화창에서 보내기 — 폰 보내기(/api/send)와 같은 길·같은 범위: 참모(HQ 폴더 세션)에게만, 제어 문자 빼고, 8,000자까지
 #[tauri::command]
-pub async fn bubble_send(window: tauri::WebviewWindow, id: String, text: String) -> Result<(), String> {
+pub async fn bubble_send(window: tauri::WebviewWindow, id: String, text: String) -> Result<String, String> {
     if window.label() != LABEL {
         return Err("bubble window only".into());
     }
@@ -532,7 +532,8 @@ pub async fn bubble_send(window: tauri::WebviewWindow, id: String, text: String)
         return Err("bad assistant id".into());
     }
     hq_only(&id).await?;
-    crate::claude::send_text_to_session(id, text).await
+    // 'inflight' = 훅이 도는 중(기록이 늦게 붙는다) — 대화창 말풍선이 30초에 '전달 안 됨'을 안 띄운다(domain/chatQueue)
+    crate::claude::send_text_noted(id, text).await.map(str::to_string)
 }
 
 /// 그 세션이 참모(HQ 폴더 세션)인가 — 바탕 대화창이 글·키·화면을 다루는 범위(폰과 같다)

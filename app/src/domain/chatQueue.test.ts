@@ -394,7 +394,8 @@ describe('typeQueue — 세션별 앱 치기 줄', () => {
     expect(restoreDraft('안녕', '안녕')).toBe('안녕');
   });
   it('채팅 보내기 실패(치기 거절·시간 넘김)가 채팅 칸까지 닿는다 — 오류 한 줄 + 입력 되살림', () => {
-    expect(grid).toMatch(/LINK_WAIT \+ TYPE_TIMEOUT\)\.then\(\(\) => \{[\s\S]{0,80}return true; \}, \(e: unknown\) => \{[\s\S]{0,160}return false; \}\)/);
+    // 성공은 true(훅이 도는 중이면 'inflight' — 2026-11-13 stable-night), 실패는 false
+    expect(grid).toMatch(/LINK_WAIT \+ TYPE_TIMEOUT\)\.then\(\(\) => \{[\s\S]{0,120}return (inflight \? 'inflight' as const : )?true; \}, \(e: unknown\) => \{[\s\S]{0,160}return false; \}\)/);
     expect(grid).toMatch(/const sent = typeAndSend\(id, text, true, again\);[\s\S]{0,240}return sent;/);
     expect(chat).toMatch(/restoreDraft\(/);
     expect(chat).toMatch(/sendFail &&/);

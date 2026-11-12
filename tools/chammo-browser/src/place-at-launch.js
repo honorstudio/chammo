@@ -59,6 +59,11 @@ function askApp(dataDir) {
   try { fs.appendFileSync(path.join(dataDir, 'app.jsonl'), JSON.stringify(line) + '\n'); } catch { /* 앱이 없다 — 화면 밖으로 */ }
 }
 
+/** 윈도우 숨은 데스크톱(src/windesk.js) 설정 — MCP 래퍼와 스크립트 지킴이(chammo-browser launch)가 같은 것을(공개 이슈 #26) */
+function deskConf(profile, p = require('./paths')) {
+  return { profile, vdFile: path.join(p.ROOT, 'vdisplay.json'), dataDir: p.dataDir(), desk: true, root: p.ROOT, liveDir: path.join(p.ROOT, 'live') };
+}
+
 function install(env = process.env) {
   let conf;
   try { conf = JSON.parse(env.CHAMMO_PLACE || ''); } catch { return; }
@@ -97,4 +102,4 @@ function install(env = process.env) {
 
 install();
 
-module.exports = { swapPlace, askApp, withInject, launchExe, headlessArgs, launchArgs };
+module.exports = { swapPlace, askApp, withInject, launchExe, headlessArgs, launchArgs, install, deskConf };

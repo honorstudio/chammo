@@ -21,7 +21,7 @@ import { openWebLink } from '../followLink';
 import { mdToHtmlTeam } from '../md';
 import { Face, PersonOf, TeamMarkIcon } from './TeamFaces';
 import { dndNotice, lookNames, lookOf, statusLine } from '../../domain/teamProfile';
-import { echoOfSent, enterAction } from '../../domain/enterSend';
+import { echoOfSent, enterAction, insertNewline } from '../../domain/enterSend';
 import { clickFocusesInput } from '../../domain/chat';
 import type { draftStore } from '../../domain/chatDraft';
 import { teamDrafts } from '../../data/drafts';
@@ -635,9 +635,17 @@ export function TeamConvo({ convo, items, team, myName, handed, onRead, onHanded
                 if ((e.key === 'Enter' || e.key === 'Tab') && !e.nativeEvent.isComposing) { e.preventDefault(); pickMention(picks[Math.min(menu.sel, picks.length - 1)]!); return; }
                 if (e.key === 'Escape') { e.preventDefault(); setMenu(null); return; }
               }
-              const act = enterAction({ key: e.key, keyCode: e.keyCode, isComposing: e.nativeEvent.isComposing, shiftKey: e.shiftKey, phone });
+              const act = enterAction({ key: e.key, keyCode: e.keyCode, isComposing: e.nativeEvent.isComposing, shiftKey: e.shiftKey, phone, ctrlKey: e.ctrlKey, altKey: e.altKey, ctrlNewline: true });
               if (act === 'skip') return;
               e.preventDefault();
+              if (act === 'newline') {
+                // Ctrl·Alt+Enter = 줄바꿈(카톡 PC 습관, 공개 이슈 #24) — 입력칸은 이 키에 아무것도 안 넣는다
+                const el = e.currentTarget;
+                const nl = insertNewline(text, el.selectionStart ?? text.length, el.selectionEnd ?? text.length);
+                typed(nl.text, nl.at);
+                requestAnimationFrame(() => el.setSelectionRange(nl.at, nl.at));
+                return;
+              }
               if (act === 'send') send();
               else setTimeout(() => sendNow.current());
             }} />

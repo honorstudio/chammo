@@ -76,3 +76,28 @@ test('가짜 화면이 없을 때 — 사본은 헤드리스, 구글 크롬(패�
   const vd = { pos: [3000, 100], size: [1200, 900], offPos: null };
   assert.deepStrictEqual(launchArgs(args, vd, true), ['--test-type', '--window-position=3000,100', '--window-size=1200,900', '--remote-debugging-port=0']);
 });
+
+// 공개 이슈 #26: 윈도우 숨은 데스크톱 설정으로 훅을 걸면 자리 인자가 든 크롬 띄우기는 실행기(없으면 헤드리스)로 바뀐다 — 보이는 창으로 안 뜬다
+test('숨은 데스크톱 설정(deskConf)으로 건 훅 — 크롬은 보이는 자리 대신 실행기 또는 헤드리스로', () => {
+  const cp = require('child_process');
+  const { install, deskConf } = require('../src/place-at-launch');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'chammo-desk-hook-'));
+  const conf = { ...deskConf('tax-site'), root, liveDir: path.join(root, 'live') };
+  const seen = [];
+  const orig = cp.spawn;
+  cp.spawn = (cmd, args) => { seen.push({ cmd, args }); return null; };
+  const err = console.error;
+  console.error = () => {};
+  try {
+    install({ CHAMMO_PLACE: JSON.stringify(conf) });
+    cp.spawn('C:\\Chrome\\chrome.exe', ['--test-type', '--window-position=0,0', '--window-size=1280,800', '--user-data-dir=C:\\p']);
+    cp.spawn('C:\\node.exe', ['setup.js']);
+  } finally {
+    cp.spawn = orig;
+    console.error = err;
+  }
+  const chrome = seen[0];
+  assert.ok(!chrome.args.includes('--window-position=0,0'), `보이는 0,0 자리로 안 뜬다: ${chrome.args.join(' ')}`);
+  assert.ok(chrome.args.includes('--headless=new') || chrome.args[0] === require('../src/windesk').DESKTOP, '실행기 또는 헤드리스');
+  assert.deepStrictEqual(seen[1], { cmd: 'C:\\node.exe', args: ['setup.js'] }, '자리 인자 없는 다른 띄우기는 그대로');
+});

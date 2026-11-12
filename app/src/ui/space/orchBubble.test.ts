@@ -184,7 +184,7 @@ describe('바탕 배지(앱을 내려도 — 10-28 사용자)', () => {
     expect(rust).toContain('let pass = !FOLLOWING.load(Ordering::SeqCst) &&'); // 끄는 중 커서가 받는 자리를 벗어나도 놓음이 바탕 앱으로 안 샌다
   });
   it('보내기는 폰과 같은 길(참모에게만·제어 문자 빼고) — 대화창은 터미널 없는 ChatView', () => {
-    expect(desk).toContain("invoke('bubble_send', { id: chatId, text })");
+    expect(desk).toContain("invoke<string>('bubble_send', { id: chatId, text })");
     expect(desk).toContain('<ChatView key={who.id} sessionId={sid}');
     expect(rust).toContain('if !is_hq_session(&sessions, id, &hq)');
     expect(rust).toMatch(/pub async fn bubble_send\([\s\S]{0,400}hq_only\(&id\)\.await\?;/);

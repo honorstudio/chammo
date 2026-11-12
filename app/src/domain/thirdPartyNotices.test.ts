@@ -119,6 +119,24 @@ describe.skipIf(!existsSync(script))('생성기 규칙(지어낸 입력)', () =>
     const body = parseNotices(r.md).find((s) => s.license === 'MIT')!.body;
     expect(body).not.toMatch(/^\s+Copyright \(c\) 2020/m);
   });
+  // ADR 0031: 윈도우 설치 파일에 새 ConPTY(conpty.dll·OpenConsole.exe, MIT)를 묶는다 — 고지에 출처·판·MIT 전문
+  it('윈도우 ConPTY 묶음 — 목록 파일이 있으면 출처·판·MIT 전문 절', () => {
+    write('web/src-tauri/windows/conpty.json', JSON.stringify({ package: 'Microsoft.Windows.Console.ConPTY', version: '9.9.9', license: 'MIT', source: 'https://github.com/microsoft/terminal' }));
+    write('web/src-tauri/windows/conpty-LICENSE.txt', MIT('Microsoft Corporation'));
+    try {
+      const a = crate('alpha', 'MIT', { LICENSE: MIT('Alpha Person') });
+      const r = run('conpty', [a], [a.id]);
+      expect(r.status, r.stderr).toBe(0);
+      const sec = parseNotices(r.md).find((s) => s.name.startsWith('Windows ConPTY'))!;
+      expect(sec.license).toBe('MIT');
+      expect(sec.body).toContain('Microsoft.Windows.Console.ConPTY 9.9.9');
+      expect(sec.body).toContain('https://github.com/microsoft/terminal');
+      expect(sec.body).toMatch(/Copyright \(c\) 2020 Microsoft Corporation/);
+      expect(sec.body).toContain('Permission is hereby granted');
+    } finally {
+      rmSync(join(root, 'web/src-tauri'), { recursive: true, force: true });
+    }
+  });
   it('원문 속 ## 줄이 절을 쪼개지 않는다', () => {
     const a = crate('alpha', 'MIT', { LICENSE: MIT('Alpha Person') });
     const r = run('heading', [a], [a.id]);

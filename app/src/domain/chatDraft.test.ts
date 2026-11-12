@@ -86,4 +86,38 @@ describe('bufferedStore — 데이터 폴더 파일(drafts.json, 600)로 남기�
     await p;
     expect(s.getItem('teamDraft:r1')).toBe('{"text":"새","refs":[]}');
   });
+  // 공개 이슈 #24 '채팅하다 나가면 대화가 지워진다': 메인 창과 메신저 창은 켤 때 한 번씩만 파일을 읽어 각자 메모리에 둔다 —
+  // 메신저 창에서 고친 글을 메인 창은 모르고 옛 글(빈 글)을 보여 준 뒤 그대로 다시 써서 파일의 새 글을 지웠다
+  it('다른 창이 고친 글 — 창으로 돌아와 다시 읽으면(refresh) 새 글, 옛 글로 덮지 않는다', async () => {
+    vi.useFakeTimers();
+    const f = io({});
+    const mainFile = bufferedStore(f);
+    const msgFile = bufferedStore(f);
+    await mainFile.load();
+    const main = draftStore(mainFile, 'teamDraft:');
+    main.save('r1', { text: '옛 글', refs: [] });
+    await vi.advanceTimersByTimeAsync(500);
+    await msgFile.load();
+    const msg = draftStore(msgFile, 'teamDraft:');
+    expect(msg.load('r1').text).toBe('옛 글');
+    msg.save('r1', { text: '메신저 창에서 이어 쓴 글', refs: [] });
+    msg.save('r2', { text: '새 대화 글', refs: [] });
+    await vi.advanceTimersByTimeAsync(500);
+    await mainFile.refresh();
+    expect(main.load('r1').text).toBe('메신저 창에서 이어 쓴 글');
+    expect(main.load('r2').text).toBe('새 대화 글');
+    msg.save('r2', { text: '', refs: [] });
+    await vi.advanceTimersByTimeAsync(500);
+    await mainFile.refresh();
+    expect(main.load('r2').text, '다른 창이 지운 글은 지운 대로').toBe('');
+    vi.useRealTimers();
+  });
+  it('다시 읽는 사이 이 창에서 쓴(아직 안 써진) 글은 그대로', async () => {
+    const f = io({ 'teamDraft:r1': '{"text":"파일","refs":[]}' });
+    const s = bufferedStore(f, undefined, '', 10_000);
+    await s.load();
+    s.setItem('teamDraft:r1', '{"text":"이 창","refs":[]}');
+    await s.refresh();
+    expect(s.getItem('teamDraft:r1')).toBe('{"text":"이 창","refs":[]}');
+  });
 });

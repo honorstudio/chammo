@@ -178,3 +178,16 @@ test('크롬 SingletonLock(호스트-pid 링크)에서 살아 있는 pid — 다
   fs.symlinkSync(`${os.hostname()}-${2 ** 22 + 7}`, path.join(dir, 'SingletonLock'));
   assert.equal(s.singletonPid(dir), null);
 });
+
+// 공개 이슈 #26(윈도우): 스크립트 지킴이(chammo-browser launch)는 윈도우 숨은 데스크톱 자리(desk)를 받고도 크롬을 보이는 0,0 에 띄웠다 —
+// 숨은 데스크톱 실행기(src/windesk.js)를 끼우는 spawn 훅이 MCP 래퍼에만 붙어 있었다. 사이트 크롬 창이 작업표시줄에 쌓였다
+test('윈도우 숨은 데스크톱 자리면 크롬을 띄우기 전에 MCP 래퍼와 같은 spawn 훅을 건다', () => {
+  const got = [];
+  assert.strictEqual(s.deskHook({ pos: [0, 0], size: [1280, 800], desk: true }, 'tax-site', (env) => got.push(JSON.parse(env.CHAMMO_PLACE))), true);
+  assert.strictEqual(got.length, 1);
+  assert.strictEqual(got[0].desk, true);
+  assert.strictEqual(got[0].profile, 'tax-site');
+  for (const k of ['root', 'liveDir', 'dataDir', 'vdFile']) assert.ok(got[0][k], `${k} 가 있어야 windesk 가 실행기·사람 차례 표시를 찾는다`);
+  assert.strictEqual(s.deskHook({ pos: [9000, 0], size: [1280, 800], offPos: [9000, 0] }, 'tax-site', () => got.push('x')), false, '맥·보이는 자리엔 안 건다');
+  assert.strictEqual(got.length, 1);
+});

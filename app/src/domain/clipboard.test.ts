@@ -76,3 +76,31 @@ describe('윈도우 터미널 복사·붙여넣기 — 윈도우 터미널 관�
     expect(winTermKey(k('KeyX', { ctrl: true }), false)).toBeNull();
   });
 });
+
+// 공개 이슈 #21: 윈도우 터미널 보기에서 그림만 든 클립보드로 Ctrl+V 하면 xterm 은 글만 읽어 아무 일도 없었다 —
+// Claude 의 윈도우 그림 붙여넣기 키(Alt+V = ESC v)를 대신 넣는다. 글이 있으면 웹뷰 붙여넣기 그대로
+import { winPasteKeys } from './clipboard';
+import termPane from '../ui/TerminalPane.tsx?raw';
+describe('윈도우 터미널 Ctrl+V — 그림이면 Alt+V', () => {
+  it('그림·파일만 → ESC v, 글이 있으면 null(웹뷰가 붙여넣는다)', () => {
+    expect(winPasteKeys([{ kind: 'file', type: 'image/png' }], false)).toBe('\x1bv');
+    expect(winPasteKeys([{ kind: 'string', type: 'text/plain' }], true)).toBeNull();
+    expect(winPasteKeys([], false)).toBe('\x1bv');
+  });
+  it('글과 그림이 같이 든 클립보드(엑셀·워드 복사는 비트맵도 싣는다)는 글로 — 0.4.13 처럼 null', () => {
+    expect(winPasteKeys([{ kind: 'string', type: 'text/plain' }, { kind: 'file', type: 'image/png' }], true)).toBeNull();
+    expect(winPasteKeys([{ kind: 'string', type: 'text/html' }, { kind: 'file', type: 'image/bmp' }], true)).toBeNull();
+  });
+  it('터미널 보기는 윈도우에서만 붙여넣기 사건을 먼저 받아 그 키를 쓴다', () => {
+    expect(termPane).toMatch(/IS_WIN && !readOnly[^\n]*addEventListener\('paste', [a-zA-Z]+, true\)/);
+    expect(termPane).toContain('winPasteKeys([...');
+  });
+});
+
+// 공개 이슈 #23(추정): WebView2 글 예측이 xterm 숨은 입력칸에 제안을 붙인다 — 자동 완성·글 제안 끄기
+describe('터미널 입력칸 글 제안 끄기', () => {
+  it('xterm 입력칸에 autocomplete off · writingsuggestions false', () => {
+    expect(termPane).toContain("term.textarea?.setAttribute('autocomplete', 'off')");
+    expect(termPane).toContain("term.textarea?.setAttribute('writingsuggestions', 'false')");
+  });
+});

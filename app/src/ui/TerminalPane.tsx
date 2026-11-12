@@ -6,7 +6,7 @@ import { findPathsWrapped, resolveLink } from '../domain/links';
 import '@xterm/xterm/css/xterm.css';
 import { imeBridgeOn, imeStep, normalizeInput, yieldsToXterm } from '../domain/imeBridge';
 import { macKeySequence, ctrlLetter } from '../domain/macKeys';
-import { copyKeyAction, parseOsc52, winTermKey } from '../domain/clipboard';
+import { copyKeyAction, parseOsc52, winPasteKeys, winTermKey } from '../domain/clipboard';
 import { IS_WIN } from '../domain/reader';
 import { termFont } from '../domain/termFont';
 import { modKey } from '../domain/keys';
@@ -203,6 +203,9 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
       },
     });
     term.open(el);
+    // 웹뷰 글 예측·자동 완성 끄기 — xterm 은 autocorrect·spellcheck 만 끈다. WebView2(Edge) 글 예측이 터미널 입력칸에 제안을 붙였다(공개 이슈 #23, 추정)
+    term.textarea?.setAttribute('autocomplete', 'off');
+    term.textarea?.setAttribute('writingsuggestions', 'false');
     // 첫 설정 터미널 — 사람이 바로 ↓·Enter 를 친다(2026-10-21 첫 사용자 QA)
     // 다른 입력칸에 치는 중이면 안 뺏는다 — 설정 입력칸에 치다가 다음 설치 터미널이 열리면 타자가 그 명령으로 샜다(가지 검토)
     const typingElsewhere = () => { const a = document.activeElement as HTMLElement | null; return !!a && !a.closest('.xterm') && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable); };
@@ -272,6 +275,16 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
     // 한글 다리는 맥(WKWebView) 몫 — 윈도우(WebView2)는 xterm 이 조합을 처리한다(다리까지 걸면 한글이 두 번, domain/imeBridge imeBridgeOn)
     const detachIme = readOnly ? () => {} : imeBridgeOn(IS_WIN, imeMode) ? installImeBridge(term, (d) => { imeTrace?.('bridge', { d: seqShape(d) }); write(d); }) : () => {};
     const detachTrace = readOnly ? () => {} : installImeTrace(term);
+    // 윈도우 Ctrl+V 에 그림만 있으면 Alt+V 로(Claude 가 클립보드 그림을 읽는다) — xterm 은 글만 붙여넣는다(공개 이슈 #21)
+    const onWinPaste = (e: ClipboardEvent) => {
+      const cd = e.clipboardData;
+      const keys = cd ? winPasteKeys([...cd.items], !!cd.getData('text/plain')) : null;
+      if (!keys) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      write(keys);
+    };
+    if (IS_WIN && !readOnly) term.element?.addEventListener('paste', onWinPaste, true);
     // 파일을 끌어다 놓으면(ui/fileDrop) 붙여넣기처럼 — Claude 가 붙여넣은 경로를 이미지로 읽는다
     const onDrop = (e: Event) => {
       term.paste((e as CustomEvent<string>).detail);
@@ -436,6 +449,7 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
       mq.removeEventListener('change', onScheme);
       term.textarea?.removeEventListener('focus', onTermFocus);
       detachTrace();
+      term.element?.removeEventListener('paste', onWinPaste, true);
       if (id != null) void closePty(id);
       TERMS.delete(el);
       term.dispose();

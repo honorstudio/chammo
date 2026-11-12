@@ -71,7 +71,8 @@ export function applyQueueOps(q: QueueState, chunk: string): QueueState {
   return { waiting: waiting.slice(-50), popped: popped.slice(-50), deq: Math.min(Math.max(deq, 0), 20), absorbed: absorbed.slice(-50) };
 }
 
-export type PendingMsg = { text: string; at: number };
+/** inflight = 앱 치기(Rust pty_type)가 '친 글을 입력칸에서 봤고 Enter 뒤 빠졌는데 기록엔 아직'이라고 알렸다 — UserPromptSubmit 훅이 도는 중 */
+export type PendingMsg = { text: string; at: number; inflight?: boolean };
 /** sending = 막 보냄 · queued = Claude 대기열에서 차례 기다림 · input = 터미널 입력칸에 걸림 · lost = 어디에도 없음
  *  · wait = 터미널 보기가 끊겨 다시 붙는 중 — 붙으면 앱이 친다(ui/SessionGrid typeAndSend, domain/paneLinks) */
 export type PendingState = 'sending' | 'queued' | 'input' | 'lost' | 'wait';
@@ -79,6 +80,11 @@ export type PendingState = 'sending' | 'queued' | 'input' | 'lost' | 'wait';
  *  user 줄·enqueue 줄은 UserPromptSubmit 훅이 끝난 뒤에 붙는다 — 부하 높던 날 훅이 18~21초 걸려 10초 땐 간 말이 '안 갔어요'로 떠 다시 보냈다(2026-10-10).
  *  45초는 너무 길어 '보내는 중'이 끝없이 남는 것처럼 보였다 — 30초(2026-10-21 사용자, 훅 21초보다 넉넉히) */
 export const LOST_AFTER = 30_000;
+/** inflight 인 말은 이만큼 — 친 글이 입력칸에서 빠졌으니 Claude 는 받았고 훅이 끝나면 기록이 붙는다. 2주(10-30~11-12) 사람 말 5,386번 중
+ *  훅 30초 넘김 280번·가장 긴 것 156초 — 30초에 '전달 안 됨 + 다시 보내기'가 떠 누르면 훅 뒤에 같은 말이 두 번 들어갔다(11-09 앱 보내기 62번, 11-13 시험 세션 재현) */
+export const INFLIGHT_LOST_AFTER = 180_000;
+/** at 에 보낸 말을 inflight 로 — 앱 치기 결과가 왔을 때 */
+export const markInflight = <P extends PendingMsg>(ps: P[], at: number): P[] => ps.map((p) => (p.at === at ? { ...p, inflight: true } : p));
 /** Enter 를 넣은 뒤 이만큼은 입력칸에 보여도 '치는 중'으로 본다 */
 const SETTLE = 1000;
 /** 같은 말에 Enter 를 다시 넣는 최대 횟수 */
@@ -110,7 +116,7 @@ export const ABSORB_GRACE = 5000;
 /** 다시 보낸 말 — 보낸 시각은 새로, 맞출 기록은 처음 보낸 때(10초 여유) 뒤부터. 처음 말의 기록이 훅 때문에 늦게(옛 시각으로) 붙어도 지워진다.
  *  입력칸에 되돌아온 말(since)은 since 그대로 */
 /** 붙인 그림(imgs) 같은 딸린 칸은 그대로 — 다시 보낸 대기 말풍선에서 썸네일이 빠지지 않게 */
-export const resent = <P extends PendingMsg & { since?: number }>(p: P, now: number): P & { since: number } => ({ ...p, at: now, since: p.since ?? p.at - 10_000 });
+export const resent = <P extends PendingMsg & { since?: number }>(p: P, now: number): P & { since: number } => ({ ...p, at: now, since: p.since ?? p.at - 10_000, inflight: false });
 
 /** 새로 보낸 말 — 맞출 기록은 보낸 때(10초 여유) 뒤, 그 사이 이미 들어온 같은 글 뒤부터. 방금 간 같은 말을 몇 초 뒤 또 보내면
  *  앞 말 기록에 짝지어져 이번 말이 안 가도 '보내는 중'도 '안 갔어요'도 없이 사라졌다(2026-10-11 bug-hunt 하네스).
@@ -137,7 +143,7 @@ export function pendingState(p: PendingMsg & { since?: number }, c: { queue: Que
   if (n && sq(c.termText).includes(n)) return c.pasting ? 'sending' : 'input';
   // 입력칸에 이 말의 토막만 보인다 — 긴 말을 치는 중이거나 입력칸 높이를 넘었다. 30초 넘게 그대로면 Enter 가 안 먹은 것: '안 갔어요 + 다시 보내기'면 입력칸에 두 벌로 붙는다
   if (typingOf(c.termText, [p.text])) return c.now < typed + LOST_AFTER ? 'sending' : 'input';
-  return c.now < typed + LOST_AFTER ? 'sending' : 'lost';
+  return c.now < typed + (p.inflight ? INFLIGHT_LOST_AFTER : LOST_AFTER) ? 'sending' : 'lost';
 }
 
 /** Claude 대기열이 다 이 채팅이 보낸 말인가 — 줄 선 말 빼기(↑ 로 대기열 전부를 입력칸에 꺼냄)는 그때만. 남의 말까지 입력칸에 쏟는다.

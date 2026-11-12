@@ -13,7 +13,7 @@ import { builtinSlash, completeSlash, isMemoryCmd, matchSlash, slashQuery, type 
 import { appendChat, chatBusy, chatEscStops, chatNorm, escUnsends, enterDelay, parseChat, pasteKind, clickFocusesInput, sentByMe, promptInput, sendControls, splitPaths, splitRefs, staleRefs, stillPending, stuckInInput, taskCounts, termRest, withRefs, type ChatItem, type ChatRef } from '../../domain/chat';
 import type { LinkState } from '../../domain/attachExit';
 import { HOLD_MAX } from '../../domain/paneLinks';
-import { absorbedAt, absorbedLeft, againPlan, againPlanOf, applyQueueOps, autoEnterTarget, DUP_CONFIRM, emptyQueue, inputLeftover, keepAfterRemove, LOST_AFTER, mineForLeftover, newPending, appLineShown, isAppLine, pendAct, pendingState, pendLook, queueAllMine, resent, restoreDraft, staleEcho, typingOf, waitingOf, type PendingState, type QueueState } from '../../domain/chatQueue';
+import { absorbedAt, absorbedLeft, againPlan, againPlanOf, applyQueueOps, autoEnterTarget, DUP_CONFIRM, emptyQueue, inputLeftover, keepAfterRemove, LOST_AFTER, markInflight, mineForLeftover, newPending, appLineShown, isAppLine, pendAct, pendingState, pendLook, queueAllMine, resent, restoreDraft, staleEcho, typingOf, waitingOf, type PendingState, type QueueState } from '../../domain/chatQueue';
 import { mdToHtml } from '../md';
 import { openWebLink } from '../followLink';
 import { chatSendLog, openTarget, readSessionTasks, readTranscript, type SessionTask, type TranscriptChunk } from '../../data/tauri';
@@ -71,7 +71,7 @@ const md = (text: string) => {
 const topRef = (refs: ChatRef[]) => Math.max(0, ...refs.map((r) => Number(r.label.slice(5)) || 0));
 // 쓰던 글은 세션마다 — 참모 탭을 옮겨도, 앱을 다시 켜도 남는다(2026-09-30 사용자: 1→2 옮기다 긴 글이 날아갔다)
 // 보내는 중인 말도 세션마다 — 탭을 옮겨 창이 새로 그려져도 "보내는 중"이 남고, 안 보내졌으면 다시 Enter 를 넣을 수 있게
-type Pend = { text: string; at: number; since?: number; imgs?: string[] };
+type Pend = { text: string; at: number; since?: number; imgs?: string[]; inflight?: boolean };
 const pendingBy = new Map<string, Pend[]>();
 // 붙인 것(첨부 줄)도 세션마다 — 탭을 옮기거나 창이 새로 그려져도 터미널 입력칸에 든 그림이 줄에서 안 사라지게(메모리만)
 const attBy = new Map<string, AttState>();
@@ -111,7 +111,8 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   state: string;
   /** 보낸다 — 약속을 주면 못 보냈을 때(false) 입력칸에 되살리고 한 줄 알린다 */
   /** again = '다시 보내기' — 세션 쪽이 입력칸에 남은 그 말에 같은 글을 겹쳐 치지 않는다(pty_type again) */
-  send: (text: string, again?: boolean) => void | Promise<boolean>;
+  /** 'inflight' = 쳤고 입력칸에서 빠졌는데 기록엔 아직(훅이 도는 중) — 그 말풍선은 '전달 안 됨'을 늦게(domain/chatQueue INFLIGHT_LOST_AFTER) */
+  send: (text: string, again?: boolean) => void | Promise<boolean | 'inflight'>;
   interrupt: () => void;
   /** 터미널에 키를 하나씩(선택 창 버튼) — 한꺼번에 넣으면 TUI 가 놓친다 */
   rawKeys?: (seq: string[]) => Promise<void>;
@@ -641,6 +642,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     pasted.current = 0; // 붙여 넣은 글은 이 말과 같이 간다
     if (!remote) chatSendLog(`${paneId} view items=${items.length} last=${items[items.length - 1]?.ts ?? '-'} state=${state} link=${link ?? '-'}`); // 보낸 순간 화면이 기록보다 낡았나(11-05 80분 멈춘 칸)
     void Promise.resolve(send(text)).then((ok) => {
+      if (ok === 'inflight') setPending((ps) => markInflight(ps, at));
       if (ok !== false) return;
       dropPending(at);
       setDraft((d) => restoreDraft(d, text));
@@ -665,7 +667,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     return true;
   };
   /** 다시 보낸 말은 보낸 시각을 새로 — 안 그러면 입력칸이 잠깐 비어 보이는 사이 '안 갔어요'가 떠 두 번 누르게 된다 */
-  const repend = (p: Pend) => setPending((ps) => [...ps.filter((x) => x.at !== p.at), resent(p, Date.now())]);
+  const repend = (p: Pend) => { const q = resent(p, Date.now()); setPending((ps) => [...ps.filter((x) => x.at !== p.at), q]); return q.at; };
   /** 손으로 넣는 Enter 도 선택 창이 떠 있으면 안 넣는다 — 창에서 골라 버린다. state blocked 는 안 본다: 답을 묻고 턴을 끝낸 쉬는 세션도 blocked 다(2.1.318) */
   const enterOk = () => !dialogRef.current;
   /** 입력칸을 비우고 → (first 가 있으면 그 말을 보내고) → 남길 말만 다시 넣는다(Enter 없이). 세션 쪽이 차례대로 친다 */
@@ -716,7 +718,11 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
       if (dupBlocked(p.text)) return;
       // 입력칸에 이 말만 그대로 걸려 있으면 Enter 만 — flushLeftover 가 Enter 를 넣은 뒤 또 치면 같은 말이 두 번 갔다
       if (againPlanOf(p.text, leftover, termText) === 'enter') { if (enterOk()) { submitTerminal(p.text); quietUntil.current = Date.now() + 1500; repend(p); } return; }
-      flushLeftover(); send(p.text, true); repend(p); return;
+      flushLeftover();
+      const sent = send(p.text, true);
+      const at = repend(p);
+      void Promise.resolve(sent).then((ok) => { if (ok === 'inflight') setPending((ps) => markInflight(ps, at)); });
+      return;
     }
     if (st === 'queued') {
       if (what === 'now') { if (busy && !unsendsNow()) sendQueuedNow(); return; } // 쉬고 있으면 Claude 가 곧 꺼내 보낸다 · 앞 말에 답이 없으면 줄 선 채로(Esc 가 앞 말을 거둬들인다)

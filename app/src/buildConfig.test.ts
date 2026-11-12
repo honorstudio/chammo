@@ -48,3 +48,31 @@ describe('윈도우 설치기', () => {
     expect(win.bundle.windows.nsis.installMode).toBe('currentUser');
   });
 });
+
+// ADR 0031 · 공개 이슈 #21·#22: 윈도우 10 기본 ConPTY 는 마우스·대체 화면·붙여넣기 괄호를 막는다(윈도우 시험 PC 프로브) — 새 ConPTY 를 exe 옆에
+import conpty from '../src-tauri/windows/conpty.json';
+import conptyLicense from '../src-tauri/windows/conpty-LICENSE.txt?raw';
+import fetchSrc from '../src-tauri/windows/fetch-conpty.mjs?raw';
+import { mismatch } from '../src-tauri/windows/fetch-conpty.mjs';
+describe('윈도우 새 ConPTY 묶기', () => {
+  const w = win as { build?: { beforeBuildCommand?: string }; bundle: { resources?: Record<string, string> } };
+  it('NuGet 공식 패키지·고정 판·sha256 셋(패키지·두 파일)', () => {
+    expect(conpty.url).toMatch(/^https:\/\/api\.nuget\.org\/v3-flatcontainer\/microsoft\.windows\.console\.conpty\/1\.25\.260930003\//);
+    expect(conpty.version).toBe('1.25.260930003');
+    for (const h of [conpty.sha256, conpty.files['conpty.dll'].sha256, conpty.files['OpenConsole.exe'].sha256]) expect(h).toMatch(/^[0-9a-f]{64}$/);
+  });
+  it('exe 옆(설치 폴더 맨 위)에 두 파일 — portable-pty 가 conpty.dll 을 이름으로 먼저 찾고, conpty.dll 은 제 옆 OpenConsole.exe 를 띄운다', () => {
+    expect(w.bundle.resources).toEqual({ 'windows/conpty/conpty.dll': 'conpty.dll', 'windows/conpty/OpenConsole.exe': 'OpenConsole.exe' });
+    expect(w.build?.beforeBuildCommand).toMatch(/^node src-tauri\/windows\/fetch-conpty\.mjs && /);
+  });
+  it('sha256 이 다르면 멈춘다 — 받은 바이트가 하나라도 다르면 이유 글', () => {
+    expect(mismatch('x', Buffer.from('abc'), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')).toBeNull();
+    expect(mismatch('conpty.dll', Buffer.from('abd'), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')).toMatch(/conpty\.dll sha256 다름/);
+    expect(fetchSrc).toContain('process.exit(1)');
+  });
+  it('고지는 MIT 전문(마이크로소프트 저작권 줄 포함)', () => {
+    expect(conpty.license).toBe('MIT');
+    expect(conptyLicense).toMatch(/^MIT License\n\nCopyright \(c\) Microsoft Corporation/);
+    expect(conptyLicense).toContain('THE SOFTWARE IS PROVIDED "AS IS"');
+  });
+});

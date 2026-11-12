@@ -21,6 +21,8 @@ const file = bufferedStore(
 export const loadDrafts = () => file.load();
 // 창을 닫거나 다시 읽기 직전 — 모아 둔 글을 바로
 try { window.addEventListener('pagehide', () => void file.flush()); } catch { /* 창 없음(시험) */ }
+// 창으로 돌아오면 다시 읽는다 — 메인 창·메신저 창이 같은 대화 글을 각자 옛 값으로 들고 있다가 덮었다(공개 이슈 #24)
+try { window.addEventListener('focus', () => void file.refresh()); } catch { /* 창 없음(시험) */ }
 
 /** 참모 채팅 — 세션마다 */
 export const chatDrafts = draftStore(file, 'chatDraft:');

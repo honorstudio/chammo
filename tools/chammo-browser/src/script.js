@@ -16,7 +16,7 @@ const users = require('./users');
 const liveMod = require('./live');
 const channelMod = require('./channel');
 const { placement, chromeLaunch, chromeArgs } = require('./window');
-const { askApp } = require('./place-at-launch');
+const { askApp, install: installPlace, deskConf } = require('./place-at-launch');
 const { minimizePulledIn } = require('./minimize');
 const { sessionChrome } = require('./appcopy');
 const { createHoldCall, startHoldPasskey } = require('./hold-passkey');
@@ -195,6 +195,14 @@ async function waitPort(profileDir, ms) {
 }
 
 /** 탭 목록 글(MCP 응답 모양) — live.parseResult 가 읽는다. 값은 주소·제목뿐 */
+/** 윈도우 숨은 데스크톱 자리(placement desk)면 크롬을 띄우기 전에 MCP 래퍼와 같은 spawn 훅을 건다 — 플레이라이트가 이 프로세스에서
+ *  child_process.spawn 으로 크롬을 띄우니 그 자리에서 숨은 데스크톱 실행기로 바뀐다. 안 걸면 보이는 0,0 에 떠 작업표시줄에 쌓였다(공개 이슈 #26) */
+function deskHook(place, profile, install = installPlace) {
+  if (!place || !place.desk) return false;
+  install({ CHAMMO_PLACE: JSON.stringify(deskConf(profile)) });
+  return true;
+}
+
 function tabsText(pages, current, titles = new Map()) {
   return pages.map((p, i) => `- ${i}: ${p === current ? '(current) ' : ''}[${String(titles.get(p) || '').replace(/[[\]\n]/g, ' ')}](${p.url()})`).join('\n');
 }
@@ -246,6 +254,7 @@ async function hold(o, { out = (r) => process.stdout.write(`${JSON.stringify(r)}
     const feature = liveMod.enabled(paths.dataDir());
     const appHere = fs.existsSync(path.join(paths.dataDir(), 'config.json'));
     const place = o.headless ? { pos: null, size: null, offPos: null } : placement({ profile, watchable: feature, appHere, vdFile: path.join(paths.ROOT, 'vdisplay.json'), ask: () => askApp(paths.dataDir()) });
+    deskHook(place, profile);
     live = feature && o.view ? liveMod.createLive({ profile, root: paths.ROOT, profileDir, pid: process.pid, ppid: o.session || 0 }) : null;
     if (live) live.reset();
     else fs.rmSync(portFile, { force: true }); // 지난 크롬이 남긴 포트로 엉뚱한 주소를 알리지 않게
@@ -336,4 +345,4 @@ async function hold(o, { out = (r) => process.stdout.write(`${JSON.stringify(r)}
   }
 }
 
-module.exports = { parseArgs, sessionPid, singletonPid, launchClient, spawnHolder, realDeps, hold, playwrightCore, tabsText, CLI, DEFAULT_WAIT };
+module.exports = { deskHook, parseArgs, sessionPid, singletonPid, launchClient, spawnHolder, realDeps, hold, playwrightCore, tabsText, CLI, DEFAULT_WAIT };

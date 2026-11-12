@@ -10,19 +10,21 @@ const EMPTY: Draft = { text: '', refs: [] };
 export function draftStore(storage?: Store, prefix = 'chatDraft:') {
   const keyOf = (id: string) => `${prefix}${id}`;
   const mem = new Map<string, Draft>();
+  let broken = false;
   return {
+    // 저장소가 먼저 — 다른 창이 고친 글을 refresh 로 받아 오면 그게 맞다(공개 이슈 #24). 메모리는 저장소가 막혔을 때만
     load(id: string | undefined): Draft {
       if (!id) return EMPTY;
-      const m = mem.get(id);
-      if (m) return m;
-      try {
-        const raw = storage?.getItem(keyOf(id));
-        const d = raw ? (JSON.parse(raw) as Partial<Draft>) : null;
-        if (d && typeof d.text === 'string') return { text: d.text, refs: Array.isArray(d.refs) ? d.refs : [] };
-      } catch {
-        // 깨진 값·막힌 저장소는 빈 입력칸
+      if (storage && !broken) {
+        try {
+          const raw = storage.getItem(keyOf(id));
+          const d = raw ? (JSON.parse(raw) as Partial<Draft>) : null;
+          return d && typeof d.text === 'string' ? { text: d.text, refs: Array.isArray(d.refs) ? d.refs : [] } : EMPTY;
+        } catch {
+          // 깨진 값·막힌 저장소 — 메모리로
+        }
       }
-      return EMPTY;
+      return mem.get(id) ?? EMPTY;
     },
     save(id: string | undefined, d: Draft) {
       if (!id) return;
@@ -33,7 +35,7 @@ export function draftStore(storage?: Store, prefix = 'chatDraft:') {
         if (empty) storage?.removeItem(keyOf(id));
         else storage?.setItem(keyOf(id), JSON.stringify(d));
       } catch {
-        // 이번 실행 동안은 메모리로
+        broken = true; // 이번 실행 동안은 메모리로
       }
     },
   };
@@ -68,6 +70,13 @@ export function bufferedStore(io: DraftIO, legacy?: Legacy, legacyPrefix = '', w
     setItem: (k: string, v: string) => { mem.set(k, v); queue(k, v); },
     removeItem: (k: string) => { mem.delete(k); queue(k, null); },
     flush,
+    /** 다른 창(메인 ↔ 메신저)이 고친 글을 다시 읽는다 — 창으로 돌아올 때. 이 창에서 쓰고 아직 안 써진 글(dirty)은 그대로(공개 이슈 #24) */
+    async refresh() {
+      let all: Record<string, string>;
+      try { all = await io.read(); } catch { return; }
+      for (const k of [...mem.keys()]) if (!(k in all) && !dirty.has(k)) mem.delete(k);
+      for (const [k, v] of Object.entries(all)) if (!dirty.has(k)) mem.set(k, v);
+    },
     async load() {
       let all: Record<string, string>;
       try { all = await io.read(); } catch { return; } // 못 읽으면 메모리만 — 옛 저장소도 그대로 둔다

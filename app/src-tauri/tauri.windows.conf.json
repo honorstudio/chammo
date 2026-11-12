@@ -1,6 +1,11 @@
 {
+  "build": {
+    "beforeBuildCommand": "node src-tauri/windows/fetch-conpty.mjs && npx vite build"
+  },
   "bundle": {
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -8,13 +13,22 @@
       "icons/icon.ico"
     ],
     "windows": {
-      "webviewInstallMode": { "type": "downloadBootstrapper" },
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["Korean", "English"],
+        "languages": [
+          "Korean",
+          "English"
+        ],
         "displayLanguageSelector": false,
         "installerHooks": "./windows/hooks.nsh"
       }
+    },
+    "resources": {
+      "windows/conpty/conpty.dll": "conpty.dll",
+      "windows/conpty/OpenConsole.exe": "OpenConsole.exe"
     }
   }
 }

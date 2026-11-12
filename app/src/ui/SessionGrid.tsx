@@ -107,12 +107,13 @@ const linkNow = new Map<string, LinkState>();
 const retakes = new Map<string, () => void>();
 /** 붙은 보기에 치는 데 쓰는 최대 — 긴 글도 몇 초면 끝난다. 넘기면 버리고 다음 말로(채팅은 입력을 되살린다, 2026-10-24 윈도우 '어떤 말도 안 감') */
 const TYPE_TIMEOUT = 30_000;
-/** 다 쳤으면 true, 못 쳤으면(보기가 안 붙음·치기 거절·시간 넘김) false */
-function typeAndSend(id: string, text: string, enter = true, again = false): Promise<boolean> {
+/** 다 쳤으면 true, 못 쳤으면(보기가 안 붙음·치기 거절·시간 넘김) false. 'inflight' = 쳤고 입력칸에서 빠졌는데 기록엔 아직(훅이 도는 중 — Rust pty_type) */
+function typeAndSend(id: string, text: string, enter = true, again = false): Promise<boolean | 'inflight'> {
   // 블랙박스 — 이 길엔 로그가 없어 '전달 안 됨'이 어디서 멈췄는지 못 가렸다(2026-11-05). 글 내용은 안 남긴다
   const asked = Date.now();
   const note = (s: string) => chatSendLog(`${id} ${s}`);
   note(`in link=${linkNow.get(id) ?? '-'} pane=${links.get(id) ? 1 : 0} chars=${[...text].length}`);
+  let inflight = false;
   return typing.push(id, async () => {
     // 끊김이 굳은 칸이면 바로 실패 — 앞 말만 drop 되고 줄 뒤 말은 80초 기다리다 세션이 돌아오면 몰래 쳐졌다(리뷰).
     // 다른 창에 쫓겨난 칸(윈도우)은 세션이 살아 있다 — 다시 붙여 되찾고 붙을 때까지 기다린다(2026-10-30 '다시 보내도 안 감')
@@ -126,7 +127,8 @@ function typeAndSend(id: string, text: string, enter = true, again = false): Pro
     const r = await api.type(typedChunks(text), enter ? enterDelay(text.length, IS_WIN) : undefined, again || undefined);
     // 칸 보기가 죽어 있었다 — 세션엔 Rust 가 새로 붙어 넣었다(기록 확인). 칸을 다시 붙인다(EOF 가 안 와 저절로는 안 붙는다)
     if (r === 'dead') { note('dead-view reattach'); api.reattach?.(); }
-  }, HOLD_MAX + LINK_WAIT + TYPE_TIMEOUT).then(() => { note(`ok ms=${Date.now() - asked}`); return true; }, (e: unknown) => { note(`fail ${e instanceof Error ? e.message : String(e)} ms=${Date.now() - asked}`); return false; });
+    inflight = r === 'inflight';
+  }, HOLD_MAX + LINK_WAIT + TYPE_TIMEOUT).then(() => { note(`ok ms=${Date.now() - asked}${inflight ? ' inflight' : ''}`); return inflight ? 'inflight' as const : true; }, (e: unknown) => { note(`fail ${e instanceof Error ? e.message : String(e)} ms=${Date.now() - asked}`); return false; });
 }
 
 /** 입력칸 지우기(백스페이스 n개) — 앞 글을 치는 중이면 그 뒤에. 지운 뒤 칠 글은 typeAndSend 가 다시 이 뒤에 줄 선다 */

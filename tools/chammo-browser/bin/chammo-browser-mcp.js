@@ -96,7 +96,7 @@ if (!extra.some((a) => a === '--config' || a.startsWith('--config='))) {
   const place = placement({ profile, watchable, appHere, vdFile, mac, wait: 0 });
   if (mac && watchable && appHere) placeEnv = { profile, vdFile, dataDir: paths.dataDir() };
   // 윈도우 — 숨은 데스크톱 실행기로 띄운다(src/windesk.js, 2026-10-28 인앱 브라우저 윈도우판)
-  if (place.desk) placeEnv = { profile, vdFile, dataDir: paths.dataDir(), desk: true, root: paths.ROOT, liveDir: require('path').join(paths.ROOT, 'live') };
+  if (place.desk) placeEnv = require('../src/place-at-launch').deskConf(profile);
   offPos = place.offPos;
   const { pos, size } = place;
   const configFile = require('path').join(paths.ROOT, 'run', `${profile}.json`);

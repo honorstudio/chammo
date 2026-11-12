@@ -54,7 +54,25 @@ const DEAD_QUIET_MS: u64 = 300_000;
 /// 출력 0(quiet=4878448)인데 앱은 그 보기에 쳐서 말이 기록 어디에도 없이 사라졌다(사용자 '다시 보내기 눌러 보니 CLI 에 아예 안 들어가 있네').
 /// 사용자가 본 그 터미널(Perambulating… PostToolUse hook 1m 35s)도 90분 전 화면에 얼어 있던 것 — 세션은 그때 쉬고 있었다
 pub(crate) fn dead_view(last_out: u64, started: u64) -> bool {
-    last_out.saturating_add(DEAD_QUIET_MS) < started
+    dead_view_on(last_out, started, cfg!(windows))
+}
+
+/// 윈도우 죽은 보기 기준 — 70초. 공개 이슈 #18·#25(윈도우 시험 PC 실측): 말이 사라진 칸은 치기 전 75~346초 조용했고 친 뒤 출력 0 이었는데
+/// 5분 기준이라 대부분 산 보기로 봤다. 산 보기는 104초 조용했어도 친 글자를 바로 그려 이 판정에 안 걸렸다(친 뒤 출력 = 산 것).
+/// 조용한 시간 기준은 '훅이 도는 동안 멈춘 TUI' 만 막으면 된다 — Claude Code 훅 기본 시간 제한 60초보다 길게.
+/// 맥은 화면 확인(seen)까지 있고 죽은 보기도 80분대였어서 5분 그대로
+const WIN_DEAD_QUIET_MS: u64 = 70_000;
+
+pub(crate) fn dead_view_on(last_out: u64, started: u64, win: bool) -> bool {
+    last_out.saturating_add(if win { WIN_DEAD_QUIET_MS } else { DEAD_QUIET_MS }) < started
+}
+
+/// 죽었다고 본 보기를 다시 안 고르게 — 윈도우 대신 넣기(claude::attach_do)는 열린 보기에 바로 쓴다. 표시 없이 attach 만 끄면
+/// 끝남을 알아채기(0.3~0.5초) 전에 같은 죽은 보기를 또 골라 말이 사라졌다(공개 이슈 #18). 프론트는 'dead' 를 받아 칸을 다시 붙인다
+fn retire_view(pty: u32) {
+    if let Some(v) = OPEN.lock().unwrap().iter().find(|v| v.pty == pty) {
+        v.gone.store(true, Ordering::Relaxed);
+    }
 }
 
 /// 열린 터미널 보기가 어느 세션에 붙어 있나 — 윈도우는 claude attach 가 세션당 한 창만 붙게 해서,
@@ -520,6 +538,7 @@ pub async fn pty_type(state: State<'_, Ptys>, id: u32, keys: Vec<String>, enter_
         let land = (enter_ms.is_some() && !crate::claude::slash_command(&text)).then(|| crate::send_land::Landing::for_session(&who, &text)).flatten();
         let started = now_ms();
         let note = type_keys_seen(&writer, &keys, enter_ms, screen.as_ref(), land, again.unwrap_or(false))?;
+        let outcome = note.as_ref().map_or("", type_outcome);
         // 이 길엔 로그가 없어 '전달 안 됨'을 못 가렸다(2026-11-05 개발 담당 18:13) — 글 없이 치기 결과만. seen=false 면 친 글이 입력칸에 한 번도 안 보인 것
         if let Some(n) = note {
             let landed = n.landed.map_or("-".to_string(), |l| l.to_string());
@@ -528,14 +547,26 @@ pub async fn pty_type(state: State<'_, Ptys>, id: u32, keys: Vec<String>, enter_
             let out = last_out.as_ref().map_or(u64::MAX, |l| l.load(Ordering::Relaxed));
             if n.landed == Some(false) && dead_view(out, started) {
                 crate::claude::log_out("chat-dead-view", &format!("{who} quiet={}", started.saturating_sub(out)));
+                retire_view(id);
                 kill_view(pid);
                 return crate::claude::type_text_tagged(&who, &text.replace("\x1b\r", "\n"), "chat-fallback").map(|_| "dead".to_string());
             }
         }
-        Ok(String::new())
+        Ok(outcome.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// 채팅에 돌려줄 치기 결과 — 'inflight' = 친 글을 입력칸에서 봤고 Enter 뒤 빠졌는데 기록엔 아직. UserPromptSubmit 훅이 도는 동안이다:
+/// 11-10~11-12 landed=false 31번이 전부 그 말의 훅이 6초를 넘긴 때였고 31번 다 늦게 들어갔다. 채팅은 이 말을 30초에 '전달 안 됨'으로 띄우지 않는다
+/// (domain/chatQueue INFLIGHT_LOST_AFTER) — 띄우면 다시 보내기가 훅 뒤에 같은 말을 한 번 더 넣는다(11-13 시험 세션 재현 2번 들어감)
+pub(crate) fn type_outcome(n: &TypeNote) -> &'static str {
+    if n.landed == Some(false) && n.seen && !n.left {
+        "inflight"
+    } else {
+        ""
+    }
 }
 
 /// 죽은 보기의 claude attach 를 끝낸다 — 세션은 안 죽는다(attach 만 뗀다). 끝나면 채팅 칸이 '연결 끊김 → 다시 붙기'로 살아난다
@@ -552,8 +583,14 @@ fn kill_view(pid: Option<u32>) {
             }
         });
     }
+    // 윈도우 — 표시(retire_view)는 이미 했고 attach 만 끈다. 보기 pid 는 감싼 cmd.exe 라 나무째(/T) — 그 밑 claude attach 까지가 우리 것.
+    // 세션은 안 죽는다. 못 꺼도 대신 넣기가 새로 붙으면 세션당 한 창이라 이 attach 는 쫓겨난다
     #[cfg(not(unix))]
-    let _ = pid;
+    if let Some(p) = pid.filter(|p| *p > 0) {
+        std::thread::spawn(move || {
+            let _ = crate::platform::command("taskkill").args(["/PID", &p.to_string(), "/T", "/F"]).status();
+        });
+    }
 }
 
 pub(crate) fn type_keys(w: &SharedWriter, keys: &[String], enter_ms: Option<u64>) -> Result<(), String> {
@@ -1415,6 +1452,33 @@ mod tests {
     }
 
     #[test]
+    fn 훅이_늦어_기록이_늦게_붙으면_inflight_로_알리고_또_치지_않는다() {
+        // 11-13 시험 세션 실측: UserPromptSubmit 훅이 도는 동안 입력칸은 바로 비는데 기록 줄은 훅이 끝난 뒤(31초) 붙었다
+        let p = land_file("hook");
+        let f = crate::fake_claude::Fake::new(None, false).hook(std::time::Duration::from_secs(12)).with_jsonl(&p); // 확인 창(LAND_WAIT 두 번 = 6초)보다 넉넉히 — 바쁜 판에도
+        let n = send_land(&f, "훅 도는 동안 보낸 말", Some(&p), false);
+        assert_eq!((n.landed, n.seen, n.left, n.retyped), (Some(false), true, false, false), "{n:?}");
+        assert_eq!(super::type_outcome(&n), "inflight");
+        assert_eq!(f.sent().0, vec!["훅 도는 동안 보낸 말".to_string()], "한 번만 들어갔다: {n:?}");
+        let t = std::time::Instant::now();
+        let users = || std::fs::read_to_string(&p).unwrap().matches("훅 도는 동안 보낸 말").count();
+        while users() == 0 && t.elapsed() < std::time::Duration::from_secs(15) {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        assert_eq!(users(), 1, "늦게라도 기록엔 한 번");
+    }
+
+    #[test]
+    fn inflight_는_입력칸에서_빠진_걸_본_때만() {
+        let n = |landed, seen, left| super::TypeNote { landed, seen, left, ..Default::default() };
+        assert_eq!(super::type_outcome(&n(Some(false), true, false)), "inflight");
+        assert_eq!(super::type_outcome(&n(Some(true), true, false)), "", "들어갔다");
+        assert_eq!(super::type_outcome(&n(None, true, false)), "", "기록으로 못 가림");
+        assert_eq!(super::type_outcome(&n(Some(false), false, false)), "", "친 글을 못 봤다 — 빠졌는지 모른다");
+        assert_eq!(super::type_outcome(&n(Some(false), true, true)), "", "입력칸에 남았다");
+    }
+
+    #[test]
     fn enter_가_계속_안_먹으면_비우고_다시_친다_겹치지_않게() {
         // 보이는 칸 — send_watched 가 Enter 세 번, 기록 확인이 한 번 더 — 넷 다 버려지면 지우고 다시 쳐서 Enter
         let p = land_file("retype");
@@ -1434,6 +1498,36 @@ mod tests {
         assert!(!super::dead_view(t - 60_000, t), "훅이 도는 동안 TUI 는 화면을 안 그린다 — 1분은 산 보기");
         assert!(!super::dead_view(u64::MAX, t), "보기를 못 찾으면 죽었다고 안 본다");
         assert!(super::dead_view(0, t), "붙은 뒤 화면이 한 번도 안 온 보기");
+    }
+
+    #[test]
+    fn 윈도우_죽은_보기는_1분_남짓_조용해도_죽은_것() {
+        // 공개 이슈 #18·#25 (윈도우 시험 PC 실측 기록): 안 간 말은 전부 landed=false, 치기 전 75~346초 조용했고 친 뒤 출력 0.
+        // 5분 기준이라 마지막 한 건만 죽은 보기로 잡혔다. 산 보기는 104초 조용했어도 친 글을 그려 늘 걸리지 않았다(친 뒤 출력 = 산 것)
+        let t = 1_000_000_000u64;
+        for quiet in [75_496u64, 242_842, 295_431] {
+            assert!(super::dead_view_on(t - quiet, t, true), "윈도우 {quiet}ms 조용 + 친 뒤 출력 없음 = 죽은 보기");
+            assert!(!super::dead_view_on(t - quiet, t, false), "맥은 5분 그대로 — 훅·그림 읽기로 조용한 산 보기를 또 넣지 않게");
+        }
+        assert!(!super::dead_view_on(t - 60_000, t, true), "훅(기본 시간 제한 60초)이 도는 동안 멈춘 TUI 는 윈도우도 산 보기");
+        assert!(!super::dead_view_on(t + 300, t, true), "친 뒤 글자가 그려졌다 = 산 보기");
+        assert!(!super::dead_view_on(u64::MAX, t, true), "보기를 못 찾으면 죽었다고 안 본다");
+    }
+
+    #[test]
+    fn 죽었다고_본_보기는_대신_넣을_때_다시_안_고른다() {
+        // 공개 이슈 #18: 윈도우는 대신 넣기(attach_do)가 열린 보기에 바로 쓴다 — 죽은 보기를 끝내지 못해(kill_view 가 유닉스만) 같은 죽은 보기에
+        // 또 써서 말이 사라졌다(실측 chat-dead-view 바로 뒤 chat-fallback landed=false, 다음 말에서야 다시 붙어 들어감)
+        let id = 4_000_000_001u32;
+        let session = "dead-view-retire-test".to_string();
+        use std::sync::atomic::{AtomicBool, AtomicUsize};
+        let visible = Arc::new(AtomicUsize::new(super::VIEW_READY_VISIBLE));
+        super::OPEN.lock().unwrap().push(super::OpenView { pty: id, session: session.clone(), writer: Arc::new(Mutex::new(Box::new(std::io::sink()))), visible, gone: Arc::new(AtomicBool::new(false)), kick: Default::default(), pid: None, screen: None, opened: std::time::Instant::now(), last_out: Default::default() });
+        assert!(super::session_writer(&session).is_some(), "죽기 전엔 고른다");
+        super::retire_view(id);
+        assert!(super::session_writer(&session).is_none(), "죽었다고 본 뒤엔 대신 넣기가 새로 붙어야 한다");
+        assert!(!super::session_has_view(&session), "쫓아낼 창도 없는 셈");
+        super::OPEN.lock().unwrap().retain(|v| v.pty != id);
     }
 
     #[test]
@@ -1658,6 +1752,48 @@ mod tests {
             std::thread::sleep(Duration::from_millis(env("CHATSEND_GAP", "6000").parse().unwrap()));
             dump(&format!("{case} 뒤"));
         }
+        let _ = child.kill();
+    }
+
+    /// E2E(진짜 세션 하나, 2026-11-13 stable-night): UserPromptSubmit 훅이 느린 세션 — 채팅 탭 길로 보내면 입력칸은 바로 비고 기록은 훅 뒤에 붙는다.
+    /// 치기 결과가 'inflight'(채팅이 30초에 '전달 안 됨'을 안 띄움)이고, 기다리면 기록엔 한 번만 들어가야 한다.
+    /// 일회용 세션: cd <팀 밖 신뢰 폴더> && claude --bg --dangerously-skip-permissions --model haiku --settings <UserPromptSubmit 에 sleep 40 훅> -n slow-hook "받음 한 단어로만 답해"
+    /// E2E_HOOK_ID=<짧은 id> cargo test --bin honor-orchestrator pty::tests::e2e_느린_훅은_inflight_로_한_번 -- --ignored --exact --nocapture
+    #[test]
+    #[ignore]
+    fn e2e_느린_훅은_inflight_로_한_번() {
+        use std::time::{Duration, Instant};
+        let id = std::env::var("E2E_HOOK_ID").expect("E2E_HOOK_ID");
+        let parser = Arc::new(Mutex::new(vt100::Parser::new(40, 100, 0)));
+        let p2 = parser.clone();
+        let mut dim = crate::claude::DimAsItalic::default();
+        let (_m, writer, mut child) = super::spawn_pty(&super::attach_line(&crate::claude::claude_bin(), &id, false), None, 100, 40, move |b| {
+            dim.feed(&mut p2.lock().unwrap(), b);
+            true
+        })
+        .unwrap();
+        let w: super::SharedWriter = Arc::new(Mutex::new(writer));
+        let t0 = Instant::now();
+        while crate::claude::input_lines(parser.lock().unwrap().screen()).is_none() && t0.elapsed() < Duration::from_secs(15) {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let sid = crate::send_land::session_id_in(&crate::claude::agents_json().unwrap(), &id).expect("sessionId");
+        let jsonl = crate::claude::transcript_path(&sid).expect("기록 파일");
+        let mk = format!("HOOK{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() % 100000);
+        let users = || std::fs::read_to_string(&jsonl).unwrap().lines().filter(|l| l.contains(&mk) && l.contains("\"type\":\"user\"")).count();
+        let text = format!("{mk} 느린 훅 동안 보낸 말");
+        let land = crate::send_land::Landing::for_session(&id, &text);
+        assert!(land.is_some(), "기록 자리");
+        let sent = Instant::now();
+        let n = super::type_keys_seen(&w, &[text.clone()], Some(400), Some(&parser), land, false).unwrap().unwrap_or_default();
+        eprintln!("SEND → {n} 결과={:?} {:?}", super::type_outcome(&n), sent.elapsed());
+        assert_eq!(super::type_outcome(&n), "inflight", "{n:?}");
+        while users() == 0 && sent.elapsed() < Duration::from_secs(150) {
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        eprintln!("기록에 붙음 {:?}", sent.elapsed());
+        std::thread::sleep(Duration::from_secs(10));
+        assert_eq!(users(), 1, "기록엔 한 번");
         let _ = child.kill();
     }
 
