@@ -191,6 +191,9 @@ export function thumbKind(name: string, size: number): 'image' | 'page' | null {
 const PHONE_PICS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'heif'];
 const PHONE_VIDEOS = ['mp4', 'mov', 'm4v'];
 const PHONE_DOCS = ['md', 'txt', 'json', 'csv', 'tsv', 'log', 'yaml', 'yml', 'toml', 'ts', 'tsx', 'js', 'jsx', 'mjs', 'py', 'rs', 'sh', 'swift', 'kt', 'css', 'sql', 'pptx', 'ppt', 'docx', 'doc', 'pages', 'xlsx', 'xls', 'numbers'];
+/** 폰 받기·공유(11-12) — 형식·크기는 안 본다(크기는 맥이 413). 못 여는(잠긴) 파일·휴지통·폴더 표시 줄만 뺀다 */
+export const phoneSaveable = (i: LockerItem, trash: boolean): boolean => !trash && i.state === 'live' && !i.why && !i.dir;
+
 export function phoneView(f: { name: string; size: number; why?: string }): 'image' | 'pdf' | 'video' | 'doc' | null {
   if (f.why) return null;
   const ext = f.name.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? '';

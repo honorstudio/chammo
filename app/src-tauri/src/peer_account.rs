@@ -64,6 +64,8 @@ pub fn word(code: &str) -> &'static str {
     match code {
         "nologin" => "이 기기가 Chammo 에 로그인하지 않아 연결이 멈췄어요 — 로그인한 뒤 재연결해 주세요",
         "unknown" => "Chammo 계정을 확인하지 못해 연결이 멈췄어요 — 인터넷을 확인하고 재연결해 주세요",
+        // 10월 테일넷 짝 — 계정이 바뀐 게 아니라 짝지을 때 Chammo 기기 id 를 안 묶은 예전 방식이다(11-12)
+        "unbound" => "예전 방식으로 연결한 컴퓨터예요. 지금 방식으로 재연결해 주세요",
         _ => "계정이 바뀌어 연결이 멈췄어요 — 재연결해 주세요",
     }
 }
@@ -441,6 +443,10 @@ pub trait Binder {
     fn bind(&self, target: &str, ctx: &str) -> Result<Bind, Verdict>;
     /// 받는 쪽 답 증명 확인
     fn check_reply(&self, target: &str, ctx: &str, proof: &str) -> bool;
+    /// 계정 메일로 승인 링크 부탁(11-12) — 그 기기(target) 사람이 카드를 못 누를 때. 실패해도 카드 길은 그대로
+    fn mail(&self, _target: &str, _ctx: &str) -> Result<(), String> {
+        Err("off".into())
+    }
 }
 
 pub struct RealBinder;
@@ -451,6 +457,49 @@ impl Binder for RealBinder {
     }
     fn check_reply(&self, target: &str, ctx: &str, proof: &str) -> bool {
         check_reply_now(target, ctx, proof)
+    }
+    fn mail(&self, target: &str, ctx: &str) -> Result<(), String> {
+        mail_now(target, ctx)
+    }
+}
+
+// ── 짝짓기 메일 승인(11-12 사용자 "허용 누르는 거 어려우니까 이메일 승인으로") — 사람이 없는 컴퓨터(사무실 PC·아이맥)와 다시 짝지을 때.
+//    부르는 쪽이 중계에 '그 계정 메일로 승인 링크'를 부탁하고, 사람이 링크 화면의 버튼을 누르면 받는 쪽이 중계에 물어 한 번 가져간다.
+//    넓어지는 건 짝짓기뿐 — 결제·운영 카드(strict)는 그대로 그 기기 사람만
+
+fn relay_post(path: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let st = state();
+    if mine_of(&st).is_none() {
+        return Err(bind_word(Verdict::NoLogin).into());
+    }
+    let k = crate::team_relay::device_keys(&crate::team_relay_keys::store(), &st)?;
+    let (code, v) = crate::team_relay::call(&crate::team_relay::Curl, &st.server, &k, Some(&st.device_id), "POST", path, Some(body))?;
+    if code != 200 {
+        return Err(crate::team_relay::why(code, &v));
+    }
+    Ok(v)
+}
+
+/// 부르는 쪽 — 중계 POST /v0/me/devices/<target>/peer-mail {ctx}. 받는 주소는 서버가 정한다(그 계정 메일뿐)
+pub fn mail_now(target: &str, ctx: &str) -> Result<(), String> {
+    if !valid_dev(target) || !ctx_ok(ctx) {
+        return Err("bad".into());
+    }
+    // 사람이 '연결'을 누른 것 — 배경 몫·쉬는 중을 건너뛴다(폰 코드 메일과 같이)
+    crate::team_relay::as_human(|| relay_post(&format!("/v0/me/devices/{target}/peer-mail"), &serde_json::json!({ "ctx": ctx }))).map(|_| ())
+}
+
+/// 받는 쪽 — 중계 POST /v0/me/peer-mail/take {from, ctx} → 서버가 승인됐다고 했나(한 번만 true)
+pub fn take_now(from: &str, ctx: &str) -> bool {
+    if cfg!(test) || !valid_dev(from) || !ctx_ok(ctx) {
+        return false;
+    }
+    match relay_post("/v0/me/peer-mail/take", &serde_json::json!({ "from": from, "ctx": ctx })) {
+        Ok(v) => v["approved"] == true,
+        Err(e) => {
+            crate::claude::log_out("peer", &format!("메일 승인 확인(중계) 실패 — {e}"));
+            false
+        }
     }
 }
 

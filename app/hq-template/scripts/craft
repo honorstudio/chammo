@@ -55,7 +55,7 @@ LICENSE-APACHE and NOTICE beside it, and is served on 127.0.0.1 only. The space 
 which can't call the app or read your files (only the browser's own open/save dialogs).
 The web build has no autosave — save or download before closing.
 """
-import contextlib, hashlib, http.server, io, json, locale, os, re, shutil, signal, socket, ssl, subprocess, sys, tempfile, time, urllib.error, urllib.request, zipfile
+import contextlib, hashlib, http.server, io, json, locale, os, re, secrets, shutil, signal, socket, ssl, subprocess, sys, tempfile, time, urllib.error, urllib.request, zipfile
 for _io in (sys.stdin, sys.stdout, sys.stderr):  # 윈도우 파이썬 기본은 cp949 — PYTHONUTF8 없이 떠도(데몬 env 세션·작업 스케줄러) 한글·'—' 를 UTF-8 로(2026-11-01 win-text H1)
     if _io and hasattr(_io, 'reconfigure') and (_io.encoding or '').lower().replace('-', '') != 'utf8':
         _io.reconfigure(encoding='utf-8', errors='replace')
@@ -697,7 +697,8 @@ def child_env(env=None):
     """참모 앱에 물려줄 env — 부른 세션의 CLAUDE_*(메시지 토큰·소켓·세션 번호·JOB_DIR 등)는 뺀다. 맥 open 도 부른 쪽 env 를 앱에 넘긴다(QA 0.3.6 포토 env 13개,
     앱(Rust) 쪽은 0.3.5 에 7개 지움)"""
     env = os.environ if env is None else env
-    return {k: v for k, v in env.items() if not k.startswith('CLAUDE')}
+    toks = {s.get('tenv') for s in NATIVE.values()} - {None}  # 부른 쪽에 남은 필름 토큰도 — 띄울 앱 것만 token_env 가 새로 넣는다
+    return {k: v for k, v in env.items() if not k.startswith('CLAUDE') and k not in toks}
 
 
 def open_native(app, get=fetch):
@@ -717,6 +718,14 @@ def open_native(app, get=fetch):
 # ── 맥 앱 조종 길: 13개 다 127.0.0.1 조작 채널(--control, JSON 한 줄 = 요청 하나) ──
 # auth: token = 토큰 파일을 앱에 넘김(첫 줄 auth params.token) / key = 앱이 설정 폴더에 키 파일을 씀(auth 줄 key)
 #       file = --control <파일> 에 앱이 {port, token} 을 씀 / None = 인증 없음(쓸 때만 켜고 close 로 닫는다)
+#       envtoken = 띄울 때마다 새 토큰을 앱 env(tenv 이름)로만 넘기고 요청마다 맨 위 token 필드(참모 필름 0.19 — 원본 FilmCraft 0.19 는
+#                  FILMCRAFT_CONTROL_TOKEN 이 없으면 리스너를 안 연다). 0.18 이하는 모르는 env·token 필드를 무시해서 판을 가르지 않는다
+#       porttoken = 앱이 켜질 때 스스로 만든 토큰을 $XDG_RUNTIME_DIR/<tfile>(0600)에 쓰고 요청마다 맨 위 token 을 본다(참모 캐드 0.19 —
+#                  원본 crates/mcp/src/control_token.rs). XDG_RUNTIME_DIR 을 우리 run 폴더(0700)로 줘 자리를 정한다(맥은 보통 이 env 가 없어
+#                  ~/.cache 로 간다), 윈도우는 그 env 를 안 보고 %LOCALAPPDATA%. 0.18 이하는 파일을 안 쓰고 token 필드를 무시 — 파일이 없으면 토큰 없이
+#       envauth = envtoken 처럼 띄울 때마다 새 토큰을 앱 env(tenv)로만, 연결 첫 줄이 auth params.token(참모 표 0.18 — 원본 GridCraft 0.18
+#                 control_auth.rs check_first_line, 아니면 'authentication required' 뒤 끊기. --control-token 인자는 ps 에 보여 안 쓴다).
+#                 옛 표(0.8.2)는 인증이 없고 auth 줄에 "unknown method `auth`" 오류 한 줄만(안 끊음) — 그 답이면 인증 없는 판으로 그대로 쓴다
 # env: 앱 설정 폴더를 따로 두는 환경 변수 — 사람이 쓰는 그 앱 설정과 안 섞이게
 # roots: 데스크톱 앱이 받는 작업 폴더 묶기(r = 읽기만). 모르는 인자를 주면 앱이 안 떠서 받는 앱에만
 # uiron: 창 자리를 <설정>/ui.ron 에 저장하는 앱 — 가짜 화면 좌표를 미리 써 넣을 수 있다
@@ -727,9 +736,9 @@ def open_native(app, get=fetch):
 #   save: 닫기 전 저장 명령(engine.execute 명령 id, params {path: 작업 폴더 안 절대 경로}) · ext: 그 앱 문서 형식(새 문서 저장 이름)
 #         save=None 이면 앱이 스스로 쓴다(LightCraft 보관함) — 10/16 craft-smoke: PSD 길을 12개에 쓰면 거절되거나 바꾼 걸 버렸다
 #   args: 설정·데이터 자리를 우리 폴더로 보내는 앱 인자({dir} = <데이터>/craft-native/<앱>) · extra: 그래도 앱이 홈에 만드는 설정(remove 가 휴지통으로)
-def _n(auth=None, env=None, roots=None, uiron=False, name=None, bundle=None, repo=None, path=None, frame=False, save=None, ext='', args=(), extra=()):
+def _n(auth=None, env=None, roots=None, uiron=False, name=None, bundle=None, repo=None, path=None, frame=False, save=None, ext='', args=(), extra=(), tenv=None, tfile=None):
     return {'auth': auth, 'env': env, 'roots': roots, 'uiron': uiron, 'name': name, 'bundle': bundle, 'repo': repo, 'path': path, 'frame': frame,
-            'save': save, 'ext': ext, 'args': list(args), 'extra': list(extra)}
+            'save': save, 'ext': ext, 'args': list(args), 'extra': list(extra), 'tenv': tenv, 'tfile': tfile}
 
 
 _AS = 'Library/Application Support/'  # 홈 기준
@@ -747,10 +756,11 @@ NATIVE = {
     'effectcraft': _n(env='EFFECTCRAFT_CONFIG_DIR', save='file.saveAs', ext='.ecproj'),  # 0.10 은 --automation-read-root 를 몰라 안 뜬다
     'lightcraft': _n(env='LIGHTCRAFT_CONFIG_DIR', args=['--library', '{dir}/library']),
     'designcraft': _n(env='DESIGNCRAFT_CONFIG_DIR', save='file.saveAs', ext='.dcdoc'),
-    'cadcraft': _n(env='CADCRAFT_CONFIG_DIR', save='saveas', ext='.dwg', extra=[_AS + 'ai.storyteller.cadcraft']),
+    'cadcraft': _n('porttoken', env='CADCRAFT_CONFIG_DIR', save='saveas', ext='.dwg', extra=[_AS + 'ai.storyteller.cadcraft'],
+                   tfile='cadcraft-control-{port}.token'),
     'soundcraft': _n(env='SOUNDCRAFT_CONFIG_DIR', save='session.save', ext='.scproj'),
-    'filmcraft': _n(save='file.saveAs', ext='.fcproj', args=['--data-dir', '{dir}/data']),
-    'gridcraft': _n(save='file.saveAs', ext='.xlsx', extra=[_AS + 'GridCraft']),
+    'filmcraft': _n('envtoken', save='file.saveAs', ext='.fcproj', args=['--data-dir', '{dir}/data'], tenv='FILMCRAFT_CONTROL_TOKEN'),
+    'gridcraft': _n('envauth', save='file.saveAs', ext='.xlsx', extra=[_AS + 'GridCraft'], tenv='GRIDCRAFT_CONTROL_TOKEN'),
     'deckcraft': _n(save='file.saveAs', ext='.pptx', extra=[_AS + 'DeckCraft']),
     'figcraft': _n(save='file.saveAs', ext='.fig', extra=[_AS + 'FigCraft']),
 }
@@ -988,7 +998,7 @@ def launch_plan(ddir, app, port, work, vd=None, scale=1.0):
         # 참모 포토는 자리를 ui.ron 으로 받지만, 켜질 때 앞으로 안 나오기(focus-root)는 이 신호로 가른다 — 값만 넘기고 자리는 ui.ron 그대로
         fp = frame_params(vd, n)
         argv += ['--env', 'CHAMMO_WINDOW_FRAME=' + ','.join(str(int(fp[k])) for k in ('x', 'y', 'width', 'height'))]
-    args, secret = [], None
+    args, secret, rundir = [], None, None
     if spec['auth'] == 'file':
         secret = os.path.join(native_dir(ddir, app), 'control.json')
         args += ['--control', secret]
@@ -1000,13 +1010,62 @@ def launch_plan(ddir, app, port, work, vd=None, scale=1.0):
         args += ['--control-token-file', secret]
     elif spec['auth'] == 'key':
         secret = os.path.join(cfg, f'control-key.local-{port}')
+    elif spec['auth'] in ('envtoken', 'envauth'):
+        secret = os.path.join(native_dir(ddir, app), 'control.envtoken')  # 값은 token_env 가 띄우기 직전에 — 인자엔 안 든다
+    elif spec['auth'] == 'porttoken':
+        rundir = os.path.join(native_dir(ddir, app), 'run')  # 앱이 토큰 파일을 쓸 자리 — 자리(경로)만 넘기고 값은 앱이 만든다
+        secret = os.path.join(rundir, spec['tfile'].format(port=port))
+        argv += ['--env', f'XDG_RUNTIME_DIR={rundir}']
     args += [a.replace('{dir}', native_dir(ddir, app)) for a in spec['args']]  # 설정·데이터 자리를 우리 폴더로(홈에 안 남게)
     if spec['roots'] and work:
         args += ['--automation-read-root', work]
         if spec['roots'] == 'rw':
             args += ['--automation-write-root', work]
     uiron = (os.path.join(cfg, 'ui.ron'), uiron_text(vd, scale, n)) if spec['uiron'] and vd else None
-    return {'argv': argv + ['--args'] + args, 'secret': secret, 'port': port, 'config': cfg, 'uiron': uiron}
+    return {'argv': argv + ['--args'] + args, 'secret': secret, 'port': port, 'config': cfg, 'uiron': uiron,
+            'tenv': spec.get('tenv') if spec['auth'] in ('envtoken', 'envauth') else None, 'porttoken': spec['auth'] == 'porttoken', 'rundir': rundir, 'tfile': spec.get('tfile')}
+
+
+def write_secret(path, value):
+    """비밀 값 파일 — 늘 0600 새 파일로 바꿔 끼운다(옛 파일 권한이 넓어도 그걸 이어 쓰지 않게)"""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f'{path}.{os.getpid()}.tmp'
+    with contextlib.suppress(FileNotFoundError):
+        os.remove(tmp)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.write(fd, (value + '\n').encode())
+    finally:
+        os.close(fd)
+    os.replace(tmp, path)
+
+
+def token_env(plan):
+    """envtoken·envauth 앱 — 이번 띄우기의 새 토큰(64자 hex)을 0600 파일에 쓰고 앱에 줄 env {이름: 값}, 다른 앱은 {}.
+    값은 env 로만: 맥 open 은 부른 쪽 env 를 앱에 그대로 물려준다(11-11 실측) — open --env 는 open 의 인자(ps)에 값이 보여서 안 쓴다"""
+    if not plan.get('tenv'):
+        return {}
+    tok = secrets.token_hex(32)
+    write_secret(plan['secret'], tok)
+    return {plan['tenv']: tok}
+
+
+def porttoken_prep(plan):
+    """porttoken 앱 — 띄우기 전에 토큰 파일 자리를 준비: run 폴더는 0700, 같은 포트 옛 파일은 지운다(원본은 끌 때 안 지워서 남은 옛 값을
+    새것으로 읽으면 첫 요청이 거절된다). 다른 앱엔 아무것도 안 한다"""
+    if not plan.get('porttoken'):
+        return
+    if plan.get('rundir'):  # 윈도우는 None — 앱이 XDG_RUNTIME_DIR 을 안 보고 %LOCALAPPDATA% 에 쓴다(craft_win 이 secret 을 그 자리로)
+        os.makedirs(plan['rundir'], mode=0o700, exist_ok=True)
+        os.chmod(plan['rundir'], 0o700)  # 예전에 넓게 만든 폴더도
+        # run 폴더는 이 인스턴스 것(띄우기 전이라 안 떠 있다) — 죽으며 남긴 다른 포트 토큰 파일도 치운다
+        head, _, tail = plan['tfile'].partition('{port}')
+        for n in os.listdir(plan['rundir']):
+            if n.startswith(head) and n.endswith(tail) and n[len(head):len(n) - len(tail)].isdigit():
+                with contextlib.suppress(FileNotFoundError):
+                    os.remove(os.path.join(plan['rundir'], n))
+    with contextlib.suppress(FileNotFoundError):
+        os.remove(plan['secret'])
 
 
 def state_file(ddir, app):
@@ -1210,15 +1269,25 @@ class Channel:
 
     def __init__(self, st, timeout=70):
         self.i = 0
+        self.token = None  # envtoken — 요청마다 맨 위 token 으로 붙인다(auth 줄 없음)
+        self.legacy = False  # envauth 인데 옛 판(인증 없음)이 auth 를 모르는 명령으로 답했다
         port, secret = st.get('port'), None
         try:
             if st['auth'] == 'file':
                 with open(st['secret'], encoding='utf-8') as f:
                     j = json.load(f)
                 port, secret = j['port'], j['token']
+            elif st['auth'] == 'porttoken':
+                try:  # 앱이 켜질 때 쓴 파일 — 없으면 옛 판(0.18 이하는 파일을 안 쓰고 인증도 없다)이라 토큰 없이
+                    with open(st['secret'], encoding='utf-8') as f:
+                        self.token = f.read().strip() or None
+                except FileNotFoundError:
+                    pass
             elif st['auth']:
                 with open(st['secret'], encoding='utf-8') as f:
                     secret = f.read().strip()
+            if st['auth'] == 'envtoken':
+                self.token = secret
             self.s = socket.create_connection(('127.0.0.1', int(port)), timeout=timeout)
         except (OSError, ValueError, KeyError, TypeError) as e:
             raise CraftError(f'{st.get("app")}: not running or no control channel / 안 떠 있음 — scripts/craft open {st.get("app")} --native ({e})') from e
@@ -1226,15 +1295,32 @@ class Channel:
         try:
             if st['auth'] == 'key':
                 self._send({'method': 'auth', 'key': secret})
-            elif st['auth']:
+            elif st['auth'] == 'envauth':
+                self._envauth(secret)
+            elif st['auth'] and st['auth'] not in ('envtoken', 'porttoken'):
                 self._send({'method': 'auth', 'params': {'token': secret}})
         except CraftError:
             self.close()
             raise
 
+    LEGACY_AUTH = 'unknown method `auth`'  # 옛 표 0.8.2 crates/ui-egui/src/control.rs — auth 를 모르는 명령으로(연결은 그대로)
+
+    def _envauth(self, secret):
+        """envauth — 첫 줄 auth. 빈 토큰은 안 보낸다(0.18 은 끊고 0.8.2 는 그냥 받아 인증된 것처럼 보인다)"""
+        if not secret:
+            raise CraftError('control token file is empty / 조작 채널 토큰 파일이 비었음 — scripts/craft close 뒤 다시 open')
+        try:
+            self._send({'method': 'auth', 'params': {'token': secret}})
+        except CraftError as e:
+            if str(e) != self.LEGACY_AUTH:
+                raise
+            self.legacy = True
+
     def _send(self, req):
         self.i += 1
         req['id'] = self.i
+        if self.token:
+            req['token'] = self.token
         try:
             self.f.write(json.dumps(req) + '\n')
             self.f.flush()
@@ -2987,19 +3073,33 @@ def key_alt(port, home=None):
 
 
 def wait_channel(st, wait=20):
-    """조작 채널이 열릴 때까지(키·control 파일은 앱이 포트를 잡은 뒤에 쓴다)"""
+    """조작 채널이 열릴 때까지(키·control 파일은 앱이 포트를 잡은 뒤에 쓴다). 돌려주는 값: 인증 없는 옛 판이었나(envauth)"""
     last = None
     for _ in range(wait * 4):
         if st['auth'] == 'key' and not os.path.exists(st['secret']) and os.path.exists(key_alt(st['port'])):
             st['secret'] = key_alt(st['port'])
         try:
             c = Channel(st, timeout=5)
-            c.close()
-            return
+            try:
+                if st['auth'] == 'porttoken':
+                    porttoken_probe(c)
+            finally:
+                c.close()
+            return c.legacy  # envauth 옛 판(인증 없음) — 띄운 쪽이 인증 없음 경고를 낸다
         except CraftError as e:
             last = e
             time.sleep(0.25)
     raise CraftError(f'control channel did not open / 조작 채널이 안 열림: {last}')
+
+
+def porttoken_probe(c):
+    """porttoken 앱 — 원본 0.19 는 포트를 잡은(bind) 다음에 토큰 파일을 써서, 그 틈에 붙으면 연결은 되는데 파일이 아직 없다.
+    ping 한 번: 거절(unauthorized)·끊김이면 CraftError 로 다시 기다리게(서버가 답했다면 파일은 이미 있다), 그 밖의 답·오류(옛 판)는 열린 것"""
+    try:
+        c.call('ping')
+    except CraftError as e:
+        if 'unauthorized' in str(e) or 'closed' in str(e):
+            raise
 
 
 def stop_app(ddir, app, st):
@@ -3031,6 +3131,9 @@ def stop_app(ddir, app, st):
             else:  # 저장 중·멈춘 앱이 SIGTERM 도 안 받으면 무인증 포트를 연 채 기록 없이 남았다
                 with contextlib.suppress(OSError):
                     os.kill(int(st['pid']), signal.SIGKILL)
+    if st.get('auth') == 'porttoken' and st.get('secret') and (not ours or not pid_alive(st.get('pid'))):
+        with contextlib.suppress(OSError):  # 원본은 끌 때 토큰 파일을 안 지운다 — 띄울 때마다 새 포트라 쌓인다(윈도우는 %LOCALAPPDATA% 바로 밑)
+            os.remove(st['secret'])
     drop_takeover(ddir, app)  # 앱이 꺼지면 개입도 끝 — 남으면 다시 띄운 앱에 참모 명령이 계속 막힌다
     drop_state(ddir, app)
 
@@ -3114,14 +3217,16 @@ def open_native_ctl(ddir, app, work=None, here=False, window=True):
             os.close(fd)
         if NATIVE[base(app)]['auth'] == 'file' and os.path.exists(plan['secret']):
             os.remove(plan['secret'])  # 옛 포트·토큰을 새것으로 읽지 않게
-        if subprocess.run(plan['argv'], capture_output=True, env=child_env()).returncode != 0:
+        env = {**child_env(), **token_env(plan)}  # 설치 뒤 다시 띄워도 같은 값(파일과 맞게)
+        porttoken_prep(plan)
+        if subprocess.run(plan['argv'], capture_output=True, env=env).returncode != 0:
             # 안 깔림 → 처음 한 번 릴리스 DMG 를 받아(SHA·공증·번들 id 확인) /Applications 에, 그다음 다시 띄운다
             size = (release_info(ddir, base(app)) or {}).get('dmg_size')
             print(f'{name}: installing the macOS app / 맥 앱 설치 중(처음 한 번{", " + human(size) if size else ""})…', file=sys.stderr)
             with slot_lock(ddir, base(app) + '.update'):  # 두 세션이 같이 처음 열어도 한 번만 받는다(auto_update 와 같은 자물쇠)
                 if not native_version(app_path(app)):  # 기다리는 동안 다른 세션이 깔았으면 받지 않는다
                     print(f'{name}: installed / 설치함 — {install_native(base(app), ddir=ddir)}', file=sys.stderr)
-            if subprocess.run(plan['argv'], capture_output=True, env=child_env()).returncode != 0:
+            if subprocess.run(plan['argv'], capture_output=True, env=env).returncode != 0:
                 return open_native(base(app))
         args = plan['argv'][plan['argv'].index('--args') + 1:]
         pid = find_pid('--control ' + args[args.index('--control') + 1])
@@ -3130,7 +3235,7 @@ def open_native_ctl(ddir, app, work=None, here=False, window=True):
         st = {'app': base(app), 'key': app, 'pid': pid, 'port': plan['port'], 'auth': NATIVE[base(app)]['auth'], 'secret': plan['secret'], 'work': work,
               'exe': os.path.join(app_path(app), 'Contents', 'MacOS'), 'here': bool(here)}  # exe: 앱이 끌 때 pid 가 그 앱인지 대조 · here: 사람 화면에 띄운 것
         try:
-            wait_channel(st)
+            noauth = wait_channel(st)
         except CraftError:
             os.kill(pid, signal.SIGTERM)  # 상태 파일 없이 포트가 열린 채 남지 않게
             raise
@@ -3182,7 +3287,8 @@ def open_native_ctl(ddir, app, work=None, here=False, window=True):
         print(f'{name}: open with control channel / 조작 채널로 띄움 ({where}) — work / 작업 폴더: {work}')
         if place and window:  # 가짜 화면에 띄웠으면 Chammo 따로 창에 비춘다
             window_line(ddir, 'open', app)
-        if not NATIVE[base(app)]['auth']:
+        # porttoken 인데 파일이 없거나 envauth 에 옛 판이 auth 를 몰랐으면 = 인증 없음
+        if not NATIVE[base(app)]['auth'] or noauth or (plan['porttoken'] and not os.path.exists(plan['secret'])):
             print('this app\'s control port has no auth — scripts/craft close when done / 인증 없는 포트라 끝나면 close', file=sys.stderr)
         return 0
     raise CraftError(f'{name}: the window did not land on the agents screen / 창이 가짜 화면에 안 떴음 {tried} — try --here')

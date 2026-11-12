@@ -143,7 +143,7 @@ export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: Re
     ? <TeamVideoSheet key={zoom.id} team={zoom.team} id={zoom.id} name={zoom.name} orch={orch.id} onClose={() => setZoom(null)} />
     : zoom.kind === 'doc'
     ? <TeamDocSheet key={zoom.id} team={zoom.team} id={zoom.id} name={zoom.name} onClose={() => setZoom(null)} />
-    : <ImageViewer key={zoom.id} title={zoom.kind === 'pdf' ? tr(`${zoom.name} · 첫 장`, `${zoom.name} · page 1`) : zoom.name} onClose={() => setZoom(null)} load={teamFileView(zoom.team, zoom.id, zoom.kind)} />);
+    : <ImageViewer key={zoom.id} team={{ team: zoom.team, id: zoom.id }} title={zoom.kind === 'pdf' ? tr(`${zoom.name} · 첫 장`, `${zoom.name} · page 1`) : zoom.name} onClose={() => setZoom(null)} load={teamFileView(zoom.team, zoom.id, zoom.kind)} />);
   // 팀 홈 판(ADR 0018) — 같은 판을 맥이 읽고 쓴다. 커버는 데스크톱만. 최근 파일은 그림·PDF·영상만 눌러 본다
   const homeApi: HomeApi = useMemo(() => ({
     board: (team, seen) => api.home(team, seen ?? 0),

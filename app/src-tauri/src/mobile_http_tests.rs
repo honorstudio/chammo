@@ -313,6 +313,26 @@ impl Backend for Fake {
             _ => Ok(Step::Ready(self.data_dir().join(crate::team_locker_app::VIEW_DIR).join(team).join(format!("{id}.mp4")))),
         }
     }
+    /// 폰 팀 파일 받기(11-12) — id 로 흉내: nope = 없는 파일, big = 300MB, 그 밖 = <id>.zip 5000바이트
+    fn team_file_meta(&self, team: &str, id: &str) -> Result<(String, u64), String> {
+        self.log(format!("team_file_meta {team} {id}"));
+        match id {
+            "nope" => Err(crate::mobile_http::TEAM_GONE.into()),
+            "netdown" => Err("중계 서버에 못 닿았어요".into()),
+            "big" => Ok(("행사 원본.mov".into(), 300 * 1024 * 1024)),
+            _ => Ok((format!("{id}.zip"), 5000)),
+        }
+    }
+    /// going = 받는 중 30/100, fail = 망 실패, 그 밖 = <데이터>/team-locker-peek/<팀>/<id>.zip
+    fn team_download(&self, team: &str, id: &str) -> Result<crate::team_media::Step, String> {
+        use crate::team_media::Step;
+        self.log(format!("team_download {team} {id}"));
+        match id {
+            "going" => Ok(Step::Going { done: 30, total: 100 }),
+            "fail" => Ok(Step::Failed { why: "net".into(), error: "중계 서버에 못 닿았어요".into() }),
+            _ => Ok(Step::Ready(self.data_dir().join(crate::team_locker_app::VIEW_DIR).join(team).join(format!("{id}.zip")))),
+        }
+    }
     fn team_locker_op(&self, o: &TeamLockerOp) -> Result<serde_json::Value, String> {
         self.log(format!("team_locker_op {} {} id={} name={} folder={} from={} to={}", o.team, o.op, o.id, o.name, o.folder, o.from, o.to));
         Ok(serde_json::json!({ "ok": true }))
@@ -2995,7 +3015,9 @@ fn md1_hello_는_열쇠_없이_앱_표시만_준다() {
     assert_eq!(v["link"], false);
     let keys: Vec<&String> = v.as_object().unwrap().keys().collect();
     // chammo = 이 기기 Chammo 기기 id(11-09, 짝지을 때 같은 계정 증명에 쓴다 — 비밀 아님)
-    assert_eq!(keys.len(), 6, "{keys:?}");
+    // peerMail = 짝짓기 메일 승인을 안다(11-12) — 부르는 쪽은 이게 있을 때만 link-request 에 mail 칸을 싣는다(옛 판은 모르는 칸을 400 으로 거절)
+    assert_eq!(keys.len(), 7, "{keys:?}");
+    assert_eq!(v["peerMail"], true);
     assert_eq!(v["chammo"], "dev-me");
     assert!(f.calls().is_empty(), "맥 쪽 일은 안 부른다");
     // 문지기(Host·funnel)는 그대로, POST 는 안 받는다
@@ -3973,6 +3995,10 @@ fn pe_연결_요청은_열쇠_없이_받고_되묻기와_사람_허용을_지나
     assert_eq!((yes["state"].as_str(), yes["token"].as_str().map(str::len), yes["back"].as_str().map(str::len)), (Some("yes"), Some(64), Some(64)));
     assert_eq!(yes["proof"].as_str(), Some(format!("r-{req}").as_str()), "답 증명이 열쇠와 같이 간다");
     assert_eq!(st(5).status, 404, "열쇠는 한 번만");
+    // mail 칸(11-12)을 실은 요청도 받는다
+    let req2 = a.start("nB", 6).unwrap();
+    let body2 = format!(r#"{{"req":"{req2}","node":"nA","device":"dev-a","proof":"p-{req2}","mail":true}}"#);
+    assert_eq!(link_route(&no_key(post("/api/link-request", &body2)), &g, &b, &env, 6).status, 200);
     // 되묻기 — 요청한 쪽만 자기 해시에 200
     let h = crate::peer_ask::hex_sha(&req);
     let req2 = a.start("nB", 6).unwrap();
@@ -5263,6 +5289,70 @@ fn tm_폰_팀_영상은_받는_동안_진행_다_받으면_영상_표() {
     assert_eq!(handle(&set(post("/api/team-media", r#"{"team":"t-1","id":"AbC"}"#), "authorization", None), &g, &f).status, 401);
     assert_eq!(handle(&as_peer(post("/api/team-media", r#"{"team":"t-1","id":"AbC"}"#)), &g, &f).status, 403, "다른 기기 참모 열쇠로는 못 받는다");
     assert_eq!(handle(&with_cookie(get("/api/team-media")), &g, &f).status, 405);
+}
+
+/// 폰 팀 파일 받기(11-12 사용자 "개인이던 팀이던 다운로드") — 팀 파일은 암호문이라 맥이 뒤에서 받아 풀고, 다 되면 받기 표(/api/dl).
+/// 형식은 가리지 않는다(zip 도), 크기 상한 200MB, 권한은 /api/team-locker 읽기와 같다(폰 열쇠만 — 다른 기기 참모 열쇠·남의 출처는 안 된다)
+#[test]
+fn tdl_폰_팀_파일_받기는_맥이_풀면_받기_표로_모든_형식() {
+    let d = tmp("team-dl");
+    let data = d.join("data");
+    let tdir = data.join(crate::team_locker_app::VIEW_DIR).join("t-1");
+    std::fs::create_dir_all(&tdir).unwrap();
+    let z = tdir.join("AbC.zip");
+    std::fs::write(&z, vec![9u8; 5000]).unwrap();
+    let g = peer_gate("tm000041");
+    let f = Fake { data: data.clone(), ..Default::default() };
+    let ask = |id: &str| handle(&post("/api/team-dl", &format!(r#"{{"team":"t-1","id":"{id}"}}"#)), &g, &f);
+    let hv = |r: &Resp, k: &str| r.headers.iter().find(|(n, _)| *n == k).map(|(_, v)| v.clone()).unwrap_or_default();
+    // 받는 중 — 진행 그대로
+    let r = ask("going");
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!((json_of(&r)["state"].as_str(), json_of(&r)["done"].as_u64(), json_of(&r)["total"].as_u64()), (Some("going"), Some(30), Some(100)));
+    let r = ask("fail");
+    assert_eq!((json_of(&r)["state"].as_str(), json_of(&r)["why"].as_str()), (Some("failed"), Some("net")));
+    // 다 받음 — 받기 표 + 이름·크기·MIME
+    let r = ask("AbC");
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    let j = json_of(&r);
+    assert_eq!((j["state"].as_str(), j["size"].as_u64(), j["name"].as_str(), j["mime"].as_str()), (Some("ready"), Some(5000), Some("AbC.zip"), Some("application/zip")));
+    let url = j["url"].as_str().unwrap().to_string();
+    assert!(url.starts_with("/api/dl?t="), "{url}");
+    assert!(j.get("path").is_none(), "폰엔 맥 경로를 안 준다");
+    // 표로 원본 — 열쇠 없이(사파리 내려받기 링크), 개인 받기에선 막힌 zip 도 팀 파일이면 된다
+    let r = handle(&get(&url), &g, &f);
+    assert_eq!((r.status, r.body.len()), (200, 5000));
+    assert!(hv(&r, "Content-Disposition").starts_with("attachment;"), "{}", hv(&r, "Content-Disposition"));
+    assert!(hv(&r, "Content-Security-Policy").starts_with("sandbox"));
+    let r = handle(&set(get(&url), "range", Some("bytes=0-9")), &g, &f);
+    assert_eq!((r.status, r.body.len()), (206, 10));
+    // 상한·없는 파일·망
+    let r = ask("big");
+    assert_eq!((r.status, String::from_utf8_lossy(&r.body).into_owned()), (413, "too large".to_string()), "200MB 넘으면 맥이 받지도 않는다");
+    assert!(!f.calls().iter().any(|c| c == "team_download t-1 big"), "큰 파일은 받기를 시작하지 않는다");
+    let r = ask("nope");
+    assert_eq!((r.status, String::from_utf8_lossy(&r.body).into_owned()), (404, "not found".to_string()));
+    assert_eq!(ask("netdown").status, 502);
+    // 받기 표 길(/api/dl-ticket)로 풀어 둔 자리 경로를 직접 대는 건 그대로 막힌다 — 팀 받기 표는 /api/team-dl 만 낸다
+    assert_eq!(handle(&post("/api/dl-ticket", &serde_json::json!({ "path": z.to_string_lossy() }).to_string()), &g, &f).status, 403);
+    // 모양·문 — /api/team-locker 읽기와 같은 폰 열쇠만
+    for b in [r#"{"team":"","id":"AbC"}"#, r#"{"team":"t-1","id":"a/b"}"#, r#"{"team":"t-1"}"#, r#"{"team":"t-1","id":"AbC","x":1}"#] {
+        assert_eq!(handle(&post("/api/team-dl", b), &g, &f).status, 400, "{b}");
+    }
+    assert!(head_check(&post("/api/team-dl", "{}"), &g).is_none(), "몸통 길 목록에 있다");
+    assert_eq!(handle(&set(post("/api/team-dl", r#"{"team":"t-1","id":"AbC"}"#), "origin", Some("http://evil.example")), &g, &f).status, 403);
+    assert_eq!(handle(&set(post("/api/team-dl", r#"{"team":"t-1","id":"AbC"}"#), "authorization", None), &g, &f).status, 401);
+    assert_eq!(handle(&as_peer(post("/api/team-dl", r#"{"team":"t-1","id":"AbC"}"#)), &g, &f).status, 403, "다른 기기 참모 열쇠로는 못 받는다");
+    assert_eq!(handle(&with_cookie(get("/api/team-dl")), &g, &f).status, 405);
+    // 풀어 둔 자리 안이라도 링크로 자리 밖을 가리키면 표를 안 낸다
+    #[cfg(unix)]
+    {
+        let other = data.join("남의.zip");
+        std::fs::write(&other, b"x").unwrap();
+        std::os::unix::fs::symlink(&other, tdir.join("link.zip")).unwrap();
+        let r = ask("link");
+        assert_eq!(json_of(&r)["state"].as_str(), Some("failed"), "{}", String::from_utf8_lossy(&r.body));
+    }
 }
 
 #[test]

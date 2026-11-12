@@ -50,7 +50,7 @@ type Props = {
   label: string;
   kind?: 'sheet' | 'card' | 'full';
   onClose: () => void;
-  /** 머리 제목 — sheet·full 은 SheetHead(제목 + actions + 닫기 X), card 는 회색 작은 제목 */
+  /** 머리 제목 — sheet·full 은 SheetHead(제목 + actions + 닫기 X), card 는 회색 작은 제목(+ actions 가 있으면 같은 줄 오른쪽) */
   title?: ReactNode;
   titleClass?: string;
   actions?: ReactNode;
@@ -113,7 +113,8 @@ export function BottomSheet({ label, kind = 'sheet', onClose, title, titleClass,
     <div className={`m-menu-wrap${kb}`} role="dialog" aria-modal="true" aria-label={label}>
       {back}
       <div ref={setPanel} className={`m-menu${className ? ` ${className}` : ''}`} style={move}>
-        {title !== undefined && <div className="m-menu-title">{title}</div>}
+        {/* 카드 머리 단추(actions) — 제목 오른쪽 같은 줄(팀 파일 받기·공유, 11-12). 뜬 직후(armMs)는 손가락 밑 단추가 눌리지 않게 막는다 */}
+        {title !== undefined && (actions ? <div className={armed ? 'm-menu-head' : 'm-menu-head m-wait'}><div className="m-menu-title">{title}</div>{actions}</div> : <div className="m-menu-title">{title}</div>)}
         {body}
       </div>
     </div>

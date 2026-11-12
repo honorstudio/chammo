@@ -855,6 +855,7 @@ fn main() {
             peer_pair::peer_relay_state,
             peer_pair::peer_relay_clear,
             remote::remote_connect_cancel,
+            remote::remote_connect_note,
             remote::remote_call,
             remote::remote_human_say,
             remote::remote_logout_ask,

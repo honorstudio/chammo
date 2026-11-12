@@ -400,12 +400,21 @@ def open_native_ctl(ddir, app, work=None, here=False, window=True):
     if auth == 'file' and os.path.exists(plan['secret']):
         os.remove(plan['secret'])
     argv, env = plan_argv(plan, exe(app))
+    env.update(C.token_env(plan))  # envtoken·envauth 앱(참모 필름 0.19·표 0.18) — 이번 띄우기의 새 토큰을 env 로만(인자엔 안 든다)
+    if plan['porttoken']:
+        # 참모 캐드 0.19 — 윈도우판은 XDG_RUNTIME_DIR 을 안 보고 %LOCALAPPDATA%\<tfile> 에 쓴다(원본 control_token.rs). LOCALAPPDATA 는 안 바꾼다
+        # (원본 글꼴도 거기서 찾는다) — 없으면 앱이 채널을 안 여니 우리가 읽을 자리와 같은 값을 준다
+        env['LOCALAPPDATA'] = env.get('LOCALAPPDATA') or os_.localappdata()
+        env.pop('XDG_RUNTIME_DIR', None)  # 맥 자리(launch_plan) — 윈도우판은 안 본다
+        plan['rundir'] = None
+        plan['secret'] = os.path.join(env['LOCALAPPDATA'], os.path.basename(plan['secret']))
+        C.porttoken_prep(plan)
     before = os_.foreground()
     pid = os_.popen(argv, env, work)
     st = {'app': app, 'pid': pid, 'port': plan['port'], 'auth': auth, 'secret': plan['secret'], 'work': work,
           'exe': argv[0], 'here': bool(here), 'win': True}
     try:
-        C.wait_channel(st)
+        noauth = C.wait_channel(st)  # envauth(참모 표 0.18) 인데 옛 판이 auth 를 몰랐다 = 인증 없는 포트
     except C.CraftError:
         os_.kill(pid)  # 상태 파일 없이 포트가 열린 채 남지 않게
         raise
@@ -433,7 +442,7 @@ def open_native_ctl(ddir, app, work=None, here=False, window=True):
     print(f'{name}: open with control channel / 조작 채널로 띄움 ({where}) — work / 작업 폴더: {work}')
     if vd and window:
         C.window_line(ddir, 'open', app)
-    if not auth:
+    if not auth or noauth:
         print('this app\'s control port has no auth — scripts/craft close when done / 인증 없는 포트라 끝나면 close', file=__import__('sys').stderr)
     return 0
 

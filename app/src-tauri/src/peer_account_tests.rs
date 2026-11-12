@@ -222,3 +222,12 @@ fn 계정_기기_목록에서_허용된_폰만() {
     assert_eq!(phones_of(&v), vec!["ph-1".to_string()]);
     assert!(phones_of(&serde_json::json!({})).is_empty());
 }
+
+// 11-12 — 10월 테일넷 짝(기기 id 없음)은 계정이 바뀐 게 아니라 예전 방식 연결이라 다시 연결해야 한다
+#[test]
+fn 예전_방식_짝은_계정이_바뀐_게_아니라_다시_연결이_필요하다고() {
+    assert!(word("unbound").contains("예전 방식"), "{}", word("unbound"));
+    assert!(!word("unbound").contains("계정이 바뀌어"));
+    assert!(word("other").contains("계정이 바뀌어 연결이 멈췄어요"));
+}
+

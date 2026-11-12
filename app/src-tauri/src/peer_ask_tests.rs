@@ -14,6 +14,11 @@ struct Env<'a> {
     commit_fails: bool,
     /// 같은 Chammo 계정 증명 — 이 기기 id 만 통과(그 밖은 Other)
     chammo_ok: &'static str,
+    /// 중계에 '메일로 승인됐나' 물은 것(부른 기기 id, 요청 번호)과 서버 답
+    mail_asks: RefCell<Vec<(String, String)>>,
+    mail_yes: Cell<bool>,
+    /// 서버 기기 목록의 Chammo 기기 이름
+    chammo_names: Vec<(&'static str, &'static str)>,
 }
 
 fn peer(id: &str, name: &str) -> LinkPeer {
@@ -32,6 +37,9 @@ fn env(a: &Asks) -> Env<'_> {
         commits: RefCell::new(Vec::new()),
         commit_fails: false,
         chammo_ok: "dev-a",
+        mail_asks: RefCell::new(Vec::new()),
+        mail_yes: Cell::new(false),
+        chammo_names: Vec::new(),
     }
 }
 
@@ -60,6 +68,13 @@ impl LinkEnv for Env<'_> {
         }
         self.commits.borrow_mut().push(format!("{}:{}", peer.id, peer.chammo.as_deref().unwrap_or("-")));
         Ok(("a".repeat(64), "b".repeat(64)))
+    }
+    fn chammo_name(&self, dev: &str) -> Option<String> {
+        self.chammo_names.iter().find(|(d, _)| *d == dev).map(|(_, n)| n.to_string())
+    }
+    fn mail_ok(&self, from: &str, req: &str) -> bool {
+        self.mail_asks.borrow_mut().push((from.into(), req.into()));
+        self.mail_yes.get()
     }
     fn bind(&self, b: &crate::peer_account::Bind, ctx: &str) -> Result<String, crate::peer_account::Verdict> {
         if b.device == self.chammo_ok && b.proof == format!("p-{ctx}") { Ok(format!("r-{ctx}")) } else { Err(crate::peer_account::Verdict::Other) }
@@ -256,3 +271,109 @@ fn 계정_증명이_틀리거나_다른_계정_기기면_카드를_안_띄운다
     b.request(&e, &req, "nA", &bind_for(&req), T0).unwrap();
     assert_eq!(e.cards.borrow().len(), 1);
 }
+
+// ── 메일 승인(11-12) — 사람이 없는 컴퓨터는 카드 대신 계정 메일 링크로. 받는 쪽은 서버(중계)가 말한 값만 믿는다
+
+#[test]
+fn me_메일로_승인되면_카드_없이_열쇠를_내주고_증명된_기기_id_로_묶인다() {
+    let (a, b) = (Asks::default(), Asks::default());
+    let e = env(&a);
+    let req = a.start("nB", T0).unwrap();
+    b.request_mail(&e, &req, "nA", &bind_for(&req), true, T0).unwrap();
+    let card = e.cards.borrow()[0].0.clone();
+    assert_eq!(b.status(&e, &req, T0 + 1000), Status::Wait);
+    assert_eq!(*e.mail_asks.borrow(), [("dev-a".to_string(), req.clone())], "증명을 지난 Chammo 기기 id 와 그 요청 번호로 묻는다");
+    e.mail_yes.set(true);
+    assert_eq!(b.status(&e, &req, T0 + 2000), Status::Wait, "중계엔 간격을 두고 묻는다");
+    assert_eq!(e.mail_asks.borrow().len(), 1);
+    assert_eq!(b.status(&e, &req, T0 + 1000 + MAIL_POLL_MS), Status::Yes { token: "a".repeat(64), back: "b".repeat(64), proof: format!("r-{req}") });
+    assert_eq!(*e.commits.borrow(), ["nA:dev-a"], "카드 허용과 같은 끝 — 기기 id 가 묶인다");
+    let closed = e.closed.borrow()[0].clone();
+    assert_eq!((closed.0.as_str(), closed.1), (card.as_str(), true));
+    assert!(closed.2.contains("메일"), "{}", closed.2);
+    assert_eq!(b.status(&e, &req, T0 + 20_000), Status::Unknown, "한 번만");
+}
+
+#[test]
+fn me_메일을_안_보낸_요청은_중계에_묻지_않는다() {
+    let (a, b) = (Asks::default(), Asks::default());
+    let e = env(&a);
+    let req = a.start("nB", T0).unwrap();
+    b.request(&e, &req, "nA", &bind_for(&req), T0).unwrap();
+    e.mail_yes.set(true);
+    for t in [1, 10_000, 60_000] {
+        assert_eq!(b.status(&e, &req, T0 + t), Status::Wait);
+    }
+    assert!(e.mail_asks.borrow().is_empty());
+}
+
+#[test]
+fn me_부른_쪽이_메일_칸을_실어도_서버가_승인_안_했으면_안_열린다() {
+    let (a, b) = (Asks::default(), Asks::default());
+    let e = env(&a);
+    let req = a.start("nB", T0).unwrap();
+    b.request_mail(&e, &req, "nA", &bind_for(&req), true, T0).unwrap();
+    let mut t = T0;
+    while t <= T0 + MAIL_TTL_MS {
+        assert_eq!(b.status(&e, &req, t), Status::Wait);
+        t += 2000;
+    }
+    assert!(e.commits.borrow().is_empty());
+    assert!(e.mail_asks.borrow().len() <= (MAIL_TTL_MS / MAIL_POLL_MS + 1) as usize, "11분 동안 {}번", e.mail_asks.borrow().len());
+    e.mail_yes.set(true);
+    assert_eq!(b.status(&e, &req, T0 + MAIL_TTL_MS + 1), Status::Expired, "카드 시간(메일 요청은 MAIL_TTL_MS)이 지나면 메일 승인도 늦었다");
+    assert!(e.commits.borrow().is_empty());
+}
+
+#[test]
+fn me_사람이_카드에서_거절했으면_메일_승인으로_뒤집지_않는다() {
+    let (a, b) = (Asks::default(), Asks::default());
+    let e = env(&a);
+    let req = a.start("nB", T0).unwrap();
+    b.request_mail(&e, &req, "nA", &bind_for(&req), true, T0).unwrap();
+    let card = e.cards.borrow()[0].0.clone();
+    b.decide(&card, false, T0 + 500).unwrap();
+    e.mail_yes.set(true);
+    assert_eq!(b.status(&e, &req, T0 + 1000), Status::No);
+    assert!(e.mail_asks.borrow().is_empty() && e.commits.borrow().is_empty());
+}
+
+// 11-12 저녁 — 메일 링크는 10분 사는데 카드·기다림은 5분이라 6분째 누른 승인이 버려졌다
+#[test]
+fn ml_메일_요청은_메일_링크만큼_기다린다() {
+    let (a, b) = (Asks::default(), Asks::default());
+    let e = env(&a);
+    let req = a.start("nB", T0).unwrap();
+    a.long(&req);
+    b.request_mail(&e, &req, "nA", &bind_for(&req), true, T0).unwrap();
+    assert_eq!(e.cards.borrow()[0].2, T0 + MAIL_TTL_MS, "카드도 메일 링크만큼");
+    assert!(MAIL_TTL_MS >= 10 * 60_000);
+    let t = T0 + 8 * 60_000;
+    assert!(a.waiting(&req, t), "요청한 쪽도 8분째 아직 기다린다");
+    e.mail_yes.set(true);
+    assert!(matches!(b.status(&e, &req, t), Status::Yes { .. }));
+    // 메일 없는 요청은 그대로 5분
+    let req2 = a.start("nC", T0).unwrap();
+    b.request(&e, &req2, "nC", &bind_for(&req2), T0).unwrap();
+    assert_eq!(b.status(&e, &req2, T0 + TTL_MS + 1), Status::Expired);
+    assert!(!a.waiting(&req2, T0 + TTL_MS + PICKUP_MS + 1));
+}
+
+// 11-12 저녁 — 같은 맥이 아이맥 카드엔 테일넷 이름(studio-laptop-userspace 꼴), 메일엔 Chammo 기기 이름으로 달랐다
+#[test]
+fn ml_카드_이름은_증명된_기기의_Chammo_이름() {
+    let (a, b) = (Asks::default(), Asks::default());
+    let mut e = env(&a);
+    e.chammo_names = vec![("dev-a", "Studio Laptop")];
+    let req = a.start("nB", T0).unwrap();
+    b.request(&e, &req, "nA", &bind_for(&req), T0).unwrap();
+    assert_eq!(e.cards.borrow()[0].1, "Studio Laptop");
+    b.decide(&e.cards.borrow()[0].0.clone(), true, T0 + 1).unwrap();
+    b.status(&e, &req, T0 + 2);
+    // 서버 이름이 없으면 테일넷 이름 그대로
+    let e2 = env(&a);
+    let req2 = a.start("nB", T0).unwrap();
+    b.request(&e2, &req2, "nA", &bind_for(&req2), T0).unwrap();
+    assert_eq!(e2.cards.borrow()[0].1, "office-mac");
+}
+

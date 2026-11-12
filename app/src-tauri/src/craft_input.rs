@@ -15,6 +15,8 @@ pub struct Conn {
     w: TcpStream,
     r: BufReader<TcpStream>,
     id: u64,
+    /// envtoken(참모 필름 0.19)·porttoken(참모 캐드 0.19) — auth 줄 대신 요청마다 맨 위 token 으로 붙인다
+    token: Option<String>,
 }
 
 impl Conn {
@@ -28,15 +30,25 @@ impl Conn {
                 (j["port"].as_u64().unwrap_or(0), j["token"].as_str().unwrap_or("").to_string())
             }
             "" => (st["port"].as_u64().unwrap_or(0), String::new()),
+            // 참모 캐드 0.19 — 앱이 켜질 때 쓴 토큰 파일. 없으면 옛 판(0.18 이하는 파일을 안 쓰고 인증도 없다)이라 토큰 없이
+            "porttoken" => (st["port"].as_u64().unwrap_or(0), std::fs::read_to_string(secret_path).map(|s| s.trim().to_string()).unwrap_or_default()),
             _ => (st["port"].as_u64().unwrap_or(0), std::fs::read_to_string(secret_path).map_err(|e| e.to_string())?.trim().to_string()),
         };
         let w = TcpStream::connect(("127.0.0.1", port as u16)).map_err(|e| e.to_string())?;
         let _ = w.set_read_timeout(Some(std::time::Duration::from_secs(60)));
         let r = BufReader::new(w.try_clone().map_err(|e| e.to_string())?);
-        let mut c = Conn { w, r, id: 0 };
+        let token = (auth == "envtoken" || (auth == "porttoken" && !secret.is_empty())).then(|| secret.clone());
+        let mut c = Conn { w, r, id: 0, token };
         match auth {
             "key" => c.send(json!({"method": "auth", "key": secret}))?,
-            "" => Value::Null,
+            "" | "envtoken" | "porttoken" => Value::Null,
+            // 참모 표 0.18 — 첫 줄 auth. 옛 표 0.8.2 는 인증이 없고 auth 를 모르는 명령으로 답한다(연결은 그대로) — 그 답이면 그대로 쓴다.
+            // 빈 토큰은 안 보낸다(0.18 은 끊고 0.8.2 는 받아 인증된 것처럼 보인다)
+            "envauth" if secret.is_empty() => return Err("control token file is empty".into()),
+            "envauth" => match c.send(json!({"method": "auth", "params": {"token": secret}})) {
+                Err(e) if e == "unknown method `auth`" => Value::Null,
+                r => r?,
+            },
             _ => c.send(json!({"method": "auth", "params": {"token": secret}}))?,
         };
         Ok(c)
@@ -50,6 +62,9 @@ impl Conn {
     fn send(&mut self, mut req: Value) -> Result<Value, String> {
         self.id += 1;
         req["id"] = json!(self.id);
+        if let Some(t) = &self.token {
+            req["token"] = json!(t);
+        }
         writeln!(self.w, "{req}").map_err(|e| e.to_string())?;
         // 시간 초과로 버린 앞 요청의 늦은 답이 먼저 올 수 있다 — 답 id 가 이번 id 가 아니면 버리고 다음 줄(안 그러면 답이 하나씩 밀려 끌기가 엉뚱한 자리에)
         let v = loop {
@@ -225,15 +240,35 @@ mod tests {
         std::thread::spawn(move || {
             let (s, _) = l.accept().unwrap();
             let mut w = s.try_clone().unwrap();
+            let mut first = true;
             for line in BufReader::new(s).lines().map_while(Result::ok) {
                 let v: Value = serde_json::from_str(&line).unwrap();
                 s2.lock().unwrap().push(v.clone());
+                // 참모 표 0.18(envauth) — 첫 줄이 auth params.token 이어야, 아니면 id 없는 거절 한 줄 + 끊기(원본 control_auth.rs check_first_line)
+                if auth == "envauth" && std::mem::take(&mut first) {
+                    if v["method"] == "auth" && v["params"]["token"] == "t0k" {
+                        let _ = writeln!(w, "{}", json!({"id": v["id"], "ok": true, "result": {"authenticated": true}}));
+                        continue;
+                    }
+                    let _ = writeln!(w, "{}", json!({"ok": false, "error": "authentication required"}));
+                    break;
+                }
+                // 옛 표 0.8.2 — 인증 없음, auth 는 모르는 명령(오류 한 줄, 연결은 그대로)
+                if auth == "old082" && v["method"] == "auth" {
+                    let _ = writeln!(w, "{}", json!({"id": v["id"], "ok": false, "error": "unknown method `auth`"}));
+                    continue;
+                }
                 let ok = match v["method"].as_str() {
+                    // 참모 필름 0.19(envtoken) — auth 메서드가 없고 모든 요청 맨 위 token 이 맞아야, 틀리면 오류 한 줄 + 끊기
+                    _ if auth == "envtoken" || auth == "porttoken" => v["token"] == "t0k",
                     Some("auth") => (auth == "token" && v["params"]["token"] == "t0k") || (auth == "key" && v["key"] == "t0k"),
                     _ => true,
                 };
                 let res = if v["method"] == "ui.inspect" { json!({"views": [{"center": [760.0, 1000.0], "zoom": 1.0}], "window": {"pixelsPerPoint": 2.0}}) } else { json!(null) };
                 let _ = writeln!(w, "{}", json!({"id": v["id"], "ok": ok, "result": res, "error": if ok { Value::Null } else { json!("unauthorized") }}));
+                if !ok && (auth == "envtoken" || auth == "porttoken") {
+                    break;
+                }
             }
         });
         (port, seen)
@@ -256,6 +291,100 @@ mod tests {
         let s = seen.lock().unwrap();
         assert_eq!((s[0]["method"].as_str(), s[0]["params"]["token"].as_str()), (Some("auth"), Some("t0k")));
         assert_eq!(s[1]["method"], "ui.click");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn envtoken_앱은_auth_줄_없이_요청마다_맨_위_token() {
+        let d = std::env::temp_dir().join(format!("craft-in-env-{}", std::process::id()));
+        let (port, seen) = fake("envtoken");
+        state(&d, "filmcraft", port, "envtoken");
+        let mut c = Conn::open(&d, "filmcraft").unwrap();
+        c.call("ui.click", json!({"x": 1, "y": 2})).unwrap();
+        c.call("ui.inspect", json!({})).unwrap();
+        let s = seen.lock().unwrap();
+        assert_eq!(s.iter().map(|v| v["method"].as_str().unwrap_or("")).collect::<Vec<_>>(), ["ui.click", "ui.inspect"], "0.19 엔 auth 메서드가 없다 — 보내면 끊긴다");
+        assert!(s.iter().all(|v| v["token"] == "t0k"), "{s:?}");
+        assert!(s[0]["params"].get("token").is_none());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn porttoken_앱은_앱이_쓴_토큰_파일로_요청마다_맨_위_token() {
+        // 참모 캐드 0.19 — 앱이 켜질 때 $XDG_RUNTIME_DIR/cadcraft-control-<포트>.token 에 쓴다(scripts/craft 가 그 자리를 secret 으로 적는다)
+        let d = std::env::temp_dir().join(format!("craft-in-port-{}", std::process::id()));
+        let (port, seen) = fake("porttoken");
+        state(&d, "cadcraft", port, "porttoken");
+        std::fs::write(d.join("craft-native").join("tok"), "t0k").unwrap(); // 원본은 줄바꿈 없이
+        let mut c = Conn::open(&d, "cadcraft").unwrap();
+        c.call("ui.click", json!({"x": 1, "y": 2})).unwrap();
+        let s = seen.lock().unwrap();
+        assert_eq!(s.iter().map(|v| v["method"].as_str().unwrap_or("")).collect::<Vec<_>>(), ["ui.click"], "auth 줄 없음");
+        assert!(s.iter().all(|v| v["token"] == "t0k"), "{s:?}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn porttoken_앱인데_토큰_파일이_없으면_옛_판으로_토큰_없이() {
+        // 0.18 이하(설치된 0.8.2)는 파일을 안 쓰고 인증도 없다 — 파일이 없다고 연결을 포기하지 않는다
+        let d = std::env::temp_dir().join(format!("craft-in-port-old-{}", std::process::id()));
+        let (port, seen) = fake("");
+        state(&d, "cadcraft", port, "porttoken");
+        std::fs::remove_file(d.join("craft-native").join("tok")).unwrap();
+        let mut c = Conn::open(&d, "cadcraft").unwrap();
+        c.call("ui.click", json!({"x": 1, "y": 2})).unwrap();
+        let s = seen.lock().unwrap();
+        assert_eq!(s.len(), 1);
+        assert!(s[0].get("token").is_none() && s[0]["method"] == "ui.click", "{s:?}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn envauth_표는_첫_줄_auth_params_token_그다음은_token_없이() {
+        let d = std::env::temp_dir().join(format!("craft-in-envauth-{}", std::process::id()));
+        let (port, seen) = fake("envauth");
+        state(&d, "gridcraft", port, "envauth");
+        let mut c = Conn::open(&d, "gridcraft").unwrap();
+        c.call("ui.click", json!({"x": 1, "y": 2})).unwrap();
+        c.call("ui.inspect", json!({})).unwrap();
+        let s = seen.lock().unwrap();
+        assert_eq!(s.iter().map(|v| v["method"].as_str().unwrap_or("")).collect::<Vec<_>>(), ["auth", "ui.click", "ui.inspect"]);
+        assert_eq!(s[0]["params"]["token"], "t0k");
+        assert!(s.iter().all(|v| v.get("token").is_none()), "맨 위 token 필드는 안 쓴다(envtoken 과 다름): {s:?}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn envauth_옛_표_0_8_2_가_auth_를_몰라도_그대로_쓴다() {
+        let d = std::env::temp_dir().join(format!("craft-in-envauth-old-{}", std::process::id()));
+        let (port, seen) = fake("old082");
+        state(&d, "gridcraft", port, "envauth");
+        let mut c = Conn::open(&d, "gridcraft").unwrap();
+        c.call("ui.click", json!({"x": 1, "y": 2})).unwrap();
+        let s = seen.lock().unwrap();
+        assert_eq!(s.iter().map(|v| v["method"].as_str().unwrap_or("")).collect::<Vec<_>>(), ["auth", "ui.click"]);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn envauth_틀린_토큰이면_열기_실패_값은_오류에_없다() {
+        let d = std::env::temp_dir().join(format!("craft-in-envauth-bad-{}", std::process::id()));
+        let (port, _) = fake("envauth");
+        state(&d, "gridcraft", port, "envauth");
+        std::fs::write(d.join("craft-native").join("tok"), "w0ng\n").unwrap();
+        let e = Conn::open(&d, "gridcraft").err().expect("거절돼야");
+        assert!(e.contains("authentication required") && !e.contains("w0ng"), "{e}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn envauth_빈_토큰_파일이면_보내지_않고_실패() {
+        let d = std::env::temp_dir().join(format!("craft-in-envauth-empty-{}", std::process::id()));
+        let (port, seen) = fake("old082");
+        state(&d, "gridcraft", port, "envauth");
+        std::fs::write(d.join("craft-native").join("tok"), "\n").unwrap();
+        assert!(Conn::open(&d, "gridcraft").is_err());
+        assert!(seen.lock().unwrap().is_empty(), "빈 토큰 auth 는 안 보낸다");
         let _ = std::fs::remove_dir_all(&d);
     }
 

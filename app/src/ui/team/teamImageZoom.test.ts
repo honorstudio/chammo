@@ -22,9 +22,9 @@ describe('폰 팀 대화 — 그림 칸을 누르면 화면 가득 보기', () =
     expect(web).toContain('/api/team-file-image?team=');
     expect(web).toMatch(/original \? '' : '&view=1'/);
   });
-  it('ImageViewer 는 받는 길을 갈아 끼울 수 있다 — 맥 파일(경로)일 때만 공유 단추', () => {
+  it('ImageViewer 는 받는 길을 갈아 끼울 수 있다 — 맥 파일(경로)이나 팀 파일일 때 받기·공유 단추(11-12)', () => {
     expect(viewer).toContain('load = (original: boolean) => fileImage(path!, original)');
-    expect(viewer).toContain('{path && <ShareButton');
+    expect(viewer).toContain('{(path || team) && <SaveButtons');
   });
   it('보기는 시트 자리(SheetPortal)로 띄운다 — 팀 칸(.tmh) 안 transform 에 갇히지 않게', () => {
     expect(viewer).toContain('<SheetPortal>');

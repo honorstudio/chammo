@@ -26,6 +26,8 @@ export type PeerView = {
 export function pausedText(p: RemoteDevice['paused']): string {
   if (p === 'nologin') return tr('이 기기가 Chammo 에 로그인하지 않아 연결이 멈췄어요 — 로그인한 뒤 재연결해 주세요', 'Paused because this device is signed out of Chammo — sign in, then pair again');
   if (p === 'unknown') return tr('Chammo 계정을 확인하지 못해 연결이 멈췄어요 — 인터넷을 확인하고 재연결해 주세요', "Paused because the Chammo account couldn't be checked — check the internet, then pair again");
+  // 10월 테일넷 짝 — 계정이 바뀐 게 아니라 Chammo 기기 id 를 안 묶은 예전 방식(11-12)
+  if (p === 'unbound') return tr('예전 방식으로 연결한 컴퓨터예요. 지금 방식으로 재연결해 주세요', 'Connected the old way. Please reconnect.');
   return tr('계정이 바뀌어 연결이 멈췄어요 — 재연결해 주세요', 'Paused because the account changed — pair again');
 }
 

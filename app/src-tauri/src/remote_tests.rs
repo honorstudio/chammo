@@ -526,7 +526,7 @@ fn wire<'a>(asks: &'a crate::peer_ask::Asks, statuses: &[(u16, &str)]) -> Wire<'
 
 fn run(w: &Wire, kc: &Fake, dir: &std::path::Path, lines: &crate::mobile_pair::Devices) -> Result<(), String> {
     let t = std::cell::Cell::new(0u64);
-    let l = Link { kc, dir, lines, asks: w.asks, bind: &Fb };
+    let l = Link { kc, dir, lines, asks: w.asks, bind: &Fb, note: &|_| {} };
     connect(&l, "nSELF", &peer("nBOX", true), &|a: &Target, r: &Request, d, m| w.send(a, r, d, m), &|| t.set(t.get() + 2000), &|| t.get())
 }
 
@@ -595,7 +595,7 @@ fn pe_기다리다_취소하거나_시간이_다_가면_멈춘다() {
     // 취소 — 다른 곳에서 cancel_node 하면 다음 바퀴에 멈춘다
     let w2 = wire(&asks, &[(200, r#"{"state":"wait"}"#)]);
     let t = std::cell::Cell::new(0u64);
-    let l = Link { kc: &kc, dir: &dir, lines: &lines, asks: &asks, bind: &Fb };
+    let l = Link { kc: &kc, dir: &dir, lines: &lines, asks: &asks, bind: &Fb, note: &|_| {} };
     let e = connect(&l, "nSELF", &peer("nBOX", true), &|a: &Target, r: &Request, d, m| w2.send(a, r, d, m), &|| { asks.cancel_node("nBOX"); t.set(t.get() + 2000) }, &|| t.get()).unwrap_err();
     assert!(e.contains("취소"), "{e}");
 }
@@ -928,3 +928,178 @@ fn 계정_옛_짝_목록_파일도_그대로_읽힌다() {
     assert_eq!(bound(&l[0]), None);
     assert_eq!(gate_with(&dir, "nDMaq", false, &judge_world), Err("account:unbound".into()));
 }
+
+// 11-12 — 중계 짝이 생기면 같은 이름의 옛 테일넷 짝(계정 안 묶임, 다시 연결해야 하는 줄)은 숨긴다. 다른 이유로 멈춘 줄·짝 없는 옛 줄은 남긴다
+#[test]
+fn 중계_짝이_생기면_같은_이름의_옛_테일넷_짝은_숨긴다() {
+    let v = |id: &str, name: &str, status: &'static str, paused: Option<&'static str>| DeviceView { id: id.into(), name: name.into(), os: String::new(), status, paired: true, old: false, link: true, version: None, last_ok: None, paused };
+    let list = vec![
+        v("nOLD", "Front-Desk", "account", Some("unbound")),
+        v("nLONE", "Back-Room", "account", Some("unbound")),
+        v("nOTHER", "Side-Box", "account", Some("other")),
+        v("relay:a", "front-desk", "connected", None),
+        v("relay:b", "Side-Box", "connected", None),
+    ];
+    let out: Vec<String> = hide_stale(list).into_iter().map(|d| d.id).collect();
+    assert_eq!(out, ["nLONE", "nOTHER", "relay:a", "relay:b"]);
+}
+
+// ── 메일 승인(11-12) — 부르는 쪽은 카드와 함께 계정 메일로 승인 링크를 부탁한다
+
+/// 메일 부탁을 적는 가짜 증명 — 나머지는 Fb 와 같다
+#[derive(Default)]
+struct Mb {
+    mails: RefCell<Vec<(String, String)>>,
+    fail: bool,
+}
+impl crate::peer_account::Binder for Mb {
+    fn bind(&self, target: &str, ctx: &str) -> Result<crate::peer_account::Bind, crate::peer_account::Verdict> {
+        Fb.bind(target, ctx)
+    }
+    fn check_reply(&self, target: &str, ctx: &str, proof: &str) -> bool {
+        Fb.check_reply(target, ctx, proof)
+    }
+    fn mail(&self, target: &str, ctx: &str) -> Result<(), String> {
+        self.mails.borrow_mut().push((target.into(), ctx.into()));
+        if self.fail { Err("mail_off".into()) } else { Ok(()) }
+    }
+}
+
+fn run_mail(tag: &str, w: &Wire, mb: &Mb, hello: &'static str) -> (Result<(), String>, std::path::PathBuf, Fake) {
+    run_mail_notes(tag, w, mb, hello, &RefCell::new(Vec::new()))
+}
+
+fn run_mail_notes(tag: &str, w: &Wire, mb: &Mb, hello: &'static str, notes: &RefCell<Vec<String>>) -> (Result<(), String>, std::path::PathBuf, Fake) {
+    let dir = tmp(tag);
+    let (kc, lines) = (Fake::default(), crate::mobile_pair::Devices::memory());
+    let t = std::cell::Cell::new(0u64);
+    let note = |n: &str| notes.borrow_mut().push(n.to_string());
+    let l = Link { kc: &kc, dir: &dir, lines: &lines, asks: w.asks, bind: mb, note: &note };
+    let send = |a: &Target, r: &Request, d, m| if r.path == "/api/hello" { ok(200, hello) } else { w.send(a, r, d, m) };
+    let r = connect(&l, "nSELF", &peer("nBOX", true), &send, &|| t.set(t.get() + 2000), &|| t.get());
+    (r, dir, kc)
+}
+
+const HELLO_MAIL: &str = r#"{"app":"chammo","proto":1,"version":"0.5.1","chammo":"dev-box","peerMail":true}"#;
+
+#[test]
+fn me_메일_승인을_아는_기기면_요청에_mail_을_싣고_계정_메일로_승인_링크를_부탁한다() {
+    let asks = crate::peer_ask::Asks::default();
+    let back = "b".repeat(64);
+    let w = wire(&asks, &[(200, r#"{"state":"wait"}"#), (200, &format!(r#"{{"state":"yes","token":"{TOK}","back":"{back}","proof":"{{PROOF}}"}}"#))]);
+    let mb = Mb::default();
+    let (r, dir, _) = run_mail("connect-mail-a", &w, &mb, HELLO_MAIL);
+    r.unwrap();
+    let seen = w.seen.borrow();
+    let b: serde_json::Value = serde_json::from_str(&seen.iter().find(|s| s.1 == "/api/link-request").unwrap().2).unwrap();
+    assert_eq!(b["mail"], true);
+    let req = b["req"].as_str().unwrap();
+    assert_eq!(*mb.mails.borrow(), [("dev-box".to_string(), req.to_string())], "hello 로 받은 그 기기 Chammo id 와 요청 번호로");
+    assert_eq!(load(&dir)[0].device.as_deref(), Some("dev-box"));
+}
+
+#[test]
+fn me_옛_판_기기엔_mail_칸을_안_싣고_메일도_안_보낸다() {
+    let asks = crate::peer_ask::Asks::default();
+    let back = "b".repeat(64);
+    let w = wire(&asks, &[(200, &format!(r#"{{"state":"yes","token":"{TOK}","back":"{back}","proof":"{{PROOF}}"}}"#))]);
+    let mb = Mb::default();
+    let (r, _, _) = run_mail("connect-mail-b", &w, &mb, r#"{"app":"chammo","proto":1,"version":"0.4.12","chammo":"dev-box"}"#);
+    r.unwrap();
+    let b: serde_json::Value = serde_json::from_str(&w.seen.borrow().iter().find(|s| s.1 == "/api/link-request").unwrap().2).unwrap();
+    assert!(b.get("mail").is_none(), "{b}");
+    assert!(mb.mails.borrow().is_empty());
+}
+
+#[test]
+fn me_메일이_안_나가도_카드_길은_그대로() {
+    let asks = crate::peer_ask::Asks::default();
+    let back = "b".repeat(64);
+    let w = wire(&asks, &[(200, r#"{"state":"wait"}"#), (200, &format!(r#"{{"state":"yes","token":"{TOK}","back":"{back}","proof":"{{PROOF}}"}}"#))]);
+    let mb = Mb { fail: true, ..Default::default() };
+    let (r, _, kc) = run_mail("connect-mail-c", &w, &mb, HELLO_MAIL);
+    r.unwrap();
+    assert_eq!(mb.mails.borrow().len(), 1);
+    assert_eq!(kc.val(SERVICE, "nBOX").as_deref(), Some(TOK));
+}
+
+#[test]
+fn me_요청이_안_받아들여지면_메일을_안_보낸다() {
+    let asks = crate::peer_ask::Asks::default();
+    let mut w = wire(&asks, &[(200, r#"{"state":"wait"}"#)]);
+    w.request = (403, "account:other".into());
+    let mb = Mb::default();
+    let (r, _, _) = run_mail("connect-mail-d", &w, &mb, HELLO_MAIL);
+    assert!(r.is_err());
+    assert!(mb.mails.borrow().is_empty());
+}
+
+// ── 11-12 저녁: 메일 승인으로 이은 아이맥이 scripts/peer list 에 '연결 안 됨' — 목록 확인(/api/env)만 보유 증명(live)을 안 실어
+//    받는 쪽(0.4.13)이 403 account:live 로 거절했다. 진짜 부르기(call_any)는 싣는다
+
+fn bound_box() -> Saved {
+    Saved { id: "nBOX".into(), name: "box".into(), ip: "100.64.0.9".parse().unwrap(), port: 47123, paired_at: 1, last_ok: None, relay_x: None, device: Some("dev-box".into()) }
+}
+
+#[test]
+fn lv_목록_확인도_묶인_테일넷_짝엔_보유_증명을_싣는다() {
+    let kc = Fake::default();
+    kc.put(SERVICE, "nBOX", TOK);
+    let seen = RefCell::new(Vec::new());
+    // 0.4.13 받는 쪽처럼 — 묶인 짝은 증명이 있어야 200
+    let send = |_: &Target, r: &Request, _: Duration, _: usize| {
+        seen.borrow_mut().push((r.path.to_string(), r.live.map(str::to_string)));
+        if r.live == Some("L dev-box GET /api/env") { ok(200, "{}") } else { ok(403, "account:live") }
+    };
+    let live = |d: &str, m: &str, p: &str| Some(format!("L {d} {m} {p}"));
+    let s = bound_box();
+    assert!(probe_auth(&kc, &s, &Target { ip: s.ip, port: s.port }, &send, &live), "증명을 실으면 연결됨");
+    assert_eq!(seen.borrow()[0], ("/api/env".to_string(), Some("L dev-box GET /api/env".to_string())));
+    // 묶이지 않은 옛 짝 — 증명을 만들 기기 id 가 없다(받는 쪽이 어차피 멈춤)
+    let old = Saved { device: None, ..bound_box() };
+    assert!(!probe_auth(&kc, &old, &Target { ip: old.ip, port: old.port }, &send, &live));
+    assert_eq!(seen.borrow()[1].1, None);
+    // 열쇠가 없으면 망을 안 부른다
+    let n = seen.borrow().len();
+    let none = Saved { id: "nNONE".into(), ..bound_box() };
+    assert!(!probe_auth(&kc, &none, &Target { ip: none.ip, port: none.port }, &send, &live));
+    assert_eq!(seen.borrow().len(), n);
+}
+
+#[test]
+fn ml_메일을_보냈으면_10분_넘게_기다리고_결과를_바로_알린다() {
+    let asks = crate::peer_ask::Asks::default();
+    let back = "b".repeat(64);
+    // 7분째에 메일 승인 — 옛 5분 마감이면 '5분 안에…'로 끝났다
+    let mut st: Vec<(u16, String)> = vec![(200, r#"{"state":"wait"}"#.into()); 210];
+    st.push((200, format!(r#"{{"state":"yes","token":"{TOK}","back":"{back}","proof":"{{PROOF}}"}}"#)));
+    let st: Vec<(u16, &str)> = st.iter().map(|(c, b)| (*c, b.as_str())).collect();
+    let w = wire(&asks, &st);
+    let (mb, notes) = (Mb::default(), RefCell::new(Vec::new()));
+    let (r, _, kc) = run_mail_notes("connect-mail-long", &w, &mb, HELLO_MAIL, &notes);
+    r.unwrap();
+    assert_eq!(kc.val(SERVICE, "nBOX").as_deref(), Some(TOK));
+    assert_eq!(notes.borrow().len(), 1, "{:?}", notes.borrow());
+    assert!(notes.borrow()[0].starts_with("mail-sent"), "{:?}", notes.borrow());
+}
+
+#[test]
+fn ml_메일을_못_보냈으면_이유를_바로_알리고_카드_시간만_기다린다() {
+    let asks = crate::peer_ask::Asks::default();
+    let w = wire(&asks, &[(200, r#"{"state":"wait"}"#)]);
+    let (mb, notes) = (Mb { fail: true, ..Default::default() }, RefCell::new(Vec::new()));
+    let (r, _, _) = run_mail_notes("connect-mail-fail-note", &w, &mb, HELLO_MAIL, &notes);
+    assert!(r.unwrap_err().contains("5분"));
+    assert_eq!(*notes.borrow(), ["mail-failed:mail_off"]);
+}
+
+#[test]
+fn ml_옛_판엔_메일_알림도_없다() {
+    let asks = crate::peer_ask::Asks::default();
+    let back = "b".repeat(64);
+    let w = wire(&asks, &[(200, &format!(r#"{{"state":"yes","token":"{TOK}","back":"{back}","proof":"{{PROOF}}"}}"#))]);
+    let (mb, notes) = (Mb::default(), RefCell::new(Vec::new()));
+    run_mail_notes("connect-mail-old-note", &w, &mb, r#"{"app":"chammo","proto":1,"version":"0.4.12","chammo":"dev-box"}"#, &notes).0.unwrap();
+    assert!(notes.borrow().is_empty());
+}
+

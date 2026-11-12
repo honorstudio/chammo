@@ -4,7 +4,7 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { teamThumbBlob, type PhoneLockerOp, type PhoneTeamLocker as View, type PhoneTeamUps, type TeamPhoneApi } from '../../data/web';
 import { FileMini } from '../team/RoomBits';
-import { keyWaitNote, lockedFiles, upNote, baseOf, crumbsOf, extOf, fmtBytes, thumbKind, inPlace, kidFolders, moveTargets, parentOf, phoneView, renamedPath, usageText, whenText, type LockerItem } from '../../domain/teamLocker';
+import { keyWaitNote, lockedFiles, upNote, baseOf, crumbsOf, extOf, fmtBytes, thumbKind, inPlace, kidFolders, moveTargets, parentOf, phoneSaveable, phoneView, renamedPath, usageText, whenText, type LockerItem } from '../../domain/teamLocker';
 import { partsOf } from '../../domain/teamPhoneUp';
 import { teamViewMemo } from '../../domain/teamViewMemo';
 import { machine, tr } from '../../i18n';
@@ -13,6 +13,7 @@ import { IconFolder, IconFolderPlus, IconMore, IconPlus, IconTrash } from '../Ic
 import { BottomSheet } from './BottomSheet';
 import { IconBtn } from './kit';
 import { usePress } from './PhoneLockerParts';
+import { SaveButtons } from './ShareButton';
 import { ProfilesCtx } from '../team/useProfiles';
 import { lookOf } from '../../domain/teamProfile';
 import { sayTarget, type Convo, type TeamFile } from '../../domain/teamChat';
@@ -165,7 +166,7 @@ export function PhoneTeamLocker({ api, teamId, onOpen, chats, say, onChatSent }:
       )}
       {!here && <div className="tmx-none">{trash ? tr('휴지통이 비었어요', 'Trash is empty') : place ? tr('비어 있어요', 'Empty') : tr('팀 보관함이 비었어요 — 위 더하기로 사진·파일을 올려요', 'The team locker is empty — use the plus above to add photos and files')}</div>}
 
-      {menu && <MenuSheet menu={menu} trash={trash} chat={!!(say && chats)} onClose={() => setMenu(null)}
+      {menu && <MenuSheet menu={menu} trash={trash} teamId={teamId} chat={!!(say && chats)} onClose={() => setMenu(null)}
         onPick={(a) => {
           if (menu.kind === 'file') {
             if (a === 'chat') setAsk({ kind: 'chat', item: menu.item });
@@ -222,14 +223,16 @@ function Row({ teamId, item, trash, onOpen, onMenu }: { teamId: string; item: Lo
 }
 
 type Act = 'chat' | 'rename' | 'move' | 'trash' | 'restore';
-/** 줄·폴더 메뉴 — 낯선 동작이라 글자. 뜬 직후 0.45초는 손가락 밑 항목을 안 받는다 */
-function MenuSheet({ menu, trash, chat = false, onClose, onPick }: { menu: Menu; trash: boolean; chat?: boolean; onClose: () => void; onPick: (a: Act) => void }) {
+/** 줄·폴더 메뉴 — 낯선 동작이라 글자. 뜬 직후 0.45초는 손가락 밑 항목을 안 받는다.
+ *  받을 수 있는 파일이면 머리 오른쪽에 받기·공유 아이콘(11-12 — 익숙한 동작이라 아이콘, 받는 동안 메뉴를 열어 둔 채 % 를 보인다) */
+function MenuSheet({ menu, trash, teamId, chat = false, onClose, onPick }: { menu: Menu; trash: boolean; teamId: string; chat?: boolean; onClose: () => void; onPick: (a: Act) => void }) {
   const title = menu.kind === 'file' ? nameOf(menu.item) : baseOf(menu.key);
   // 팀챗에 보내기 = 파일만(잠긴 파일·폴더·휴지통엔 없다)
   const send: [Act, string][] = chat && menu.kind === 'file' ? [['chat', tr('팀챗에 보내기', 'Send to a team chat')]] : [];
   const acts: [Act, string][] = trash ? [['restore', tr('복원', 'Restore')]] : menu.kind === 'file' && menu.item.why ? [['trash', tr('휴지통으로', 'Move to trash')]] : [...send, ['rename', tr('이름 바꾸기', 'Rename')], ['move', tr('옮기기', 'Move')], ['trash', tr('휴지통으로', 'Move to trash')]];
   return (
-    <BottomSheet label={title} kind="card" title={title} armMs={450} onClose={onClose}>
+    <BottomSheet label={title} kind="card" title={title} armMs={450} onClose={onClose}
+      actions={menu.kind === 'file' && phoneSaveable(menu.item, trash) ? <SaveButtons team={{ team: teamId, id: menu.item.id }} /> : undefined}>
       {({ close, armed }) => acts.map(([a, label]) => <button key={a} type="button" className="m-menu-item" onClick={() => { if (armed) { close(); onPick(a); } }}>{label}</button>)}
     </BottomSheet>
   );

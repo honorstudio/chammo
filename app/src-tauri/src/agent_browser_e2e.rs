@@ -986,7 +986,8 @@ fn pane_offset_e2e() {
         let _ = std::fs::remove_file(&shot);
         let ok = crate::platform::command("/usr/sbin/screencapture").args(["-x", "-o", "-t", "bmp", &format!("-l{}", win.num)]).arg(&shot).status().map(|s| s.success()).unwrap_or(false);
         assert!(ok, "창 찍기 실패(화면 기록 권한?)");
-        let (bw, bh, red) = red_box(&std::fs::read(&shot).unwrap());
+        // 툴바(창 위 top 점) 밑만 — 창 신호등의 빨간 닫기 점까지 감싸 표시 가운데가 (126,220) 으로 빗나갔다(11-11)
+        let (bw, bh, red) = red_box(&std::fs::read(&shot).unwrap(), g.top / g.win[3]);
         let _ = std::fs::remove_file(&shot);
         let k = bw as f64 / g.win[2];
         let red = red.expect("캡처에 빨간 표시가 없다");
@@ -1183,8 +1184,107 @@ fn pane_unshow_e2e() {
     on.store(false, Ordering::Relaxed);
 }
 
-/// BMP(screencapture -t bmp) → (가로, 세로, 빨간 픽셀 상자(x0,y0,x1,y1) 위 원점)
-fn red_box(b: &[u8]) -> (usize, usize, Option<(usize, usize, usize, usize)>) {
+/// 칸 입력 순서(11-11 — 칸에서 캡차 끌기·단추 누름이 자주 안 먹던 것) — Swift 비추기 뷰가 사건마다 부르는 진짜 입구(browser_pane::handle_input)에
+/// 사람 속도로 누름·끌기를 넣고 페이지가 받은 순서(pointerdown 'd' · pointerup 'u')·click·끈 거리를 센다. 트랙패드 탭은 누름·뗌이 몇 ms 사이로 온다.
+/// ① 개입 중 누름 ② 개입 전 첫 누름(칸이 개입을 켬) ③ 개입 중 끌기 ④ 개입 전 첫 끌기 — 다 '누름 뗌' 짝 그대로, 끌기는 100px 그대로여야 한다.
+/// `CHAMMO_HOME=<빈 시험 폴더> cargo test pane_order_e2e -- --ignored --nocapture --test-threads=1` — 앱 가짜 화면이 떠 있어야 한다
+#[test]
+#[ignore]
+fn pane_order_e2e() {
+    use crate::agent_input::InputEv;
+    let profile = "por-test";
+    let pc = pane_chrome(profile, None, None);
+    let live = pc.live.clone();
+    let mut owner = Owner::new(&live);
+    let page = "data:text/html,<body style=margin:0;background:%23eef><div id=a style=position:fixed;left:100px;top:100px;width:80px;height:80px;background:red;touch-action:none></div><div id=b style=position:fixed;left:300px;top:100px;width:80px;height:80px;background:blue></div><script>window.seq='';window.clicks='';window.drags=[];window.sx=null;addEventListener('pointerdown',e=>{seq+='d';sx=e.clientX},true);addEventListener('pointerup',e=>{seq+='u';if(sx!=null)drags.push(Math.round(e.clientX-sx));sx=null},true);addEventListener('click',e=>clicks+=e.target.id||'-',true)</script>";
+    let (t, s) = owner.tab(page);
+    wait_for("시험 페이지", 10, || owner.eval(&s, "window.drags ? 1 : null").ok().filter(|v| v == 1));
+    let on = keep_pane(profile, Arc::new(Mutex::new((900.0, 600.0))));
+    show(profile, &t);
+    let (mut last, mut since) = (None, Instant::now());
+    wait_for("창 모양 가라앉음", 20, || {
+        let g = pane_geom(profile, 900.0, 600.0, true)?.1?;
+        if last != Some(g) {
+            last = Some(g);
+            since = Instant::now();
+        }
+        (since.elapsed() > Duration::from_millis(1500)).then_some(g)
+    });
+    assert!(!pane_geom(profile, 900.0, 600.0, true).expect("칸").2, "칸이 SCK 가 아니라 그림 길이다 — 시험 크롬이 Dock 숨김으로 안 떴다");
+    let pm = with_workers(|ws| ws.get(profile).and_then(|w| w.view.lock().ok().and_then(|v| v.pane_meta))).expect("칸 페이지 크기");
+    // Swift BrowserMirror.mouse 와 같은 모양 — 끄는 이동은 button left, 누름·뗌은 clickCount
+    let ev = |ty: &str, x: f64, y: f64| InputEv::Mouse { ty: ty.into(), x: x / pm.w, y: y / pm.h, button: Some("left".into()), click_count: (ty != "mouseMoved").then_some(1), delta_x: None, delta_y: None, modifiers: 0 };
+    let put = |e: InputEv, focus: bool| crate::browser_pane::handle_input(profile.to_string(), vec![e], focus);
+    let reset = |owner: &mut Owner| owner.eval(&s, "seq='';clicks='';drags=[];1").unwrap();
+    let read = |owner: &mut Owner| owner.eval(&s, "JSON.stringify([seq,clicks,drags])").unwrap().as_str().unwrap_or("").to_string();
+    let settle = |owner: &mut Owner, want: usize| {
+        let until = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < until && owner.eval(&s, "seq.length").ok().and_then(|v| v.as_u64()).unwrap_or(0) < want as u64 {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        std::thread::sleep(Duration::from_millis(300));
+    };
+    let n = 15;
+    let mut rows = vec![];
+    for (name, first, drag, gap) in [("개입 중 탭(0ms)", false, false, 0u64), ("개입 중 누름(40ms)", false, false, 40), ("개입 전 첫 탭", true, false, 0), ("개입 중 끌기", false, true, 16), ("개입 전 첫 끌기", true, true, 16)] {
+        // 개입 중 장면은 개입을 먼저 켜 둔다(빈 곳 누름 한 번) — 앞 장면 찌꺼기를 지운다
+        let _ = agent_handback(profile.to_string(), live.pid);
+        std::thread::sleep(Duration::from_millis(300));
+        if !first {
+            put(ev("mousePressed", 600.0, 400.0), true);
+            put(ev("mouseReleased", 600.0, 400.0), false);
+            wait_for("개입 켜짐", 5, || crate::takeover::current(&live_dir(), profile).map(|_| ()));
+        }
+        std::thread::sleep(Duration::from_millis(400));
+        reset(&mut owner);
+        let mut want_clicks = String::new();
+        for i in 0..n {
+            // 탭은 두 단추(a 140 · b 340)에 번갈아 — 누름이 다음 탭까지 남으면 click 이 엉뚱한 데(둘의 부모)로 간다
+            let (x, id) = if drag || i % 2 == 0 { (140.0, 'a') } else { (340.0, 'b') };
+            want_clicks.push(id);
+            if first {
+                let _ = agent_handback(profile.to_string(), live.pid);
+                std::thread::sleep(Duration::from_millis(150));
+            }
+            put(ev("mousePressed", x, 140.0), true);
+            if drag {
+                for k in 1..=10 {
+                    std::thread::sleep(Duration::from_millis(gap));
+                    put(ev("mouseMoved", 140.0 + 10.0 * k as f64, 140.0), false);
+                }
+                std::thread::sleep(Duration::from_millis(gap));
+                put(ev("mouseReleased", 240.0, 140.0), false);
+            } else {
+                std::thread::sleep(Duration::from_millis(gap));
+                put(ev("mouseReleased", x, 140.0), false);
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        settle(&mut owner, 2 * n);
+        let got = read(&mut owner);
+        let v: serde_json::Value = serde_json::from_str(&got).unwrap_or_default();
+        let seq = v[0].as_str().unwrap_or("").to_string();
+        let pairs = seq.matches("du").count();
+        let clicks = v[1].as_str().unwrap_or("").to_string();
+        let right = clicks.chars().zip(want_clicks.chars()).filter(|(a, b)| a == b).count();
+        let full = v[2].as_array().map(|a| a.iter().filter(|d| d.as_i64() == Some(100)).count()).unwrap_or(0);
+        eprintln!("[{name}] {n}번 → 짝 du {pairs} · 누른 곳 click {right} ({clicks:?}) · 100px 끌기 {full} · 순서 {seq:?} · 끈 거리 {}", v[2]);
+        rows.push((name, pairs, right, full, drag, seq));
+    }
+    on.store(false, Ordering::Relaxed);
+    let _ = agent_handback(profile.to_string(), live.pid);
+    for (name, pairs, clicks, full, drag, seq) in &rows {
+        assert_eq!((*pairs, seq.len()), (n, 2 * n), "[{name}] 누름·뗌 순서가 흐트러졌다: {seq:?}");
+        if *drag {
+            assert_eq!(*full, n, "[{name}] 끌기가 100px 를 다 못 갔다");
+        } else {
+            assert_eq!(*clicks, n, "[{name}] 누른 단추가 click 안 됐다");
+        }
+    }
+}
+
+/// BMP(screencapture -t bmp) → (가로, 세로, 빨간 픽셀 상자(x0,y0,x1,y1) 위 원점). skip = 위에서 건너뛸 높이 비율(툴바)
+fn red_box(b: &[u8], skip: f64) -> (usize, usize, Option<(usize, usize, usize, usize)>) {
     let u32le = |i: usize| u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
     let off = u32le(10) as usize;
     let w = u32le(18) as usize;
@@ -1193,7 +1293,7 @@ fn red_box(b: &[u8]) -> (usize, usize, Option<(usize, usize, usize, usize)>) {
     let bpp = u16::from_le_bytes([b[28], b[29]]) as usize / 8;
     let row = (w * bpp).div_ceil(4) * 4;
     let mut bx: Option<(usize, usize, usize, usize)> = None;
-    for y in 0..h {
+    for y in (skip.clamp(0.0, 1.0) * h as f64).ceil() as usize..h {
         let r = off + if hs > 0 { (h - 1 - y) * row } else { y * row };
         for x in 0..w {
             let p = r + x * bpp;

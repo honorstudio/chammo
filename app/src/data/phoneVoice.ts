@@ -36,6 +36,10 @@ export const getSay = () => say;
 const visible = () => typeof document === 'undefined' || document.visibilityState === 'visible';
 const audio = () => (el ??= typeof Audio === 'undefined' ? null : new Audio());
 const ready = () => isReady({ unlocked, visible: visible(), lastTouch, now: Date.now() });
+/** 쉬는 원소는 늘 음소거 — 한 번 소리를 낸 원소가 남아 있으면 WebKit 이 type 'auto' 에서 분류를 MediaPlayback(안 섞임)으로 올려 남의 소리를 끊고
+ *  '지금 재생'도 쥐고 있었다(2026-11-12 사용자 — 유튜브가 중간에 멈춤 · 지금 재생이 참모로 고정). muted 면 '지금 재생 정보 지움'과 분류 내림이 찍혔다(iOS 26.5 시뮬레이터 로그).
+ *  type 을 원래 값으로 돌리기 전에 불러야 한다 — 돌리는 순간 소리 낼 수 있는 원소가 있으면 그 자리에서 MediaPlayback 이 된다 */
+const rest = (a: HTMLAudioElement) => { a.pause(); a.muted = true; };
 
 /** 사람이 누른 그 순간(누름 처리기 안에서 동기로)에 불러야 한다 — 무음 파일을 한 번 틀어 오디오 원소를 풀어 둔다 */
 export function unlockAudio(): void {
@@ -43,11 +47,12 @@ export function unlockAudio(): void {
   if (!a || unlocked) return;
   const url = URL.createObjectURL(new Blob([silentWav() as BlobPart], { type: 'audio/wav' }));
   a.src = url;
+  a.muted = false;
   const dk = duck.begin('ambient'); // 무음 풀기는 섞어 튼다 — 듣던 음악이 이 순간 끊기지 않게
   a.play().then(
     () => { unlocked = true; beatSoon(); },
     () => { unlocked = false; },
-  ).finally(() => setTimeout(() => { URL.revokeObjectURL(url); duck.end(dk); }, 2000));
+  ).finally(() => setTimeout(() => { URL.revokeObjectURL(url); if (!current) rest(a); duck.end(dk); }, 2000));
 }
 
 function touched() {
@@ -132,6 +137,7 @@ async function play(it: Item): Promise<void> {
     a.onended = () => { if (current?.id === id) { ack(id, 'end'); release(); sayEnded(id); } };
     a.onerror = () => { if (current?.id === id) { ack(id, 'fail'); release(); sayEnded(id); } };
     a.src = url;
+    a.muted = false;
     await a.play();
     ack(id, 'start');
     setSay({ id, who: it.who, startedMs: Date.now(), endedMs: null, hop: it.hop, env: it.env });
@@ -149,8 +155,8 @@ async function play(it: Item): Promise<void> {
 function release() {
   if (current) {
     URL.revokeObjectURL(current.url);
+    if (el) rest(el); // 먼저 음소거 — 그다음 원래 type
     duck.end(current.dk);
-    // 잠금 화면 '지금 재생' 칸에 음악처럼 남지 않게
     try { if (navigator.mediaSession) { navigator.mediaSession.metadata = null; navigator.mediaSession.playbackState = 'none'; } } catch { /* 없는 브라우저 */ }
   }
   current = null;
@@ -178,6 +184,7 @@ export function setPhoneVoice(next: boolean): void {
   } else {
     stop();
     stopCurrent();
+    if (el) rest(el); // 풀기만 하고 말은 안 했어도 — 끈 뒤에 남의 소리를 끊을 원소를 남기지 않는다
     if (visible()) void beat(true); // 맥이 바로 '폰 안 봄'으로 — 소리 파일을 내놓고 기다리지 않게
   }
 }

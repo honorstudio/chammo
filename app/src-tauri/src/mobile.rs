@@ -1642,23 +1642,26 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
         // 폰이 누른 팀 영상 — 뒤 스레드가 데스크톱 열기와 같은 길로 받아 푼다(크기 제한 없음, 진행은 team_down 'open' 줄)
         let (t, i) = (team.to_string(), id.to_string());
         let start = move || -> Result<crate::team_media::Work, String> {
-            // 영상만 — 폰이 다른 큰 파일을 이 맥에 받게 하지 않는다
+            // 영상만 — 폰이 다른 큰 파일을 이 맥에 받게 하지 않는다(그 밖 형식은 크기를 먼저 본 /api/team-dl 로만)
             let name = crate::team_locker_app::name_of(crate::config::data_dir(), &crate::team_relay_keys::store(), &crate::team_relay::Curl, &t, &i)?;
             if crate::mobile_files::kind_of(std::path::Path::new(&name)) != crate::mobile_files::Kind::Video {
                 return Err("영상만 폰에서 튼다".into());
             }
-            Ok(Box::new(move || {
-                // 사람이 누른 받기 — 배경 몫에 안 막히게(스레드마다 따로라 여기서 다시)
-                crate::team_relay::as_human(|| {
-                    while crate::team_media::busy(&t, &i) {
-                        std::thread::sleep(std::time::Duration::from_millis(500));
-                    }
-                    let (d, kc, h) = (crate::config::data_dir(), crate::team_relay_keys::store(), crate::team_relay::Curl);
-                    crate::team_down::track(&t, &i, "open", |tick| crate::team_locker_app::view_with(d, &kc, &h, &t, &i, tick))
-                })
-            }))
+            Ok(team_fetch_work(t, i))
         };
         crate::team_media::poll(team, id, start, |f| {
+            std::thread::spawn(f);
+        })
+    }
+    fn team_file_meta(&self, team: &str, id: &str) -> Result<(String, u64), String> {
+        // 사람이 누른 받기 — 목록을 받아야 하면 배경 몫에 안 막히게
+        crate::team_relay::as_human(|| crate::team_locker_app::name_size_of(crate::config::data_dir(), &crate::team_relay_keys::store(), &crate::team_relay::Curl, team, id))
+            .map_err(|e| if e.starts_with("그 파일이 없어") { crate::mobile_http::TEAM_GONE.to_string() } else { e })
+    }
+    fn team_download(&self, team: &str, id: &str) -> Result<crate::team_media::Step, String> {
+        // 폰 팀 파일 받기(11-12) — 영상 길과 같은 받기 줄·받은 자리 기억(같은 파일이면 다시 안 받는다). 크기는 부른 쪽(/api/team-dl)이 먼저 봤다
+        let (t, i) = (team.to_string(), id.to_string());
+        crate::team_media::poll(team, id, move || Ok(team_fetch_work(t, i)), |f| {
             std::thread::spawn(f);
         })
     }
@@ -1858,6 +1861,20 @@ fn clean_device_name(s: &str) -> Option<String> {
     (!t.is_empty()).then(|| t.to_string())
 }
 
+/// 폰이 누른 팀 파일 받기(영상·받기 공용) — 데스크톱 열기와 같은 team_down 'open' 줄로 받아 풀어 둔 자리(team-locker-peek). 같은 파일을 받는 중이면 끝날 때까지 기다린다
+fn team_fetch_work(t: String, i: String) -> crate::team_media::Work {
+    Box::new(move || {
+        // 사람이 누른 받기 — 배경 몫에 안 막히게(스레드마다 따로라 여기서 다시)
+        crate::team_relay::as_human(|| {
+            while crate::team_media::busy(&t, &i) {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            let (d, kc, h) = (crate::config::data_dir(), crate::team_relay_keys::store(), crate::team_relay::Curl);
+            crate::team_down::track(&t, &i, "open", |tick| crate::team_locker_app::view_with(d, &kc, &h, &t, &i, tick))
+        })
+    })
+}
+
 #[cfg(test)]
 #[path = "mobile_tests.rs"]
 mod tests;
@@ -1867,3 +1884,4 @@ fn phone_uploads(team: &str) -> serde_json::Value {
     let ups: Vec<_> = crate::team_locker_app::uploads(team).into_iter().filter(|u| u.room.is_empty()).map(|u| serde_json::json!({ "name": u.name, "done": u.done, "total": u.total, "error": u.error, "folder": u.folder, "note": u.note })).collect();
     serde_json::Value::Array(ups)
 }
+

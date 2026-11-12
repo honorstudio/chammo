@@ -332,3 +332,23 @@ describe('열쇠 기다림 안내', () => {
     expect(lockedFiles([f('a'), f('b', '열쇠 없음'), f('c', '열쇠 없음', { deletedAt: 5 }), f('d', '열쇠 없음', { dir: true }), f('e', '열쇠 없음', { kind: 'post' }), f('g', '열쇠 없음', { state: 'trash' })])).toBe(1);
   });
 });
+
+// 11-12 폰 팀 파일 받기·공유 — 길게 누르기 메뉴·보기 머리에 단추를 둘 파일
+import { phoneSaveable } from './teamLocker';
+describe('폰 팀 파일 받기 — 받을 수 있는 줄(11-12)', () => {
+  const it0 = { id: 'A', name: '묶음.zip', size: 1000, cipher: 1000, at: 1, state: 'live' as const, kind: 'file', room: '', folder: '', by: '', byMember: '', mine: false, why: '', deletedAt: null };
+  it('형식은 가리지 않는다 — zip·hwp·영상도', () => {
+    expect(phoneSaveable(it0, false)).toBe(true);
+    expect(phoneSaveable({ ...it0, name: '계약.hwp' }, false)).toBe(true);
+    expect(phoneSaveable({ ...it0, name: '행사.mov', size: 150e6 }, false)).toBe(true);
+  });
+  it('못 여는(잠긴) 파일·휴지통·폴더 표시 줄은 아니다', () => {
+    expect(phoneSaveable({ ...it0, why: '열쇠 기다림' }, false)).toBe(false);
+    expect(phoneSaveable(it0, true)).toBe(false);
+    expect(phoneSaveable({ ...it0, state: 'trash' }, false)).toBe(false);
+    expect(phoneSaveable({ ...it0, dir: true }, false)).toBe(false);
+  });
+  it('200MB 넘으면 단추는 두되 판단은 맥 413 이 한다 — 여기선 크기로 막지 않는다', () => {
+    expect(phoneSaveable({ ...it0, size: 900e6 }, false)).toBe(true);
+  });
+});

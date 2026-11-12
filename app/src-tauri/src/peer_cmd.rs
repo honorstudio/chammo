@@ -9,7 +9,9 @@ pub trait PeerOps {
     fn pair(&self, id: &str, code: &str) -> Result<(), String>;
     fn unpair(&self, id: &str) -> Result<(), String>;
     /// 코드 없이 잇기 — 그 기기 사람이 카드에서 허용할 때까지 붙잡는다(최대 6분)
-    fn connect(&self, id: &str) -> Result<(), String>;
+    fn connect(&self, id: &str, note: &dyn Fn(&str)) -> Result<(), String>;
+    /// 연결 중 알림을 그 부탁(scripts/peer 의 rid)에 바로 — 스크립트가 기다리는 동안 찍는다
+    fn note(&self, rid: &str, text: &str);
     fn call(&self, id: &str, method: &str, path: &str, body: Option<&str>) -> Result<CallOut, String>;
     /// 부른 세션 id → 그 참모 이름(live.json) — 이름표에 실린다
     fn who(&self, by: &str) -> String;
@@ -34,18 +36,35 @@ pub fn request(line: &str) -> Option<PeerReq> {
     matches!(verb, "list" | "connect" | "pair" | "unpair" | "say" | "reply").then(|| PeerReq { id: id.to_string(), verb: verb.to_string(), arg: v["arg"].clone() })
 }
 
-/// 기기 찾기 — id, 이름(대소문자 무시), 하나뿐인 앞부분
+/// 기기 찾기 — id, 이름(대소문자 무시), 하나뿐인 앞부분. 같은 이름이 여럿이면 계정이 묶인 줄(멈추지 않은 줄)이 이긴다 —
+/// 10월 테일넷 옛 짝과 새 중계 짝이 같은 이름으로 같이 있을 때 옛 줄을 골라 '멈췄어요'가 나오던 것(11-12)
 pub fn find_device<'a>(list: &'a [DeviceView], q: &str) -> Result<&'a DeviceView, String> {
     let q = q.trim();
     let low = q.to_lowercase();
-    if let Some(d) = list.iter().find(|d| d.id == q || d.name.to_lowercase() == low) {
+    if let Some(d) = list.iter().find(|d| d.id == q) {
         return Ok(d);
     }
-    let hits: Vec<_> = list.iter().filter(|d| !low.is_empty() && d.name.to_lowercase().starts_with(&low)).collect();
+    let live_first = |hits: Vec<&'a DeviceView>| -> Vec<&'a DeviceView> {
+        let live: Vec<_> = hits.iter().copied().filter(|d| d.status != "account").collect();
+        if live.is_empty() { hits } else { live }
+    };
+    if let Some(d) = live_first(list.iter().filter(|d| d.name.to_lowercase() == low).collect()).first() {
+        return Ok(d);
+    }
+    let hits = live_first(list.iter().filter(|d| !low.is_empty() && d.name.to_lowercase().starts_with(&low)).collect());
     match hits.as_slice() {
         [d] => Ok(d),
         [] => Err(format!("no such device / 그런 기기 없음: {q} — {}", names(list))),
         many => Err(format!("which one? / 어느 기기?: {}", many.iter().map(|d| d.name.as_str()).collect::<Vec<_>>().join(", "))),
+    }
+}
+
+/// 연결 중 알림(remote::Link note) → 사람 말
+pub fn mail_note_word(n: &str) -> String {
+    match n.strip_prefix("mail-failed:") {
+        Some(why) => format!("승인 메일을 못 보냈어요({}) — 그 컴퓨터 앞에서 카드의 '허용'을 눌러야 연결돼요", why.chars().filter(|c| !c.is_control()).take(80).collect::<String>()),
+        None if n == "mail-sent" => "계정 메일로 승인 링크를 보냈어요 — 10분 안에 메일의 '연결 승인'이나 그 컴퓨터 카드의 '허용'을 누르면 연결돼요".into(),
+        None => n.to_string(),
     }
 }
 
@@ -148,6 +167,10 @@ pub fn answer(req: &PeerReq, ops: &dyn PeerOps) -> Value {
                     None => json!([]),
                 };
                 v["accounts"] = Value::Array(env.as_ref().map(accounts).unwrap_or_default());
+                // 멈춘 짝은 왜 멈췄는지 사람 말로(scripts/peer list 가 'account' 대신 이 줄을 찍는다)
+                if let Some(code) = d.paused {
+                    v["pausedWord"] = json!(crate::peer_account::word(code));
+                }
                 v
             })
             .collect();
@@ -159,7 +182,7 @@ pub fn answer(req: &PeerReq, ops: &dyn PeerOps) -> Value {
     };
     match req.verb.as_str() {
         "connect" if d.status == "connected" => json!({ "ok": true, "device": d.name, "already": true }),
-        "connect" => match ops.connect(&d.id) {
+        "connect" => match ops.connect(&d.id, &|n| ops.note(&req.id, &mail_note_word(n))) {
             Ok(()) => json!({ "ok": true, "device": d.name }),
             Err(e) => fail(e),
         },
@@ -222,8 +245,20 @@ impl PeerOps for RealOps {
     fn unpair(&self, id: &str) -> Result<(), String> {
         crate::remote::unpair_now(id)
     }
-    fn connect(&self, id: &str) -> Result<(), String> {
-        crate::remote::connect_now(id)
+    fn connect(&self, id: &str, note: &dyn Fn(&str)) -> Result<(), String> {
+        crate::remote::connect_now_note(id, note)
+    }
+    /// <데이터>/answers/peer-<rid>.note — 스크립트가 읽고 지운다
+    fn note(&self, rid: &str, text: &str) {
+        if rid.is_empty() || rid.len() > 32 || !rid.bytes().all(|b| b.is_ascii_alphanumeric()) {
+            return;
+        }
+        let dir = crate::config::data_dir().join("answers");
+        let _ = std::fs::create_dir_all(&dir);
+        let tmp = dir.join(format!("peer-{rid}.note.tmp"));
+        if std::fs::write(&tmp, text).is_ok() {
+            let _ = std::fs::rename(&tmp, dir.join(format!("peer-{rid}.note")));
+        }
     }
     fn call(&self, id: &str, method: &str, path: &str, body: Option<&str>) -> Result<CallOut, String> {
         crate::remote::call_now(id, method, path, body)

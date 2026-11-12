@@ -3,7 +3,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { fileBytes } from '../../data/web';
 import type { ShowAt } from '../../domain/showAt';
-import { ShareButton } from './ShareButton';
+import { SaveButtons } from './ShareButton';
 import { BottomSheet } from './kit';
 import { tr } from '../../i18n';
 
@@ -74,7 +74,7 @@ export default function PdfSheet({ path, title, at, onClose }: { path: string; t
   }, []);
   return (
     <BottomSheet kind="full" className="m-pdf" label={title} title={title} titleClass="m-view-title" onClose={onClose}
-      actions={<>{page.of > 0 && <span className="m-pdf-no">{page.n} / {page.of}</span>}<ShareButton path={path} /></>}>
+      actions={<>{page.of > 0 && <span className="m-pdf-no">{page.n} / {page.of}</span>}<SaveButtons path={path} /></>}>
       <div className="m-pdf-body" ref={wrap}>
         <Suspense fallback={<p className="m-muted m-pad">{tr('여는 중…', 'Opening…')}</p>}>
           <PdfView path={path} zoom={zoom} at={at} atKey={path} load={fileBytes} />

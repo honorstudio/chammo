@@ -12,7 +12,7 @@ import { fileError } from '../../domain/phoneFile';
 import { frameLink } from '../../domain/frameLink';
 import { useFrameGuard } from '../frameGuard';
 import { machine, tr } from '../../i18n';
-import { ShareButton } from './ShareButton';
+import { SaveButtons } from './ShareButton';
 import { BottomSheet } from './kit';
 
 type Cur = { title: string; total: number; done: number; text: string };
@@ -143,7 +143,7 @@ export default function HtmlSheet({ path, title, orch, onClose }: { path: string
             </>
           );
         })()}
-        <ShareButton path={path} />
+        <SaveButtons path={path} />
         <button type="button" className="m-rt-btn m-ico" onClick={onClose} aria-label={tr('닫기', 'Close')} title={tr('닫기', 'Close')}><IconClose /></button>
       </div>}>
       {ask !== null && (() => {

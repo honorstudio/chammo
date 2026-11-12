@@ -325,9 +325,14 @@ fn net_word(e: &NetErr) -> String {
 
 /// 그 기기 Chammo 기기 id — /api/hello chammo(로그인해 허용된 기기만, 11-09~). 옛 판·로그인 안 한 기기는 None
 pub fn hello_chammo(t: &Target, send: &SendFn) -> Result<Option<String>, String> {
+    hello_link(t, send).map(|(d, _)| d)
+}
+
+/// (Chammo 기기 id, 짝짓기 메일 승인을 아나 — hello peerMail, 11-12~)
+fn hello_link(t: &Target, send: &SendFn) -> Result<(Option<String>, bool), String> {
     let r = send(t, &Request { method: "GET", path: "/api/hello", body: None, token: None, live: None }, HELLO_WAIT, 4096).map_err(|e| net_word(&e))?;
     let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap_or_default();
-    Ok(v["chammo"].as_str().filter(|d| crate::peer_account::valid_dev(d)).map(str::to_string))
+    Ok((v["chammo"].as_str().filter(|d| crate::peer_account::valid_dev(d)).map(str::to_string), v["peerMail"] == true))
 }
 
 /// 상대가 Chammo 계정 기기 id 를 안 알려 줌 — 옛 판이거나 로그인 안 함
@@ -386,6 +391,8 @@ pub struct Link<'a> {
     pub asks: &'a crate::peer_ask::Asks,
     /// 같은 Chammo 계정 증명(11-09)
     pub bind: &'a dyn crate::peer_account::Binder,
+    /// 연결 중 알림 — "mail-sent" · "mail-failed:<이유>"(peer_cmd::mail_note_word 가 사람 말로). 화면·scripts/peer 가 기다리는 동안 바로 보인다
+    pub note: &'a dyn Fn(&str),
 }
 
 fn hex64(s: &str) -> bool {
@@ -430,9 +437,15 @@ pub fn connect(l: &Link, me_id: &str, peer: &TsPeer, send: &SendFn, pause: &dyn 
 
 fn connect_inner(l: &Link, me_id: &str, peer: &TsPeer, req: &str, send: &SendFn, pause: &dyn Fn(), now: &dyn Fn() -> u64) -> Result<(), String> {
     let t = Target { ip: peer.ip, port: peer_port() };
-    let theirs = hello_chammo(&t, send)?.ok_or(NO_CHAMMO)?;
+    let (theirs, knows_mail) = hello_link(&t, send)?;
+    let theirs = theirs.ok_or(NO_CHAMMO)?;
     let b = l.bind.bind(&theirs, req).map_err(crate::peer_account::bind_word)?;
-    let body = serde_json::json!({ "req": req, "node": me_id, "device": b.device, "proof": b.proof }).to_string();
+    let mut body = serde_json::json!({ "req": req, "node": me_id, "device": b.device, "proof": b.proof });
+    // 메일 승인을 아는 기기에만 mail 칸 — 옛 판은 모르는 칸을 400 으로 거절한다
+    if knows_mail {
+        body["mail"] = serde_json::json!(true);
+    }
+    let body = body.to_string();
     let r = send(&t, &Request { method: "POST", path: "/api/link-request", body: Some(body.as_bytes()), token: None, live: None }, CALL_WAIT, 4096).map_err(|e| net_word(&e))?;
     let text = String::from_utf8_lossy(&r.body).trim().to_string();
     match r.status {
@@ -446,11 +459,32 @@ fn connect_inner(l: &Link, me_id: &str, peer: &TsPeer, req: &str, send: &SendFn,
         501 => return Err("그 기기의 Chammo가 옛 버전이라 연결을 받을 수 없어요. 그 기기를 업데이트해 주세요".into()),
         s => return Err(format!("그 기기가 연결 요청을 못 받았어요({s})")),
     }
-    let end = now() + crate::peer_ask::TTL_MS + crate::peer_ask::PICKUP_MS;
+    // 그 기기 앞에 사람이 없을 수 있다(사무실 PC·아이맥) — 카드와 함께 계정 메일로도 승인 링크를(11-12). 못 보내도 카드 길은 그대로
+    // 결과는 기다리는 사람에게 바로(note) — 실패가 notify.log 에만 남아 메일을 기다리다 5분을 날렸다(11-12 저녁)
+    let mut mailed = false;
+    if knows_mail {
+        let note = match l.bind.mail(&theirs, req) {
+            Ok(()) => {
+                mailed = true;
+                // 메일 링크만큼 기다린다 — 카드(5분)보다 링크(10분)가 길어서 늦게 누른 승인이 버려졌다
+                l.asks.long(req);
+                "mail-sent".to_string()
+            }
+            Err(e) => format!("mail-failed:{e}"),
+        };
+        (l.note)(&note);
+        // 시험은 진짜 notify.log 에 안 쓴다
+        if !cfg!(test) {
+            crate::claude::log_out("peer", &format!("연결 요청 — {note}"));
+        }
+    }
+    let wait = if mailed { crate::peer_ask::MAIL_TTL_MS } else { crate::peer_ask::TTL_MS };
+    let end = now() + wait + crate::peer_ask::PICKUP_MS;
+    let late = if mailed { "10분 안에 메일의 '연결 승인'이나 그 컴퓨터 카드의 '허용'을 누르지 않아서 연결하지 못했어요" } else { "5분 안에 그 기기에서 허용하지 않았어요" };
     let path = format!("/api/link-status?req={req}");
     loop {
         if now() > end {
-            return Err("5분 안에 그 기기에서 허용하지 않았어요".into());
+            return Err(late.into());
         }
         if !l.asks.waiting(req, now()) {
             return Err("연결을 취소했어요".into());
@@ -470,7 +504,7 @@ fn connect_inner(l: &Link, me_id: &str, peer: &TsPeer, req: &str, send: &SendFn,
                     return keep(l, peer, v["token"].as_str().unwrap_or(""), v["back"].as_str().unwrap_or(""), &theirs);
                 }
                 (200, "no") => return Err("그 기기에서 거절했어요".into()),
-                (200, "expired") => return Err("5분 안에 그 기기에서 허용하지 않았어요".into()),
+                (200, "expired") => return Err(late.into()),
                 (200, "failed") => return Err("그 기기가 연결하다 실패했어요 — 다시 해 주세요".into()),
                 _ => {}
             }
@@ -531,10 +565,7 @@ fn call_any(kc: &dyn Store, dir: &Path, id: &str, here: Option<Ipv4Addr>, method
     let token = kc.get(&service(), id).map_err(|e| format!("{STORE_WORD}에서 열쇠를 못 읽었어요({e:?})"))?.ok_or("pair")?;
     let t = Target { ip, port: list[i].port };
     // 테일넷 짝 — 그 기기 열쇠를 지금도 가졌다는 증명(받는 쪽이 본다, 11-09). 중계 짝은 허브가 기기 서명으로 본다
-    let live = match (&list[i].relay_x, &list[i].device) {
-        (None, Some(d)) => crate::peer_account::live_now(d, method, path),
-        _ => None,
-    };
+    let live = live_for(&list[i], method, path, &crate::peer_account::live_now);
     let r = send(&t, &Request { method, path, body: body.map(str::as_bytes), token: Some(token.expose()), live: live.as_deref() }, CALL_WAIT, MAX_BODY).map_err(|e| net_word(&e))?;
     if r.status == 401 {
         return Err("pair".into());
@@ -621,6 +652,7 @@ pub fn devices_now() -> Result<DevicesOut, String> {
         combine(devices_tailnet(), relay)
     }?;
     mark_paused(&mut out.devices, &saved, &|b| crate::peer_account::check(b, false));
+    out.devices = hide_stale(std::mem::take(&mut out.devices));
     Ok(out)
 }
 
@@ -645,6 +677,22 @@ pub fn relay_views(saved: &[Saved]) -> Vec<DeviceView> {
         .collect()
 }
 
+/// 테일넷 짝 보유 증명(11-09) — 묶인 테일넷 짝에만. 중계 짝은 허브가 기기 서명으로 본다
+fn live_for(s: &Saved, method: &str, path: &str, live: &dyn Fn(&str, &str, &str) -> Option<String>) -> Option<String> {
+    match (&s.relay_x, &s.device) {
+        (None, Some(d)) => live(d, method, path),
+        _ => None,
+    }
+}
+
+/// 기기 칸 — 짝지은 기기 열쇠로 /api/env 가 통하나. 보유 증명도 싣는다: 안 실으면 0.4.13 받는 쪽이 묶인 짝을 403 account:live 로 거절해
+/// 메일 승인으로 이은 아이맥이 '연결 안 됨'으로 보였다(11-12 저녁 — 진짜 부르기 call_any 는 싣고 있었다)
+pub fn probe_auth(kc: &dyn Store, s: &Saved, t: &Target, send: &SendFn, live: &dyn Fn(&str, &str, &str) -> Option<String>) -> bool {
+    let Some(tok) = kc.get(&service(), &s.id).ok().flatten() else { return false };
+    let lv = live_for(s, "GET", "/api/env", live);
+    send(t, &Request { method: "GET", path: "/api/env", body: None, token: Some(tok.expose()), live: lv.as_deref() }, HELLO_WAIT, 64 * 1024).is_ok_and(|r| r.status == 200)
+}
+
 fn devices_tailnet() -> Result<DevicesOut, String> {
     {
         let (route, json) = tailnet()?;
@@ -663,10 +711,7 @@ fn devices_tailnet() -> Result<DevicesOut, String> {
                     sc.spawn(move || {
                         let t = Target { ip: p.ip, port: peer_port() };
                         let hello = presence(&send(&t, &Request { method: "GET", path: "/api/hello", body: None, token: None, live: None }, HELLO_WAIT, 4096));
-                        let auth = (saved.iter().any(|s| s.id == p.id) && hello != Presence::Absent).then(|| {
-                            let tok = kc.get(&service(), &p.id).ok().flatten();
-                            tok.is_some_and(|tok| send(&t, &Request { method: "GET", path: "/api/env", body: None, token: Some(tok.expose()), live: None }, HELLO_WAIT, 64 * 1024).is_ok_and(|r| r.status == 200))
-                        });
+                        let auth = saved.iter().find(|s| s.id == p.id).filter(|_| hello != Presence::Absent).map(|s| probe_auth(kc, s, &t, send, &crate::peer_account::live_now));
                         (p.id.clone(), Probe { hello, auth })
                     })
                 })
@@ -767,6 +812,13 @@ pub fn merge_relay(tail: Vec<DeviceView>, relay: Vec<DeviceView>) -> Vec<DeviceV
     tail.into_iter().filter(|d| d.status == "connected" || !names.contains(&d.name)).chain(relay).collect()
 }
 
+/// 중계 짝이 생긴 기기의 옛 테일넷 짝 숨기기(11-12) — 계정이 안 묶인(unbound) 테일넷 줄이 같은 이름(대소문자 무시)의 중계 줄과 같이 있으면 옛 줄은 뺀다.
+/// 목록 파일(remote-peers.json)은 그대로 — 화면·scripts/peer 에서만 안 보인다. 다른 이유로 멈춘 줄·중계 짝이 없는 옛 줄은 남긴다(재연결할 자리)
+pub fn hide_stale(v: Vec<DeviceView>) -> Vec<DeviceView> {
+    let relay: std::collections::HashSet<String> = v.iter().filter(|d| d.id.starts_with("relay:")).map(|d| d.name.to_lowercase()).collect();
+    v.into_iter().filter(|d| d.id.starts_with("relay:") || !(d.status == "account" && d.paused == Some("unbound") && relay.contains(&d.name.to_lowercase()))).collect()
+}
+
 /// 중계로 이은 컴퓨터를 목록에 — id = relay:<중계 기기 id>, 열쇠는 store_relay_key 로 같은 칸에
 pub fn save_relay_peer(dir: &Path, hub: &str, name: &str, x: &str) -> std::io::Result<()> {
     let id = relay_key_account(hub);
@@ -845,10 +897,37 @@ impl crate::peer_ask::LinkEnv for RealLink {
     fn bind(&self, b: &crate::peer_account::Bind, ctx: &str) -> Result<String, crate::peer_account::Verdict> {
         crate::peer_account::verify_now(b, ctx)
     }
+    fn mail_ok(&self, from: &str, req: &str) -> bool {
+        crate::peer_account::take_now(from, req)
+    }
+    fn chammo_name(&self, dev: &str) -> Option<String> {
+        crate::team_relay::load_state(&data_dir()).my_devices.iter().find(|d| d.id == dev).map(|d| d.name.clone())
+    }
 }
 
 /// 연결(실제 테일넷·키체인) — 앱 화면 '연결'과 scripts/peer connect 가 같이 쓴다. 허용될 때까지(최대 6분) 붙잡는다
 pub fn connect_now(id: &str) -> Result<(), String> {
+    connect_now_note(id, &|n| note_set(id, n))
+}
+
+/// 연결 중 알림(화면이 기다리는 동안 읽는다) — 기기마다 마지막 하나
+static NOTES: std::sync::Mutex<Option<std::collections::HashMap<String, String>>> = std::sync::Mutex::new(None);
+
+fn note_set(id: &str, n: &str) {
+    NOTES.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(Default::default).insert(id.to_string(), n.to_string());
+}
+
+/// 화면 — 그 기기에 연결을 기다리는 동안의 알림(사람 말). 없으면 None
+#[tauri::command]
+pub fn remote_connect_note(id: String) -> Option<String> {
+    NOTES.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(&id)).map(|n| crate::peer_cmd::mail_note_word(n))
+}
+
+/// connect_now 인데 알림을 부른 쪽이 받는다(scripts/peer)
+pub fn connect_now_note(id: &str, note: &dyn Fn(&str)) -> Result<(), String> {
+    if let Some(m) = NOTES.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+        m.remove(id);
+    }
     if !can_link(std::env::consts::OS) {
         return Err("다른 기기 참모 연결은 맥·윈도우에서만 돼요".into());
     }
@@ -861,7 +940,11 @@ pub fn connect_now(id: &str) -> Result<(), String> {
     let me = self_id(&json).ok_or("테일스케일에서 이 기기 번호를 못 읽었어요")?;
     let peer = peers.into_iter().find(|p| p.id == id).ok_or("테일넷에 그 기기가 없어요(같은 계정 기기만)")?;
     let (kc, dir, lines) = (keychain(), data_dir(), crate::mobile::devices());
-    let l = Link { kc: &kc, dir: &dir, lines: &lines, asks: crate::peer_ask::asks(), bind: &crate::peer_account::RealBinder };
+    let both = |n: &str| {
+        note_set(id, n);
+        note(n);
+    };
+    let l = Link { kc: &kc, dir: &dir, lines: &lines, asks: crate::peer_ask::asks(), bind: &crate::peer_account::RealBinder, note: &both };
     connect(&l, &me, &peer, &real_send(route), &|| std::thread::sleep(Duration::from_secs(2)), &now_ms)
 }
 

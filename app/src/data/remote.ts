@@ -82,6 +82,9 @@ export const remoteSaved = () => invoke<{ id: string; name: string }[]>('remote_
 /** 그 기기 카드에 사람이 누른 답 — 사람 길(remote_direct_answer). 결정 대기함과 기기 보기 홈이 같이 쓴다 */
 export const remoteCardAnswer = (dev: string) => (card: string, pick: unknown) => invoke<void>('remote_direct_answer', { id: dev, card, pick });
 /** 기다리던 연결 거두기 */
+/** 연결을 기다리는 동안의 알림(메일 보냄·못 보냄, 사람 말) — 없으면 null */
+export const remoteConnectNote = (id: string) => invoke<string | null>('remote_connect_note', { id });
+
 export const remoteConnectCancel = (id: string) => invoke<void>('remote_connect_cancel', { id });
 /** 그 기기 Chammo 계정 로그아웃 요청 — 그 기기에 사람 확인 카드만 띄운다(끊기는 그쪽 사람이 '로그아웃'을 누를 때). 사람 클릭에서만 */
 export const remoteLogoutAsk = (id: string) => invoke<{ ok: boolean; card: string }>('remote_logout_ask', { id });

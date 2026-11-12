@@ -204,6 +204,22 @@ mod tests {
         assert_eq!(wheel_delta(120, true), (120.0, 0.0));
     }
 
+    #[test]
+    fn 칸_입력은_느린_앞_일이_있어도_온_순서대로() {
+        // 누름(느림: 창 목록·크롬 pid) 바로 뒤 떼기(빠름) — 사건마다 스레드였을 땐 떼기가 앞질렀다(11-11)
+        let (out, got) = std::sync::mpsc::channel::<&'static str>();
+        let line = in_order(move |(name, wait_ms): (&'static str, u64)| {
+            std::thread::sleep(Duration::from_millis(wait_ms));
+            assert_ne!(name, "boom", "일 하나가 패닉");
+            let _ = out.send(name);
+        });
+        for job in [("down", 80), ("boom", 0), ("move", 0), ("up", 0)] {
+            line.send(job).unwrap();
+        }
+        let seen: Vec<_> = (0..3).map(|_| got.recv_timeout(Duration::from_secs(5)).unwrap()).collect();
+        assert_eq!(seen, ["down", "move", "up"], "순서 그대로, 패닉한 일 뒤도 산다");
+    }
+
     fn g() -> Geom {
         // 실측 모양 — 크롬 베타 창 1400x968, 툴바 88, 페이지 1400x880
         Geom { id: 7, win: [-2886.0, 1004.0, 1400.0, 968.0], top: 88.0, inner: [1400.0, 880.0] }
@@ -436,18 +452,34 @@ extern "C" fn on_input(ctx: *mut std::ffi::c_void, json: *const std::ffi::c_char
     }
 }
 
-/// 네이티브 칸(맥 Swift 뷰·윈도우 자식 창)이 받은 사람 입력 — 메인 스레드에서 오니 일은 따로 돌린다
-#[cfg_attr(not(any(craft_mirror, windows)), allow(dead_code))]
+/// 칸 사람 입력(네이티브 칸 마우스·휠 + 웹 글칸 키·글) — 메인 스레드·명령 스레드를 안 막게 일꾼 하나가 온 순서대로 처리한다.
+/// 사건마다 스레드를 따로 띄우던 때는 느린 누름(창 목록·크롬 pid·개입 시작·포커스)을 바로 뒤 떼기가 앞질러 크롬엔 '뗌 → 누름'으로 갔다 —
+/// 눌린 채 다음 탭까지 남아 단추·캡차가 안 눌렸다(11-11 사용자, 트랙패드 탭 15번 중 15번 · pane_order_e2e)
 pub(crate) fn handle_input(profile: String, evs: Vec<crate::agent_input::InputEv>, focus: bool) {
-    std::thread::spawn(move || {
-        // 칸을 누르면 키·한글은 웹 숨은 글칸이 받는다(모달과 같은 길) — 그 글칸에 포커스
-        if focus {
-            if let Some(w) = APP.get().and_then(|a| a.get_webview_window("main")) {
-                let _ = w.eval(format!("window.__bpFocus && window.__bpFocus({})", serde_json::Value::from(profile.as_str())));
-            }
+    static LINE: std::sync::OnceLock<std::sync::mpsc::Sender<(String, Vec<crate::agent_input::InputEv>, bool)>> = std::sync::OnceLock::new();
+    // run_input 은 일꾼 스레드에서만 — 함수 값으로 넘긴다(동기 명령 browser_pane_input 이 메인 스레드에서 파일을 안 만진다, offmain_scan)
+    let _ = LINE.get_or_init(|| in_order(run_input)).send((profile, evs, focus));
+}
+
+fn run_input((profile, evs, focus): (String, Vec<crate::agent_input::InputEv>, bool)) {
+    // 칸을 누르면 키·한글은 웹 숨은 글칸이 받는다(모달과 같은 길) — 그 글칸에 포커스
+    if focus {
+        if let Some(w) = APP.get().and_then(|a| a.get_webview_window("main")) {
+            let _ = w.eval(format!("window.__bpFocus && window.__bpFocus({})", serde_json::Value::from(profile.as_str())));
         }
-        let _ = crate::agent_browser::pane_input(&profile, evs);
+    }
+    let _ = crate::agent_browser::pane_input(&profile, evs);
+}
+
+/// 보낸 순서대로 하나씩 하는 일꾼 — 일 하나가 패닉해도 줄은 산다(죽으면 그 뒤 칸 입력이 조용히 다 버려진다)
+fn in_order<J: Send + 'static>(work: impl Fn(J) + Send + 'static) -> std::sync::mpsc::Sender<J> {
+    let (tx, rx) = std::sync::mpsc::channel::<J>();
+    let _ = std::thread::Builder::new().name("pane-input".into()).spawn(move || {
+        for job in rx {
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(job)));
+        }
     });
+    tx
 }
 
 /// 칸에 넘긴 그림 수(프로필별) — 시험이 '칸이 그림을 받나'를 센다
@@ -646,10 +678,10 @@ pub async fn browser_pane_still<R: Runtime>(handle: tauri::AppHandle<R>, profile
     .map_err(|e| e.to_string())?
 }
 
-/// 칸 머리줄·숨은 글칸의 입력(키·글·뒤로·앞으로·새로고침) — 마우스는 Swift 뷰가 바로 넘긴다
-#[tauri::command(async)]
-pub fn browser_pane_input(profile: String, events: Vec<crate::agent_input::InputEv>) -> Result<(), String> {
-    crate::agent_browser::pane_input(&profile, events)
+/// 칸 머리줄·숨은 글칸의 입력(키·글·뒤로·앞으로·새로고침) — 마우스는 Swift 뷰가 바로 넘긴다. 마우스와 같은 줄로(누른 칸에 친 글이 누름보다 먼저 가지 않게)
+#[tauri::command]
+pub fn browser_pane_input(profile: String, events: Vec<crate::agent_input::InputEv>) {
+    handle_input(profile, events, false);
 }
 
 /// 칸이 사라졌다(탭 X = 숨김·다른 탭·참모 바꾸기) — 비추기만 뗀다. 크롬·세션은 그대로, 다시 열면 0.06초 안에 첫 그림(spike A5)

@@ -37,14 +37,14 @@ scripts/show <작업 폴더>/a-edit.png
 | PhotoCraft | 사진(레이어·PSD) | 토큰 | `image.adjustments.*`·`layer.newAdjustmentLayer.*`·`app.open/save` |
 | WordCraft | 문서 | 키 | `text.insert`·`file.exportPng` |
 | PdfCraft | PDF | 토큰 | `run` 이 `ui.command`(메뉴 명령), `ui.state` |
-| GridCraft | 표(엑셀) | 없음 | `range.setValues`·`formulas.autoSum`·`data.sort`·`data.removeDuplicates`·`insert.chart`·`home.bold`/`fillColor`/`numberFormat`/`borders`·`sheet.read` |
+| GridCraft | 표(엑셀) | 토큰(env, 첫 줄) | `range.setValues`·`formulas.autoSum`·`data.sort`·`data.removeDuplicates`·`insert.chart`·`home.bold`/`fillColor`/`numberFormat`/`borders`·`sheet.read` |
 | VectorCraft | 벡터 | 없음 | 도구·보기·`app.export` — 인쇄용 .ai 는 `document.save` 에 `{"bleed":{"useDocument":true}}` 를 줘야 도련까지 담긴다(안 주면 재단 크기로만) |
 | DesignCraft | 지면 | 없음 | `file.exportPdf`(PNG 내보내기 없음)·`view.*` |
 | DeckCraft | 발표 | 없음 | `slide.new` |
-| FilmCraft | 영상 | 없음 | 타임라인·`ui.playback` |
+| FilmCraft | 영상 | 토큰(env) | 타임라인·`ui.playback` |
 | EffectCraft | 모션 | 없음 | `comp.new`·`ui.playback` |
 | LightCraft | 사진 보관·RAW | 없음 | 가져오기·현상 |
-| CADCraft | 캐드 | 없음 | AutoCAD 명령 이름 그대로 `run`(`line`·`circle`·`text`·`saveas`) |
+| CADCraft | 캐드 | 토큰(앱이 파일에) | AutoCAD 명령 이름 그대로 `run`(`line`·`circle`·`text`·`saveas`) |
 | SoundCraft | 오디오 | 없음 | 트랙·믹스 |
 | FigCraft | 화면 설계 | 없음 | `file.export`·`page.select` |
 
@@ -99,7 +99,7 @@ and can take over any time. A project session opening it gets its pane in the ta
 3. **Do**: `scripts/craft run <app> <command id> '<json params>'`; raw channel calls `scripts/craft do <app> <method> '<json>'`
    (`app.open`, `app.save`, `ui.inspect`, `ui.menu.invoke`)
 4. **Check**: `scripts/craft shot <app> --out <png>` and look at it; show results to the user with `scripts/show`
-5. **Close**: `scripts/craft close <app>` — always when done. 10 of the 13 have no auth on the control port (any program on this Mac can
+5. **Close**: `scripts/craft close <app>` — always when done. 7 of the 13 have no auth on the control port (any program on this Mac can
    connect), so never leave one running. `scripts/craft status` lists what's open
 
 The windowless engine (`scripts/craft cli …`) is **only for work nobody needs to watch** — batches (retouch 100 photos: `cli photocraft batch …`),

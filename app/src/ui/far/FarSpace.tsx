@@ -1,6 +1,6 @@
 // 다른 기기 보기(peer-panel) 오른쪽 스페이스 — 그 기기 홈(결정 대기 → 참모 → 맡긴 세션)·세션 엿보기(읽기 전용)·보관함(목록만)
-import { useMemo, useState } from 'react';
-import { remoteApi, remoteCardAnswer, remoteConnect, remoteConnectCancel, type RemoteDevice } from '../../data/remote';
+import { useEffect, useMemo, useState } from 'react';
+import { remoteApi, remoteCardAnswer, remoteConnect, remoteConnectCancel, remoteConnectNote, type RemoteDevice } from '../../data/remote';
 import { canRepair, pausedText } from '../../domain/peerDevices';
 import type { FarDot, FarSession } from '../../domain/farHome';
 import type { RemoteCard } from '../../domain/remoteCards';
@@ -111,6 +111,13 @@ export function FarSpace({ t, data, status, paused, onRepaired, cards, onAgent, 
 /** 계정 때문에 멈춘 짝 — 꺼진 기기('켜지면 저절로 이어져요')와 달리 기다려도 안 풀린다. 그 자리에서 다시 짝짓기(그 기기 사람이 카드에서 허용, QA 0.4.11 문제 3-2) */
 function FarPaused({ t, paused, onRepaired }: { t: FarTarget; paused: NonNullable<RemoteDevice['paused']>; onRepaired?: () => void }) {
   const [wait, setWait] = useState(false);
+  // 기다리는 동안 메일 결과(보냄·못 보냄)
+  const [waitNote, setWaitNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (!wait) { setWaitNote(null); return; }
+    const iv = setInterval(() => void remoteConnectNote(t.dev).then((n) => n && setWaitNote(n), () => {}), 1500);
+    return () => clearInterval(iv);
+  }, [wait, t.dev]);
   const [err, setErr] = useState<string | null>(null);
   const repair = () => {
     setErr(null);
@@ -120,7 +127,7 @@ function FarPaused({ t, paused, onRepaired }: { t: FarTarget; paused: NonNullabl
   return (
     <div className="far-empty">
       <b>{tr(`${josa(t.name, '과', '와')} 연결이 멈췄어요`, `The link to ${t.name} is paused`)}</b>
-      <span>{wait ? tr('그 기기에서 허용을 기다려요', 'Waiting for that device to allow') : pausedText(paused)}</span>
+      <span>{wait ? waitNote ?? tr('그 기기에서 허용을 기다려요', 'Waiting for that device to allow') : pausedText(paused)}</span>
       {canRepair(paused) && (wait
         ? <button className="btn" onClick={() => void remoteConnectCancel(t.dev)}>{tr('취소', 'Cancel')}</button>
         : <button className="btn pri" onClick={repair}>{tr('재연결', 'Pair again')}</button>)}

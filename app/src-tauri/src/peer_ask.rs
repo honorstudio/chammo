@@ -20,6 +20,10 @@ pub const WINDOW_MS: u64 = 10 * 60_000;
 pub const PER_WINDOW: usize = 5;
 /// 한꺼번에 허용을 기다리는 카드
 pub const MAX_WAITING: usize = 3;
+/// 메일 승인을 중계에 묻는 간격 — 요청한 기기가 2초마다 link-status 를 물을 때 이 간격으로만(5분에 60번 아래)
+pub const MAIL_POLL_MS: u64 = 5_000;
+/// 메일 승인을 실은 요청의 카드·기다림 — 메일 링크(중계 10분)보다 조금 길게. 요청이 먼저 오고 메일은 그 뒤에 나가서(11-12 저녁: 6분째 누른 승인이 버려졌다)
+pub const MAIL_TTL_MS: u64 = 11 * 60_000;
 
 /// 받는 쪽이 자기 테일넷에서 찾은 요청 기기 — 이름·OS·테일넷 이름은 요청이 아니라 이 기기 tailscale 이 말한 것
 #[derive(Debug, Clone, PartialEq)]
@@ -59,6 +63,15 @@ pub trait LinkEnv {
     fn close_card(&self, card: &str, done: bool, note: &str);
     /// 열쇠 둘을 만들어 이 기기에 걸고 (그 기기가 이 기기에 쓸 열쇠, 이 기기가 그 기기에 쓸 열쇠)
     fn commit(&self, peer: &LinkPeer) -> Result<(String, String), String>;
+    /// 계정 메일 승인(11-12) — 중계에 '그 기기(from, 증명을 지난 Chammo 기기 id)가 낸 이 요청이 메일로 승인됐나' 묻고 한 번 가져간다.
+    /// 서버가 말한 값만 — 부른 쪽이 승인됐다고 말할 길은 없다. 기본은 '아니'
+    fn mail_ok(&self, _from: &str, _req: &str) -> bool {
+        false
+    }
+    /// 증명을 지난 Chammo 기기의 이름(서버 기기 목록) — 카드에 테일넷 이름 대신 메일과 같은 이름을(11-12 저녁). 없으면 테일넷 이름
+    fn chammo_name(&self, _dev: &str) -> Option<String> {
+        None
+    }
     /// 같은 Chammo 계정 증명 확인(peer_account::verify_now) → 답 증명. ctx = 요청 번호
     fn bind(&self, b: &crate::peer_account::Bind, ctx: &str) -> Result<String, crate::peer_account::Verdict>;
 }
@@ -115,12 +128,16 @@ struct Incoming {
     at: u64,
     pick: Pick,
     decided: u64,
+    /// 요청한 기기가 계정 메일로 승인 링크를 보냈다고 했나(11-12) — 그때만 중계에 묻는다(승인 자체는 서버 답)
+    mail: bool,
+    mail_at: u64,
+    by_mail: bool,
 }
 
 impl Incoming {
     fn dead(&self, now: u64) -> bool {
         match self.pick {
-            Pick::Wait => now > self.at + TTL_MS,
+            Pick::Wait => now > self.at + if self.mail { MAIL_TTL_MS } else { TTL_MS },
             _ => now > self.decided + PICKUP_MS,
         }
     }
@@ -130,6 +147,14 @@ struct Outgoing {
     hash: String,
     node: String,
     at: u64,
+    /// 메일 승인 링크를 보냈다 — 메일 링크만큼 기다린다
+    long: bool,
+}
+
+impl Outgoing {
+    fn alive(&self, now: u64) -> bool {
+        now.saturating_sub(self.at) <= if self.long { MAIL_TTL_MS } else { TTL_MS } + PICKUP_MS
+    }
 }
 
 #[derive(Default)]
@@ -168,7 +193,7 @@ fn sweep(g: &mut Inner, env: &dyn LinkEnv, now: u64) {
         }
         false
     });
-    g.outgoing.retain(|o| now.saturating_sub(o.at) <= TTL_MS + PICKUP_MS);
+    g.outgoing.retain(|o| o.alive(now));
 }
 
 impl Asks {
@@ -180,6 +205,11 @@ impl Asks {
 
     /// /api/link-request — 되묻기(망)는 자물쇠 밖에서
     pub fn request(&self, env: &dyn LinkEnv, req: &str, node: &str, bind: &crate::peer_account::Bind, now: u64) -> Result<(), AskErr> {
+        self.request_mail(env, req, node, bind, false, now)
+    }
+
+    /// mail = 요청한 기기가 계정 메일로 승인 링크도 보냈다(11-12) — 카드는 그대로 띄우고, 기다리는 동안 중계에도 묻는다
+    pub fn request_mail(&self, env: &dyn LinkEnv, req: &str, node: &str, bind: &crate::peer_account::Bind, mail: bool, now: u64) -> Result<(), AskErr> {
         if !valid_req(req) || !valid_node(node) {
             return Err(AskErr::Bad);
         }
@@ -205,6 +235,9 @@ impl Asks {
         // 같은 Chammo 계정 컴퓨터인가 — 테일스케일 같은 계정만으론 모자란다(11-09: 다른 Chammo 계정으로 바꾼 PC 에 카드가 떴다). 카드를 띄우기 전에
         let proof = env.bind(bind, req).map_err(AskErr::Account)?;
         peer.chammo = Some(bind.device.clone());
+        if let Some(n) = env.chammo_name(&bind.device).filter(|n| !n.trim().is_empty()) {
+            peer.name = n;
+        }
         let mut g = self.lock();
         if let Some(i) = g.incoming.iter().position(|i| i.peer.id == node && i.pick == Pick::Wait) {
             let old = g.incoming.remove(i);
@@ -213,8 +246,8 @@ impl Asks {
         if g.incoming.iter().filter(|i| i.pick == Pick::Wait).count() >= MAX_WAITING {
             return Err(AskErr::TooMany);
         }
-        let card = env.card(&peer, now + TTL_MS).map_err(AskErr::Card)?;
-        g.incoming.push(Incoming { card, hash, proof, peer, at: now, pick: Pick::Wait, decided: 0 });
+        let card = env.card(&peer, now + if mail { MAIL_TTL_MS } else { TTL_MS }).map_err(AskErr::Card)?;
+        g.incoming.push(Incoming { card, hash, proof, peer, at: now, pick: Pick::Wait, decided: 0, mail, mail_at: 0, by_mail: false });
         Ok(())
     }
 
@@ -234,6 +267,7 @@ impl Asks {
             return Status::Unknown;
         }
         let h = hex_sha(req);
+        self.mail_check(env, req, &h, now);
         let mut g = self.lock();
         let mut at = None;
         for (n, i) in g.incoming.iter().enumerate() {
@@ -256,7 +290,7 @@ impl Asks {
                 let i = &g.incoming[n];
                 match env.commit(&i.peer) {
                     Ok((token, back)) => {
-                        env.close_card(&i.card, true, "연결됨");
+                        env.close_card(&i.card, true, if i.by_mail { "메일에서 승인해서 연결됐어요" } else { "연결됨" });
                         Status::Yes { token, back, proof: i.proof.clone() }
                     }
                     Err(e) => {
@@ -271,15 +305,48 @@ impl Asks {
         out
     }
 
+    /// 기다리는 요청이 메일로 승인됐나 — 간격(MAIL_POLL_MS)마다 한 번, 망은 자물쇠 밖에서. 승인이면 사람이 카드에서 허용한 것과 같은 자리로
+    fn mail_check(&self, env: &dyn LinkEnv, req: &str, h: &str, now: u64) {
+        let from = {
+            let mut g = self.lock();
+            let Some(i) = g.incoming.iter_mut().find(|i| ct_eq(h.as_bytes(), i.hash.as_bytes()) && i.pick == Pick::Wait && i.mail && !i.dead(now)) else { return };
+            if i.mail_at != 0 && now.saturating_sub(i.mail_at) < MAIL_POLL_MS {
+                return;
+            }
+            i.mail_at = now.max(1);
+            match i.peer.chammo.clone() {
+                Some(d) => d,
+                None => return,
+            }
+        };
+        if !env.mail_ok(&from, req) {
+            return;
+        }
+        let mut g = self.lock();
+        if let Some(i) = g.incoming.iter_mut().find(|i| ct_eq(h.as_bytes(), i.hash.as_bytes()) && i.pick == Pick::Wait && !i.dead(now)) {
+            i.pick = Pick::Yes;
+            i.decided = now;
+            i.by_mail = true;
+        }
+    }
+
     // ── 요청하는 쪽 ──
 
     /// 새 요청 번호 — 같은 기기에 낸 옛 요청은 죽는다
     pub fn start(&self, node: &str, now: u64) -> Result<String, String> {
         let req = crate::mobile_pair::random_hex(16).map_err(|e| e.to_string())?;
         let mut g = self.lock();
-        g.outgoing.retain(|o| o.node != node && now.saturating_sub(o.at) <= TTL_MS + PICKUP_MS);
-        g.outgoing.push(Outgoing { hash: hex_sha(&req), node: node.to_string(), at: now });
+        g.outgoing.retain(|o| o.node != node && o.alive(now));
+        g.outgoing.push(Outgoing { hash: hex_sha(&req), node: node.to_string(), at: now, long: false });
         Ok(req)
+    }
+
+    /// 메일 승인 링크를 보냈다 — 이 요청은 메일 링크만큼(MAIL_TTL_MS) 기다린다
+    pub fn long(&self, req: &str) {
+        let h = hex_sha(req);
+        if let Some(o) = self.lock().outgoing.iter_mut().find(|o| o.hash == h) {
+            o.long = true;
+        }
     }
 
     /// /api/link-check — 그 해시로 지금 요청 중인가
@@ -287,7 +354,7 @@ impl Asks {
         let g = self.lock();
         let mut hit = false;
         for o in &g.outgoing {
-            if ct_eq(hash.as_bytes(), o.hash.as_bytes()) && now.saturating_sub(o.at) <= TTL_MS + PICKUP_MS {
+            if ct_eq(hash.as_bytes(), o.hash.as_bytes()) && o.alive(now) {
                 hit = true;
             }
         }

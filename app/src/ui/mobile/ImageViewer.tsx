@@ -7,7 +7,7 @@ import { fileImage } from '../../data/web';
 import { fileError } from '../../domain/phoneFile';
 import { clampIn, fitContain, longFit, maxZoom, needOriginal, realScale, zoomAt } from '../../domain/zoom';
 import { IconClose } from '../Icons';
-import { ShareButton } from './ShareButton';
+import { SaveButtons } from './ShareButton';
 import { SheetPortal } from './BottomSheet';
 import { tr } from '../../i18n';
 
@@ -16,8 +16,9 @@ type Pt = { x: number; y: number };
 const mid = (t: TouchList): Pt => ({ x: (t[0]!.clientX + t[1]!.clientX) / 2, y: (t[0]!.clientY + t[1]!.clientY) / 2 });
 const gap = (t: TouchList) => Math.hypot(t[0]!.clientX - t[1]!.clientX, t[0]!.clientY - t[1]!.clientY);
 
-/** path = 맥 파일(보여 준 것) · load = 다른 길(팀 대화 그림은 맥이 풀어 준 것, 11-01) — original 이면 원본 */
-export function ImageViewer({ path, title, onClose, load = (original: boolean) => fileImage(path!, original) }: { path?: string; title: string; onClose: () => void; load?: (original: boolean) => Promise<{ url: string; w: number; h: number }> }) {
+/** path = 맥 파일(보여 준 것) · load = 다른 길(팀 대화 그림은 맥이 풀어 준 것, 11-01) — original 이면 원본.
+ *  team = 팀 파일이면 그 id — 머리 받기·공유가 팀 받기 길로(11-12) */
+export function ImageViewer({ path, team, title, onClose, load = (original: boolean) => fileImage(path!, original) }: { path?: string; team?: { team: string; id: string }; title: string; onClose: () => void; load?: (original: boolean) => Promise<{ url: string; w: number; h: number }> }) {
   const stage = useRef<HTMLDivElement>(null);
   const [img, setImg] = useState<{ url: string; w: number; h: number; served: number; original: boolean } | null>(null);
   const [err, setErr] = useState<{ text: string; gone: boolean } | null>(null);
@@ -124,7 +125,7 @@ export function ImageViewer({ path, title, onClose, load = (original: boolean) =
     <div className="m-iv" role="dialog" aria-label={title} style={{ background: `rgba(0, 0, 0, ${1 - Math.min(0.6, drop / 400)})` }}>
       <div className="m-iv-head">
         <b className="m-iv-title">{title}</b>
-        {path && <ShareButton path={path} cls="m-icon m-iv-x" />}
+        {(path || team) && <SaveButtons path={path} team={team} cls="m-icon m-iv-x" />}
         <button type="button" className="m-icon m-iv-x" onClick={onClose} aria-label={tr('닫기', 'Close')} title={tr('닫기', 'Close')}><IconClose /></button>
       </div>
       <div ref={stage} data-zoom className="m-iv-stage" onTouchStart={start} onTouchMove={move} onTouchEnd={end} onTouchCancel={end}>

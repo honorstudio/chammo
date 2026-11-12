@@ -8,7 +8,7 @@ import { machine, tr } from '../../i18n';
 import { IconPlay } from '../Icons';
 import { wordDocToHtml } from '../md';
 import { useBlobUrl } from './useBlobUrl';
-import { ShareButton } from './ShareButton';
+import { SaveButtons } from './ShareButton';
 import { BottomSheet } from './kit';
 import { SheetTable } from './SheetTable';
 
@@ -25,7 +25,7 @@ function OpenOnMac({ path }: { path: string }) {
 
 /** 오피스·영상 보기 틀 — 공용 시트(전체 덮기), 머리 = 제목 + 폰으로 받기 + 닫기 */
 function View({ path, title, video, onClose, children }: { path: string; title: string; video?: boolean; onClose: () => void; children: ReactNode }) {
-  return <BottomSheet kind="full" className={video ? 'm-video' : undefined} label={title} title={title} titleClass="m-view-title" actions={<ShareButton path={path} />} onClose={onClose}>{children}</BottomSheet>;
+  return <BottomSheet kind="full" className={video ? 'm-video' : undefined} label={title} title={title} titleClass="m-view-title" actions={<SaveButtons path={path} />} onClose={onClose}>{children}</BottomSheet>;
 }
 
 export function OfficeSheet({ path, title, onClose }: { path: string; title: string; onClose: () => void }) {

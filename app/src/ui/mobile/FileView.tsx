@@ -12,7 +12,7 @@ import HtmlSheet from './HtmlSheet';
 import { OfficeSheet, VideoSheet } from './OfficeSheet';
 import VideoReviewSheet from './VideoReviewSheet';
 import { CodeText, CsvTable, MdDoc } from './FileText';
-import { ShareButton } from './ShareButton';
+import { SaveButtons } from './ShareButton';
 import { BottomSheet } from './kit';
 import { IconChatSend } from '../Icons';
 import { askRef } from '../refBus';
@@ -45,7 +45,7 @@ function TextView({ path, data, kind, title, at, orch, onClose }: { path: string
   }, [path, data]);
   return (
     <BottomSheet kind="full" label={title} title={title} titleClass="m-view-title m-view-file" onClose={onClose}
-      actions={<>{send && <button type="button" className="m-rt-btn m-ico" onClick={send} aria-label={tr(`${assistant()}에게 보내기`, `Send to ${assistant()}`)} title={tr(`${assistant()}에게 보내기`, `Send to ${assistant()}`)}><IconChatSend /></button>}<ShareButton path={path} /></>}>
+      actions={<>{send && <button type="button" className="m-rt-btn m-ico" onClick={send} aria-label={tr(`${assistant()}에게 보내기`, `Send to ${assistant()}`)} title={tr(`${assistant()}에게 보내기`, `Send to ${assistant()}`)}><IconChatSend /></button>}<SaveButtons path={path} /></>}>
       <div className="m-view-body">
         {data && blob && <img src={blob} alt={title} />}
         {text !== null && (kind === 'md' ? <MdDoc path={path} text={text} at={at} />

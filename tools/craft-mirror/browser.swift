@@ -42,6 +42,7 @@ final class BrowserMirror: NSObject, SCStreamOutput, SCStreamDelegate {
     var inputCB: BrowserInputCB?
     var inputCtx: UnsafeMutableRawPointer?
     var lastMove: CFTimeInterval = 0
+    var held = false  // 그림 안에서 누른 채(뗄 때까지)
     let cursor = CAShapeLayer()
     weak var window: NSWindow?
     let pid: pid_t
@@ -252,10 +253,13 @@ final class BrowserMirror: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     /// 뷰 좌표(아래 원점) → 페이지 비율(위 원점, 0~1). 그림 밖이면 nil
-    static func ratio(_ p: CGPoint, in r: CGRect, flipped: Bool, height: CGFloat) -> CGPoint? {
+    /// clamp = 누른 채 끄는 중 — 그림 밖으로 나가도 가장자리로 붙인다(밖에서 뗀 놓기를 버리면 페이지는 끄는 채로 남는다)
+    static func ratio(_ p: CGPoint, in r: CGRect, flipped: Bool, height: CGFloat, clamp: Bool = false) -> CGPoint? {
+        guard r.width > 0, r.height > 0 else { return nil }
         let y = flipped ? p.y : height - p.y
         let top = flipped ? r.minY : height - r.maxY
         let x = (p.x - r.minX) / r.width, yy = (y - top) / r.height
+        if clamp { return CGPoint(x: min(max(x, 0), 1), y: min(max(yy, 0), 1)) }
         return (0...1).contains(x) && (0...1).contains(yy) ? CGPoint(x: x, y: yy) : nil
     }
 
@@ -271,7 +275,11 @@ final class BrowserMirror: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     func mouse(_ type: String, _ e: NSEvent, focus: Bool = false) {
-        guard status == 1, let p = BrowserMirror.ratio(view.convert(e.locationInWindow, from: nil), in: contentRect(), flipped: view.isFlipped, height: view.bounds.height) else { return }
+        // 누름이 그림 안에서 시작했으면 뗄 때까지(밖으로 끌어도 맥이 이 뷰에 준다) 가장자리로 붙여 보낸다
+        let clamp = held && type != "mousePressed"
+        if type == "mouseReleased" { held = false }  // 못 보내도 푼다 — 남으면 다음 지나가는 이동까지 가장자리로 붙는다
+        guard status == 1, let p = BrowserMirror.ratio(view.convert(e.locationInWindow, from: nil), in: contentRect(), flipped: view.isFlipped, height: view.bounds.height, clamp: clamp) else { return }
+        if type == "mousePressed" { held = true }
         // 지나가는 이동은 초당 60번까지만
         if type == "mouseMoved" {
             let now = CACurrentMediaTime()

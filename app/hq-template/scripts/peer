@@ -13,8 +13,9 @@ Without Tailscale (the default) use scripts/team self-say — same Chammo accoun
   scripts/peer list                                    devices with Chammo on your tailnet: connected / not connected,
                                                        the Chammo account it is signed in to (other data folders too)
                                                        and the assistants on each connected device
-  scripts/peer connect <device>                        first time only — a card pops up on that device; once the person there
-                                                       presses Allow, both sides can talk (waits up to 6 min). No code needed
+  scripts/peer connect <device>                        first time only: a card appears on that device and an approval link goes to
+                                                       the account email. Press Allow on the card or Approve in the email,
+                                                       and both sides can talk (waits up to 12 min with the email, 6 without). No code needed
   scripts/peer pair <device> <code>                    fallback for an old version — the code comes from that device's
                                                        Settings > Devices > Phone (or a phone already paired with it). The user reads it to you
   scripts/peer unpair <device>                         forget the key on this device (the other device can also cut it there)
@@ -86,7 +87,7 @@ def parse(argv):
     return None, USAGE
 
 
-def ask(data, arg, wait):
+def ask(data, arg, wait, on_note=None):
     """app.jsonl 에 한 줄 쓰고 <데이터>/peer.txt 의 답을 기다린다 — (종료 코드, 답 dict 또는 오류 글)"""
     rid = uuid.uuid4().hex[:12]
     os.makedirs(data, exist_ok=True)
@@ -95,8 +96,16 @@ def ask(data, arg, wait):
         f.write(json.dumps(line, ensure_ascii=False) + '\n')
     out = os.path.join(data, 'peer.txt')
     mine = os.path.join(data, 'answers', f'peer-{rid}.txt')  # 부탁마다 따로인 자리 — 겹친 부탁의 답이 한 칸을 덮어도 내 답은 남는다
+    note = os.path.join(data, 'answers', f'peer-{rid}.note')  # 연결 중 알림(메일 보냄·못 보냄) — 기다리는 동안 바로 찍는다
     end = time.time() + wait
     while time.time() < end:
+        if on_note and os.path.exists(note):
+            try:
+                with open(note, encoding='utf-8') as f:
+                    on_note(f.read().strip())
+                os.remove(note)
+            except OSError:
+                pass
         for p in (mine, out):
             try:
                 with open(p, encoding='utf-8') as f:
@@ -139,6 +148,10 @@ def show_list(ans):
         print('no other device with Chammo on this Tailscale account / 같은 테일스케일 계정에 참모가 있는 다른 기기가 없어')
     word = {'connected': 'connected / 연결됨', 'pair': 'not connected / 연결 안 됨 — scripts/peer connect', 'offline': 'not connected (offline) / 연결 안 됨(꺼져 있음)'}
     for d in devs:
+        if d.get('status') == 'account':
+            # 멈춘 짝 — 왜 멈췄는지(앱이 준 사람 말)와 다시 잇는 명령
+            print(f'- {d.get("name")} — paused / 멈춤: {d.get("pausedWord") or d.get("paused") or "?"} (scripts/peer connect {d.get("name")})')
+            continue
         print(f'- {d.get("name")} — {word.get(d.get("status"), d.get("status"))}' + (' (old version / 옛 판)' if d.get('old') else ''))
         for a in d.get('accounts') or []:
             who = a.get('email') or a.get('name') or ''
@@ -191,9 +204,10 @@ def main(argv, env=os.environ):
     if arg['verb'] == 'reply':
         return wait_reply(data, arg['device'], arg['cid'], arg['wait'])
     if arg['verb'] == 'connect':
-        # 그 기기 사람이 카드에서 허용할 때까지 앱이 붙잡는다(5분 + 받아 가기 1분)
-        print('asking that device — the person there presses Allow on the card / 그 기기에 카드를 띄웠어 — 그쪽 사람이 허용하면 이어져', file=sys.stderr)
-        code, ans = ask(data, arg, 400)
+        # 그 기기 카드나 메일에서 허용할 때까지 앱이 붙잡는다
+        print('asking that device: press Allow on its card, or Approve in the email link / 그 기기에 허용 카드를 띄우고 계정 메일로 승인 링크도 보내요. 카드 허용이나 메일 승인 중 하나면 연결돼요', file=sys.stderr)
+        # 메일 승인 링크를 보냈으면 11분 + 받아 가기 1분까지 앱이 붙잡는다
+        code, ans = ask(data, arg, 760, on_note=lambda n: print(n, file=sys.stderr, flush=True))
         if code or not isinstance(ans, dict) or not ans.get('ok'):
             err = ans.get('error') if isinstance(ans, dict) else ans
             print(f'failed / 못 했어: {err or "failed"}', file=sys.stderr)

@@ -26,7 +26,7 @@ pub fn route(path: &str) -> String {
 /// 무거운 길인가 — 디스크를 훑거나 큰 몸을 나르거나 다른 컴퓨터 답을 기다리는 것(/api/peer-cards 5.3초, 11-07). 모르는 길은 가벼운 쪽으로 친다
 pub fn heavy(path: &str) -> bool {
     let p = path.split('?').next().unwrap_or("");
-    const HEAVY: &[&str] = &["/api/file", "/api/attach", "/api/team-locker", "/api/team-file", "/api/team-media", "/api/locker", "/api/peer-", "/api/dl", "/api/media", "/api/html", "/api/browser-frame"];
+    const HEAVY: &[&str] = &["/api/file", "/api/attach", "/api/team-locker", "/api/team-file", "/api/team-media", "/api/team-dl", "/api/locker", "/api/peer-", "/api/dl", "/api/media", "/api/html", "/api/browser-frame"];
     HEAVY.iter().any(|h| p.starts_with(h))
 }
 
@@ -208,6 +208,7 @@ mod tests {
     fn 무거운_길을_가른다() {
         assert!(heavy("/api/file?path=x"));
         assert!(heavy("/api/team-locker-put"));
+        assert!(heavy("/api/team-dl"), "팀 파일 받기 — 맥이 목록을 받을 수 있다(11-12)");
         assert!(heavy("/api/peer-cards"), "다른 컴퓨터 답을 기다리는 길 — 5.3초를 가벼운 칸에서 쥐고 있었다");
         assert!(heavy("/api/peer-get?dev=a"));
         assert!(!heavy("/api/sessions?since=a"));

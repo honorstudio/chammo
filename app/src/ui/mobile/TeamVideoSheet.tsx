@@ -9,6 +9,7 @@ import { IconClose, IconRefresh } from '../Icons';
 import { vrCopy, teamVideoCopy as c } from '../videoReview/copy';
 import { BottomSheet } from './kit';
 import VideoReviewSheet from './VideoReviewSheet';
+import { SaveButtons } from './ShareButton';
 
 const POLL_MS = 1000;
 
@@ -32,7 +33,9 @@ export default function TeamVideoSheet({ team, id, name, orch, onClose }: { team
   // 다 받은 뒤 새 표(만료·끊김)도 같은 길 — 맥은 받은 자리를 기억해 바로 준다
   const reload = useCallback((): Promise<MediaTicket> => teamMedia(team, id).then((r) => (r.state === 'ready' ? r : Promise.reject(new Error(r.state)))), [team, id]);
 
-  if (st?.state === 'ready') return <VideoReviewSheet path={st.path} title={name} orch={orch} onClose={onClose} load={reload} />;
+  // 받기·공유(11-12) — 받는 중 화면에도, 다 받은 영상 검토 머리에도. 받기는 맥이 받아 둔 같은 파일을 받기 표로 넘긴다
+  const save = <SaveButtons team={{ team, id }} />;
+  if (st?.state === 'ready') return <VideoReviewSheet path={st.path} title={name} orch={orch} onClose={onClose} load={reload} extra={save} />;
 
   const note = st ? teamMediaNote(st) : { k: 'open' as const };
   const failed = broke || note.k === 'fail';
@@ -45,6 +48,7 @@ export default function TeamVideoSheet({ team, id, name, orch, onClose }: { team
     <BottomSheet kind="full" className="m-vr" label={name} onClose={onClose} head={
       <div className="m-picker-head m-vr-head vr-phone-svg">
         <b className="m-view-title">{name}</b>
+        {save}
         <button type="button" className="m-rt-btn m-ico" onClick={onClose} aria-label={vrCopy.close()} title={vrCopy.close()}><IconClose /></button>
       </div>}>
       <div className="vr phone">

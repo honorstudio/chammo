@@ -2,7 +2,7 @@
 // 0.3.2: 같은 계정 기기는 목록에 바로 뜨고 '연결'을 누르면 그 기기에 허용 카드가 뜬다 → 그쪽 사람이 허용하면 양쪽이 이어진다.
 // 코드(그 기기 설정 > 폰의 연결 코드)는 대피로 — 옛 판이거나 되묻기가 안 닿을 때. 열쇠는 이 기기 키체인(윈도우는 자격 증명 관리자)에만. 참모끼리 말은 scripts/peer 로
 import { useEffect, useState } from 'react';
-import { remoteApi, remoteConnect, remoteConnectCancel, remoteDevices, remoteLogoutAsk, remotePair, remoteUnpair, type RemoteDevice } from '../data/remote';
+import { remoteApi, remoteConnect, remoteConnectCancel, remoteConnectNote, remoteDevices, remoteLogoutAsk, remotePair, remoteUnpair, type RemoteDevice } from '../data/remote';
 import { teamStatus } from '../data/teamApi';
 import { peerAccount, type HereAccount } from '../domain/chammoHere';
 import { remoteAssistants, type RemoteAssistant } from '../domain/remoteChat';
@@ -19,6 +19,15 @@ export function PeerSection({ title }: { title: string }) {
   const [busy, setBusy] = useState(false);
   // 허용을 기다리는 기기들 — 기다리는 동안에도 다른 줄은 만질 수 있다
   const [waiting, setWaiting] = useState<string[]>([]);
+  // 기다리는 동안 메일 결과(보냄·못 보냄) — 못 보냈으면 그 기기 카드만 남았다는 걸 바로 알게(11-12 저녁)
+  const [waitNote, setWaitNote] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!waiting.length) return;
+    const t = setInterval(() => {
+      for (const id of waiting) void remoteConnectNote(id).then((n) => n && setWaitNote((m) => (m[id] === n ? m : { ...m, [id]: n })), () => {});
+    }, 1500);
+    return () => clearInterval(t);
+  }, [waiting]);
   // 코드를 넣는 중인 기기(대피로)
   const [pairing, setPairing] = useState<string | null>(null);
   const [code, setCode] = useState('');
@@ -75,7 +84,10 @@ export function PeerSection({ title }: { title: string }) {
     void remoteConnect(d.id).then(load, (e: unknown) => {
       const m = String(e);
       if (!m.includes('취소')) setErr(`${d.name}: ${m}`);
-    }).finally(() => setWaiting((w) => w.filter((x) => x !== d.id)));
+    }).finally(() => {
+      setWaiting((w) => w.filter((x) => x !== d.id));
+      setWaitNote(({ [d.id]: _, ...rest }) => rest);
+    });
   };
 
   return (
@@ -98,6 +110,7 @@ export function PeerSection({ title }: { title: string }) {
               <div className="su-row-text">
                 <b title={d.name}>{d.name}</b>
                 <span className={d.status === 'connected' ? 'peer-on' : undefined}>{v.extra ? `${v.word} · ${v.extra}` : v.word}</span>
+                {wait && waitNote[d.id] && <span>{waitNote[d.id]}</span>}
                 {pa?.main && <span>{pa.main.signedIn ? tr(`${pa.main.who} 계정`, `${pa.main.who} account`) : tr('Chammo 계정 로그인 안 됨', 'Not signed in to Chammo')}{pa.main.other && <> · <span className="acct-st-out">{tr('다른 계정', 'Another account')}</span></>}</span>}
                 {pa?.others.map((o) => <span key={o.folder}>{o.folder} · {o.who}{o.other && <> · <span className="acct-st-out">{tr('다른 계정', 'Another account')}</span></>}</span>)}
               </div>

@@ -1054,6 +1054,11 @@ pub fn name_of(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, id: &str
     find(dir, kc, http, team, id).map(|(_, _, _, _, o)| o.meta.name)
 }
 
+/// 이름·평문 크기 — 목록 기억으로(없으면 목록을 한 번). 폰 팀 파일 받기가 받기 전에 크기를 본다(11-12)
+pub fn name_size_of(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, id: &str) -> Result<(String, u64), String> {
+    find(dir, kc, http, team, id).map(|(_, _, _, _, o)| (core::safe_file_name(&o.meta.name), o.meta.size))
+}
+
 /// 미리보기·카드 썸네일 — 같은 자리에, 50MiB 까지
 pub fn peek(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, id: &str) -> Result<PathBuf, String> {
     let st = relay::load_state(dir);

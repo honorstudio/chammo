@@ -648,6 +648,12 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-menu { position: relative; display: flex; flex-direction: column; gap: 2px; margin: 0 8px calc(8px + env(safe-area-inset-bottom)); padding: 8px; border-radius: 16px; background: var(--surface); box-shadow: 0 8px 30px rgba(0, 0, 0, .25); transition: transform .3s cubic-bezier(.22, 1, .36, 1); touch-action: pan-y; }
 .m-menu-wrap.m-kb .m-menu { margin-bottom: 8px; }
 .m-menu-title { padding: 6px 10px 8px; font-size: 13px; color: var(--text-3); }
+/* 카드 머리 단추 줄(팀 파일 길게 누르기 — 받기·공유, 11-12): 제목은 줄여서 자르고 단추는 오른쪽 끝, 받는 중 글은 제목과 단추 사이 */
+.m-menu-head { display: flex; align-items: center; gap: 2px; min-width: 0; margin: -4px -2px 0 0; }
+.m-menu-head > .m-menu-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-menu-head > .m-share-st { margin-left: 0; flex: 0 1 auto; }
+.m-menu-head.m-wait button { pointer-events: none; }
+.m-menu-note { padding: 0 10px; }
 .m-menu-item { min-height: 48px; padding: 0 12px; border: 0; border-radius: 10px; background: transparent; color: var(--text); font: inherit; font-size: 16px; text-align: left; }
 .m-menu-item:active { background: var(--surface-2); }
 .m-menu-item.m-danger-ink { color: #d33b3b; }

@@ -39,8 +39,8 @@ describe('peerView — 같은 Chammo 계정이 아니라 멈춘 짝(11-09 보안
   it('상대가 로그아웃·다른 계정 → 연결 멈춤 · 한 줄 · 다시 짝짓기(연결) + 끊기', () => {
     expect(peerView(D({ status: 'account', paused: 'other' }), false)).toEqual({ word: '연결 멈춤', extra: '계정이 바뀌어 연결이 멈췄어요 — 재연결해 주세요', connect: true, unlink: true, code: false });
   });
-  it('계정이 안 묶인 옛 짝도 같은 한 줄', () => {
-    expect(peerView(D({ status: 'account', paused: 'unbound' }), false).extra).toBe('계정이 바뀌어 연결이 멈췄어요 — 재연결해 주세요');
+  it('계정이 안 묶인 옛 짝은 예전 방식이라 재연결(11-12 — 계정이 바뀐 게 아니다)', () => {
+    expect(peerView(D({ status: 'account', paused: 'unbound' }), false)).toMatchObject({ extra: '예전 방식으로 연결한 컴퓨터예요. 지금 방식으로 재연결해 주세요', connect: true });
   });
   it('이 기기가 로그아웃 → 로그인부터(연결 단추 없음)', () => {
     expect(peerView(D({ status: 'account', paused: 'nologin' }), false)).toMatchObject({ word: '연결 멈춤', connect: false, unlink: true });
@@ -74,5 +74,13 @@ describe('계정 때문에 멈춘 짝 — QA 0.4.11 문제 3-1·3-2·3-3', () =>
     expect(tailscaleNeedsLook([D({}), D({ id: 'n2', status: 'account', paused: 'other' })], [])).toBe(true);
     expect(tailscaleNeedsLook([], [{ direct: true }])).toBe(true);
     expect(tailscaleNeedsLook([D({}), D({ id: 'n2', status: 'offline' })], [{ direct: false }, {}])).toBe(false);
+  });
+});
+
+describe('pausedText — 예전 방식 짝(11-12)', () => {
+  it('계정이 안 묶인 옛 짝은 계정이 바뀐 게 아니라 다시 연결이 필요하다고', () => {
+    expect(pausedText('unbound')).toContain('예전 방식');
+    expect(pausedText('unbound')).not.toContain('계정이 바뀌어');
+    expect(pausedText('other')).toContain('계정이 바뀌어');
   });
 });

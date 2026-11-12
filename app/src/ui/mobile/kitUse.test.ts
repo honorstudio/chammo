@@ -19,7 +19,7 @@ describe('공용 조각 쓰기', () => {
     expect(src('BottomSheet.tsx')).toMatch(/<SheetHead/);
   });
   it('파일 받기(폰으로 받기) 버튼은 시트 머리 안 — 닫기 X 와 같은 줄', () => {
-    for (const f of ['FileView.tsx', 'PdfSheet.tsx', 'OfficeSheet.tsx']) expect(src(f), f).toMatch(/<SheetHead[^]*?<ShareButton[^]*?<\/SheetHead>|<BottomSheet[^>]*actions=\{[^]*?<ShareButton/); // 공용 시트 actions = 머리 안
+    for (const f of ['FileView.tsx', 'PdfSheet.tsx', 'OfficeSheet.tsx']) expect(src(f), f).toMatch(/<SheetHead[^]*?<SaveButtons[^]*?<\/SheetHead>|<BottomSheet[^>]*actions=\{[^]*?<SaveButtons/); // 공용 시트 actions = 머리 안(받기·공유 쌍, 11-12)
   });
   it("폰 화면 어디에도 '닫기' 글자 버튼이 없다 — X 아이콘", () => {
     const bad = Object.entries(files).filter(([, t]) => />닫기<\/button>/.test(t)).map(([f]) => f);

@@ -277,6 +277,8 @@ export const openOnMac = (path: string) => post<{ ok: true }>('/api/open-mac', {
 export const htmlTicket = (path: string) => post<{ url: string }>('/api/html-ticket', { path });
 /** 받기 표 — 보여 준 파일 원본(진짜 MIME·attachment·Range). 표 주소라 열쇠 없이 링크로도 받는다 */
 export const dlTicket = (path: string) => post<{ url: string; size: number; name: string; mime: string }>('/api/dl-ticket', { path });
+/** 팀 파일 받기(11-12) — 맥이 팀 보관함에서 받아 푸는 동안 진행, 다 되면 받기 표(/api/dl, 형식 가리지 않음·200MB 까지). 다시 물으면 같은 받기를 본다 */
+export const teamDl = (team: string, id: string) => post<import('../domain/phoneShare').TeamDlStep>('/api/team-dl', { team, id });
 /** 시안 검토 표시 — 맥 curation/ 에(데스크톱과 같은 파일) */
 export const curationSave = (path: string, text: string, store: unknown) => post<{ ok: true }>('/api/curation', { path, text, store });
 export const curationState = (path: string) => getText(`/api/curation-state?path=${encodeURIComponent(path)}`);

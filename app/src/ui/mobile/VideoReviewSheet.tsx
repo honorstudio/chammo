@@ -1,6 +1,6 @@
 // 폰 영상 검토 — 참모가 보여 준 영상. 준비된 저용량(540p, 256KB 씩)을 표로 받고, 끄는 동안은 그림 묶음만 보여 준다.
 // 저용량이 아직이면 진행을 보이며 기다리고, 도우미가 없거나(윈도우) 실패하면 원본 + LTE 확인. 기록·보내기는 시안 검토와 같은 길
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { curationSave, curationState, mediaTicket, type MediaTicket } from '../../data/web';
 import { canCurSend, curSendState, readCurSent, writeCurSent, type CurSend } from '../../domain/curation';
 import { askBeforePlay, fileError, sizeLabel } from '../../domain/phoneFile';
@@ -16,7 +16,8 @@ import { sendOut, storage } from './outbox';
 const POLL_MS = 2000;
 
 /** load = 표 받기(기본 보여 준 영상 /api/media-ticket — 팀 보관함 영상은 TeamVideoSheet 가 /api/team-media 로) */
-export default function VideoReviewSheet({ path, title, orch, onClose, load: loadTicket }: { path: string; title: string; orch: string; onClose: () => void; load?: () => Promise<MediaTicket> }) {
+/** extra = 머리 닫기 앞에 더 둘 단추(팀 영상 받기·공유, 11-12) */
+export default function VideoReviewSheet({ path, title, orch, onClose, load: loadTicket, extra }: { path: string; title: string; orch: string; onClose: () => void; load?: () => Promise<MediaTicket>; extra?: ReactNode }) {
   const [tk, setTk] = useState<MediaTicket | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [agreed, setAgreed] = useState(false);
@@ -99,6 +100,7 @@ export default function VideoReviewSheet({ path, title, orch, onClose, load: loa
         {say && <span className={`m-cur-st ${st}`} role="status">{say}</span>}
         <span className="m-vr-n">{notes.notes.length}</span>
         <button type="button" className={`m-rt-btn m-ico m-vr-send ${st}`} disabled={!notes.notes.length || !canCurSend(st)} onClick={() => void send()} aria-label={sendLabel} title={sendLabel}><IconSend /></button>
+        {extra}
         <button type="button" className="m-rt-btn m-ico" onClick={onClose} aria-label={c.close()} title={c.close()}><IconClose /></button>
       </div>}>
       <VideoReviewBody src={src && src.kind !== 'wait' && !need ? src.url : null} phone sprite={sprite} spriteUrl={spriteUrl} veil={veil} notes={notes} onDuration={setDur} onClose={onClose} onVideoError={onVideoError} resumeAt={resumeAt} />

@@ -28,6 +28,11 @@ struct BrowserTest {
         check(BrowserMirror.ratio(CGPoint(x: 500, y: 350), in: r, flipped: false, height: 700) == CGPoint(x: 0.5, y: 0.5), "가운데는 0.5")
         check(BrowserMirror.ratio(CGPoint(x: 50, y: 350), in: r, flipped: false, height: 700) == nil, "그림 밖(여백)은 안 보낸다")
         check(BrowserMirror.ratio(CGPoint(x: 500, y: 175), in: r, flipped: true, height: 700) == CGPoint(x: 0.5, y: 0.25), "위 원점 뷰도")
+        // 누른 채 끄는 중(clamp) — 그림 밖은 가장자리로 붙여 보낸다(밖에서 뗀 놓기를 잃지 않게, 11-11 캡차 끌기)
+        check(BrowserMirror.ratio(CGPoint(x: 50, y: 350), in: r, flipped: false, height: 700, clamp: true) == CGPoint(x: 0, y: 0.5), "왼쪽 여백 → 왼쪽 가장자리")
+        check(BrowserMirror.ratio(CGPoint(x: 1200, y: -40), in: r, flipped: false, height: 700, clamp: true) == CGPoint(x: 1, y: 1), "뷰 밖 아래·오른쪽 → 오른쪽 아래 구석")
+        check(BrowserMirror.ratio(CGPoint(x: 500, y: 350), in: r, flipped: false, height: 700, clamp: true) == CGPoint(x: 0.5, y: 0.5), "안은 그대로")
+        check(BrowserMirror.ratio(CGPoint(x: 5, y: 5), in: .zero, flipped: false, height: 700, clamp: true) == nil, "그림 자리를 모르면 안 보낸다")
         // 덮였을 때 깔 마지막 그림 — 그림 길(CGImage)도 읽는다
         let cs = CGColorSpaceCreateDeviceRGB()
         let ctx = CGContext(data: nil, width: 4, height: 3, bitsPerComponent: 8, bytesPerRow: 0, space: cs, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!

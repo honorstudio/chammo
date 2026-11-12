@@ -15,6 +15,8 @@ struct Ops {
     fail: Option<&'static str>,
     /// 이 기기에 테일스케일이 안 깔림(remote::NO_TAILSCALE)
     no_ts: bool,
+    /// 목록 끝에 더할 줄
+    more: Vec<DeviceView>,
 }
 
 impl PeerOps for Ops {
@@ -22,7 +24,9 @@ impl PeerOps for Ops {
         if self.no_ts {
             return Err(crate::remote::NO_TAILSCALE.into());
         }
-        Ok(DevicesOut { me: "laptop".into(), devices: vec![dev("nA", "office-imac", "connected"), dev("nB", "office-pc", "pair"), dev("nC", "office-mini", "offline")] })
+        let mut devices = vec![dev("nA", "office-imac", "connected"), dev("nB", "office-pc", "pair"), dev("nC", "office-mini", "offline")];
+        devices.extend(self.more.iter().cloned());
+        Ok(DevicesOut { me: "laptop".into(), devices })
     }
     fn pair(&self, id: &str, code: &str) -> Result<(), String> {
         self.calls.borrow_mut().push(format!("pair {id} {code}"));
@@ -32,8 +36,9 @@ impl PeerOps for Ops {
         self.calls.borrow_mut().push(format!("unpair {id}"));
         Ok(())
     }
-    fn connect(&self, id: &str) -> Result<(), String> {
+    fn connect(&self, id: &str, note: &dyn Fn(&str)) -> Result<(), String> {
         self.calls.borrow_mut().push(format!("connect {id}"));
+        note("mail-failed:os error 49");
         if id == "nC" { Err("그 기기에서 거절했어요".into()) } else { Ok(()) }
     }
     fn call(&self, id: &str, method: &str, path: &str, body: Option<&str>) -> Result<CallOut, String> {
@@ -46,6 +51,9 @@ impl PeerOps for Ops {
             Some((_, s, t)) => CallOut { status: *s, text: Some((*t).into()), b64: None },
             None => CallOut { status: 404, text: Some("not found".into()), b64: None },
         })
+    }
+    fn note(&self, rid: &str, text: &str) {
+        self.calls.borrow_mut().push(format!("note {rid} {text}"));
     }
     fn who(&self, by: &str) -> String {
         if by == "sess-1" { "참모-2 · 영상".into() } else { String::new() }
@@ -166,7 +174,7 @@ fn pe_연결은_그_기기에_허용을_묻고_이미_연결됐으면_안_묻는
     let a = answer(&ask("office-mini"), &ops);
     assert_eq!(a["ok"], false);
     assert!(a["error"].as_str().unwrap().contains("거절"));
-    assert_eq!(*ops.calls.borrow(), ["connect nB", "connect nC"]);
+    assert_eq!(ops.calls.borrow().iter().filter(|c| c.starts_with("connect ")).collect::<Vec<_>>(), ["connect nB", "connect nC"]);
     assert!(request(&line(serde_json::json!({ "verb": "connect", "device": "x" }))).is_some());
 }
 
@@ -190,3 +198,50 @@ fn 테일스케일이_없으면_self_say_로_안내하고_테일스케일을_권
         assert!(!e.contains("켜") && !e.contains("install"), "{verb}: 테일스케일을 켜라·깔아라 하지 않는다: {e}");
     }
 }
+
+fn stale(id: &str, name: &str) -> DeviceView {
+    DeviceView { paused: Some("unbound"), ..dev(id, name, "account") }
+}
+
+// 11-12 — 같은 이름의 옛 테일넷 짝(계정 안 묶임)과 새 중계 짝이 같이 있으면 이름으로 부를 때 묶인 쪽이 이긴다
+#[test]
+fn 같은_이름이_둘이면_계정이_묶인_쪽을_고른다() {
+    let (old, relay) = (stale("nOLD", "Front-Desk"), dev("relay:hub-1", "front-desk", "connected"));
+    for list in [vec![old.clone(), relay.clone()], vec![relay.clone(), old.clone()]] {
+        assert_eq!(find_device(&list, "front-desk").unwrap().id, "relay:hub-1");
+        assert_eq!(find_device(&list, "Front-Desk").unwrap().id, "relay:hub-1", "이름이 글자까지 같은 옛 줄보다 묶인 줄");
+        assert_eq!(find_device(&list, "front").unwrap().id, "relay:hub-1", "앞부분도");
+        assert_eq!(find_device(&list, "nOLD").unwrap().id, "nOLD", "id 로 부르면 그 줄");
+    }
+    // 둘 다 멀쩡하면 옛 규칙 그대로(앞 줄)
+    let two = vec![dev("nX", "box", "connected"), dev("relay:x", "box", "connected")];
+    assert_eq!(find_device(&two, "box").unwrap().id, "nX");
+}
+
+#[test]
+fn 목록은_멈춘_이유를_사람_말로_싣는다() {
+    let ops = Ops { more: vec![stale("nOLD", "front-desk")], ..Default::default() };
+    let v = answer(&PeerReq { id: "r".into(), verb: "list".into(), arg: json!({}) }, &ops);
+    let d = v["devices"].as_array().unwrap().iter().find(|d| d["id"] == "nOLD").unwrap();
+    assert!(d["pausedWord"].as_str().unwrap_or("").contains("예전 방식"), "{d}");
+}
+
+// 11-12 저녁 — 메일이 안 나가도 scripts/peer connect 엔 '메일도 보내'만 보였다. 연결 중 알림을 그 부탁 번호로 바로 넘긴다
+#[test]
+fn ml_연결_중_메일_결과를_그_부탁에_바로_넘긴다() {
+    let ops = Ops::default();
+    let v = answer(&PeerReq { id: "rq1".into(), verb: "connect".into(), arg: json!({ "device": "office-pc" }) }, &ops);
+    assert_eq!(v["ok"], true);
+    let calls = ops.calls.borrow();
+    let n = calls.iter().position(|c| c.starts_with("note ")).expect("알림");
+    assert!(calls[n].starts_with("note rq1 "), "{}", calls[n]);
+    assert!(calls[n].contains("메일") && calls[n].contains("os error 49"), "사람 말로 + 이유: {}", calls[n]);
+}
+
+#[test]
+fn ml_메일_알림_사람_말() {
+    assert!(mail_note_word("mail-sent").contains("10분"));
+    let f = mail_note_word("mail-failed:os error 49");
+    assert!(f.contains("못") && f.contains("os error 49") && f.contains("카드"), "{f}");
+}
+
