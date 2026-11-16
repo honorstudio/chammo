@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cardLine, cardShow, directCards, dismiss, kindView, LINE_TTL } from './directAsk';
+import { cardLine, cardPushesPhones, cardShow, directCards, dismiss, kindView, LINE_TTL } from './directAsk';
 
 const ask = (id: string, from: string, ts: string, more: object = {}) => JSON.stringify({ ts, type: 'ask', id, from, cwd: '/dev/project-x', q: '결제할까요?', kind: 'pay', yes: '결제 승인', no: '거절', options: [], ...more });
 const row = (o: object) => JSON.stringify(o);
@@ -145,5 +145,27 @@ describe('기기 카드(ADR 0014) — 새 기기 허용·폰 숫자 확인', () 
     const ask = JSON.stringify({ ts: '2027-01-15T08:00:00Z', type: 'ask', id: 'ab12cd34', from: '@link', kind: 'link', sub: 'device', q: '새 기기', options: [], until: '2027-01-16T08:00:00Z' });
     const done = JSON.stringify({ ts: '2027-01-15T08:00:30Z', type: 'done', id: 'ab12cd34', note: '다른 기기에서 처리했어요' });
     expect(directCards(`${ask}\n${done}`, env)[0]!.state).not.toBe('wait');
+  });
+});
+
+// 2026-11-13 폰 다시 연결 때 알림 쏟아짐 — 폰 연결·새 폰 허용 카드 알림이 바로 그 폰에 푸시로 갔다
+describe('cardPushesPhones — 카드 알림을 폰에도 보내나', () => {
+  const link = (more: object) => directCards(row({ ts: T0, type: 'ask', id: 'ab12cd34', from: '@link', cwd: '', kind: 'link', q: 'q', options: [], ...more }), env())[0]!;
+  it('기기 카드의 그 기기 종류를 읽는다', () => {
+    expect(link({ sub: 'device', dev: 'd1', devKind: 'phone' }).devKind).toBe('phone');
+  });
+  it('새 폰 허용·폰 숫자 확인·폰 QR 허용은 맥에만 — 그 폰이 지금 하는 일이다', () => {
+    expect(cardPushesPhones(link({ sub: 'device', devKind: 'phone' }))).toBe(false);
+    expect(cardPushesPhones(link({ sub: 'phone-link' }))).toBe(false);
+    expect(cardPushesPhones(link({ sub: 'phone' }))).toBe(false);
+  });
+  it('새 컴퓨터 허용·종류 모르는 기기·계정 되찾기·결제는 폰에도', () => {
+    expect(cardPushesPhones(link({ sub: 'device', devKind: 'mac' }))).toBe(true);
+    expect(cardPushesPhones(link({ sub: 'device' }))).toBe(true);
+    expect(cardPushesPhones(link({ sub: 'recover' }))).toBe(true);
+    expect(cardPushesPhones(directCards(ask('c1', 'a1b2c3d4', T0), env())[0]!)).toBe(true);
+  });
+  it('세션이 띄운 카드는 @link 흉내를 내도 폰에 간다(갈래는 앱이 쓴 연결 카드만 본다)', () => {
+    expect(cardPushesPhones(directCards(ask('c2', 'a1b2c3d4', T0, { kind: 'link', sub: 'phone-link' }), env())[0]!)).toBe(true);
   });
 });

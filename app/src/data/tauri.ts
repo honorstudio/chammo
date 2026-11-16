@@ -227,7 +227,8 @@ export const speakPreview = (id: number, text: string, voice: string) => invoke<
 export const speakPreviewState = () => invoke<{ id: number; phase: PreviewPhase }>('speak_preview_state');
 export const speakPreviewStop = (id: number) => invoke<void>('speak_preview_stop', { id });
 /** target = 알림을 누르면 갈 곳(domain/notify noteTarget) — 눌리면 window.__notifyClick(target) 으로 돌아온다 */
-export const notify = (title: string, body: string, target: string) => invoke<void>('notify', { title, body, target });
+/** phones false = 맥 알림만(폰 푸시 없이). 안 주면 폰에도 */
+export const notify = (title: string, body: string, target: string, phones?: boolean) => invoke<void>('notify', { title, body, target, phones });
 /** 메인 창을 보고 있나(보임·최소화 아님·앞) — 윈도우 알림 판단용 */
 export const mainWatched = () => invoke<boolean>('main_watched');
 /** 맥 마지막 입력 뒤 초·화면 잠김(Rust away.rs) — 자리 비움이면 사람 필요 알림을 폰으로도 */
@@ -503,6 +504,8 @@ export const mobileApi = {
 export type UsageKind = 'office' | 'messenger' | 'craft' | 'webview';
 /** 화면이 ErrorBoundary 로 멈춘 한 줄을 notify.log 'ui-crash' 칸에(창 이름은 Rust 가 붙인다) */
 export const uiCrash = (message: string) => invoke<void>('ui_crash', { message });
+/** 메인 창 오류 화면 '참모 배지로 대화' — 꺼져 있으면 켠다(bubble_menu.rs) */
+export const bubbleRescue = () => invoke<void>('bubble_rescue');
 export const bumpUsage = (kind: UsageKind) => {
   invoke<void>('usage_bump', { kind }).catch(() => {});
 };

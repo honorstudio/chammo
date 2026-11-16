@@ -161,7 +161,7 @@ pub fn init<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     }));
     let _ = GONE_HOOK.set(Box::new(|names: &[String]| {
         for n in names {
-            crate::claude::notify(crate::i18n::tr("팀에서 빠졌어요", "Removed from a team").into(), gone_body(n), None);
+            crate::claude::notify_to(crate::i18n::tr("팀에서 빠졌어요", "Removed from a team").into(), gone_body(n), None, true);
         }
         poke_state();
     }));

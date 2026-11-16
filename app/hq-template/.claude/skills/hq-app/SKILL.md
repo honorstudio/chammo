@@ -19,7 +19,7 @@ scripts/app voice on|off
 scripts/app feature office|gacha|review|voice|autoTidy on|off   # 설정 > 기능과 같다 — autoTidy = 세션 자동 정리(끝난 세션을 [앱] 줄로 알림)
 scripts/app feature usagePing off                     # 익명 사용 통계 끄기 — 사용자가 끄라고 할 때만(하루 한 번 무작위 설치 번호·판·OS·CPU·언어·나라, 경로·이름·대화는 안 보냄)
 scripts/app feature craftBasics off                    # 기본 참모 앱 다섯 미리 받기 끄기 — 사용자가 끄라고 할 때만(디스크가 모자라다 등)
-scripts/app feature bubble|bubbleDesk on|off          # 떠 있는 참모 배지(창 밖 동그란 얼굴) · bubbleDesk = 앱을 내려도 배지만 바탕 화면에 — "배지 꺼 줘"는 bubble off
+scripts/app feature bubble|bubbleDesk on|off          # 떠 있는 참모 배지(창 밖 동그란 얼굴) · bubbleDesk = 앱을 내려도 배지만 바탕 화면에 — "배지 꺼 줘"는 bubble off(메뉴 보기 › 참모 배지·윈도우 트레이와 같은 값)
 scripts/app open settings|tour|office|review|all|replay|load|reader|tasks|inbox|home|harnitor|tools   # home = 홈 대시보드(채팅 뷰, 터미널 뷰면 참모 화면)
 scripts/app close settings|office|reader|tasks|inbox|harnitor|tools|review
 scripts/app harness [<프로젝트>]                       # 사용자 하네스를 글로(스킬·MCP·훅·플러그인·진단)
@@ -106,7 +106,7 @@ scripts/app voice on|off
 scripts/app feature office|gacha|review|voice|autoTidy on|off   # same as Settings > Features — autoTidy = tidy sessions automatically (an [app] line for finished sessions)
 scripts/app feature usagePing off                     # turn off anonymous usage statistics — only when the user asks (once a day: a random install ID, version, OS, CPU, language, country; never paths, names or chats)
 scripts/app feature craftBasics off                    # stop installing the basic five Chammo apps ahead — only when the user asks (short on disk etc.)
-scripts/app feature bubble|bubbleDesk on|off          # floating assistant badge (round face outside the window) · bubbleDesk = keep only the badge on the desktop when the app is hidden — "hide the badge" is bubble off
+scripts/app feature bubble|bubbleDesk on|off          # floating assistant badge (round face outside the window) · bubbleDesk = keep only the badge on the desktop when the app is hidden — "hide the badge" is bubble off (same switch as View › Assistant Badge and the Windows tray)
 scripts/app open settings|tour|office|review|all|replay|load|reader|tasks|inbox|home|harnitor|tools   # home = the Home dashboard (chat view; in the terminal view, your screen)
 scripts/app close settings|office|reader|tasks|inbox|harnitor|tools|review
 scripts/app harness [<project>]                       # the user's harness as text (skills, MCP, hooks, plugins, findings)

@@ -180,6 +180,10 @@ export const IconChat = () => (
 export const IconChatSend = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M3 3h10a1.2 1.2 0 0 1 1.2 1.2v5.6A1.2 1.2 0 0 1 13 11H7l-3 2.5V11H3a1.2 1.2 0 0 1-1.2-1.2V4.2A1.2 1.2 0 0 1 3 3Z" /><circle cx="5.3" cy="7" r=".55" fill="currentColor" /><circle cx="8" cy="7" r=".55" fill="currentColor" /><circle cx="10.7" cy="7" r=".55" fill="currentColor" /></svg>
 );
+/** 그림에서 영역 고르기: 점선 네모 + 오른쪽 아래 십자(끌어서 상자 긋기, ui/space/BoxPick). 맞는 기존 아이콘이 없어 새로 — 네 모서리는 같은 머리의 '크게 보기'(IconMaximize)라 겹친다 */
+export const IconBoxPick = () => (
+  <svg viewBox="0 0 16 16" {...P}><path d="M2.5 5V2.5H5M7.3 2.5h1.4M11 2.5h2.5V5M13.5 7.3v.9M2.5 7.3v1.4M2.5 11v2.5H5M7.3 13.5h.9M12 9.6v4.8M9.6 12h4.8" /></svg>
+);
 /** 팀챗에 보내기: 겹친 말풍선 둘(여럿이 보는 대화) — 말풍선 하나(IconChatSend = 내 참모에게)와 가른다(11-09 팀 보관함 → 팀챗) */
 export const IconTeamChat = () => (
   <svg viewBox="0 0 16 16" {...P}><path d="M5.4 4.6V3.6A1.1 1.1 0 0 1 6.5 2.5h6.4A1.1 1.1 0 0 1 14 3.6v3.8a1.1 1.1 0 0 1-1.1 1.1h-.7v1.7l-1.9-1.7" /><path d="M3.1 5.6h6.4a1.1 1.1 0 0 1 1.1 1.1v3.8a1.1 1.1 0 0 1-1.1 1.1H6.2l-2.4 2v-2h-.7A1.1 1.1 0 0 1 2 10.5V6.7a1.1 1.1 0 0 1 1.1-1.1Z" /></svg>

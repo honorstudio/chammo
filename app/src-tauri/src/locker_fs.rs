@@ -169,11 +169,36 @@ pub(crate) fn big_outside_msg(lang: &str, p: &Path) -> String {
     format!("{head}: {}", p.display())
 }
 
+/// 화면에 띄우는 넣기 실패 한 줄 — 전체 경로 없이 '<이름>' 를 못 넣었어 — <짧은 까닭>(11-16 사용자 "글자 많은 화면 싫어")
+pub fn fail_line(lang: &str, src: &Path, err: &str) -> String {
+    let name = src.file_name().map(|n| crate::locker_link::nfc(&n.to_string_lossy())).unwrap_or_else(|| src.display().to_string());
+    const WHY: &[(&[&str], &str, &str)] = &[
+        (&["Permission denied", "Operation not permitted", "권한 없음"], "권한 없음", "no permission"),
+        (&["500MB", "500 MB"], "500MB 넘는 홈 밖 파일", "over 500 MB outside home"),
+        (&["개발자 모드"], "윈도우 개발자 모드 필요", "needs Windows Developer Mode"),
+        (&["민감한 폴더"], "민감한 폴더", "protected folder"),
+        (&["홈 폴더 밖"], "홈 폴더 밖", "outside your home folder"),
+        (&["앱 데이터"], "앱 데이터 폴더", "app data folder"),
+        (&["이미 보관함 안"], "이미 보관함 안", "already in the locker"),
+        (&["없는 파일", "없는 폴더", "No such file"], "없음", "not found"),
+        (&["절대 경로"], "경로가 이상해", "odd path"),
+    ];
+    let en = lang == "en";
+    let why = WHY.iter().find(|(keys, ..)| keys.iter().any(|k| err.contains(k))).map(|(_, ko, e)| if en { e.to_string() } else { ko.to_string() });
+    // 모르는 까닭 — 경로·os error 를 떼고 앞 조각만
+    let why = why.unwrap_or_else(|| err.split(": ").next().unwrap_or(err).split(" (os error").next().unwrap_or(err).trim().to_string());
+    if en {
+        format!("Couldn't add ‘{name}’ — {why}")
+    } else {
+        format!("‘{name}’ 를 못 넣었어 — {why}")
+    }
+}
+
 fn check(p: &Path, ctx: &Ctx, given: bool) -> Result<PathBuf, String> {
     if !plain_abs(p) {
         return Err(format!("절대 경로만 넣을 수 있어: {}", p.display()));
     }
-    let real = std::fs::canonicalize(p).map_err(|_| format!("없는 파일: {}", p.display()))?;
+    let real = std::fs::canonicalize(p).map_err(|e| if e.kind() == std::io::ErrorKind::PermissionDenied { format!("권한 없음: {}", p.display()) } else { format!("없는 파일: {}", p.display()) })?;
     let home = canon(ctx.home);
     // 사람이 준 홈 밖 큰 파일 — 보관함엔 사본으로만 들어가니(decide) 통째 복사를 안 한다. 자리 잡은 곳(프로젝트·열어도 되는 폴더)이면 별칭이라 괜찮다
     if given && !real.starts_with(&home) && !ctx.settled.iter().any(|s| real.starts_with(s) || real.starts_with(canon(s))) && std::fs::metadata(&real).is_ok_and(|m| m.is_file() && m.len() > BIG) {
@@ -353,6 +378,11 @@ pub fn add(ctx: &Ctx, owner: &Path, rel: &str, src: &Path) -> Result<Added, Stri
 
 /// given = 사람이 직접 준 파일(화면 끌어 놓기·파일 고르기) — 홈 밖도 사본으로 받는다(check_given)
 pub fn add_from(ctx: &Ctx, owner: &Path, rel: &str, src: &Path, given: bool) -> Result<Added, String> {
+    // 폴더는 복사 말고 연결 폴더(링크)로 — 원본 폴더 안은 안 건드리고, 연결을 풀면 링크만 빠진다(11-16 사용자, 전엔 '폴더는 못 넣어' 띠)
+    if plain_abs(src) && std::fs::metadata(src).is_ok_and(|m| m.is_dir()) {
+        let at = crate::locker_link::connect(ctx, owner, rel, src, None)?;
+        return Ok(Added { path: at, link: true });
+    }
     let real = check(src, ctx, given)?;
     let folder = sub_dir(owner, rel)?;
     let shown = src.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -1560,7 +1590,7 @@ pub fn locker_put(id: String, name: String, paths: Vec<String>, folder: Option<S
     for p in paths {
         match add_from(&a.ctx(), &d, folder.as_deref().unwrap_or(""), Path::new(&p), true) {
             Ok(x) => ok.push(x),
-            Err(e) => errs.push(e),
+            Err(e) => errs.push(fail_line(&crate::config::current().language, Path::new(&p), &e)),
         }
     }
     serde_json::json!({ "added": ok, "errors": errs })

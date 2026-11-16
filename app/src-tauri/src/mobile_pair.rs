@@ -16,6 +16,8 @@ pub const PAIR_TTL: Duration = Duration::from_secs(10 * 60);
 pub const MAX_DEVICES: usize = 8;
 /// 이만큼 안 쓴 줄은 정리한다
 const IDLE_TTL_MS: u64 = 30 * 24 * 60 * 60 * 1000;
+/// 같은 이름·같은 칸의 더 새 폰 줄이 있을 때 옛 줄을 정리하는 때(구독 주소가 없어 같은 폰인지 모를 때의 그물)
+const SAME_NAME_TTL_MS: u64 = 14 * 24 * 60 * 60 * 1000;
 /// 예전엔 홈 화면 앱을 이름 끝에 붙여 적었다 — 읽을 때 칸(home)으로 나눈다
 const HOME_SUFFIX: &str = " 홈 화면 앱";
 /// 마지막 접속을 파일에 적는 간격(요청마다 쓰지 않게)
@@ -135,6 +137,16 @@ pub(crate) fn prune(list: &mut Vec<Device>, now: u64, keep: Option<&str>) -> Vec
             gone.push(Removed { id: d.id.clone(), name: d.name.clone(), reason: "30일 넘게 안 씀".into() });
         }
         !idle
+    });
+    // 같은 이름·같은 칸 폰 줄이 더 새로 있으면 2주 안 쓴 옛 줄은 다시 로그인해 버려진 것(11-16 iPhone 8줄 — 저장소가 지워져 증명이 없다)
+    let newer = |d: &Device, l: &[Device]| l.iter().any(|o| !o.peer && o.id != d.id && o.name == d.name && o.home == d.home && o.used() > d.used());
+    let stale: Vec<String> = list.iter().filter(|d| !d.peer && !kept(d) && now.saturating_sub(d.used()) > SAME_NAME_TTL_MS && newer(d, list)).map(|d| d.id.clone()).collect();
+    list.retain(|d| {
+        let s = stale.contains(&d.id);
+        if s {
+            gone.push(Removed { id: d.id.clone(), name: d.name.clone(), reason: "같은 이름 새 줄이 있고 14일 안 씀".into() });
+        }
+        !s
     });
     // 상한은 폰 줄·컴퓨터(peer) 줄을 따로 센다 — 컴퓨터 줄 때문에 폰 줄이 지워지면 안 된다(C-6 재실측 11-02)
     for peer in [false, true] {
@@ -493,6 +505,32 @@ impl Devices {
             n = before - l.len();
         })?;
         Ok(n)
+    }
+
+    /// 같은 폰 앱의 옛 줄 빼기 — 지금 줄(now_id)이 그 줄들의 푸시 구독 주소를 넘겨받았다(push::subscribe). 주소는 그 폰 앱 저장 공간에 하나라
+    /// 옛 줄의 열쇠는 이미 지워졌다(다시 로그인, 11-16 iPhone 8줄). 폰 줄끼리만, 빠진 중계 기기는 mutate 가 끊을 대기열에 → 계정 기기 목록에서도 빠진다. 뺀 줄 수
+    pub fn retire_same_phone(&self, now_id: &str, old: &[String]) -> std::io::Result<usize> {
+        let mut g = self.inner.lock().unwrap();
+        self.reload_if_changed(&mut g);
+        let phone = |l: &[Device], id: &str| l.iter().any(|d| d.id == id && !d.peer);
+        if !phone(&g.list, now_id) || !old.iter().any(|o| o != now_id && phone(&g.list, o)) {
+            return Ok(0);
+        }
+        let mut gone = Vec::new();
+        self.mutate(&mut g, |l| {
+            if !l.iter().any(|d| d.id == now_id && !d.peer) {
+                return;
+            }
+            l.retain(|d| {
+                let out = !d.peer && d.id != now_id && old.contains(&d.id);
+                if out {
+                    gone.push(Removed { id: d.id.clone(), name: d.name.clone(), reason: format!("같은 푸시 구독을 {} 가 넘겨받음", short(now_id)) });
+                }
+                !out
+            });
+        })?;
+        log_removed(&gone);
+        Ok(gone.len())
     }
 
     /// 로그아웃 — 다른 기기 참모 줄 전부(폰 줄은 안 건드린다). 지운 줄 수

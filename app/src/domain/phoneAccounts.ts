@@ -1,7 +1,7 @@
 // 폰 계정 시트 — 맥 /api/accounts(Rust accounts_cmd::PhoneView: 이름·요금제·사용량·쉬는 때, 이메일·토큰 없음)를 읽어 줄로.
 // 막대·쉬는 판단은 데스크톱 계정 팝오버(domain/accounts popRows)와 같은 것을 쓴다
 import { machine, tr } from '../i18n';
-import { accountError, allOut, popRows, usageOf, weekText, type AccountsView } from './accounts';
+import { accountError, allOut, popRows, usageOf, weekText, type AccountsView, type PopRow } from './accounts';
 import { usageText } from './mobile';
 import { parseUsage } from './usage';
 import { fmtUntil, readAuto, slotStatus } from './accountAuto';
@@ -37,7 +37,7 @@ export function readPhoneAccounts(text: string): PhoneAccounts | null {
 }
 
 /** left = 5시간·주 중 적은 쪽, soon = 그 칸이 다시 차는 때(시안 phone-dash S3 두 칸 고르기) */
-export type PhoneAccountRow = { id: string; name: string; plan: string; on: boolean; pinned: boolean; pinHint: boolean; five: number | null; week: number | null; left: number | null; soon: string | null; note: string; rest: string | null };
+export type PhoneAccountRow = { id: string; name: string; plan: string; pick: PopRow['pick']; on: boolean; pinned: boolean; pinHint: boolean; five: number | null; week: number | null; left: number | null; soon: string | null; note: string; rest: string | null };
 
 /** 데스크톱 계정 보기 모양으로 — 이메일은 폰에 안 오니 빈 글 */
 const asView = (v: PhoneAccounts): AccountsView => ({ accounts: v.accounts.map((a) => ({ ...a, email: '' })), active: v.active, liveEmail: null, livePlan: v.livePlan, auto: v.auto });
@@ -54,7 +54,7 @@ export function phoneAccountRows(v: PhoneAccounts, now: number): PhoneAccountRow
     const five = sl?.five && sl.five.resetsAt > now ? sl.five : null;
     const week = sl?.week && sl.week.resetsAt > now ? sl.week : null;
     const soon = r.left == null ? null : five && r.five === r.left ? fmtUntil(five.resetsAt, now) : week ? weekText(week.resetsAt) : null;
-    return { id: r.id, name: r.name, on: r.on, pinned: r.pinned, pinHint: r.pinHint, five: r.five, week: r.week, left: r.left, soon, note: r.note, plan: v.accounts[i]!.plan, rest: st.kind === 'ok' ? null : st.kind === 'auth' ? tr('로그인 필요', 'Login needed') : st.kind === 'terms' ? tr('약관 동의 필요', 'Terms to accept') : tr(`${fmtUntil(st.until, now)}까지 쉬는 중`, `Resting until ${fmtUntil(st.until, now)}`) };
+    return { id: r.id, name: r.name, pick: r.pick, on: r.on, pinned: r.pinned, pinHint: r.pinHint, five: r.five, week: r.week, left: r.left, soon, note: r.note, plan: v.accounts[i]!.plan, rest: st.kind === 'ok' ? null : st.kind === 'auth' ? tr('로그인 필요', 'Login needed') : st.kind === 'terms' ? tr('약관 동의 필요', 'Terms to accept') : tr(`${fmtUntil(st.until, now)}까지 쉬는 중`, `Resting until ${fmtUntil(st.until, now)}`) };
   });
 }
 
@@ -75,8 +75,15 @@ export function accountHead(v: PhoneAccounts | null): string | null {
 }
 
 /** 서버 오류 글 → 폰 글. 폰은 맥 키체인 창을 안 띄우니(허용 필요 = locked) 맥 앞에서 한 번 하라고 */
+/** 로그인 필요 칸을 눌렀다 — 폰은 로그인 터미널을 못 띄워 바꾸지 않고 이유 한 줄(막힌 칸으로 바꾸면 맥 자동 전환이 첫 칸으로 되돌린다, 2026-11-13) */
+export function phoneLoginNeeded(r: Pick<PhoneAccountRow, 'name'>): string {
+  const n = r.name || tr('그', 'That');
+  return tr(`${n} 계정은 로그인이 풀렸어요 — ${machine()}에서 위 계정 메뉴를 열고 그 계정을 눌러 다시 로그인해 주세요`, `${n} is signed out — on the ${machine()}, open the account menu at the top and click it to sign in again`);
+}
+
 export function phoneAccountError(msg: string): string {
   const m = msg.trim();
+  if (m === 'needsLogin') return tr(`그 계정은 로그인이 풀렸어요 — ${machine()}에서 위 계정 메뉴를 열고 그 계정을 눌러 다시 로그인해 주세요`, `That account is signed out — on the ${machine()}, open the account menu at the top and click it to sign in again`);
   if (m === 'too soon') return tr('방금 바꾸는 중이었어요 — 잠깐 뒤에 다시 눌러 주세요', 'A switch was just in progress — try again in a moment');
   if (m === 'locked' || m === 'denied') return machine() === 'PC' ? tr('자격 증명을 못 읽었어요 — PC 앞에서 한 번 바꿔 주세요', 'Could not read the credentials — switch once at the PC') : tr(`${machine()} 키체인이 잠겼거나 허용이 필요해요 — ${machine()} 앞에서 한 번 바꿔 주세요`, `The ${machine()} keychain is locked or needs permission — switch once at the ${machine()}`);
   if (m === 'unsupported') return tr(`이 ${machine()} 앱은 폰 계정 바꾸기를 아직 몰라요 — ${machine()} 앱을 새로 깔아 주세요`, `This ${machine()} app does not support switching accounts from the phone yet — reinstall the ${machine()} app`);

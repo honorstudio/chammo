@@ -3,6 +3,7 @@
 // 화면 정보는 JXA(AppKit NSScreen) — 권한 창 없이 읽힌다. MCP 설정은 시작할 때 한 번 읽으므로 세션을 켤 때 정해진다.
 const { spawnSync } = require('child_process');
 const { featureArgs } = require('./features');
+const { envGet } = require('./winenv');
 
 const STEP = 36;
 const BASE = [24, 48]; // 화면 왼쪽 위에서 — 메뉴 막대 아래
@@ -132,9 +133,16 @@ function chromeChannel(opts = {}) {
  * 세션 크롬 고르기 — { channel, executablePath, found }. 맥은 베타 먼저, 윈도우·리눅스는 정식 먼저(없으면 다른 쪽).
  * 플레이라이트의 채널은 맥에서 /Applications 만 보므로 ~/Applications(관리자 아닌 계정에 앱이 깐 자리)면 실행 파일 경로를 같이 준다.
  * found = 크롬이 하나라도 있나 — 없으면 래퍼가 브라우저 도구를 '설치' 안내로 막는다(플레이라이트의 관리자 설치 안내로 새지 않게)
+ * channel = 고른 채널(없으면 env CHAMMO_BROWSER_CHANNEL). env 사본을 만들어 넘기지 않게 인자로 받는다(공개 이슈 #28 — 윈도우 사본은 대소문자를 가린다).
+ * soft = 채널을 기억·기본으로 골랐을 뿐이면 true — 그 채널이 없으면 깔린 다른 크롬으로(#28 (c): 정식을 기본으로 골랐는데 베타만 보여 막혔다)
  */
-function chromeLaunch({ platform = process.platform, exists = (p) => require('fs').existsSync(p), env = process.env, home = require('os').homedir() } = {}) {
-  const forced = (env.CHAMMO_BROWSER_CHANNEL || '').trim();
+function chromeLaunch({ platform = process.platform, exists = (p) => require('fs').existsSync(p), env = process.env, home = require('os').homedir(), channel = null, soft = false } = {}) {
+  const forced = String(channel || envGet(env, 'CHAMMO_BROWSER_CHANNEL') || '').trim();
+  const r = launchFor({ platform, exists, env, home, forced });
+  return !r.found && soft && forced ? launchFor({ platform, exists, env, home, forced: '' }) : r;
+}
+
+function launchFor({ platform, exists, env, home, forced }) {
   const at = (channel, executablePath = null) => ({ channel, executablePath, found: true });
   if (platform === 'darwin') {
     const app = (dir, name) => ({ dir: `${dir}/${name}.app`, exe: `${dir}/${name}.app/Contents/MacOS/${name}` });
@@ -147,7 +155,7 @@ function chromeLaunch({ platform = process.platform, exists = (p) => require('fs
     if (s >= 0) return at(null, s === 0 ? null : stable[s].exe);
     return { channel: null, executablePath: null, found: false };
   }
-  const roots = platform === 'win32' ? ['LOCALAPPDATA', 'ProgramFiles', 'ProgramFiles(x86)'].filter((k) => env[k]).map((k) => env[k]) : [];
+  const roots = platform === 'win32' ? ['LOCALAPPDATA', 'ProgramFiles', 'ProgramFiles(x86)'].map((k) => envGet(env, k)).filter(Boolean) : [];
   const beta = platform === 'win32' ? roots.map((r) => `${r}\\Google\\Chrome Beta\\Application\\chrome.exe`) : ['/opt/google/chrome-beta/chrome'];
   const stable = platform === 'win32' ? roots.map((r) => `${r}\\Google\\Chrome\\Application\\chrome.exe`) : ['/opt/google/chrome/chrome'];
   if (forced === 'chrome-beta') return at('chrome-beta');
@@ -220,10 +228,11 @@ function offscreenPosition(info) {
  * 그래도 없으면 화면 밖에(사용자 화면에 안 뜨게, 2026-10-03 맥북 하나일 때). 앱이 아예 없는 기계는 보이는 자리.
  * MCP 래퍼는 세션이 뜰 때 wait 0 으로 일단 정하고, 크롬이 실제로 뜰 때 place-at-launch.js 가 부탁·기다림으로 다시 정한다.
  * offPos = 화면 밖에 띄웠으면 그 자리(크롬이 끌어오면 minimize.js 가 최소화)
+ * keep = 숨기지 않을 프로필(src/keepvisible.js) — 윈도우에서 숨은 데스크톱 대신 보이는 자리
  * 윈도우는 앱에서 보기가 켜졌고 앱이 있으면 숨은 데스크톱(desk) — 자리 0,0 은 spawn 바꾸기 표시이자 그 데스크톱 안 자리(src/windesk.js)
  */
-function placement({ profile, watchable, appHere, vdFile, mac = process.platform === 'darwin', win = process.platform === 'win32', wait = 6000, ask = null }) {
-  if (win && watchable && appHere) return { pos: [0, 0], size: [1280, 800], offPos: null, desk: true };
+function placement({ profile, watchable, appHere, vdFile, mac = process.platform === 'darwin', win = process.platform === 'win32', wait = 6000, ask = null, keep = false }) {
+  if (win && watchable && appHere && !keep) return { pos: [0, 0], size: [1280, 800], offPos: null, desk: true };
   let vd = mac && watchable ? settledVd(vdFile) : null;
   if (!vd && mac && watchable && appHere && wait > 0) {
     if (ask) ask();

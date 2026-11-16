@@ -7,7 +7,7 @@ import { seenName } from './session';
 /** 새로 쓰는 참조 이름표 머리 — #img1·#file1·#chat1 */
 export const REF_PREFIX = '#';
 /** 참조 이름표(새 # + 옛 @) */
-export const REF_TOKEN = /[#@](?:img|file|chat|task|goal)\d+/;
+export const REF_TOKEN = /[#@](?:img|file|chat|task|goal|sel|area)\d+/;
 
 /** @ 목록에 뜨는 참모 — name 은 진짜 세션 이름(SendMessage 주소), label 은 화면 이름 */
 export type MentionWho = { id: string; name: string; label: string; role?: string; off?: boolean };
@@ -77,7 +77,7 @@ export function expandMentions(text: string, who: MentionWho[]): string {
 export const sentMentionLabel = (name: string) => seenName(name);
 
 export type Token = string | { ref: string } | { mention: string } | { live: string };
-const SPLIT = /([#@](?:img|file|chat|task|goal)\d+(?![\w])|@\[[^\]\n]{1,80}\])/;
+const SPLIT = /([#@](?:img|file|chat|task|goal|sel|area)\d+(?![\w])|@\[[^\]\n]{1,80}\])/;
 
 /** 글 → 글 조각과 이름표 — 참조(#img1·옛 @img1), 보낸 멘션 @[이름]. who 를 주면 지금 로스터 멘션(입력칸)도 */
 export function splitTokens(text: string, who?: MentionWho[]): Token[] {

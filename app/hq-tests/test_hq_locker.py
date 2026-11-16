@@ -94,11 +94,30 @@ class Cli(unittest.TestCase):
     def test_홈_밖·데이터_폴더·링크로_빠져나가기·폴더는_거절(self):
         put(os.path.join(self.data, 'accounts.json'), '{}')
         os.symlink(self.outside, os.path.join(self.home, 'Downloads', '밖.pdf'))
-        for a in (self.outside, os.path.join(self.data, 'accounts.json'), 'Downloads/밖.pdf', 'Downloads', 'Downloads/없음.pdf'):
+        for a in (self.outside, os.path.join(self.data, 'accounts.json'), 'Downloads/밖.pdf', self.data, 'Downloads/없음.pdf'):
             code, _, err = self.run_('add', a)
             self.assertEqual(code, 1, a)
             self.assertTrue(err.startswith('locker: '), err)
         self.assertEqual([n for n in os.listdir(self.mine) if not n.startswith('.') and not os.path.isdir(os.path.join(self.mine, n))], [])
+
+    def test_폴더는_연결_폴더로_원본은_그대로(self):
+        # 11-16 — 앱 끌어 놓기와 같다(locker_link::connect): 보관함엔 링크만, 표식 .chammo-links 에 가리키는 곳, 같은 폴더는 한 번
+        src = os.path.join(self.home, 'Desktop', '사진', 'Selects')
+        put(os.path.join(src, 'a.jpg'), 'a')
+        code, out, err = self.run_('add', 'Desktop/사진/Selects', '--folder', '자료')
+        self.assertEqual(code, 0, err)
+        at = os.path.join(self.mine, '자료', 'Selects')
+        self.assertTrue(os.path.islink(at))
+        self.assertEqual(os.readlink(at), src)
+        self.assertIn(src, pathlib.Path(self.mine, '.chammo-links').read_text(encoding='utf-8').splitlines())
+        code, out, _ = self.run_('add', 'Desktop/사진/Selects')
+        self.assertIn(at, out, '이미 이은 폴더는 그 링크')
+        self.assertEqual(sorted(os.listdir(src)), ['a.jpg'], '원본 폴더 안은 그대로')
+        # 홈 밖·점 폴더는 거절
+        os.makedirs(os.path.join(self.home, '.ssh'))
+        for a in (os.path.dirname(self.home), os.path.join(self.home, '.ssh')):
+            code, _, err = self.run_('add', a)
+            self.assertEqual(code, 1, a)
 
     def test_설정에서_연_폴더와_홈_밖_프로젝트는_넣고_나머지_홈_밖은_이유와_거절(self):
         # 공개 이슈 #19 — 참모 길은 사람이 연 폴더(openFolders)·홈 밖 devRoot 까지만. 둘 다 자리 잡은 곳이라 바로가기(통째 복사 안 함, 앱과 같다)

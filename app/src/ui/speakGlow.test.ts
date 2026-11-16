@@ -57,3 +57,35 @@ describe('말하는 빛 — --speak-level 은 빛나는 탭 하나에만', () =>
     expect(root.style.setProperty).not.toHaveBeenCalled();
   });
 });
+
+// 2026-11-13 perf-night: 묻는 중(speak_now_state 답 기다림)에 멈추면 답이 온 뒤 다음 묻기를 또 걸어 100/500ms 폴링이 살아남았다 — 다시 켜면 둘이 돈다
+describe('말하는 빛 폴링 — 멈추면 진짜 멈춘다', () => {
+  it('묻는 중에 멈춰도 답이 온 뒤 다음 묻기를 걸지 않는다', async () => {
+    const timers: (() => void)[] = [];
+    vi.stubGlobal('window', { setTimeout: (f: () => void) => { timers.push(f); return timers.length; }, clearTimeout: () => {}, matchMedia: () => ({ matches: false }) });
+    const tauri = await import('../data/tauri');
+    let answer: (v: unknown) => void = () => {};
+    (tauri.speakNowState as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(() => new Promise((r) => { answer = r; }));
+    const { startSpeakGlow } = await import('./speakGlow');
+    const stop = startSpeakGlow();
+    stop(); // 답을 기다리는 중에 음성 모드 끔
+    answer({ id: 0, from: null, phase: 'idle', startedMs: 0, hopMs: 25, env: null });
+    await flush();
+    expect(timers.length).toBe(0);
+  });
+
+  it('껐다 켜도 묻기 고리는 하나다', async () => {
+    const timers: (() => void)[] = [];
+    vi.stubGlobal('window', { setTimeout: (f: () => void) => { timers.push(f); return timers.length; }, clearTimeout: () => {}, matchMedia: () => ({ matches: false }) });
+    const tauri = await import('../data/tauri');
+    let answer: (v: unknown) => void = () => {};
+    (tauri.speakNowState as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(() => new Promise((r) => { answer = r; }));
+    const { startSpeakGlow } = await import('./speakGlow');
+    startSpeakGlow()();
+    const stop = startSpeakGlow();
+    answer({ id: 0, from: null, phase: 'idle', startedMs: 0, hopMs: 25, env: null });
+    await flush();
+    expect(timers.length).toBe(1); // 새로 켠 것 하나만 다음 묻기를 건다
+    stop();
+  });
+});

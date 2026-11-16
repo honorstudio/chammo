@@ -286,7 +286,7 @@ pub fn attach_at(dir: &Path) -> Result<BrowserLink, String> {
         return Err(format!("{}: {}", tr("폴더가 없어", "No such folder"), dir.display()));
     }
     if !crate::browser::installed(data) {
-        return Err(tr("브라우저 자동화가 아직 안 깔렸어 — 설정 → 기능 → 브라우저 자동화의 '설치'부터", "Browser automation is not installed yet — press Install in Settings → Features → Browser automation").into());
+        return Err(tr("참모 브라우저가 아직 안 깔렸어 — 설정 › 브라우저 › 참모 브라우저의 '설치'부터", "The assistant browser is not installed yet — press Install in Settings › Browser › Assistant browser").into());
     }
     let profile = profile_for(dir).ok_or_else(|| tr("이 폴더 이름으로는 프로필을 못 만들어", "Can't make a profile name from this folder").to_string())?;
     let node = node_cmd(data).ok_or_else(|| tr("쓸 Node 가 없어 — 설정의 브라우저 자동화 '설치'를 다시", "No Node to run it — press Install in browser automation again").to_string())?;

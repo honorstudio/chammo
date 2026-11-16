@@ -39,10 +39,12 @@ import { lockerApi, useLockerTree, useRecentShots, type LockerOwner } from '../s
 import { IconButton } from '../kit/IconButton';
 import { JumpBottom } from '../kit/JumpBottom';
 import { CHAT_INSERT, PATH_MIME } from '../space/dragPath';
-import { OPEN_PAGE } from '../space/PageBlock';
+import { OPEN_PAGE } from '../space/pageEvents';
 import { openChatFile } from './openChatFile';
 import { attachToChat } from '../fileDrop';
 import { useRefInbox } from '../refBus';
+import { areaOf } from '../../domain/askPick';
+import { AreaCrop } from './AreaCrop';
 import { nextRefLabel, type RefKind } from '../../domain/refChips';
 import { withPlain } from '../../domain/notes';
 import { useCoverEvery } from '../poll';
@@ -229,19 +231,22 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   // 진행 칸의 일·목표(#task·#goal)도 같은 줄로 — 참모 id 로 날아온다(ui/refBus, 2026-10-23 사용자 폰). 연달아 와도 번호가 안 겹치게 지금 목록을 따로 든다
   const refsNow = useRef(refs);
   refsNow.current = refs;
-  const addRef = (who: string, text: string, kind: RefKind = 'chat') => {
+  const addRef = (who: string, text: string, kind: RefKind = 'chat', more?: Pick<ChatRef, 'at' | 'head'>) => {
     const label = kind === 'chat' ? `${REF_PREFIX}chat${++refCount.current}` : nextRefLabel(refsNow.current, kind);
-    refsNow.current = [...refsNow.current, { label, who, text }];
-    setRefs((r) => [...r, { label, who, text }]);
+    const ref: ChatRef = { label, who, text, ...(more?.at ? { at: more.at } : {}), ...(more?.head ? { head: more.head } : {}) };
+    refsNow.current = [...refsNow.current, ref];
+    setRefs((r) => [...r, ref]);
     setDraft((d) => `${d}${d && !/\s$/.test(d) ? ' ' : ''}${label} `);
     requestAnimationFrame(() => input.current?.focus());
+    return label;
   };
   // 말풍선에 넘기는 참조 함수는 늘 같은 것 — 말풍선이 다시 안 그려지게(memo)
   const addRefNow = useRef(addRef);
   addRefNow.current = addRef;
   const stableRef = useCallback((who: string, text: string) => addRefNow.current(who, text), []);
   useRefInbox(remote ? undefined : paneId, (r) => {
-    if (!r.plain) { addRef(r.who, r.text, r.kind); return; }
+    // addRef 를 먼저 따로 — r.onLabel?.(addRef(…)) 로 쓰면 onLabel 이 없을 때(문서 물어보기·진행 칸) 인자째 건너뛰어 칩이 안 붙었다(하네스 실측)
+    if (!r.plain) { const label = addRef(r.who, r.text, r.kind, { at: r.at, head: r.head }); r.onLabel?.(label); return; }
     setDraft((d) => withPlain(d, r.text));
     requestAnimationFrame(() => input.current?.focus());
   });
@@ -984,8 +989,9 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
       {refs.length > 0 && (
         <div className="chat-refs">
           {refs.map((r) => (
-            <span key={r.label} className="chat-ref" title={r.text}>
-              <span className="at-chip">{r.label}</span><span className="dim">{r.who}</span><span className="q">{r.text.replace(/\s+/g, ' ')}</span>
+            <span key={r.label} className="chat-ref" title={r.at ? undefined : r.text}>
+              {/* 고른 곳(#sel·#area)은 파일 이름·줄·그림 조각만 — 고른 글·제목·box 숫자는 참모에게 가는 글에만(11-13 사용자 "텍스트 많은 거 싫어") */}
+              <span className="at-chip">{r.label}</span>{r.at ? <>{areaOf(r.at) ? <AreaCrop at={r.at} /> : null}<span className="dim q">{r.who}</span></> : <><span className="dim">{r.who}</span><span className="q">{r.text.replace(/\s+/g, ' ')}</span></>}
               <IconButton size="s" tone="line" label={tr('빼기', 'Remove')} onClick={() => dropRef(r.label)}><IconClose /></IconButton>
             </span>
           ))}
@@ -1127,8 +1133,9 @@ const Bubble = memo(function Bubble({ it, by, onRef }: { it: ChatItem; by: strin
         <RefBtn onClick={() => onRef(tr(`내 말${hhmm(it.ts)}`, `Me${hhmm(it.ts)}`), body)} />
         <div className="bubble me">
           {it.images && <div className="chat-thumbs">{it.images.map((src, i) => <Thumb key={i} src={src} by={by} label={`${REF_PREFIX}img${i + 1}`} />)}</div>}
-          {splitPaths(body).map((x, i) => ('text' in x ? <AtText key={i} text={x.text} /> : <button type="button" key={i} className="chat-file" title={x.path} onClick={() => void openChatFile(x.path, by)}><IconFile />{x.name}</button>))}
-          {refs.map((r) => <div key={r.label} className="chat-quote" title={r.text}><span className="at-chip">{r.label}</span> <span className="dim">{r.who}</span><div className="q">{r.text}</div></div>)}
+          {splitPaths(body).map((x, i) => ('text' in x ? <AtText key={i} text={x.text} /> : <button type="button" key={i} className="chat-file" title={x.path} onClick={() => void openChatFile(x.path, by, x.at)}>{x.at?.box ? <AreaCrop path={x.path} box={x.at.box} height={18} /> : <><IconFile />{x.name}</>}</button>))}
+          {/* #sel 인용(파일:줄 · 제목 · 고른 글)은 말풍선에 다시 안 펼친다 — 위 파일 칸(누르면 그 줄로)이면 된다 */}
+          {refs.filter((r) => !/^[#@]sel\d+$/.test(r.label)).map((r) => <div key={r.label} className="chat-quote" title={r.text}><span className="at-chip">{r.label}</span> <span className="dim">{r.who}</span><div className="q">{r.text}</div></div>)}
         </div>
       </div>
     );

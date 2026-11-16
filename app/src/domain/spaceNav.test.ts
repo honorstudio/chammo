@@ -229,6 +229,18 @@ describe('featurePick — 기록·도구·하니터·리뷰는 스페이스의 �
     expect(featurePick('t:', 'h:', 'close', 'o:a', 'o:a')).toEqual({ pick: 'h:', before: 'o:a' });
     expect(featurePick('h:', 'o:a', 'close', '', 'o:a')).toEqual({ pick: 'o:a', before: '' });
   });
+  // 2026-11-16 사용자 after-blank.png — 브라우저 칸에서 도구를 열고, 그사이 브라우저가 꺼진 뒤 닫으면 빈 칸(탭 줄만)에 남았다
+  it('열기 전 화면이 그사이 사라졌으면(꺼진 브라우저·Craft 칸) 그 참모 첫 화면으로', () => {
+    const gone = (p: string) => p === 'b:hq' || p === 'k:photo';
+    for (const k of ['t:', 'h:', 'rv:', 'r:', 'rp:'] as const) {
+      expect(featurePick(k, k, 'close', 'b:hq', 'o:a', gone)).toEqual({ pick: 'o:a', before: '' });
+      expect(featurePick(k, k, 'toggle', 'k:photo', 'o:a', gone)).toEqual({ pick: 'o:a', before: '' });
+    }
+    // 살아 있으면 그대로 — 열기 전 화면으로
+    expect(featurePick('t:', 't:', 'close', 'b:other', 'o:a', gone)).toEqual({ pick: 'b:other', before: '' });
+    // 다른 기능으로 바꾸는 건 닫기가 아니다 — 기억은 그대로 두고(닫을 때 본다)
+    expect(featurePick('rv:', 't:', 'open', 'b:hq', 'o:a', gone)).toEqual({ pick: 'rv:', before: 'b:hq' });
+  });
 });
 
 describe('featureOf·sidePick — 기능 화면이 떠 있는 동안 왼쪽(프사 띠·보관함 칸·메뉴)은 열기 전 화면 그대로', () => {
@@ -329,6 +341,12 @@ describe('ownPick — 참모 화면은 그 참모 것만', () => {
     expect(ownPick('d:/H/x.md', 'b', home)).toBe('d:/H/x.md');
     expect(ownPick('s:abc', 'b', home)).toBe('s:abc');
     expect(ownPick(undefined, 'b', home)).toBe(home);
+  });
+  it('기억한 자리가 그사이 사라졌으면(꺼진 브라우저·Craft 칸) 홈 — 탭 바꾸기·⌘`·홈 대시보드로 돌아와도 빈 칸에 안 남게(2026-11-16)', () => {
+    const gone = (p: string) => p === 'b:hq' || p === 'k:photo';
+    expect(ownPick('b:hq', 'b', home, gone)).toBe(home);
+    expect(ownPick('k:photo', 'b', home, gone)).toBe(home);
+    expect(ownPick('b:other', 'b', home, gone)).toBe('b:other');
   });
   it('홈 대시보드(oh:)는 참모 화면이 아니다 — 기억에 박혀 있어도 이 참모 자리로(⌘2→⌘1 이 홈으로 돌아왔다, 2026-10-24 사용자)', () => {
     expect(ownPick('oh:', 'b', home)).toBe(home);

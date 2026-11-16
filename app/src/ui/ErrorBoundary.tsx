@@ -2,9 +2,9 @@
 import { Component, type ReactNode } from 'react';
 import { tr } from '../i18n';
 import { IconRefresh } from './Icons';
-import { bumpUsage, uiCrash } from '../data/tauri';
+import { bubbleRescue, bumpUsage, readConfig, uiCrash } from '../data/tauri';
 
-type State = { err: string | null };
+type State = { err: string | null; badgeOff?: boolean };
 
 export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
   state: State = { err: null };
@@ -17,6 +17,8 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
   componentDidCatch(e: unknown) {
     bumpUsage('webview');
     uiCrash(String(e instanceof Error ? e.message : e)).catch(() => {});
+    // 참모 배지를 꺼 뒀나 — 이 창이 멈춰도 배지 대화창은 따로 돌아 참모와 말할 수 있다(11-05 TDZ 때 비상구). 꺼져 있으면 켜는 단추
+    readConfig().then((c) => this.setState({ badgeOff: !c.features.bubble }), () => {});
   }
   render() {
     if (this.state.err === null) return this.props.children;
@@ -26,6 +28,11 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
         <b>{tr('화면을 그리다 멈췄어요', 'The screen stopped drawing')}</b>
         <code style={{ whiteSpace: 'pre-wrap', opacity: 0.7 }}>{this.state.err}</code>
         <button className="btn" onClick={() => this.setState({ err: null })} aria-label={again} title={again}><IconRefresh /></button>
+        {this.state.badgeOff && (
+          <button className="btn" onClick={() => void bubbleRescue().then(() => this.setState({ badgeOff: false }), () => {})}>
+            {tr('참모 배지로 대화하기', 'Chat from the assistant badge')}
+          </button>
+        )}
       </div>
     );
   }

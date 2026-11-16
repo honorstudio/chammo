@@ -55,17 +55,25 @@ function apply(next: Glow | null) {
   if (!playing()) { if (raf) cancelAnimationFrame(raf); raf = 0; setLevel(0); } // 끊기면 그 자리에서 0
 }
 
-async function poll() {
+// 묻기 고리 번호 — 답을 기다리는 사이 멈추거나 다시 켜면 옛 고리는 답이 와도 다음 묻기를 안 건다(11-13: 멈춘 뒤에도 살아남아 둘이 돌았다)
+let gen = 0;
+
+async function poll(my: number) {
   // 곡선은 재생 중으로 받은 번호면 다시 안 받는다 — 기다림(만드는 중)으로 받은 번호는 곡선이 아직 없어 0
   const known = glow && glow.phase === 'playing' ? glow.id : 0;
-  try { apply(foldSay(glow, await speakNowState(known))); } catch { /* 앱 밖(시험 화면)에선 없다 */ }
-  timer = window.setTimeout(poll, isAttended() ? 100 : 500); // 안 볼 땐 누가 말하나만 알면 된다
+  let next: Awaited<ReturnType<typeof speakNowState>> | null = null;
+  try { next = await speakNowState(known); } catch { /* 앱 밖(시험 화면)에선 없다 */ }
+  if (my !== gen) return;
+  if (next) try { apply(foldSay(glow, next)); } catch { /* 옛 동작 그대로 — 그리기 실패로 고리를 끊지 않는다 */ }
+  timer = window.setTimeout(() => void poll(my), isAttended() ? 100 : 500); // 안 볼 땐 누가 말하나만 알면 된다
 }
 
 /** 묻기 시작 — 돌려준 함수로 멈추면 빛도 0 */
 export function startSpeakGlow(): () => void {
-  void poll();
-  return () => { window.clearTimeout(timer); timer = 0; apply(null); };
+  const my = ++gen;
+  window.clearTimeout(timer);
+  void poll(my);
+  return () => { if (my !== gen) return; gen++; window.clearTimeout(timer); timer = 0; apply(null); };
 }
 
 /** 음성 모드일 때만 묻는다 — 끄면 빛도 0 */

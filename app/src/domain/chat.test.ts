@@ -434,7 +434,7 @@ describe('promptInput — 입력칸 표시 글자는 글로 안 친다', () => {
 describe('pendingLeft — 보내는 중 말풍선은 보낸 뒤에 들어온 기록하고만 맞춘다', () => {
   const u = (id: string, ts: string, text: string) => ({ kind: 'user' as const, id, ts, text });
   it('예전 말에 같은 글이 있어도 방금 보낸 건 보내는 중(한국말로가 바로 사라졌다, 2026-09-30 사용자)', () => {
-    const items = [u('a', '2026-09-30T10:00:00Z', '한국말로 하고 리스타트해')];
+    const items = [u('a', '2026-09-30T10:00:00Z', '한국말로 답하고 다시 켜 줘')];
     const sent = { text: '한국말로', at: Date.parse('2026-09-30T11:00:00Z') };
     expect(pendingLeft([sent], items)).toEqual([sent]);
   });

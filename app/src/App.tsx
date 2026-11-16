@@ -61,7 +61,7 @@ import { useDirectCards } from './ui/useDirectCards';
 import { useShowLog } from './ui/space/useShowLog';
 import { chatFiles, showOwnerOf, type ChatFile } from './domain/chatFiles';
 import { ChatFileCard } from './ui/chat/ChatFileCard';
-import { freshAppCards, kindView, needsAnswer } from './domain/directAsk';
+import { cardPushesPhones, freshAppCards, kindView, needsAnswer } from './domain/directAsk';
 import { useAgentLives } from './ui/AgentBrowser';
 import { every } from './ui/poll';
 import { askName, liveOf, takeoverLine, type Live } from './domain/agentBrowser';
@@ -192,6 +192,8 @@ import { useSpeakGlowPoll } from './ui/speakGlow';
 import { attachCommand } from './domain/termCommand';
 import { chatViewOf, type ChatView } from './domain/space';
 import { usePerfAlerts } from './ui/usePerfAlerts';
+import { useBrowserMemcap } from './ui/useBrowserMemcap';
+import { useMemAlert } from './ui/useMemAlert';
 
 /** 앱을 켠 때 — 이전 결정은 알림으로 다시 안 띄운다(domain/inbox bornAfter) */
 const APP_STARTED = Date.now();
@@ -1214,7 +1216,7 @@ export default function App() {
   // 직접 답하기 카드 — 하위 세션이 본인 승인을 원하면 맡긴 참모 채팅에 카드(사람이 누르면 그 세션에 사람 말로)
   // 살아 있나·이름은 폴더로 거르기 전 전체 목록(allSessions)으로 — 워크트리로 들어가 사이드바에서 빠진 세션 카드가 꺼짐으로 숨었다(2026-10-05 아이맥)
   const direct = useDirectCards(allSessions, allActs, taskEvents, groups.orchestrators, agentLives, (c, name, owner) => notifyOnce({
-    kind: 'human', session: c.from, orch: false, ...(owner ? { go: cardTarget(owner.id, cardToken(c.id)) } : {}),
+    kind: 'human', session: c.from, orch: false, ...(owner ? { go: cardTarget(owner.id, cardToken(c.id)) } : {}), phones: cardPushesPhones(c),
     title: tr(`${josa(name, '이', '가')} 네 답을 기다려`, `${name} needs your answer`),
     body: `${kindView(c.kind).word}${c.amount ? ` ${c.amount}` : ''} — ${c.q}`,
   }), async (c) => {
@@ -1230,6 +1232,8 @@ export default function App() {
   useGoalStall({ on: features.autoTidy, orchs: groups.orchestrators, events: taskEvents, sessions });
   // 팀 성능 예산 넘침 — Rust 가 쌓은 알림(배경 몫 넘김·사람 동작 429)을 앱 업데이트 맡은 참모에게 [앱] 한 줄(domain/perfAlert · 10-31 사용자)
   usePerfAlerts({ orchs: groups.orchestrators, roles: orchRoles });
+  // 참모 브라우저 메모리 상한 — 래퍼가 탭을 닫거나 크롬을 끄면 맡긴 참모(스크립트 길이면 그 세션도)에게 [앱] 한 줄(domain/browserMemcap · 11-16 맥 멈춤 사고)
+  useBrowserMemcap({ orchs: groups.orchestrators, sessions, events: taskEvents, front: groups.orchestrator, heir: heirOf });
   const inbox = buildInbox(allActs, taskEvents, new Set(dismissed), sessions, (s) => orchIds.has(s.id), (s) => orchDisplay(s) || assistant()).filter((i) => !(i.kind === 'blocked' && picking.has(i.target ?? '')));
   // 새 결정이 생기면: 종 아래 드롭다운이 저절로 펼쳐짐 + macOS 알림. 개수는 상단 바 종·Dock 뱃지
   // 직접 답하기 카드도 결정 대기함에 — 새로 기다리는 카드가 생기면 드롭다운도 펼친다(어느 화면·탭을 보든 보이게)
@@ -1437,6 +1441,8 @@ export default function App() {
   const [loadAt, setLoadAt] = useState<DOMRect | null>(null);
   const [loadHover, setLoadHover] = useState(false);
   const loadMon = useLoad(loadMine, loadOthers, !!loadAt || loadHover, loadAt ? 3000 : 2000);
+  // 맥 메모리 위험 — 세션 하나가 8GB(압박 중 4GB)를 넘으면 맡긴 참모에게 [앱] 한 줄(domain/memAlert · 11-16 jest 워커 21GB 로 맥 멈춤)
+  useMemAlert({ sys: loadMon.sys, report: loadMon.report, orchs: groups.orchestrators, sessions, events: taskEvents, front: groups.orchestrator, heir: heirOf });
   const openLoad = (a?: DOMRect) => setLoadAt(a ?? document.querySelector('.load-chip')?.getBoundingClientRect() ?? new DOMRect(240, 0, 0, 34));
   const openTarget = (target: string) => {
     const s = findTarget(sessions, target);

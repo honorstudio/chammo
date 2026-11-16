@@ -120,3 +120,14 @@ fn 숫자_확인_받을_기기_폰은_대기도_컴퓨터는_허용된_것만() 
     assert!(!link_dev_ok(&s, "odd", true), "종류 모름");
     assert!(!link_dev_ok(&s, "ghost", true));
 }
+
+#[test]
+fn 메일_코드_연결_알림은_맥에만_그_폰엔_안_보낸다() {
+    // 2026-11-13 12:37: '새 폰이 메일 코드로 연결됐어요'가 방금 코드를 넣은 그 폰에 푸시로 갔다(같은 폰의 옛 기기 구독으로).
+    // 코드를 넣은 폰엔 필요 없고, '내가 아니면 끊어라'는 맥 알림과 코드 메일(받는 주소 = 계정 메일)에 남는다
+    let src = include_str!("phone_relay.rs");
+    let body = &src[src.find("fn mail_submit").unwrap()..];
+    let body = &body[..body.find("\nstruct LinkOut").unwrap()];
+    assert!(body.contains("crate::claude::notify_local("), "맥 알림만");
+    assert!(!body.contains("crate::claude::notify("), "폰 푸시까지 가는 notify 는 안 쓴다");
+}

@@ -681,7 +681,12 @@ fn authed(req: &Req, gate: &Gate) -> bool {
 /// 열쇠의 기기 id — 푸시 구독을 그 기기에 묶는다(기기를 끊으면 그 구독도 끝)
 fn device_of(req: &Req, gate: &Gate) -> Option<String> {
     let now = std::time::SystemTime::now();
-    req.header("authorization").and_then(|v| v.strip_prefix("Bearer ")).and_then(|t| gate.devices.check(t, now))
+    let id = req.header("authorization").and_then(|v| v.strip_prefix("Bearer ")).and_then(|t| gate.devices.check(t, now));
+    // 방금 물어 온 폰 = 화면이 열려 있다 — 그동안 그 폰엔 푸시를 안 보낸다(push::FRONT_FOR)
+    if let Some(d) = &id {
+        crate::push::saw(d);
+    }
+    id
 }
 
 /// 이 폰 줄이 결제·운영·발송·삭제 카드를 보고 답해도 되나(11-09 2차) — 중계로 붙은 내 계정 허용 폰을 1분 안에 확인한 것만.

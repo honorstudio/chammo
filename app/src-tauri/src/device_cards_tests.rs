@@ -271,3 +271,13 @@ fn 컴퓨터_연결_카드는_다른_sub_과_dev_를_달고_두_화면_숫자_�
     assert!(q.contains("집 맥북") && !q.contains('\n') && q.contains("컴퓨터"), "{q}");
     assert_ne!(PEER_LINK_SUB, PHONE_LINK_SUB);
 }
+
+#[test]
+fn 기기_카드는_그_기기_종류를_싣는다_폰_푸시를_가리려고() {
+    // 2026-11-13: 폰이 다시 로그인하면 이 카드 알림이 바로 그 폰에 갔다 — 화면은 devKind 로 폰 푸시를 뺀다
+    let r = device_row("ab12cd34", &dev(P1, "pending", false), "2027-01-15T08:00:00Z");
+    assert_eq!(r["devKind"], "phone");
+    let mut mac = dev(P2, "pending", false);
+    mac.kind = "mac".into();
+    assert_eq!(device_row("ab12cd35", &mac, "2027-01-15T08:00:00Z")["devKind"], "mac");
+}

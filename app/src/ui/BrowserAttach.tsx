@@ -93,7 +93,7 @@ function BrowserNeedCard({ need, link, note, onAttach, onClose }: { need: Browse
         <button className="ib" title={tr('닫기', 'Close')} aria-label={tr('닫기', 'Close')} onClick={onClose}><IconClose /></button>
       </div>
       {need.why && <div className="login-card-where">{need.why}</div>}
-      {!installed && <div className="login-card-where">{tr('먼저 설정 → 기능 → 브라우저 자동화의 설치', 'First: Settings → Features → Browser automation → Install')}</div>}
+      {!installed && <div className="login-card-where">{tr('먼저 설정 › 브라우저 › 참모 브라우저의 설치', 'First: Settings › Browser › Assistant browser → Install')}</div>}
       {note && <div className="login-card-where">{note}</div>}
     </div>
   );

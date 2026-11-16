@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """자동 업데이트(ADR 0005)의 latest.json — 앱이 GitHub 최신 릴리스에서 이걸 읽고 받을 파일·서명을 안다.
   scripts/updater-manifest make <버전> --mac <Chammo_<버전>_aarch64.app.tar.gz> --win <Chammo_<버전>_x64-setup.exe> [--notes "…"] [--out latest.json]
-  scripts/updater-manifest check <폴더> <버전>     → latest.json·업데이트 파일·.sig 가 그 폴더에 있고 맞는지(틀리면 줄마다 찍고 종료 1)
+  scripts/updater-manifest check <폴더> <버전> [--win-only]  → latest.json·업데이트 파일·.sig 가 그 폴더에 있고 맞는지(틀리면 줄마다 찍고 종료 1)
+윈도우만 낼 때(맥 공증 막힘, 0.4.15): make 에 --mac 을 빼면 맥 줄이 아예 없다 — 맥 줄을 옛 판 파일로 두면 version 이 새 판이라
+맥이 옛 판을 받아 깔고 또 띠가 뜨는 고리가 된다. 업데이터(2.11)는 자기 줄이 없으면 오류(TargetsNotFound)만 내고 앱은 조용히 넘긴다.
 서명(.sig)은 릴리스 스크립트(release-mac.sh·win-build)가 키체인 키로 만든 것. 이 스크립트는 키를 읽지 않는다.
 릴리스에 올릴 것: latest.json + 두 업데이트 파일(.sig 내용은 latest.json 안에 들어간다)
 """
@@ -21,7 +23,12 @@ def _sig(f):
 def make(ver, notes, mac, win, pub_date=None):
     ver = ver.removeprefix('v')
     plats = {}
-    for plat, f in (('darwin-aarch64', pathlib.Path(mac)), ('windows-x86_64', pathlib.Path(win))):
+    if not mac and not win:
+        sys.exit('--mac·--win 둘 다 없음 — 하나는 있어야')
+    for plat, f in (('darwin-aarch64', mac), ('windows-x86_64', win)):
+        if not f:
+            continue
+        f = pathlib.Path(f)
         if f.name != f'Chammo_{ver}{PLATFORMS[plat]}':
             sys.exit(f'{plat} 파일 이름이 버전 {ver} 과 다름: {f.name}')
         plats[plat] = {'url': BASE.format(ver=ver) + f.name, 'signature': _sig(f)}
@@ -33,8 +40,8 @@ def make(ver, notes, mac, win, pub_date=None):
     }
 
 
-def check(d, ver):
-    """문제 줄 목록(비면 통과)"""
+def check(d, ver, win_only=False):
+    """문제 줄 목록(비면 통과). win_only 면 맥 줄이 없어야 맞다"""
     p = d / 'latest.json'
     if not p.is_file():
         return [f'latest.json 없음 ({d})']
@@ -47,6 +54,10 @@ def check(d, ver):
         out.append(f"버전이 {m.get('version')} — {ver} 이어야")
     for plat, tail in PLATFORMS.items():
         e = (m.get('platforms') or {}).get(plat)
+        if win_only and plat == 'darwin-aarch64':
+            if e:
+                out.append(f'{plat} 줄이 있음 — 윈도우만 낼 땐 빼야(옛 맥 판 고리)')
+            continue
         name = f'Chammo_{ver}{tail}'
         if not e:
             out.append(f'{plat} 없음')
@@ -69,19 +80,20 @@ def main():
     sub = ap.add_subparsers(dest='cmd', required=True)
     mk = sub.add_parser('make')
     mk.add_argument('version')
-    mk.add_argument('--mac', required=True)
-    mk.add_argument('--win', required=True)
+    mk.add_argument('--mac')
+    mk.add_argument('--win')
     mk.add_argument('--notes', default='')
     mk.add_argument('--out', default='latest.json')
     ck = sub.add_parser('check')
     ck.add_argument('dir')
     ck.add_argument('version')
+    ck.add_argument('--win-only', action='store_true')
     a = ap.parse_args()
     if a.cmd == 'make':
         pathlib.Path(a.out).write_text(json.dumps(make(a.version, a.notes, a.mac, a.win), ensure_ascii=False, indent=2) + '\n')
         print(a.out)
         return 0
-    probs = check(pathlib.Path(a.dir), a.version.removeprefix('v'))
+    probs = check(pathlib.Path(a.dir), a.version.removeprefix('v'), a.win_only)
     for x in probs:
         print(x)
     return 1 if probs else 0

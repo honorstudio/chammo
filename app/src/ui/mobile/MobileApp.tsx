@@ -60,6 +60,8 @@ import { installFreshBuild } from './freshBuild';
 import { Notice } from './Notice';
 import { PhoneLoginCard } from './PhoneLogin';
 import { unlinkPhone } from '../../phone-web/reset';
+import { lostStore, markLost, relinkLine, takeLost } from '../../phone-web/lostMark';
+import type { TrustError } from '../../phone-web/hub';
 import { preloadFirstScreen } from './bootPreload';
 import { PhoneFar, useFarDevices, type FarPick } from './PhoneFar';
 
@@ -352,7 +354,11 @@ export function MobileApp() {
           const step = unreachStep(un, { ok: false, startedAt: g.at, now: Date.now() });
           un = { since: step.since };
           const trust = (g.err as Error)?.name === 'TrustError';
-          if (trust) setDenied(true);
+          if (trust) {
+            setDenied(true);
+            const why = (g.err as TrustError).why;
+            if (why) markLost(lostStore, why, Date.now()); // 다시 이은 뒤 맥 기록에 까닭 한 줄(lostMark)
+          }
           if (step.show || trust) setError(netText(g.err));
           return;
         }
@@ -364,6 +370,11 @@ export function MobileApp() {
         fails = 0;
         why = '';
         un = { since: 0 };
+        if (!got) {
+          // 연결이 풀려 다시 이었으면 그 까닭을 맥 기록에(phone-diag relink) — 다음에 또 풀리면 원인을 가린다(2026-11-13)
+          const lost = takeLost(lostStore);
+          if (lost) void phoneDiag('relink', relinkLine(lost, Date.now()));
+        }
         got = true;
         show(g.env, g.raw);
       },

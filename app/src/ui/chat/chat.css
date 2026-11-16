@@ -3,6 +3,8 @@
 .chat:focus { outline: none; } /* Esc 를 받으려고 tabIndex -1 — 칸 테두리는 안 그린다 */
 /* 머리줄 없는 창(채팅 칸에 한 창만 — 이름·단추는 칸 머리로 올라감)은 채팅 판이 맨 위부터 — 안 그러면 빈 35px 로 뒤 터미널이 비친다 */
 .pane.headless > .chat { top: 0; }
+/* 채팅 판이 덮은 터미널은 그리지 않는다 — 화면만 빼면 xterm 이 '안 보임'으로 멈추고(IntersectionObserver) 채팅이 닫히면 통째로 다시 그린다. 버퍼·크기 맞추기는 그대로(11-13 perf-night, 덮인 참모 3명 GPU 2.8→0%) */
+.pane:has(> .chat) .xterm-screen { display: none; }
 .chat-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 12px 12px 4px; font-size: 13px; line-height: 1.55; }
 .chat-inner { display: flex; flex-direction: column; gap: 8px; }
 .chat-row { display: flex; }
@@ -206,6 +208,9 @@
 .chat-refs { display: flex; flex-direction: column; gap: 4px; padding: 6px 10px 0; }
 .chat-ref { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; }
 .chat-ref .q { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); }
+/* #area 칩의 상자 부분 그림(AreaCrop) — 칸 안에 그림을 밀어 넣어 그 부분만 보인다 */
+.chat-ref-crop { position: relative; display: inline-block; vertical-align: middle; flex: none; overflow: hidden; border-radius: 4px; background: var(--panel); box-shadow: 0 0 0 1px var(--line); }
+.chat-ref-crop img { position: absolute; max-width: none; max-height: none; }
 .chat-quote { margin-top: 6px; padding: 4px 8px; border-radius: 6px; background: color-mix(in srgb, var(--surface) 60%, transparent); font-size: 12px; }
 .chat-quote .q { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; color: var(--text-3); }
 /* 채팅 뷰: 고른 창 표시는 탭에만 — 창 전체 테두리는 안 칠한다(2026-09-30 사용자). 쌓기 보기는 머리줄 글자색만 */

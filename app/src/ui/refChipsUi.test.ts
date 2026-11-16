@@ -23,7 +23,7 @@ describe('진행 칸 참모에게 묻기', () => {
     expect(goal).toMatch(/onAsk=\{onAsk \?\? \(\(r\) => askRef\(p\.orch\.id, r\)\)\}/);
   });
   it('데스크톱 입력칸은 자기 칸 id 로 받는다(원격 칸은 빼고)', () => {
-    expect(chatView).toMatch(/useRefInbox\(remote \? undefined : paneId, \(r\) => \{\s*if \(!r\.plain\) \{ addRef\(r\.who, r\.text, r\.kind\); return; \}/);
+    expect(chatView).toMatch(/useRefInbox\(remote \? undefined : paneId, \(r\) => \{\s*(?:\/\/[^\n]*\n\s*)?if \(!r\.plain\) \{ const label = addRef\(r\.who, r\.text, r\.kind, \{ at: r\.at, head: r\.head \}\); r\.onLabel\?\.\(label\); return; \}/);
     // plain(내 메모 글 통째)은 이름표 없이 입력칸 글 뒤에
     expect(chatView).toMatch(/setDraft\(\(d\) => withPlain\(d, r\.text\)\)/);
   });

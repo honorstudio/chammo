@@ -93,7 +93,7 @@ let placeEnv = null; // 크롬이 뜰 때 자리를 다시 정하기(src/place-a
 if (!extra.some((a) => a === '--config' || a.startsWith('--config='))) {
   const appHere = fs.existsSync(require('path').join(paths.dataDir(), 'config.json'));
   // 지금은 기다리지 않고 정한다 — 앱은 가짜 화면을 필요할 때만 띄우니 세션마다 3초씩 기다리지 않게, 진짜 자리는 크롬이 뜰 때
-  const place = placement({ profile, watchable, appHere, vdFile, mac, wait: 0 });
+  const place = placement({ profile, watchable, appHere, vdFile, mac, wait: 0, keep: require('../src/keepvisible').keepVisible(paths.dataDir(), profile) });
   if (mac && watchable && appHere) placeEnv = { profile, vdFile, dataDir: paths.dataDir() };
   // 윈도우 — 숨은 데스크톱 실행기로 띄운다(src/windesk.js, 2026-10-28 인앱 브라우저 윈도우판)
   if (place.desk) placeEnv = require('../src/place-at-launch').deskConf(profile);
@@ -117,7 +117,9 @@ const own = extra.some((a) => a === '--browser' || a.startsWith('--browser=') ||
 const pick = own ? null : channelMod.pickChannel({ profileDir: userDataDir });
 if (pick && pick.warn) console.error(`[chammo-browser-mcp] ${pick.warn}`);
 if (pick && pick.note) console.error(`[chammo-browser-mcp] ${pick.note}`);
-const picked = own ? chromeLaunch() : sessionChrome(chromeLaunch(pick && pick.channel ? { env: { ...process.env, CHAMMO_BROWSER_CHANNEL: pick.channel } } : {}));
+// 채널은 인자로 — env 사본은 윈도우에서 대소문자를 가려 C:\Program Files 를 못 봤다(공개 이슈 #28). 직접 고른 게 아니면(soft) 그 채널이 없을 때 깔린 다른 크롬으로
+const picked = own ? chromeLaunch() : sessionChrome(chromeLaunch(pick && pick.channel ? { channel: pick.channel, soft: pick.why !== 'asked' } : {}));
+if (pick && pick.channel && picked.found && (picked.channel || 'chrome') !== pick.channel) console.error(`[chammo-browser-mcp] ${pick.channel} 이 안 보여 ${picked.channel || 'chrome'} 로 엽니다`);
 if (!own && picked.found) channelMod.remember(userDataDir, picked.channel || 'chrome');
 if (!own && picked.channel) configArgs.push('--browser', picked.channel);
 if (!own && picked.executablePath) configArgs.push('--executable-path', picked.executablePath);
@@ -129,6 +131,8 @@ if (placeEnv && picked.inject) {
 }
 // 크롬이 하나도 없으면 브라우저 도구를 '설치' 안내로 막는다(직접 고른 브라우저면 그대로). browser_install 은 늘 막는다(src/guard.js)
 const chromeFound = own || picked.found;
+// 앱 설정 '참모 브라우저' 줄에 다시 찾기 단추가 보이게 — 설치가 끝났다고 '설치' 단추가 숨어 사람이 누를 게 없었다(공개 이슈 #28, src/guard.js)
+if (!own) require('../src/guard').markMissing(paths.dataDir(), !picked.found, profile);
 console.error(`[chammo-browser-mcp] 시작 pid ${process.pid} · 크롬 ${picked.executablePath || picked.channel || '기본'}${placeEnv && placeEnv.inject && placeEnv.inject.signed ? ' · 구글 크롬 갈래 있음' : ''}`);
 
 const ASK_TOOL = {
@@ -185,9 +189,11 @@ const share = createShare({
   onLine: (line) => relay.onChildLine(line),
 });
 const mine = () => !share.active(); // 지금 크롬이 내 것(래퍼가 띄운 것)인가
+// 메모리 상한 — 내 락·내 크롬일 때만 잰다(같이 쓰는 스크립트 크롬은 지킴이가 잰다). 넘어서 한 일은 다음 도구 결과 꼬리로(switchNote)
+let memWatch = null;
 /** 래퍼가 스스로 창을 바꿨으면(패스키) 그 꼬리를 이번 결과에 한 번 — 문지기 답(g)과 합친다 */
 function switchNote(g) {
-  const note = winshow ? winshow.takeNote() : '';
+  const note = [winshow ? winshow.takeNote() : '', memWatch ? memWatch.takeNote() : ''].filter(Boolean).join('\n');
   if (!note) return g;
   return Promise.resolve(g || { run: true }).then((r) => ({ ...(r || { run: true }), note: [note, r && r.note].filter(Boolean).join('\n') }));
 }
@@ -266,6 +272,7 @@ relay = createRelay({
     };
   })(),
 });
+memWatch = require('../src/memcap-run').attach({ profile, sessionPid: require('../src/script').sessionPid(), via: 'mcp', when: () => relay.holdsLock() && mine() });
 // 윈도우 숨은 데스크톱 크롬 — 사람 차례 OS 창이 필요하면 앱이 부탁해 같은 프로필을 보이는 데스크톱에 다시 띄운다(src/winshow.js)
 if (live && placeEnv && placeEnv.desk) {
   winshow = createWinShow({ liveDir: placeEnv.liveDir, profile, pid: process.pid, call: relay.callInternal, live, log: (m) => console.error(m) });

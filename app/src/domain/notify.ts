@@ -7,7 +7,8 @@ import { tr } from '../i18n';
 
 export type NoteKind = 'decide' | 'login' | 'allowFail' | 'asks' | 'blocked' | 'ctx' | 'accounts' | 'human' | 'lost';
 /** session = 알림을 묶는 단위(세션 id 등). orch = 참모 세션에서 난 일인가. go = 누르면 갈 곳을 따로 정할 때(noteTarget 글자) */
-export type Note = { kind: NoteKind; session: string; orch: boolean; title: string; body: string; go?: string };
+/** phones false = 맥 알림만(폰 푸시 없이) — 폰이 지금 하는 일을 그 폰에 또 알리지 않게(2026-11-13) */
+export type Note = { kind: NoteKind; session: string; orch: boolean; title: string; body: string; go?: string; phones?: boolean };
 
 export const NOTIFY_GAP_MS = 2 * 60_000;
 

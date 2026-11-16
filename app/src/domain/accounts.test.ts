@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLang } from '../i18n';
-import { accountError, accountLoginCommand, loginFixes, reloginDone, switchFailure, addState, allOut, moved, popHead, popRows, slotText, slotUsageText, topLabel, usageOf, weekText, type AccountsView } from './accounts';
+import { LOGIN_HOLD_MS, holdStep, accountError, accountLoginCommand, loginFixes, switchFailure, addState, allOut, moved, popHead, popRows, slotText, slotUsageText, topLabel, usageOf, weekText, type AccountsView } from './accounts';
 
 const view = (p: Partial<AccountsView> = {}): AccountsView => ({
   accounts: [
@@ -168,8 +168,8 @@ describe('popRows — 계정 칩 팝오버 줄(글자 적게: 이름·5시간·�
 
   it('지금 계정·고정·남은 %(위 막대와 같은 기준)·리셋 시각(5시간 시:분, 주간 요일 시:분)·몇 분 전', () => {
     const [b, a] = popRows(view({ auto }), now);
-    expect(b).toEqual({ id: 'a2', name: '작은 것', on: true, pinned: true, pinHint: true, five: 40, week: 90, left: 40, stop: null, note: '5시간 22:20 · 주간 목 16:00 초기화 · 3분 전', title: 'b@x.com · Max 5x', tip: '5시간 40% 남음 · 22:20 초기화\n주간 90% 남음 · 목 16:00 초기화\n3분 전 · b@x.com · Max 5x' });
-    expect(a).toEqual({ id: 'a1', name: '큰 것', on: false, pinned: false, pinHint: false, five: null, week: null, left: null, stop: '~10/08 16:00', note: '주간 소진 ~10/08 16:00', title: 'a@x.com · Max 20x', tip: '주간 소진 ~10/08 16:00\na@x.com · Max 20x' });
+    expect(b).toEqual({ id: 'a2', name: '작은 것', on: true, pinned: true, pinHint: true, five: 40, week: 90, left: 40, stop: null, pick: 'switch', note: '5시간 22:20 · 주간 목 16:00 초기화 · 3분 전', title: 'b@x.com · Max 5x', tip: '5시간 40% 남음 · 22:20 초기화\n주간 90% 남음 · 목 16:00 초기화\n3분 전 · b@x.com · Max 5x' });
+    expect(a).toEqual({ id: 'a1', name: '큰 것', on: false, pinned: false, pinHint: false, five: null, week: null, left: null, stop: '~10/08 16:00', pick: 'switch', note: '주간 소진 ~10/08 16:00', title: 'a@x.com · Max 20x', tip: '주간 소진 ~10/08 16:00\na@x.com · Max 20x' });
   });
 
   it('고정 표시 — 자동 전환이 켜져 있을 때만 "다 쓰면 넘어감"(pinHint)', () => {
@@ -179,6 +179,30 @@ describe('popRows — 계정 칩 팝오버 줄(글자 적게: 이름·5시간·�
   it('값이 없으면 null(— 로 그린다), 칸이 없으면 빈 목록', () => {
     expect(popRows(view(), now)[0]).toMatchObject({ five: null, week: null, note: '' });
     expect(popRows(null, now)).toEqual([]);
+  });
+});
+
+describe('popRows pick — 줄을 누르면 무엇을 하나(2026-11-13 로그인 필요 줄을 눌렀더니 첫 계정으로 바뀜)', () => {
+  const now = new Date(2026, 10, 13, 10, 43).getTime();
+  const far = now + 20 * 24 * 3600_000;
+
+  it('로그인 필요(auth) 줄은 바꾸기가 아니라 그 계정 로그인 — 바꿔 끼우면 자동 전환이 막힌 칸이라 곧장 첫 칸으로 되돌린다', () => {
+    const [cur, dead] = popRows(view({ auto: { v: 3, slots: { a1: { blockedUntil: far, why: 'auth' } } } }), now);
+    expect(dead).toMatchObject({ id: 'a1', on: false, stop: '로그인 필요', pick: 'login' });
+    expect(cur?.pick).toBe('switch');
+  });
+
+  it('고정 칸이어도 로그인 필요면 로그인(고정은 한도 문턱만 늦춘다)', () => {
+    expect(popRows(view({ auto: { v: 3, pinned: 'a1', slots: { a1: { blockedUntil: far, why: 'auth' } } } }), now)[1]?.pick).toBe('login');
+  });
+
+  it('약관 동의 필요(terms) 줄은 약관 막힘을 풀고 바꾸기 — 막힌 채 바꾸면 똑같이 되돌아간다', () => {
+    expect(popRows(view({ auto: { v: 3, slots: { a1: { blockedUntil: far, why: 'terms' } } } }), now)[1]).toMatchObject({ stop: '약관 동의 필요', pick: 'terms' });
+  });
+
+  it('한도로 막힌 줄·멀쩡한 줄은 그냥 바꾸기(고정 문턱 99% 가 맡는다)', () => {
+    const rows = popRows(view({ auto: { v: 3, slots: { a1: { blockedUntil: far, why: 'week' } } } }), now);
+    expect(rows.map((r) => r.pick)).toEqual(['switch', 'switch']);
   });
 });
 
@@ -243,11 +267,6 @@ describe('로그인해서 바꾸기 — 바꾸기가 갱신 막힘·죽은 갱�
     // 이메일을 모르면 이메일 없이
     expect(accountLoginCommand(null, '', 'd')).toBe("'claude' auth login; echo; echo 'd'");
   });
-  it('끝남 = 로그인 표시가 그 칸 계정이 됨', () => {
-    expect(reloginDone(view({ active: 'a1' }), 'a1')).toBe(true);
-    expect(reloginDone(view(), 'a1')).toBe(false);
-    expect(reloginDone(view({ active: null, liveEmail: 'other@x.com' }), 'a1')).toBe(false);
-  });
 });
 
 describe('popRows — 5시간 한도 없음(Ultra)은 마우스 올림 설명에 한 줄', () => {
@@ -257,5 +276,38 @@ describe('popRows — 5시간 한도 없음(Ultra)은 마우스 올림 설명에
     const [r] = popRows(v, now);
     expect(r!.tip.split('\n')[0]).toBe('5시간 한도 없음 (Ultra 요금제)');
     expect([r!.five, r!.week, r!.left]).toEqual([null, 54, 54]);
+  });
+});
+
+describe('holdStep — 계정 로그인 중 자동 전환 쉬기(2026-11-13: 팝오버를 닫아도 로그인이 끝날 때까지, 상한 있음)', () => {
+  const t0 = new Date(2026, 10, 13, 10, 50).getTime();
+  const h = { id: 'm', until: t0 + LOGIN_HOLD_MS, seenAt: 0 };
+
+  it('쉬기가 없으면 none', () => {
+    expect(holdStep(null, 'm', t0)).toEqual({ hold: null, act: 'none' });
+  });
+
+  it('로그인이 아직 그 계정이 아니면 기다림(본 시각도 지움)', () => {
+    expect(holdStep({ ...h, seenAt: t0 - 1000 }, 't', t0)).toEqual({ hold: h, act: 'wait' });
+  });
+
+  it('그 계정이 된 걸 처음 보면 본 시각만 적고, 키체인·표시를 다 쓸 만큼(3초) 이어지면 finish', () => {
+    const a = holdStep(h, 'm', t0);
+    expect(a).toEqual({ hold: { ...h, seenAt: t0 }, act: 'wait' });
+    expect(holdStep(a.hold, 'm', t0 + 2000).act).toBe('wait');
+    expect(holdStep(a.hold, 'm', t0 + 3000)).toEqual({ hold: a.hold, act: 'finish' });
+  });
+
+  it('상한(10분)이 지나면 풀린다 — 로그인 창을 닫고 잊어도 자동 전환이 영영 멈추지 않게', () => {
+    expect(LOGIN_HOLD_MS).toBe(10 * 60_000);
+    expect(holdStep(h, 't', t0 + LOGIN_HOLD_MS)).toEqual({ hold: null, act: 'expired' });
+    expect(holdStep({ ...h, seenAt: t0 }, 'm', t0 + LOGIN_HOLD_MS)).toEqual({ hold: null, act: 'expired' });
+  });
+});
+
+describe('accountError — 로그인 관련 새 이름(2026-11-13)', () => {
+  it('needsLogin·loginTimeout', () => {
+    expect(accountError('needsLogin')).toBe('그 계정은 로그인이 풀려서 바꾸지 않았어요. 위 계정 메뉴에서 그 계정을 눌러 다시 로그인해 주세요.');
+    expect(accountError('loginTimeout')).toBe('로그인을 10분 넘게 기다려서 멈췄어요. 다시 하려면 그 계정을 한 번 더 눌러 주세요.');
   });
 });

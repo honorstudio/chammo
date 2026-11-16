@@ -5,21 +5,21 @@ const f = (sessionId: string, used: number, ts = 100) => JSON.stringify({ sessio
 
 describe('parseCtx — 상태줄이 세션마다 남긴 파일들', () => {
   it('session_id → 사용 %', () => {
-    expect(parseCtx([f('a', 56), f('b', 81)])).toEqual({ a: { used: 56, ts: 100, model: 'Opus 5.5', size: 1_000_000 }, b: { used: 81, ts: 100, model: 'Opus 5.5', size: 1_000_000 } });
+    expect(parseCtx([f('a', 56), f('b', 81)])).toEqual({ a: { used: 56, model: 'Opus 5.5', size: 1_000_000 }, b: { used: 81, model: 'Opus 5.5', size: 1_000_000 } });
   });
 
   it('깨진 파일·숫자 아닌 값은 건너뛴다', () => {
-    expect(parseCtx(['{깨짐', JSON.stringify({ sessionId: 'c', used: null }), f('d', 12)])).toEqual({ d: { used: 12, ts: 100, model: 'Opus 5.5', size: 1_000_000 } });
+    expect(parseCtx(['{깨짐', JSON.stringify({ sessionId: 'c', used: null }), f('d', 12)])).toEqual({ d: { used: 12, model: 'Opus 5.5', size: 1_000_000 } });
   });
 });
 
 describe('parseCtx — 모델·에포트(채팅 칩)', () => {
   it('모델 이름·id·에포트를 같이 읽는다', () => {
     const j = JSON.stringify({ sessionId: 'a', used: 5, model: 'Sonnet 5.5', modelId: 'claude-sonnet-5-5', effort: 'high', ts: 9 });
-    expect(parseCtx([j]).a).toEqual({ used: 5, ts: 9, model: 'Sonnet 5.5', modelId: 'claude-sonnet-5-5', effort: 'high' });
+    expect(parseCtx([j]).a).toEqual({ used: 5, model: 'Sonnet 5.5', modelId: 'claude-sonnet-5-5', effort: 'high' });
   });
   it('옛 파일(모델·에포트 없음)은 값 없이 읽힌다', () => {
-    expect(parseCtx([JSON.stringify({ sessionId: 'a', used: 5, ts: 9 })]).a).toEqual({ used: 5, ts: 9 });
+    expect(parseCtx([JSON.stringify({ sessionId: 'a', used: 5, ts: 9 })]).a).toEqual({ used: 5 });
   });
 });
 
@@ -57,5 +57,13 @@ describe('ctxRing — 사이드바 프사 고리(대화 %), 2026-10-10 B안', ()
     expect(ctxRing(59, 10).level).toBe('ok');
     expect(ctxRing(60, 10).level).toBe('mid');
     expect(ctxRing(80, 10).level).toBe('high');
+  });
+});
+
+// 2026-11-13 perf-night: 상태줄이 ctx 파일을 다시 쓸 때마다(일하는 세션마다 분당 10~15번) 시각(ts)만 바뀌어도
+// App 이 3초 폴링마다 통째로 다시 그렸다(하네스 가만히 1분 커밋 61번 중 20번). ts 는 아무도 안 읽는다 — 안 싣는다
+describe('parseCtx — 시각만 바뀐 다시 쓰기는 같은 값', () => {
+  it('ts 가 달라도 결과가 같다', () => {
+    expect(parseCtx([f('a', 56, 100)])).toEqual(parseCtx([f('a', 56, 200)]));
   });
 });

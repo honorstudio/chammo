@@ -60,6 +60,24 @@ sys.dont_write_bytecode = True  # keep scripts/ free of __pycache__
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 TASK_ID = re.compile(r'[A-Za-z0-9_-]{1,40}\Z')
 import lesson_skill  # lessons -> project skills (lesson-review / -group / -drop / -promote / -restore / -propose)
+try:
+    import automem  # 알아서 기억 — 늘 지킬 줄·사람이 보낸 화면 전후 캡처 관문(ADR 0032). 없거나 터져도 task 는 그대로
+except Exception:
+    automem = None
+
+
+def mem_send(ev, project):
+    try:
+        return automem.on_send(DATA, ev, project) if automem else []
+    except Exception:
+        return []
+
+
+def mem_done(tid, note, no_shot):
+    try:
+        return automem.on_done(DATA, tid, note, read_events(), append, no_shot=no_shot) if automem else (None, {})
+    except Exception:
+        return None, {}
 
 
 def data_dir(home=None, env=None, exists=os.path.isdir):
@@ -1235,6 +1253,11 @@ def main(a):
         print(__doc__); return 0
     cmd = a[0]
     no_proof = None
+    no_shot = None
+    if cmd == 'done' and '--no-shot' in a:  # 사람이 보낸 화면을 다시 찍을 수 없는 일 — 이유 한 줄(ADR 0032)
+        k = a.index('--no-shot')
+        no_shot = (a[k + 1].strip() if k + 1 < len(a) else '') or 'no reason'
+        a = a[:k] + a[k + 2:]
     if cmd == 'done' and '--no-proof' in a:
         k = a.index('--no-proof')
         no_proof = a[k + 1].strip() if k + 1 < len(a) else ''
@@ -1294,6 +1317,7 @@ def main(a):
             h = handovers_of(events_before)[link][0]
             if not goal:
                 goal = ev['goal'] = h.get('goal') or h.get('title') or link
+        mem_lines = mem_send(ev, project_of(a[1], agents) or a[1])
         append(ev)
         print(tid)
         if link:
@@ -1337,6 +1361,8 @@ def main(a):
             print(T(f'이 프로젝트 교훈 — 지시에 붙여: {l}', f'project lesson — append to your message: {l}'), file=sys.stderr)
         for l in skill_ls:
             print(T(f'이 프로젝트 교훈 스킬 — 지시에 붙여: {l}', f'project lesson skill — append to your message: {l}'), file=sys.stderr)
+        for l in mem_lines:  # 알아서 기억 — 늘 지킬 규칙·켜진 검사(ADR 0032)
+            print(l, file=sys.stderr)
         free = ops_free().get(project)
         if free:
             print(T(f'메시지 끝에 붙여: {project} 는 {free} — 운영 반영(마이그·함수 배포·테스트 발송)도 묻지 말고 진행. 결제만 멈춰',
@@ -1441,6 +1467,11 @@ def main(a):
         stop = proof_gate(a[1], a[2])
         if stop is not None:
             return stop
+    done_extra = {}
+    if cmd == 'done' and len(a) >= 3:
+        stop, done_extra = mem_done(a[1], a[2], no_shot)
+        if stop is not None:
+            return stop
     if cmd == 'ask' and len(a) >= 3:
         handed, agents = handed_check(a[1], a[2])
         if handed:
@@ -1449,6 +1480,8 @@ def main(a):
         ev = {'ts': now(), 'type': cmd, 'task': a[1], 'note': a[2]}
         if no_proof:
             ev['noProof'] = no_proof
+        if cmd == 'done':
+            ev.update(done_extra)
         if cmd == 'ask' and me:
             ev['to'] = me
         append(ev)

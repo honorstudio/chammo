@@ -1,0 +1,14 @@
+/* 그림 영역 고르기(BoxPick) — 상자는 참모 색 전체 테두리 + 옅은 면(아직 안 물음 = 점선, 물음 = 실선), 번호는 왼쪽 위 작은 알약. 왼쪽 색 띠 없음 */
+.bx-layer { position: absolute; z-index: calc(var(--z-base) + 2); cursor: crosshair; touch-action: none; user-select: none; }
+.bx-box { position: absolute; box-sizing: border-box; border: 2px dashed var(--orch-solid, var(--accent)); border-radius: 4px; background: color-mix(in srgb, var(--orch, var(--accent)) 12%, transparent); }
+.bx-box.bx-sent { border-style: solid; }
+.bx-box.bx-live { border-style: solid; pointer-events: none; }
+.bx-num { position: absolute; left: -11px; top: -11px; min-width: 22px; height: 22px; padding: 0 6px; box-sizing: border-box; border-radius: 11px; display: grid; place-items: center; background: var(--orch-solid, var(--accent)); color: var(--orch-ink, var(--accent-ink)); font-size: 12px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; box-shadow: 0 1px 4px rgba(0, 0, 0, .28); pointer-events: none; }
+.bx-x { position: absolute; right: -11px; top: -11px; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 11px; display: grid; place-items: center; background: var(--surface); color: var(--text); box-shadow: 0 0 0 1px var(--line), 0 1px 4px rgba(0, 0, 0, .2); cursor: pointer; opacity: 0; }
+.bx-x svg { width: 12px; height: 12px; }
+/* 안 보일 땐 누름도 안 받는다 — 상자 모서리 밖으로 나온 × 가 옆에서 새로 긋는 끌기를 삼켰다(하네스 실측) */
+.bx-x { pointer-events: none; }
+.bx-box:hover .bx-x, .bx-x:focus-visible { opacity: 1; pointer-events: auto; }
+@media (hover: none) { .bx-x { opacity: 1; pointer-events: auto; } }
+/* 아래 막대 — 그림을 굴려도 제자리(칸 밖 .ft-body 에 붙는다) */
+.bx-bar { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: calc(var(--z-base) + 4); display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), 0 6px 20px rgba(0, 0, 0, .18); }

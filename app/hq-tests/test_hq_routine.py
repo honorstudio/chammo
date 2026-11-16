@@ -461,6 +461,25 @@ class SpawnStagger(unittest.TestCase):
                     return type('R', (), {'returncode': 1, 'stdout': '', 'stderr': out})()
             return super().__call__(argv, **kw)
 
+    def test_모델과_강도를_적으면_띄울_때_붙인다(self):
+        # 매일 도는 가벼운 판단(알아서 기억)은 소넷 medium 으로 — 구독 사용량(2026-11-16)
+        rt.new('memory', 'daily 05:30', 'x', data=str(self.data), home=str(self.home), run=Calls(), claude='/bin/claude',
+               python='/usr/bin/python3', uid=501, now=self.NOW, apps=[], allow_test=True, model='sonnet', effort='medium')
+        calls = Calls()
+        self.run_now('memory', calls)
+        argv = next(c for c in calls.calls if '--bg' in c)
+        self.assertEqual(argv[argv.index('--model') + 1:argv.index('--model') + 2], ['sonnet'])
+        self.assertEqual(argv[argv.index('--effort') + 1], 'medium')
+        with self.assertRaises(ValueError):
+            rt.new('bad', 'daily 05:30', 'x', data=str(self.data), home=str(self.home), run=Calls(), claude='/bin/claude',
+                   python='/usr/bin/python3', uid=501, now=self.NOW, apps=[], allow_test=True, model='sonnet; rm -rf /')
+
+    def test_모델을_안_적으면_그대로(self):
+        self.new('plain')
+        calls = Calls()
+        self.run_now('plain', calls)
+        self.assertNotIn('--model', next(c for c in calls.calls if '--bg' in c))
+
     def test_같은_tick_두_예약은_차례로_사이를_띄운다(self):
         self.new('nightly-check')
         self.new('weekly-cleanup', sched='10/06 09:00, 10/13 09:00')

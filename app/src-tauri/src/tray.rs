@@ -27,14 +27,30 @@ fn hint_text(en: bool) -> (&'static str, &'static str) {
     }
 }
 
-/// 앱이 뜰 때 한 번(윈도우만 부른다) — 앱 아이콘, 글자 없이 이름만 툴팁. 왼쪽 누름 = 열기, 오른쪽 = 메뉴(열기·끝내기)
-pub fn setup<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
-    use tauri::menu::{Menu, MenuItem};
-    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-    let (open, quit) = labels(crate::i18n::is_en());
+/// 트레이 메뉴 — 열기 · 참모 배지(✓ = 설정 bubble) · 끝내기. 참모 배지 누름은 앱 메뉴 사건(main.rs on_menu_event)이 받는다
+fn menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<tauri::menu::Menu<R>> {
+    use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
+    let en = crate::i18n::is_en();
+    let (open, quit) = labels(en);
     let open = MenuItem::with_id(app, "tray_open", open, true, None::<&str>)?;
+    let badge = CheckMenuItem::with_id(app, crate::bubble_menu::MENU_ID, crate::bubble_menu::label(en), true, crate::config::current().features.bubble, None::<&str>)?;
     let quit = MenuItem::with_id(app, "tray_quit", quit, true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &quit])?;
+    Menu::with_items(app, &[&open, &badge, &PredefinedMenuItem::separator(app)?, &quit])
+}
+
+/// 트레이 메뉴를 다시(✓·언어) — 메뉴를 다시 만들 때마다 main.rs 가 부른다. 트레이가 없으면(맥) 그냥 지나간다
+pub fn refresh<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(t) = app.tray_by_id("main") {
+        if let Ok(m) = menu(app) {
+            let _ = t.set_menu(Some(m));
+        }
+    }
+}
+
+/// 앱이 뜰 때 한 번(윈도우만 부른다) — 앱 아이콘, 글자 없이 이름만 툴팁. 왼쪽 누름 = 열기, 오른쪽 = 메뉴(열기·참모 배지·끝내기)
+pub fn setup<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+    let menu = menu(app)?;
     let mut b = TrayIconBuilder::with_id("main").menu(&menu).show_menu_on_left_click(false).tooltip(app.package_info().name.clone());
     if let Some(icon) = app.default_window_icon() {
         b = b.icon(icon.clone());
@@ -43,6 +59,7 @@ pub fn setup<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> 
         "tray_open" => show_main(app),
         // 지금까지 X 가 하던 끄기와 같다 — 앱만 끄고 세션은 계속
         "tray_quit" => crate::quit::exit_now(app, "tray exit"),
+        // 참모 배지(bubble_toggle)는 여기서 받지 않는다 — 트레이 메뉴 사건도 앱 메뉴 사건(main.rs)으로 같이 가서 두 번 뒤집힌다
         _ => {}
     })
     .on_tray_icon_event(|tray, e| {
@@ -93,6 +110,15 @@ mod tests {
         assert!(super::hint_due(&d), "처음엔 띄운다");
         assert!(!super::hint_due(&d), "두 번째부터는 안 띄운다");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 트레이_메뉴는_열기_참모_배지_끝내기() {
+        let src = include_str!("tray.rs");
+        let m = &src[src.find("fn menu<").unwrap()..];
+        let m = &m[..m.find("\n}\n").unwrap()];
+        assert!(m.contains("CheckMenuItem::with_id(app, crate::bubble_menu::MENU_ID, crate::bubble_menu::label(en), true, crate::config::current().features.bubble"), "✓ = 설정 bubble");
+        assert!(m.contains("&[&open, &badge, &PredefinedMenuItem::separator(app)?, &quit]"));
     }
 
     #[test]

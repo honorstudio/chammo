@@ -4,6 +4,7 @@ import { agree, b64, DATA, HELLO, helloFrame, NONCE_LEN, RESET, Session, unb64 }
 import { linkedKeys, NoKeysError, type PhoneKeys } from './keys';
 import { call, wsUrl } from './relayClient';
 import type { RelayLink } from './link';
+import type { LostWhy } from './lostMark';
 
 const CHUNK = 128 * 1024; // Rust phone_relay_core::CHUNK 와 같게
 const CONNECT_MS = 10_000;
@@ -33,7 +34,8 @@ export class OfflineError extends TypeError {
 /** 다시 이어야 한다 — 중계가 이 폰 서명을 거절(401)·열쇠가 없음·붙은 상대가 그 컴퓨터가 아님. 저절로 안 풀린다 */
 export class TrustError extends TypeError {
   override name = 'TrustError';
-  constructor() {
+  /** 까닭 — hold 거절 뒤 잠깐 안 묻는 동안 · nokeys 열쇠 없음 · relay401 중계가 서명 거절 · confirm 상대가 그 컴퓨터가 아님(lostMark 가 남긴다) */
+  constructor(readonly why: LostWhy) {
     super('이 폰 연결이 풀렸어요');
   }
 }
@@ -57,6 +59,8 @@ export class HubTunnel {
   private probedAt = 0;
   private askedAt = 0;
   private deniedAt = 0;
+  /** 거절을 본 까닭 — 잠깐 안 묻는 동안(hold)에도 원래 까닭으로 */
+  private deniedWhy: LostWhy = 'hold';
   private watch: ReturnType<typeof setInterval> | null = null;
   private readonly stallMs: number;
   private readonly probeMs: number;
@@ -121,16 +125,17 @@ export class HubTunnel {
       const r = await call(this.link.relay, k, this.link.device, 'GET', '/v0/me/self');
       if (r.status !== 401) return e;
       this.deniedAt = Date.now();
-      return new TrustError();
+      this.deniedWhy = 'relay401';
+      return new TrustError('relay401');
     } catch {
       return e;
     }
   }
 
   private async open(): Promise<void> {
-    if (Date.now() - this.deniedAt < DENIED_HOLD_MS) throw new TrustError();
+    if (Date.now() - this.deniedAt < DENIED_HOLD_MS) throw new TrustError(this.deniedWhy);
     // 링크가 있는데 열쇠가 없으면 소켓을 안 연다 — 새 열쇠로 옛 기기 id 를 서명해 봐야 401 이다
-    const k = await linkedKeys().catch((e: unknown) => { throw e instanceof NoKeysError ? new TrustError() : e; });
+    const k = await linkedKeys().catch((e: unknown) => { throw e instanceof NoKeysError ? new TrustError('nokeys') : e; });
     const shared = await agree(k.x.privateKey, unb64(this.link.macX));
     const nP = crypto.getRandomValues(new Uint8Array(NONCE_LEN));
     const ws = new WebSocket(await wsUrl(this.link.relay, `/v0/hubs/${this.link.mac}/ws`, k, this.link.device));
@@ -163,7 +168,7 @@ export class HubTunnel {
               done();
             } catch (e) {
               // 확인이 안 풀림 = QR 의 컴퓨터 열쇠와 다른 상대 — 바로 끊는다
-              done(new TrustError());
+              done(new TrustError('confirm'));
               this.fail(e);
             }
           } else if (frame[0] === RESET) {

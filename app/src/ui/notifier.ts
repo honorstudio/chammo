@@ -28,7 +28,7 @@ function fire(n: Note) {
   // 윈도우는 묻는 사이 같은 알림이 또 올 수 있다 — 보내기 직전에 한 번 더
   if (!shouldNotify(n, last, now)) return;
   last.set(noteKey(n), now);
-  void notify(n.title, n.body.slice(0, 120), noteTarget(n)).catch(() => {});
+  void notify(n.title, n.body.slice(0, 120), noteTarget(n), n.phones).catch(() => {});
 }
 
 // ── 보고 있어 건너뛴 사람 필요 알림 — 자리 비움이면 보낸다(domain/notify awayStep) ──

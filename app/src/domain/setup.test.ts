@@ -87,6 +87,12 @@ describe('참모 브라우저 줄 — 필수, 설치 버튼 하나, 없는 것�
     expect(browserRow(fresh, { ...idle, step: 'chrome', error: '인터넷에 연결할 수 없어요' }).action).toBe('retry');
   });
   it('모르면(읽기 실패) 버튼 없이 선택', () => expect(browserRow(null, null)).toEqual({ state: 'need', action: null, busy: false }));
+  // 공개 이슈 #28 — 설치는 끝났는데(준비됨) 세션이 크롬을 못 찾으면 '설치' 단추가 숨어 누를 게 없었다
+  it('세션이 크롬을 못 찾았으면(missing) 준비됨이어도 다시 찾기', () => {
+    expect(browserRow({ ...ready, missing: true, ready: false }, idle)).toEqual({ state: 'need', action: 'refind', busy: false });
+    expect(browserRow({ ...ready, missing: true, ready: false }, { ...idle, step: 'check', error: 'no-chrome' }).action).toBe('retry');
+    expect(browserRow({ ...ready, missing: true, ready: false }, { ...idle, running: true, step: 'check' }).busy).toBe(true);
+  });
   it('확인 목록 네 칸 — 있는 것·지금 하는 것·실패한 것', () => {
     expect(browserChecklist(ready, idle).map((c) => c.state)).toEqual(['ok', 'ok', 'ok', 'ok']);
     expect(browserChecklist({ ...fresh, nodeOk: true }, { ...idle, running: true, step: 'chrome' }).map((c) => [c.key, c.state])).toEqual([

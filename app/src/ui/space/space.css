@@ -93,7 +93,8 @@ button.cv-empty:hover { color: var(--accent); }
 .cv-h2 span { font-weight: 500; color: var(--text-3); }
 
 /* 대시보드 — 파일이 주인공(썸네일 크게, 최근 먼저), 맨 아래 검은 한 줄 */
-.cv-dash { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+/* min-height:0 — 세션 독이 기능 화면을 .lk-center(세로 flex)에 넣고, 터미널 뷰 도구 창(.hn-panel)도 세로 flex 라 없으면 내용만큼 늘어나 .cv-files 스크롤이 죽는다(2026-11-16 도구 화면) */
+.cv-dash { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .cv-dash > .cv-page-head { padding: 28px 36px 0; }
 .cv-files { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 36px 28px; /* 위 여백 — 카드 그림자·올라오는 움직임이 스크롤 칸 위에서 잘리지 않게 */ }
 .cv-files > .cv-blank { margin: 40px auto; }

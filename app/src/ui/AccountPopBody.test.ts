@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { AccountPopBody, type PopBodyProps } from './AccountPopBody';
 import type { PopRow } from '../domain/accounts';
 
-const row = (p: Partial<PopRow>): PopRow => ({ id: 'x', name: '', on: false, pinned: false, pinHint: false, five: null, week: null, left: null, stop: null, note: '', title: '', tip: '', ...p });
+const row = (p: Partial<PopRow>): PopRow => ({ id: 'x', name: '', on: false, pinned: false, pinHint: false, five: null, week: null, left: null, stop: null, pick: 'switch', note: '', title: '', tip: '', ...p });
 const props = (p: Partial<PopBodyProps> = {}): PopBodyProps => ({
   rows: [
     row({ id: 'k1', name: 'kimchi-long-name', on: true, five: 86, week: 86, left: 86, tip: '5시간 86% 남음' }),
@@ -117,5 +117,18 @@ describe('AccountPopBody — 한 줄 목록 + 다가오는 초기화', () => {
     // 바쁠 땐 막힌다
     const busy = find(tree(props({ error: 'x', fix: true, onFix, busy: true })), (e) => e.type === 'button' && cls(e).includes('acct-pop-fix'));
     expect(busy[0]!.props.disabled).toBe(true);
+  });
+});
+
+describe('AccountPopBody — 로그인 필요 줄(2026-11-13)', () => {
+  it('로그인 필요 줄은 "로그인" 이름표 — 누르면 같은 onUse(id), 무엇을 할지는 팝오버가 줄의 pick 으로', () => {
+    const onUse = vi.fn();
+    const p = props({ onUse, rows: [row({ id: 'k1', name: 'kimchi', on: true }), row({ id: 'k2', name: 'mandu.studio', stop: '로그인 필요', pick: 'login' })] });
+    const html = renderToStaticMarkup(createElement(AccountPopBody, p));
+    expect(html).toContain('aria-label="mandu.studio 계정 로그인"');
+    expect(html).not.toContain('mandu.studio 계정으로 바꾸기');
+    const [btn] = find(tree(p), (e) => e.type === 'button' && cls(e) === 'acct-pop-row');
+    (btn!.props.onClick as () => void)();
+    expect(onUse).toHaveBeenCalledWith('k2');
   });
 });

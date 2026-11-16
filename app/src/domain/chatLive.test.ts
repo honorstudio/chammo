@@ -180,7 +180,7 @@ describe('표가 든 지난 답 — 새 턴에 다시 그리지 않는다', () =
     + '| SVG (웹용 벡터) | 웹 페이지에 바로 넣을 수 있는 벡터 이미지 형식이라 용량이 작고 확대해도 선명하다. 다만 텍스트나 특수 효과는 브라우저에서 다르게 보일 수 있어서 저장 후 한 번은 직접 열어 확인해야 한다. | 다른 이름으로 저장에서 SVG 형식을 고르고, 옵션 창에서 글꼴 처리 방식을 정하면 된다. |\n\n'
     + '추천은 원본은 AI로 보관하고, 웹이나 배포용으로만 SVG를 따로 뽑는 것이다.';
   const said = (text: string, id = 'a1'): ChatItem => ({ kind: 'assistant', id, text, ts: '' } as ChatItem);
-  const me = (id: string): ChatItem => ({ kind: 'user', id, text: '어 팀 한정 아님', ts: '' } as ChatItem);
+  const me = (id: string): ChatItem => ({ kind: 'user', id, text: '응 팀만 해당은 아니야', ts: '' } as ChatItem);
 
   it('화면의 표 풀린 지난 답은 이미 기록에 있는 글이다', () => {
     const live = liveReply(screen)!;

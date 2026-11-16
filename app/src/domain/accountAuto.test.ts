@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { afterSwitch, applyApi, changedKeys, clearTerms, fpOf, AUTH_BLOCK_MS, STATE_V, TERMS_GRACE_MS, TERMS_CHAIN_MS, markDead, migrate, fmtUntil, markNudged, pinPatch, slotDead, stuckOf, parseResets, readAuto, readWins, slotStatus, step, LEARN_MS, MIN_GAP_MS, PIN_THRESHOLD, type AutoState, type Input } from './accountAuto';
+import { afterSwitch, applyApi, changedKeys, clearAuth, clearTerms, fpOf, AUTH_BLOCK_MS, STATE_V, TERMS_GRACE_MS, TERMS_CHAIN_MS, markDead, migrate, fmtUntil, markNudged, pinPatch, slotDead, stuckOf, parseResets, readAuto, readWins, slotStatus, step, LEARN_MS, MIN_GAP_MS, PIN_THRESHOLD, type AutoState, type Input } from './accountAuto';
 
 // 로컬 시각으로 — 22:20 같은 '다시 열리는 시각'을 사람 눈으로 맞춘다
 const at = (h: number, m = 0, d = 2, s = 0) => new Date(2026, 9, d, h, m, s).getTime();
@@ -769,5 +769,39 @@ describe('5시간 한도 없음(2026-11 Ultra) — 없음을 0%·100% 로 오판
     expect(p.switchTo).toBe('a');
     expect(p.state.slots.b?.why).toBe('limit');
     expect(p.state.slots.b?.blockedUntil).toBe(at(19, 30));
+  });
+});
+
+describe('clearAuth — 사람이 그 계정으로 새로 로그인했다(2026-11-13 계정 메뉴 로그인 필요 줄)', () => {
+  const dead = (): AutoState => base({ switchedAt: at(17), slots: { b: { fp: WB, authAt: at(4), blockedUntil: at(4) + AUTH_BLOCK_MS, why: 'auth' }, a: { fp: WA } } });
+
+  it('로그인 막힘·401 기록을 지우고 다시 열린 시각을 적는다 — 지문·사용량은 그대로', () => {
+    const c = clearAuth(dead(), 'b', at(10, 45));
+    expect(c.slots.b).toEqual({ fp: WB, openedAt: at(10, 45) });
+    expect(slotStatus(c.slots.b, at(10, 46)).kind).toBe('ok');
+  });
+
+  it('새 로그인으로 바꾸고 고정하면 자동 전환이 되돌리지 않는다(사용량 주소가 쉬는 중이라 못 물어도)', () => {
+    const s = { ...clearAuth(dead(), 'b', at(10, 45)), pinned: 'b', switchedAt: at(10, 45) };
+    const p = tick(s, at(10, 46), null, { ids: ['a', 'b'], active: 'b' });
+    expect(p.switchTo).toBeNull();
+  });
+
+  it('지우지 않으면 — 막힌 칸으로 바꾸고 고정해도 다음 차례에 첫 칸으로 되돌린다(고치기 전 버그의 판단 쪽)', () => {
+    const s = { ...dead(), slots: { a: { fp: WA }, b: dead().slots.b! }, pinned: 'b', switchedAt: at(10, 43) };
+    const p = step(s, input({ now: at(10, 43, 2, 20), ids: ['a', 'b'], active: 'b' }));
+    expect(p.switchTo).toBe('a');
+    expect(p.unpinned).toBe(true); // 그래서 '고정 계정이 다 차서 넘겼어' 알림까지 떴다
+  });
+
+  it('한도 막힘은 안 건드린다(로그인과 상관없다), 다른 칸도 그대로', () => {
+    const s = base({ slots: { b: { fp: WB, blockedUntil: at(22), why: 'five' }, a: { fp: WA, authAt: at(4), blockedUntil: at(4) + AUTH_BLOCK_MS, why: 'auth' } } });
+    const c = clearAuth(s, 'b', at(19));
+    expect(c.slots.b).toEqual(s.slots.b);
+    expect(c.slots.a).toEqual(s.slots.a);
+  });
+
+  it('칸 기록이 없으면 그대로', () => {
+    expect(clearAuth(base(), 'zz', at(19)).slots).toEqual(base().slots);
   });
 });

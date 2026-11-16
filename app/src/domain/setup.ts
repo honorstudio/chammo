@@ -296,6 +296,8 @@ export function axRow(trusted: boolean): { state: 'ok' | 'opt'; action: 'setting
 export type BrowserStatus = {
   node: string | null; nodeVersion: string; nodeOk: boolean; nodeSource: 'system' | 'ours' | '';
   installed: boolean; chrome: boolean; chromeBeta: boolean; checked: boolean; ready: boolean;
+  /** 세션이 크롬을 못 찾았다(래퍼가 남긴 tools/chammo-browser/.missing) — 그동안 ready 는 false(공개 이슈 #28) */
+  missing?: boolean;
 };
 export type BrowserStep = 'node' | 'chrome' | 'parts' | 'check';
 /** Rust browser_setup_state — '설치' 한 바퀴의 진행 */
@@ -303,11 +305,12 @@ export type BrowserStep = 'node' | 'chrome' | 'parts' | 'check';
 export type BrowserSetupState = { running: boolean; step: BrowserStep | null; pct: number | null; text: string; error: string | null; done: boolean; note?: string | null };
 
 /** 참모 브라우저 줄 — 필수(사용자 11-05, 첫 설치가 깔고, 안 깔린 옛 사용자는 여기서). 하나라도 없으면 '설치' 하나(Node·크롬 베타까지 앱이 받는다), 실패하면 '다시 시도' */
-export function browserRow(s: BrowserStatus | null, run: BrowserSetupState | null): { state: 'ok' | 'need'; action: 'install' | 'retry' | null; busy: boolean } {
+/** 세션이 크롬을 못 찾았으면(missing) 다 깔려 있어도 '다시 찾기' — 누르면 없는 것만 받고 시험으로 열어 본다(공개 이슈 #28) */
+export function browserRow(s: BrowserStatus | null, run: BrowserSetupState | null): { state: 'ok' | 'need'; action: 'install' | 'retry' | 'refind' | null; busy: boolean } {
   if (run?.running) return { state: 'need', action: null, busy: true };
   if (!s) return { state: 'need', action: null, busy: false };
   if (s.ready) return { state: 'ok', action: null, busy: false };
-  return { state: 'need', action: run?.error ? 'retry' : 'install', busy: false };
+  return { state: 'need', action: run?.error ? 'retry' : s.missing ? 'refind' : 'install', busy: false };
 }
 
 /** 확인 목록 네 칸 — ok 있음 · now 지금 하는 중 · fail 여기서 멈춤 · todo 받을 것 */

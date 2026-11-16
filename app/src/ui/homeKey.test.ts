@@ -29,7 +29,7 @@ describe('⌘` 홈 토글', () => {
     expect(nav).toMatch(/'dash' \| 'dashToggle'/);
   });
   it('스페이스: 홈이면 그 참모 탭이 보던 화면으로, 아니면 홈(domain/spaceNav dashToggle)', () => {
-    expect(view).toMatch(/if \(c === 'dashToggle'\) \{ setPick\(dashToggle\(pick, orch \? ownPick\(screens\.current\.get\(orch\.id\)\?\.pick, orch\.id, homeOf\(orch\)\) : ''\), 'home'\); return; \}/);
+    expect(view).toMatch(/if \(c === 'dashToggle'\) \{ setPick\(dashToggle\(pick, orch \? ownPick\(screens\.current\.get\(orch\.id\)\?\.pick, orch\.id, homeOf\(orch\), gone\) : ''\), 'home'\); return; \}/);
   });
   it('안내: 둘러보기 단축키 줄·미리보기 가득 단추·hq-app 스킬(한·영)', () => {
     // 2026-11-01 ux-start M5 — 둘러보기는 키 셋(⌘, ⌘/ ⌘1~⌘9)만, 키 표는 README·hq-app 스킬에

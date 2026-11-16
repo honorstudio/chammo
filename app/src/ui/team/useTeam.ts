@@ -6,6 +6,7 @@ import { teamFeed, teamMarkRead, type TeamFeed } from '../../data/teamApi';
 import { markRead, type TeamItem } from '../../domain/teamChat';
 import { looking, mergedRead, pushRead } from '../../domain/teamReads';
 import { every } from '../poll';
+import { keepSame } from '../../domain/keepSame';
 
 type Poke = { room: string; seq: number; note: string };
 type Dock = { key: string; place: 'window' | 'app' };
@@ -45,7 +46,7 @@ export function useTeam(): TeamData {
   const [handed, setHanded] = useState<Record<string, string>>(() => load(HANDED_KEY, {}));
   const alive = useRef(true);
   const refresh = useCallback(() => {
-    void teamFeed().then((f) => { if (alive.current) { setFeed(f); setErr(null); } }, (e: unknown) => { if (alive.current) setErr(String(e)); });
+    void teamFeed().then((f) => { if (alive.current) { setFeed((o) => keepSame(o, f)); setErr(null); } }, (e: unknown) => { if (alive.current) setErr(String(e)); });
   }, []);
   useEffect(() => {
     alive.current = true;

@@ -440,7 +440,7 @@ fn funnel_check() -> bool {
     }
     stop_running(false);
     set_error(Some(msg.clone()));
-    crate::claude::notify(crate::i18n::tr("모바일을 내렸어요", "Mobile stopped").into(), msg, None);
+    crate::claude::notify_to(crate::i18n::tr("모바일을 내렸어요", "Mobile stopped").into(), msg, None, true);
     true
 }
 
@@ -1192,7 +1192,12 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
     }
     fn push_subscribe(&self, device: &str, endpoint: &str, p256dh: &str, auth: &str) -> Result<(), String> {
         let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
-        crate::push::subscribe(crate::config::data_dir(), crate::push::Sub { device: device.into(), endpoint: endpoint.into(), p256dh: p256dh.into(), auth: auth.into(), at, replaces: vec![] })
+        let took = crate::push::subscribe(crate::config::data_dir(), crate::push::Sub { device: device.into(), endpoint: endpoint.into(), p256dh: p256dh.into(), auth: auth.into(), at, replaces: vec![] })?;
+        // 같은 폰 앱이 다시 로그인해 새 줄이 됐다 — 옛 줄은 빼고 그 중계 기기도 끊는다(11-16 홈 기기 칸 iPhone 8줄). 못 빼도 구독은 됐다
+        if !took.is_empty() {
+            let _ = devices().retire_same_phone(device, &took);
+        }
+        Ok(())
     }
     fn push_unsubscribe(&self, device: &str, endpoint: &str) -> Result<(), String> {
         crate::push::unsubscribe(crate::config::data_dir(), device, endpoint)

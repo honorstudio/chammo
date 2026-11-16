@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { BrowserMemCap, memCapShown } from './BrowserMemCap';
 import { TtsField } from './TtsField';
 import { baseTools, setGitIdentity, appVersion, trustFolders, browserSetupStart, browserSetupState, browserStatus, checkEnv, claudeTrusted, projectAccess, notifyOpenSettings, notifyRequest, notifyStatus, axTrusted, screenTrusted, askPermission, createHq, folderStatus, getAppEnv, makeDir, openTarget, pickFolder, rebuildMenu, writeConfig, type Config, type FolderStatus } from '../data/tauri';
 import { addExtraProject, addOpenFolder, claudeSignedInText, parseClaudeVersion, setupCommand, winSetupNotes, tildify, notifyRow, axRow, browserRow, browserChecklist, ghRow, gitIdentityRow, gitIdentityError, installState, loginRow, GET_URL, setupFailed, versionFit, type BrowserSetupState, type BrowserStatus, type EnvCheck, type NotifyStatus, type SetupTask, type SkipKey, type Trust } from '../domain/setup';
@@ -103,6 +104,8 @@ const ANIM_HINT = (): Record<Animation, string> => ({
 export function Setup({ config, fontSize, onClose, start, tab: tab0 }: Props) {
   const [draft, setDraft] = useState<Config>(config);
   const set = <K extends keyof Config>(k: K, v: Config[K]) => setDraft((d) => ({ ...d, [k]: v }));
+  // 설정 창을 연 채 메뉴 '참모 배지'(보기·윈도우 트레이)로 바꾸면 스위치도 따라온다 — 안 그러면 저장할 때 옛 값으로 덮었다(11-13)
+  useEffect(() => { setDraft((d) => (d.features.bubble === config.features.bubble ? d : { ...d, features: { ...d.features, bubble: config.features.bubble } })); }, [config.features.bubble]);
   const [check, setCheck] = useState<EnvCheck | null>(null);
   /** git 이름·메일 입력(점검 줄) — 저장된 값이 있으면 그걸로 채운다(win-first M1) */
   const [gitIn, setGitIn] = useState({ name: '', email: '' });
@@ -636,12 +639,14 @@ export function Setup({ config, fontSize, onClose, start, tab: tab0 }: Props) {
               <div className="su-rows">
                 <Row state={b.state} title={tr('참모 브라우저', 'Assistant browser')}
                   text={b.state === 'ok' ? tr('설치됐어요', 'Installed')
+                    : b.action === 'refind' ? tr('세션이 크롬을 못 찾았어요', 'A session couldn’t find Chrome')
                     : browser ? tr('세션이 웹사이트를 여는 브라우저예요. 없는 것만 받고 암호는 안 물어요', 'Sessions use it to open websites. Only missing parts download; no password')
                     : tr('확인하는 중…', 'Checking…')}>
-                  {b.action && (b.action === 'retry'
-                    ? <IconButton size="l" tone="pri" label={tr('다시 시도', 'Try again')} onClick={startBrowser}><IconRefresh /></IconButton>
+                  {b.action && (b.action === 'retry' || b.action === 'refind'
+                    ? <IconButton size="l" tone="pri" label={b.action === 'refind' ? tr('다시 찾기', 'Find again') : tr('다시 시도', 'Try again')} onClick={startBrowser}><IconRefresh /></IconButton>
                     : <button className="btn pri" onClick={startBrowser}>{tr('설치', 'Install')}</button>)}
                 </Row>
+                {memCapShown(b.state, IS_WIN) && <BrowserMemCap />}
                 {browser && (
                   <ul className="su-checks">
                     {browserChecklist(browser, browserRun).map((c) => (

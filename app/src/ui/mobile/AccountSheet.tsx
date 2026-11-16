@@ -1,11 +1,12 @@
 // 계정 시트 — 대시보드 머리줄의 계정·사용량을 누르면 아래에서 올라온다. 계정마다 이름·5시간·주 남은 %·지금·쉬는 중,
 // 다른 계정을 누르면 확인 한 번 → 맥이 데스크톱과 같은 길로 바꿔 끼운다(Rust accounts_cmd::phone_switch). 자동 전환 켜기·끄기.
+// 로그인 필요 칸은 바꾸지 않고 이유 한 줄(폰은 로그인 터미널을 못 띄운다 — 맥 계정 메뉴에서), 약관 칸은 맥이 그 칸 약관 막힘만 풀고 바꾼다
 // 계정 둘을 나란히 두고 칸 하나를 고른다(시안 phone-dash S3) — 지금 계정 = 채운 면 + 체크(글자 칩 없음), 숫자 하나(5시간·주 중 적은 쪽)와 그 칸이 다시 차는 때만.
 // 두 숫자·고정 여부는 칸 aria 와 데스크톱 계정 창에. 왼쪽 띠 금지
 import { useEffect, useState } from 'react';
 import { readAccounts, setAccountAuto, switchAccount } from '../../data/web';
 import { readAuto } from '../../domain/accountAuto';
-import { confirmText, phoneAccountError, phoneAccountRows, phoneAllOut, readPhoneAccounts, type PhoneAccountRow, type PhoneAccounts } from '../../domain/phoneAccounts';
+import { confirmText, phoneAccountError, phoneAccountRows, phoneAllOut, phoneLoginNeeded, readPhoneAccounts, type PhoneAccountRow, type PhoneAccounts } from '../../domain/phoneAccounts';
 import { usageLevel } from '../../domain/usage';
 import { IconCheck } from '../Icons';
 import { machine, tr } from '../../i18n';
@@ -62,7 +63,7 @@ export function AccountSheet({ text, onChanged, onClose }: Props) {
             {rows.map((r) => (
               <button key={r.id} type="button" className={r.on ? 'm-acct-tile m-cur' : 'm-acct-tile'} disabled={r.on || !!busy} aria-current={r.on ? 'true' : undefined}
                 aria-label={`${r.name || tr('이름 없음', 'No name')}${r.on ? tr(' — 지금 쓰는 계정', ' — current account') : ''}${r.five != null ? tr(` · 5시간 ${r.five}% 남음`, ` · 5h ${r.five}% left`) : ''}${r.week != null ? tr(` · 주 ${r.week}% 남음`, ` · week ${r.week}% left`) : ''}${r.pinned ? tr(' · 고정', ' · pinned') : ''}${r.rest ? ` · ${r.rest}` : ''}`}
-                onClick={() => { setError(null); setAsk(r); }}>
+                onClick={() => { if (r.pick === 'login') { setAsk(null); setError(phoneLoginNeeded(r)); } else { setError(null); setAsk(r); } }}>
                 <span className="m-acct-ck" aria-hidden="true">{r.on && <IconCheck />}</span>
                 <b className="m-acct-name">{r.name || tr('이름 없음', 'No name')}</b>
                 <span className={`m-acct-big${r.left != null ? ` m-${usageLevel(r.left)}` : ''}`}>{r.left == null ? '—' : `${r.left}%`}</span>

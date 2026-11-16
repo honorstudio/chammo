@@ -125,13 +125,13 @@ describe('허브 소켓이 안 열리면 HTTP 로 가른다', () => {
 
 describe('받기 다시 하기 — TrustError 는 다시 해도 소용없다', () => {
   it('TrustError 는 잠깐 끊김이 아니다', () => {
-    expect(isTransient(new TrustError())).toBe(false);
+    expect(isTransient(new TrustError('relay401'))).toBe(false);
     expect(isTransient(new TypeError('Load failed'))).toBe(true);
     expect(isTransient(new OfflineError())).toBe(true);
   });
   it('netRetry 가 바로 멈춘다', async () => {
     let n = 0;
-    await expect(netRetry(async () => { n++; throw new TrustError(); })).rejects.toBeInstanceOf(TrustError);
+    await expect(netRetry(async () => { n++; throw new TrustError('relay401'); })).rejects.toBeInstanceOf(TrustError);
     expect(n).toBe(1);
   });
 });

@@ -4,6 +4,7 @@
 // ① 그 상자에 표준 전역을 넣고 ② 세션 코드(evalmachine)에서 온 예외는 죽지 말고 unhandledRejection 길로 넘긴다 —
 // 플레이라이트가 그 길을 이미 받아 지금 도는 run_code 를 실패로 끝내거나 다음 도구 결과에 오류로 붙인다. 그 밖의 예외는 원래처럼 죽는다
 // ③ 상자 console 은 stderr 로 — 이 프로세스의 stdout 은 MCP JSON-RPC 통로라 세션의 console.log 가 날것으로 섞인다(래퍼가 JSON 아닌 줄도 넘긴다)
+// ⑤ 대화상자 경합 거절("No dialog is showing", src/cdprace.js)은 죽지 않고 한 줄만
 // ④ 같은 예외가 되풀이되면(setInterval·응답마다 터지는 처리기) 1분에 한 번만 넘긴다 — 전엔 첫 번에 죽었는데, 살리고 나니 다음 도구 결과·로그가 끝없이 불어났다
 const vm = require('vm');
 const { Console } = require('console');
@@ -26,7 +27,13 @@ const fromSessionCode = (e) => !!(e && typeof e.stack === 'string' && e.stack.in
 
 const REPEAT_MS = 60_000;
 const seen = new Map(); // 예외 글 → 마지막으로 넘긴 때
+const { benignRace } = require('./cdprace');
 process.on('uncaughtException', (err, origin) => {
+  // 대화상자 경합(src/cdprace.js) — 크롬이 이미 닫은 대화상자를 플레이라이트가 또 닫으려다 거절. 서버·크롬을 같이 죽일 일이 아니다
+  if (origin === 'unhandledRejection' && benignRace(err)) {
+    console.error(`[chammo-browser] 대화상자가 이미 닫혀 있었음 — 서버는 계속 돈다: ${err.message}`);
+    return;
+  }
   if (fromSessionCode(err)) {
     const msg = String(err && err.message);
     const now = Date.now();

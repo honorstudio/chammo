@@ -2,6 +2,7 @@ import { josa, machine, tr } from '../i18n';
 import { fmtUntil, readAuto, slotStatus, type SlotAuto } from './accountAuto';
 import type { Usage } from './usage';
 import { shq } from './setup';
+import { SETTLE_MS } from './login';
 
 /** 계정 칸 — 토큰은 화면에 안 온다(키체인에만). Rust accounts_cmd::View */
 export type AccountRow = { id: string; name: string; email: string; plan: string };
@@ -109,7 +110,11 @@ export function weekText(t: number): string {
 /** 계정 칩 팝오버 한 줄 — 이름·5시간·주간 '남은 %'(위 막대와 같은 기준, 값 없으면 null)·작은 한 줄(리셋 시각·몇 분 전, 막혔으면 그 상태)·마우스 올림(이메일·요금제) */
 /** pinHint = 고정이고 자동 전환이 켜져 있다 — '고정 — 다 쓰면 넘어감' 을 보인다(폰 시트·설정) */
 /** left = 둘 중 적은 쪽(먼저 막히는 한도) · stop = 막혔으면 짧은 글(~22:20·로그인 필요) · tip = 데스크톱 팝오버 마우스 올림(두 한도·몇 분 전·이메일) */
-export type PopRow = { id: string; name: string; on: boolean; pinned: boolean; pinHint: boolean; five: number | null; week: number | null; left: number | null; stop: string | null; note: string; title: string; tip: string };
+/** pick = 그 줄을 누르면: switch 바꾸기+고정 · login 그 계정 로그인(바꾸지 않는다) · terms 약관 막힘을 풀고 바꾸기.
+ *  로그인·약관 막힘은 고정해도 안 풀려서(step 은 한도 문턱만 늦춘다) 막힌 채 바꾸면 다음 차례 자동 전환이 첫 칸으로 되돌렸다(2026-11-13) */
+export type RowPick = 'switch' | 'login' | 'terms';
+export const rowPick = (kind: ReturnType<typeof slotStatus>['kind']): RowPick => (kind === 'auth' ? 'login' : kind === 'terms' ? 'terms' : 'switch');
+export type PopRow = { id: string; name: string; on: boolean; pinned: boolean; pinHint: boolean; five: number | null; week: number | null; left: number | null; stop: string | null; pick: RowPick; note: string; title: string; tip: string };
 export function popRows(v: AccountsView | null, now: number): PopRow[] {
   if (!v) return [];
   const auto = readAuto(v.auto);
@@ -143,6 +148,7 @@ export function popRows(v: AccountsView | null, now: number): PopRow[] {
       week: weekLeft,
       left: nums.length ? Math.min(...nums) : null,
       stop: st.kind === 'ok' ? null : st.kind === 'auth' || st.kind === 'terms' ? slotText(st, now) : `~${fmtUntil(st.until, now)}`,
+      pick: rowPick(st.kind),
       note,
       title,
       tip,
@@ -209,9 +215,17 @@ export function accountLoginCommand(claude: string | null | undefined, email: st
   return `${shq(claude || 'claude')} auth login${email ? ` --email ${shq(email)}` : ''}; echo; echo ${shq(done)}`;
 }
 
-/** 로그인해서 바꾸기가 끝났나 — 로그인 표시(oauthAccount)가 그 칸 계정이 됨 */
-export function reloginDone(v: AccountsView, id: string): boolean {
-  return v.active === id;
+/** 그 계정으로 로그인하는 동안 자동 전환을 쉰다 — 팝오버·설정 창을 닫아도 로그인이 끝날 때까지(다른 길로 로그인해도), 상한까지.
+ *  쉬지 않으면 로그인이 끝나 키체인이 그 계정이 된 순간 그 칸이 아직 '로그인 필요'라 자동 전환이 첫 칸으로 되돌린다(2026-11-13) */
+export const LOGIN_HOLD_MS = 10 * 60_000;
+export type LoginHold = { id: string; until: number; seenAt: number };
+/** 한 차례 — 로그인 표시(oauthAccount)가 그 칸 계정이 된 게 SETTLE_MS 이어지면 finish(막힘 풀고 바꾸기+고정), 상한이 지나면 expired */
+export function holdStep(h: LoginHold | null, active: string | null, now: number): { hold: LoginHold | null; act: 'none' | 'wait' | 'finish' | 'expired' } {
+  if (!h) return { hold: null, act: 'none' };
+  if (now >= h.until) return { hold: null, act: 'expired' };
+  if (active !== h.id) return { hold: { ...h, seenAt: 0 }, act: 'wait' };
+  if (!h.seenAt) return { hold: { ...h, seenAt: now }, act: 'wait' };
+  return { hold: h, act: now - h.seenAt >= SETTLE_MS ? 'finish' : 'wait' };
 }
 
 /** Rust 오류 이름 → 사람 글 */
@@ -251,6 +265,8 @@ export function accountError(code: string): string {
       : detail === 'network'
         ? tr('바꿀 계정의 로그인을 새로 받으려는데 인터넷이 안 돼요. 연결을 확인하고 다시 해 주세요.', 'Could not renew the sign-in for that account — no internet. Check the connection and try again.')
         : tr(`바꿀 계정의 로그인을 새로 받지 못했어요(${detail}). 잠시 뒤 다시 해 주세요.`, `Could not renew the sign-in for that account (${detail}). Try again in a moment.`);
+    case 'needsLogin': return tr('그 계정은 로그인이 풀려서 바꾸지 않았어요. 위 계정 메뉴에서 그 계정을 눌러 다시 로그인해 주세요.', 'That account is signed out, so it was not switched. Click it in the account menu at the top to sign in again.');
+    case 'loginTimeout': return tr('로그인을 10분 넘게 기다려서 멈췄어요. 다시 하려면 그 계정을 한 번 더 눌러 주세요.', 'Stopped waiting for sign-in after 10 minutes. Click the account again to retry.');
     case 'configDir': return tr('CLAUDE_CONFIG_DIR 를 쓰는 중이라 계정 칸을 아직 쓸 수 없어요.', 'Accounts are not supported while CLAUDE_CONFIG_DIR is set.');
     case 'macOnly': return tr('계정 칸은 지금은 맥에서만 돼요.', 'Accounts are Mac-only for now.');
     default: return tr(`계정 일을 못 끝냈어요: ${detail || code}`, `Could not finish: ${detail || code}`);

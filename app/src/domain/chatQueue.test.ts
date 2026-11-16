@@ -430,9 +430,9 @@ describe('다시 보내기는 같은 말을 겹쳐 치지 않는다(2026-11-09 c
 
 // 2026-11-09 23:09~23:14 참모 업데이트 실측(2.1.319): 일하는 중 보낸 말의 enqueue 줄에 글(content)이 없었다(이 세션 3,150개 중 37개).
 // 앱은 대기 중인 말을 못 알아보고 30초 뒤 '전달 안 됨 + 다시 보내기' → 사용자가 눌러 같은 말이 대기열에 또 들어가
-// '내 머리속에 있어' 두 번, '#img1 … 엑스 누르고싶음' 세 번이 턴이 끝날 때마다 늦게 들어갔다(다른 탭을 볼 때)
+// '메모장에 적어 뒀어' 두 번, '#img1 … 엑스 누르고싶음' 세 번이 턴이 끝날 때마다 늦게 들어갔다(다른 탭을 볼 때)
 describe('글 없는 enqueue — 이름 없는 대기 말로 센다', () => {
-  const sent = { text: '내 머리속에 있어', at: at(10), since: at(0) };
+  const sent = { text: '메모장에 적어 뒀어', at: at(10), since: at(0) };
   it('재현: 보낸 뒤 글 없는 enqueue 가 붙었으면 30초가 지나도 전달 안 됨이 아니라 대기 중', () => {
     const q = applyQueueOps(emptyQueue, op('enqueue', T(11)));
     expect(pendingState(sent, { queue: q, termText: '', now: at(10) + 60_000, enterWait: 400 })).toBe('queued');
@@ -446,7 +446,7 @@ describe('글 없는 enqueue — 이름 없는 대기 말로 센다', () => {
     expect(q.waiting.length).toBe(3);
     q = applyQueueOps(q, [op('dequeue', T(20)), user('B')].join('\n'));
     expect(q.waiting.map((w) => w.text)).toEqual(['', '']);
-    q = applyQueueOps(q, [op('dequeue', T(21)), user('내 머리속에 있어')].join('\n'));
+    q = applyQueueOps(q, [op('dequeue', T(21)), user('메모장에 적어 뒀어')].join('\n'));
     expect(q.waiting.length).toBe(1);
   });
   it('이름 없는 대기 말은 다른 말의 짝(after)으로 안 쓰인다 — 글 있는 대기 말 비교는 그대로', () => {

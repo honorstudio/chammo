@@ -165,6 +165,9 @@ def parse(argv):
             return {'verb': 'locker-ls', 'team': opts.get('team', ''), 'trash': bool(opts.get('trash'))}, None
         if sub == 'put' and names:
             paths = [os.path.realpath(os.path.expanduser(n)) for n in names]
+            dirs = [n for n, p in zip(names, paths) if os.path.isdir(p)]
+            if dirs:  # 팀 보관함엔 폴더 바로가기를 안 올린다 — 다른 기기에서 안 열린다(앱 team_locker_put 과 같다)
+                return None, "folders can't go in the team locker — put the files inside / 폴더는 팀 보관함에 못 올려 — 안의 파일을 올려: " + ', '.join(dirs)
             missing = [n for n, p in zip(names, paths) if not os.path.isfile(p)]
             if missing:
                 return None, 'no such file / 파일이 없어: ' + ', '.join(missing)

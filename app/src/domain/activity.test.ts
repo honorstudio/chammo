@@ -208,7 +208,7 @@ describe('auth — 로그인이 풀려 멈춘 세션(2026-10-06 아이맥 참모
   it('"다시 로그인함, 이어서" 뒤 또 같은 오류면 그 새 오류가 남는다(아이맥 00:30:31)', () => {
     const a = summarizeTranscript([
       err('2026-10-06T00:30:22Z', 'Login expired · Please run /login', 'authentication_failed'),
-      user('2026-10-06T00:30:31Z', '로그인 오류로 멈췄었어(다시 로그인함). 하던 거 이어서 해줘.'),
+      user('2026-10-06T00:30:31Z', '로그인이 풀려서 멈췄었어(다시 들어감). 하던 일 이어서 해 줘.'),
       err('2026-10-06T00:30:31.8Z', 'Login expired · Please run /login', 'authentication_failed'),
     ].join('\n'));
     expect(a.auth?.ts).toBe('2026-10-06T00:30:31.8Z');

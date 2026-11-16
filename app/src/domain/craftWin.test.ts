@@ -39,6 +39,13 @@ describe('Craft 따로 창 머리줄·아래 줄', () => {
     expect(l).not.toMatch(/\n/);
   });
 
+  it('이어서 하라면 같은 문서를 고치게 — 새로 만들거나 지우지 않게(2026-11-16 — 고치지 않고 새로 만들던 것)', () => {
+    const l = handbackLine('참모 슬라이드', "1쪽 '본문'→'본문 고침'");
+    expect(l).toMatch(/그 문서를 그대로/);
+    expect(l).toMatch(/새로 만들거나 지우지/);
+    expect(l).not.toMatch(/다시 짠다/);
+  });
+
   it('비추기가 안 될 때만 칸 가운데 안내', () => {
     expect(mirrorNote(info())).toBeNull();
     expect(mirrorNote(info({ mirror: 'waiting' }))?.text).toContain('비추는 중');

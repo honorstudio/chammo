@@ -4,6 +4,7 @@
 import { toolTarget } from './activity';
 import { ORIGIN_NOTE, quotePath } from './drop';
 import { dropSig } from './orchLabel';
+import type { ShowAt } from './showAt';
 
 export type ChatTool = { name: string; target: string };
 export type ChatItem =
@@ -426,8 +427,13 @@ export function typedChunks(text: string, size = 200): string[] {
 /** 파일 경로 — 채팅 칩은 큰따옴표 안이 통째로 경로(drop quotePath, 안의 " 는 \"), 끌어 놓은 그림·옛 기록은 셸 이스케이프(띄어쓰기는 "\ ").
  *  /… 또는 ~/… 로 시작. 1 = 따옴표 경로, 2 = 이스케이프 경로 */
 const PATH_RE = /(?:^|(?<=\s))(?:"((?:\/|~\/)(?:\\.|[^"\\\n])*)"|((?:\/|~\/)(?:\\ |[^\s])+))/g;
-const unquote = (q: string) => q.replace(/\\(x[0-9a-f]{2}|.)/g, (_, c: string) => (c === 'n' ? '\n' : c === 'r' ? '\r' : c.length === 3 ? String.fromCharCode(parseInt(c.slice(1), 16)) : c));
-export type Seg = { text: string } | { path: string; name: string };
+/** 칩 따옴표 경로 풀기(quotePath 의 반대) — 그림 상자 칩 되읽기도 쓴다(domain/askPick areaOf) */
+export const unquote = (q: string) => q.replace(/\\(x[0-9a-f]{2}|.)/g, (_, c: string) => (c === 'n' ? '\n' : c === 'r' ? '\r' : c.length === 3 ? String.fromCharCode(parseInt(c.slice(1), 16)) : c));
+export type Seg = { text: string } | { path: string; name: string; /** 짚을 자리 — #sel1 "경로:줄" 의 줄, #area1 "경로" box= 의 상자(누르면 그 자리에 열린다) */ at?: ShowAt };
+/** 고른 곳 칩(domain/askPick) — 따옴표 경로 바로 앞 이름표, 문서 줄 꼬리, 그림 상자 꼬리 */
+const ASK_BEFORE = /#(sel|area)\d+ $/;
+const LINE_TAIL = /:(\d+)(?:-(\d+))?$/;
+const BOX_TAIL = /^ box=((?:0|1|0?\.\d+|1\.0+)(?:,(?:0|1|0?\.\d+|1\.0+)){3})(?![\d.,])/;
 /** 사람 말 속 파일 경로를 이름 칸으로 떼어 낸다 — 말풍선이 긴 경로로 지저분했다(2026-09-30 사용자) */
 export function splitPaths(text: string): Seg[] {
   const out: Seg[] = [];
@@ -435,11 +441,25 @@ export function splitPaths(text: string): Seg[] {
   for (const m of text.matchAll(PATH_RE)) {
     const raw = m[1] ?? m[2]!;
     if (!raw.slice(1).includes('/')) continue; // /compact 같은 슬래시 명령은 경로가 아니다
-    const len = m[1] !== undefined ? raw.length + 2 : raw.length;
+    let len = m[1] !== undefined ? raw.length + 2 : raw.length;
     const at = m.index! + (m[0].length - len);
     if (at > last) out.push({ text: text.slice(last, at) });
-    const path = m[1] !== undefined ? unquote(raw) : raw.replace(/\\ /g, ' ');
-    out.push({ path, name: path.split('/').pop() || path });
+    let path = m[1] !== undefined ? unquote(raw) : raw.replace(/\\ /g, ' ');
+    let name = path.split('/').pop() || path;
+    let spot: ShowAt | undefined;
+    const ask = m[1] !== undefined ? text.slice(0, at).match(ASK_BEFORE)?.[1] : undefined;
+    const lm = ask === 'sel' ? path.match(LINE_TAIL) : null;
+    if (lm) {
+      path = path.slice(0, -lm[0].length);
+      spot = { line: Number(lm[1]), ...(lm[2] ? { lineEnd: Number(lm[2]) } : {}) };
+    }
+    const bm = ask === 'area' ? text.slice(at + len).match(BOX_TAIL) : null;
+    if (bm) {
+      spot = { box: bm[1]!.split(',').map(Number) as [number, number, number, number] };
+      len += bm[0].length;
+      name = path.split('/').pop() || path;
+    }
+    out.push({ path, name, ...(spot ? { at: spot } : {}) });
     last = at + len;
   }
   if (last < text.length) out.push({ text: text.slice(last) });
@@ -460,9 +480,12 @@ export function termRest(termText: string, paths: string[]): string {
 }
 
 /** 말풍선 참조 — 앞 말풍선을 #chat1 로 입력칸에 끌어온 것(2026-09-30 사용자, 10-12 @ → # — 옛 @chat1 기록도 읽는다) */
-export type ChatRef = { label: string; who: string; text: string };
+export type ChatRef = { label: string; who: string; text: string; /** 이름표 바로 뒤에 붙여 보낼 자리 — #sel1 "경로:줄", #area1 "경로" box=…(domain/askPick) */ at?: string;
+  /** 인용 블록 머리 — 없으면 who. #sel 은 화면 이름(파일:줄)보다 길게(파일:줄 · 제목) 참모에게만 */ head?: string };
 const REF_MAX = 600;
-const REF_HEAD = /^\[참조 ([#@]chat\d+) · ([^\]]*)\]$/;
+const REF_HEAD = /^\[참조 ([#@](?:chat|sel)\d+) · ([^\]]*)\]$/;
+/** 인용 블록 없이 이름표 자리에서 끝나는 것 — 일·목표(따옴표 글), 그림 상자(경로와 box 가 전부) */
+const NO_BLOCK = /^#(?:task|goal|area)\d+$/;
 
 /** #task1·#goal1 — 인용 블록 대신 이름표 뒤 따옴표 안으로 풀린다(#file1 "경로" 와 같은 꼴, 2026-10-23 사용자 폰) */
 const INLINE_REF = /^#(?:task|goal)\d+$/;
@@ -477,20 +500,23 @@ export function withRefs(text: string, refs: ChatRef[]): string {
   const at = (r: ChatRef) => new RegExp(`${r.label}(?!\\d)`);
   const used = refs.filter((r) => at(r).test(text));
   if (!used.length) return text;
-  for (const r of used.filter((x) => INLINE_REF.test(x.label))) text = text.replace(at(r), () => `${r.label} "${inlineText(r.text)}"`);
-  const blocks = used.filter((r) => !INLINE_REF.test(r.label));
+  for (const r of used) {
+    if (INLINE_REF.test(r.label)) text = text.replace(at(r), () => `${r.label} "${inlineText(r.text)}"`);
+    else if (r.at) text = text.replace(at(r), () => `${r.label} ${r.at}`);
+  }
+  const blocks = used.filter((r) => !NO_BLOCK.test(r.label));
   if (!blocks.length) return text;
   const quote = (t: string) => {
     const flat = t.split('\n').filter((l) => l.trim()).join('\n');
     const cut = [...flat].length > REF_MAX ? `${[...flat].slice(0, REF_MAX).join('')}…` : flat;
     return cut.split('\n').map((l) => `> ${l}`).join('\n');
   };
-  return [text, ...blocks.map((r) => `[참조 ${r.label} · ${r.who}]\n${quote(r.text)}`)].join('\n\n');
+  return [text, ...blocks.map((r) => `[참조 ${r.label} · ${r.head ?? r.who}]\n${quote(r.text)}`)].join('\n\n');
 }
 
 /** 보낸 말풍선에서 본문과 참조 블록을 가른다 — withRefs 의 반대 */
 export function splitRefs(text: string): { body: string; refs: ChatRef[] } {
-  const at = text.search(/\n\n\[참조 [#@]chat\d+ · [^\]]*\]\n/);
+  const at = text.search(/\n\n\[참조 [#@](?:chat|sel)\d+ · [^\]]*\]\n/);
   if (at < 0) return { body: text, refs: [] };
   const refs: ChatRef[] = [];
   for (const block of text.slice(at + 2).split('\n\n')) {

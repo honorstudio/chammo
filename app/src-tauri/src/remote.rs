@@ -726,7 +726,21 @@ fn devices_tailnet() -> Result<DevicesOut, String> {
 /// 짝지은 기기(이름만) — 파일 하나 읽기라 가볍다. 띠의 기기 단추는 이게 하나라도 있을 때만 뜬다(끊긴 기기도 짝은 지은 것)
 #[tauri::command]
 pub fn remote_saved() -> Vec<serde_json::Value> {
-    load(&data_dir()).into_iter().map(|s| serde_json::json!({ "id": s.id, "name": s.name })).collect()
+    one_per_name(load(&data_dir())).into_iter().map(|s| serde_json::json!({ "id": s.id, "name": s.name })).collect()
+}
+
+/// 같은 이름(대소문자 무시) 컴퓨터는 한 줄 — 테일넷 옛 짝과 중계 짝이 같이 남은 PC(11-16 홈 DESKTOP 두 줄). 최근에 닿은 쪽, 같으면 늦게 짝지은 쪽.
+/// 목록 파일은 그대로(scripts/peer·설정은 hide_stale 로 따로 거른다)
+pub fn one_per_name(v: Vec<Saved>) -> Vec<Saved> {
+    let mut out: Vec<Saved> = Vec::new();
+    for s in v {
+        match out.iter_mut().find(|o| o.name.to_lowercase() == s.name.to_lowercase()) {
+            Some(o) if (s.last_ok, s.paired_at) > (o.last_ok, o.paired_at) => *o = s,
+            Some(_) => {}
+            None => out.push(s),
+        }
+    }
+    out
 }
 
 /// 중계로 짝지은 다른 컴퓨터를 부를 열쇠 — 키체인(윈도우는 자격 증명 관리자) 칸 `relay:<중계 기기 id>`(테일넷 노드 칸과 안 섞이게). C-3b

@@ -63,7 +63,7 @@ describe('attachStep — 보낸 뒤 첨부 줄', () => {
     expect(mixed.s.list).toHaveLength(1);
   });
   it('쓰는 중(입력칸에 #img 이름표)·붙인 지 5초 안이면 비지 않는다', () => {
-    expect(run([{ kind: 'add', item: img('a'), as: 'img', now: 0 }, ...reads('', '#img1 이거', 6000, 8)]).s.list).toHaveLength(1);
+    expect(run([{ kind: 'add', item: img('a'), as: 'img', now: 0 }, ...reads('', '#img1 이것 좀', 6000, 8)]).s.list).toHaveLength(1);
     expect(run([{ kind: 'add', item: img('a'), as: 'img', now: 0 }, ...reads('', '', 1000, 8)]).s.list).toHaveLength(1);
   });
   it('그림과 파일 번호는 따로 센다', () => {

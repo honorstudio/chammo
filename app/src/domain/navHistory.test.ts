@@ -52,3 +52,17 @@ describe('keyFallback — ⌘[·마우스 뒤로가 기록이 없을 때(roadmap
     expect(keyFallback(-1, 'd:/a/b.md', '')).toBeUndefined();
   });
 });
+
+describe('goBack — 그사이 사라진 화면은 건너뛴다(2026-11-16 — 꺼진 브라우저 칸으로 돌아가 탭 줄만 남은 빈 칸)', () => {
+  const gone = (p: string) => p === 'b:hq' || p === 'k:photo';
+  it('꺼진 브라우저·Craft 칸을 넘어 그 앞 화면으로', () => {
+    const n = { back: ['l:a#h', 'b:hq', 'k:photo'], fwd: [] };
+    expect(goBack(n, 'l:a#d:x', gone)).toEqual({ nav: { back: [], fwd: ['l:a#d:x'] }, to: 'l:a#h' });
+  });
+  it('뒤가 다 사라졌으면 null — 부르는 쪽이 첫 화면(fallback)으로', () => {
+    expect(goBack({ back: ['b:hq'], fwd: [] }, 'l:a#h', gone)).toBeNull();
+  });
+  it('앞으로도 사라진 화면은 건너뛴다', () => {
+    expect(goForward({ back: [], fwd: ['b:hq', 'l:a#h'] }, 'l:a#d:x', gone)).toEqual({ nav: { back: ['l:a#d:x'], fwd: [] }, to: 'l:a#h' });
+  });
+});

@@ -197,13 +197,14 @@ export function featureOf(pick: string): FeatureKey | null {
 
 /** 기능 열기·닫기 → 다음 화면. 켜고 끄는 토글 — 다시 누르면 닫고 열기 전 화면으로(2026-10-11 사용자 "갈아엎지 말고 열고 닫히게").
  *  before = 그 탭에서 기능 화면을 열기 전에 보던 화면 — 기능끼리 바꿔도 처음 것 그대로(리뷰를 닫으면 도구가 아니라 보관함으로).
- *  home = 기억이 없을 때 갈 그 참모 첫 화면. 하니터가 앱 전체에 고정이면 다른 탭으로 가도 남아 있어서 탭마다 기억한다(2026-10-02) */
-export function featurePick(key: FeatureKey, pick: string, req: 'open' | 'close' | 'toggle', before: string, home: string): { pick: string; before: string } {
+ *  home = 기억이 없을 때 갈 그 참모 첫 화면. 하니터가 앱 전체에 고정이면 다른 탭으로 가도 남아 있어서 탭마다 기억한다(2026-10-02)
+ *  gone = 열어 둔 사이 사라진 화면(꺼진 브라우저·Craft 칸) — 그리로 돌아가면 탭 줄만 남은 빈 칸이라 첫 화면으로(2026-11-16 사용자 after-blank) */
+export function featurePick(key: FeatureKey, pick: string, req: 'open' | 'close' | 'toggle', before: string, home: string, gone: (p: string) => boolean = () => false): { pick: string; before: string } {
   const now = featureOf(pick);
   const open = now === key;
   const want = req === 'toggle' ? !open : req === 'open';
   if (want === open) return { pick, before };
-  if (!want) return { pick: before || home, before: '' };
+  if (!want) return { pick: before && !gone(before) ? before : home, before: '' };
   return { pick: key, before: now ? before : pick };
 }
 
@@ -261,9 +262,9 @@ export const leaveHomeFor = (pick: string, view: string | undefined, id: string)
 
 /** 참모 화면 되살리기 — 기억한 자리가 다른 참모 보관함(l:<남>…)이면 이 참모 홈으로. 옛 화면이 눌려 남의 보관함 자리가 한 참모 기억에 박히면
  *  그 참모로 가도 남의 홈이 떴고, 다른 참모를 떠날 때마다 그 기억으로 옮아 갔다(2026-10-13) */
-export function ownPick(saved: string | undefined, id: string, home: string): string {
-  // 홈 대시보드는 참모 화면이 아니다 — 박혀 있어도 이 참모 자리로
-  if (!saved || saved === HOME_PICK) return home;
+export function ownPick(saved: string | undefined, id: string, home: string, gone: (p: string) => boolean = () => false): string {
+  // 홈 대시보드는 참모 화면이 아니다 — 박혀 있어도 이 참모 자리로. 그사이 사라진 화면(꺼진 브라우저·Craft 칸)도 홈(featurePick 과 같은 판정)
+  if (!saved || saved === HOME_PICK || gone(saved)) return home;
   const l = parseLkPick(saved);
   return l && l.orch !== id ? home : saved;
 }

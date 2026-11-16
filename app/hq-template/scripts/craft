@@ -37,6 +37,9 @@ Craft 앱(ArtCraft 오픈소스)을 고치지 않은 원본 그대로 앱 안에
                                      removed until reinstalled or --reset (the switch turned back on). The app runs it after setup
                                      / 기본 다섯(표·PDF·슬라이드·문서·벡터) 중 없는 것을 차례로 — 앱이 첫 설정 뒤 뒤에서 돌린다
   scripts/craft recent [<app>]         — recently saved/opened Craft documents / 최근 Craft 문서
+  scripts/craft changes <file>         — what changed since you last saw it (a person edited it) / 지난번 본 판 뒤로 바뀐 것
+  scripts/craft keep <file> one|versions [--project] — the user's pick: keep editing one file, or a new version each time / 한 파일·판 나누기
+  scripts/craft trash <file>…          — old copies to the Trash, never rm / 옛 판은 휴지통으로
   scripts/craft takeover <app> on|off  — (the app's Take over / Hand back) on: commands pause; off: prints what the person changed
                                      / 개입 켜기·끄기 — 끄면 사람이 바꾼 것 한 줄
   scripts/craft eject <app>          — pop out: save (PSD), quit, reopen on your screen with the file / 꺼내기 — 저장 후 내 화면에 다시 열기
@@ -61,6 +64,7 @@ for _io in (sys.stdin, sys.stdout, sys.stderr):  # 윈도우 파이썬 기본은
         _io.reconfigure(encoding='utf-8', errors='replace')
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import craft_win  # 윈도우 길(설치·띄우기·지우기 — 참모 앱 portable zip). 맥 길은 이 파일 그대로
+import craft_diff  # 문서 전후 비교 — 돌려받음·다시 열기·changes 가 사람이 고친 걸 쪽·글·도형 단위 한 줄로
 IS_WIN = sys.platform == 'win32'
 
 OWNER = 'storytold'
@@ -2027,6 +2031,8 @@ def note_call(ddir, app, method, params):
         args = ' '.join(f'{k} {v}' for k, v in inner.items() if isinstance(v, (int, float, str)))[:80]
         st = {'last': f'{name} {args}'.strip(), 'dirty': True}
     st['at'] = time.strftime('%H:%M:%S')
+    if load_status(ddir, app).get('person'):
+        st['person'] = True  # 사람이 고친 문서 — 닫을 때 그 사람 파일 자리에 쓴다(세션 명령이 뒤에 와도 남긴다)
     if unknown:
         st['docUnknown'] = True
     try:
@@ -2673,7 +2679,7 @@ def free_name(path, ours=frozenset()):
     return f'{stem} {n}{ext}'
 
 
-def close_plan(doc, sources, save_dir, work, ours=frozenset(), ext='.psd'):
+def close_plan(doc, sources, save_dir, work, ours=frozenset(), ext='.psd', versions=frozenset()):
     """[(작업 폴더 안에 저장할 이름, 옮길 자리)] — 파일에서 왔으면 그 파일(같은 형식) + 옆에 레이어 살린 PSD,
     새 문서면 보관함 Craft 폴더에 그 앱 형식, 보관함을 모르면 작업 폴더. 옆 PSD 는 사람이 가진 파일을 덮지 않는다(' 2') — 우리가 써 둔 것(ours)만 그 자리에 다시.
     새 문서는 우리가 써 둔 자리여도 늘 새 이름 — 이름 없는 새 문서가 다 untitled 라 앞 문서를 덮었다(10-28 참모 벡터)"""
@@ -2681,9 +2687,10 @@ def close_plan(doc, sources, save_dir, work, ours=frozenset(), ext='.psd'):
     stem, own = os.path.splitext(name or 'untitled')
     src = sources.get(name)
     if src:
-        out = [(name, src)]
+        dest = next_version(src) if src in versions else src  # 판을 나누기로 한 파일·정하기 전 세션만 고친 파일은 원본을 안 덮고 다음 판에
+        out = [(name, dest)]
         if ext == '.psd' and own.lower() != '.psd':  # 레이어 살린 PSD 사본은 PhotoCraft 만
-            out.append((stem + '.psd', free_name(os.path.splitext(src)[0] + '.psd', ours)))
+            out.append((stem + '.psd', free_name(os.path.splitext(dest)[0] + '.psd', ours)))
         return out
     dest = free_name(os.path.join(save_dir or work, stem + ext))
     return [(stem + ext if save_dir else os.path.basename(dest), dest)]
@@ -2706,6 +2713,128 @@ def add_recent(ddir, app, paths, saved=False):
     new = [{'app': app, 'path': p, 'at': now, **({'saved': True} if saved or old.get(p, {}).get('saved') else {})} for p in paths]
     keep = [r for r in recent(ddir) if r.get('path') not in paths]
     _write_json(recent_file(ddir), {'items': (new + keep)[:RECENT_MAX]})
+
+
+# ── 한 파일로 계속 고칠까, 판을 나눌까 — 사용자가 정한다(참모가 한 번 묻는다), 정할 때까지는 한 파일(2026-11-16 — 새로 만들지 말고 같은 파일에 저장) ──
+KEEP_WORDS = {'one': '한 파일로 계속 고친다(같은 자리에 저장)', 'versions': '고칠 때마다 판을 나눠 새 파일(이름 v2·v3…)로 둔다'}
+
+
+def keep_file(ddir):
+    return os.path.join(ddir, 'craft-native', 'keep.json')
+
+
+def _unversioned(path):
+    """'발표 v3.pptx' → '발표.pptx' — 나눈 판도 처음 파일의 선택을 따른다"""
+    return os.path.realpath(_strip_v(path))
+
+
+def _strip_v(path):
+    stem, ext = os.path.splitext(os.path.abspath(path))
+    return re.sub(r' v\d+$', '', stem) + ext
+
+
+def next_version(path):
+    """원본 옆 다음 판 이름 — 이미 있는 판 번호 다음(v2 부터)"""
+    stem, ext = os.path.splitext(_strip_v(path))
+    folder, base_ = os.path.split(stem)
+    pat = re.compile(re.escape(base_) + r' v(\d+)' + re.escape(ext) + '$')
+    have = [int(m.group(1)) for n in (os.listdir(folder) if os.path.isdir(folder) else []) for m in [pat.match(n)] if m]
+    return f'{stem} v{max(have + [1]) + 1}{ext}'
+
+
+def project_dir(ddir, path):
+    """파일이 든 프로젝트 폴더(devRoot/<이름>) — 프로젝트 밖이면 None"""
+    dev = _read_json(os.path.join(ddir, 'config.json')).get('devRoot')
+    if not dev:
+        return None
+    root = os.path.realpath(os.path.expanduser(dev))
+    rel = os.path.relpath(os.path.realpath(path), root)
+    return None if rel.startswith('..') or rel == '.' else os.path.join(root, rel.split(os.sep)[0])
+
+
+def keep_choice(ddir, path):
+    """'one' | 'versions' | None(아직 안 정함) — 파일로 정한 게 먼저, 없으면 그 프로젝트로 정한 것"""
+    k = _read_json(keep_file(ddir))
+    got = (k.get('files') or {}).get(_unversioned(path))
+    proj = project_dir(ddir, path)
+    return got or ((k.get('projects') or {}).get(proj) if proj else None)
+
+
+def set_keep(ddir, path, choice, project=False, runner=None):
+    """사용자 답을 기억 — craft 표(keep.json) + 알아서 기억 프로젝트 칸(그 프로젝트 세션이 매번 읽는다). 기억 칸에 못 쓰면 그 까닭 한 줄"""
+    if choice not in KEEP_WORDS:
+        raise CraftError('keep: one | versions')
+    proj = project_dir(ddir, path)
+    if project and not proj:
+        raise CraftError('this file is not in a project folder — decide for the file only / 프로젝트 폴더 밖 파일이라 파일 하나로만 정할 수 있음')
+    k = _read_json(keep_file(ddir))
+    k.setdefault('projects' if project else 'files', {})[proj if project else _unversioned(path)] = choice
+    (k.get('asked') or {}).pop(_unversioned(path), None)
+    _write_json(keep_file(ddir), k)
+    if not proj:
+        return ''
+    what = '이 프로젝트 문서들' if project else f"'{os.path.basename(_unversioned(path))}'"
+    text = f'참모 앱 문서 {what}: {KEEP_WORDS[choice]} — 사용자가 정함'
+    memory = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'memory')
+    run = runner or (lambda a: subprocess.run([sys.executable, memory] + a, capture_output=True, timeout=60).returncode)
+    try:
+        rc = run(['add', f'project:{os.path.basename(proj)}', text, '--why', 'scripts/craft keep'])
+    except (OSError, subprocess.SubprocessError) as e:
+        return f' (알아서 기억에 못 씀: {e})'
+    return '' if rc == 0 else f' (알아서 기억에 못 씀: 종료 {rc})'
+
+
+def write_mode(ddir, src, person, ours=frozenset()):
+    """닫을 때 사람 파일 자리에 덮을까('one') 옆에 새 판으로 둘까('versions') — 사용자가 정한 게 먼저.
+    정하기 전엔: 우리가 만든 판은 그 자리, 보관함 바로가기는 따라가서 원본에 쓰지 않고(11-16 원본 PSD 를 덮었다),
+    사람이 고친 문서만 그 자리(덮기 전 사본은 휴지통), 세션만 고쳤으면 옆에 새 판"""
+    choice = keep_choice(ddir, src)
+    if choice:
+        return choice
+    if src in ours:
+        return 'one'
+    if os.path.islink(src):
+        return 'versions'
+    return 'one' if person else 'versions'
+
+
+def photo_sig(doc):
+    """포토 문서 모양 — 레이어(이름·보임·불투명도)와 작업 내역 수. 연 때와 같으면 안 바뀐 것"""
+    lay = [[x.get('id'), x.get('name'), x.get('visible'), x.get('opacity')] for x in doc.get('layers') or [] if isinstance(x, dict)]
+    return {'layers': lay, 'history': len(doc.get('history') or [])}
+
+
+def keep_note(ddir, path):
+    """열 때 한 줄 — 아직 안 정했으면 묻게(처음 한 번), 물어 둔 뒤엔 짧게. 정했으면 None"""
+    if keep_choice(ddir, path):
+        return None
+    k = _read_json(keep_file(ddir))
+    key = _unversioned(path)
+    if key in (k.get('asked') or {}):
+        return '판 관리 답 기다리는 중 — 그때까지 이 파일 하나에 저장 / waiting for the user: one file or versions'
+    k.setdefault('asked', {})[key] = time.strftime('%Y-%m-%d %H:%M')
+    _write_json(keep_file(ddir), k)
+    return (f'판 관리 안 정함 — 이 파일 하나로 계속 고칠지(같은 자리에 저장), 고칠 때마다 새 판(v2·v3…)으로 둘지 사용자에게 한 번 물어'
+            f'(프로젝트 세션은 맡긴 참모에게 SendMessage), 답을 scripts/craft keep "{path}" one|versions [--project] 로. 정할 때까지는 이 파일 하나에 저장 / '
+            f'ask the user once: one file or versions')
+
+
+def made_from(ddir, app, src):
+    """영상·소리를 가져와 연 앱(필름·이펙트·사운드) — 그 파일로 전에 만든 프로젝트가 있으면 그걸 열라고(가져올 때마다 '이름 2' 프로젝트가 새로 생긴다)"""
+    stem = os.path.splitext(os.path.basename(src))[0]
+    rows = [r['path'] for r in recent(ddir) if r.get('app') == base(app) and r.get('saved') and os.path.exists(r.get('path', ''))
+            and re.sub(r' \d+$', '', os.path.splitext(os.path.basename(r['path']))[0]) == stem]
+    return (f'{display(app)}: 이 파일로 만든 프로젝트가 있다 — 이어서 고칠 거면 그걸 열어 / a project made from this file exists: '
+            + ' · '.join(f'scripts/craft open {base(app)} --native "{p}"' for p in rows[:3])) if rows else None
+
+
+def recent_hint(ddir, app):
+    """파일 없이 열 때 — 이 앱으로 고치던 파일이 있으면 그걸 열라고(새 문서는 닫을 때 새 파일이 된다)"""
+    rows = [r['path'] for r in recent(ddir) if r.get('app') == base(app) and os.path.exists(r.get('path', ''))][:3]
+    if not rows:
+        return None
+    return (f'{display(app)}: 이어서 고칠 거면 그 파일로 열어 — 파일 없이 열면 닫을 때 새 파일이 생긴다 / to keep editing, open the file: '
+            + ' · '.join(f'scripts/craft open {base(app)} --native "{p}"' for p in rows))
 
 
 def open_file_arg(rest):
@@ -2799,6 +2928,7 @@ def open_file(ddir, app, path):
     had = (st.get('sources') or {}).get(name)
     if had and os.path.abspath(had) != src:  # 작업 폴더 사본을 덮고 돌려놓을 자리가 바뀌어 첫 파일에 한 일이 안 돌아갔다
         raise CraftError(f'{name} from another folder is already open ({had}) — open this one in its own instance / 다른 폴더의 같은 이름 파일이 이미 열려 있음 — 따로 띄워서(scripts/craft open {base(app)} --native)')
+    since = seen_changes(ddir, src)  # 지난번 본 판 뒤로 사람이 바꾼 것 — 세션이 그걸 모르고 처음부터 다시 만들지 않게(2026-11-16)
     here = os.path.join(work, name)
     if not (os.path.exists(here) and os.path.samefile(src, here)):  # --work 가 그 파일 폴더면 복사할 것 없음(SameFileError)
         shutil.copy2(src, here)
@@ -2809,12 +2939,30 @@ def open_file(ddir, app, path):
     finally:
         c.close()
     st = load_state(ddir, app)
+    if base(app) == 'photocraft':
+        c = Channel(st)
+        try:
+            st['openDoc'] = photo_sig(c.call('engine.execute', {'command': 'document.inspect'}) or {})  # 닫을 때 '연 뒤로 그대로'를 가린다
+        except CraftError:
+            st.pop('openDoc', None)
+        finally:
+            c.close()
     st['opened'] = [n for n in st.get('opened') or [] if n != name] + [name]  # 연 파일 전부 — 하나일 때만 그 이름으로 저장한다(autosave)
     if back:
         st.setdefault('sources', {})[name] = src
     save_state(ddir, app, st)
     add_recent(ddir, base(app), [src])
+    remember(ddir, src)
     print(f'{display(app)}: opened / 열었음 — {src}' + ('' if back else ' (saved as a new file on close / 닫을 때 새 파일로 저장 — 원본은 그대로)'))
+    if not back:
+        hint = made_from(ddir, app, src)
+        if hint:
+            print(hint, file=sys.stderr)
+    note = keep_note(ddir, src) if back else None
+    if note:
+        print(note)
+    if since and since != '바뀐 것 없음':
+        print(f'지난번 본 판 뒤로 바뀐 것(사람이 고쳤을 수 있음 — 이 상태에서 이어서 고친다) / changed since you last saw it: {since}')
 
 
 def autosave(ddir, app, st):
@@ -2843,6 +2991,8 @@ def autosave(ddir, app, st):
                 raise CraftError(f'could not read the open document / 연 문서를 못 읽음: {e}')  # 바쁨·시간 초과를 '저장할 것 없음'으로 넘기지 않는다
             if here_photo and isinstance(doc.get('history'), list) and len(doc['history']) <= 1:
                 return []  # 연 뒤로 아무것도 안 했다
+            if st.get('openDoc') and photo_sig(doc) == st['openDoc'] and not status.get('person'):
+                return []  # 연 때와 문서가 같다 — 원본에 다시 쓰지 않는다(11-16 패스만 그린 PSD 가 원본을 덮었다)
         else:
             # 다른 앱은 지금 문서 이름을 물을 길이 앱마다 달라 — 연 파일이 하나면 그 이름(돌려놓을 자리가 있으면 거기), 아니면 새 문서.
             # 둘 이상 열었으면 지금 문서가 어느 것인지 몰라 사람 파일 자리에 쓰지 않는다
@@ -2851,7 +3001,9 @@ def autosave(ddir, app, st):
             doc = {'name': opened[0]} if len(opened) == 1 and not status.get('docUnknown') else {}
         ours = {r.get('path') for r in recent(ddir) if r.get('saved')}  # 우리가 저장해 둔 자리 — 옆 PSD 는 다시 쓸 수 있다
         ext = spec.get('ext') or '.psd'
-        plan = close_plan(doc, st.get('sources') or {}, st.get('saveDir'), work, ours, ext)
+        person = bool(status.get('person')) or here_photo or bool(_read_json(takeover_file(ddir, app)).get('on'))
+        versions = {p for p in (st.get('sources') or {}).values() if write_mode(ddir, p, person, ours) == 'versions'}
+        plan = close_plan(doc, st.get('sources') or {}, st.get('saveDir'), work, ours, ext, versions)
         failed, why = [], ''
         for name, dest in plan:
             here = os.path.join(work, name)
@@ -2898,6 +3050,8 @@ def autosave(ddir, app, st):
     src = set((st.get('sources') or {}).values())
     add_recent(ddir, base(app), [p for p in out if p in src])
     add_recent(ddir, base(app), [p for p in out if p not in src], saved=True)
+    for p in out:
+        remember(ddir, p)  # 다음에 열 때 사람이 그 뒤 고친 걸 가려낸다
     if failed:
         where = ', '.join(d for _, d in failed)
         raise NotSaved(f'could not save / 저장 못 함 — {display(app)} did not write {", ".join(n for n, _ in failed)}: {why}. '
@@ -3529,14 +3683,21 @@ def takeover(ddir, app, st, onoff):
     finally:
         c.close()
     if onoff == 'on':
-        save_takeover(ddir, app, {'on': True, 'before': doc, 'at': time.strftime('%H:%M:%S')})
+        snap = snap_save(app, st, 'before') if doc is None else None  # 상태를 못 읽는 앱(포토·표 말고) — 파일 사본으로 비교
+        save_takeover(ddir, app, {'on': True, 'before': doc, 'beforeFile': snap, 'at': time.strftime('%H:%M:%S')})
         print(f'{display(app)}: a person has control / 사람이 조작 중')
         return 0
     lock = _read_json(takeover_file(ddir, app))
     before = lock.get('before')
     drop_takeover(ddir, app)
-    if before is None or doc is None or change_summary(before, doc) != '바뀐 것 없음':
-        _write_json(status_file(ddir, app), {'last': 'person / 사람이 고침', 'dirty': True})  # 닫을 때 저장되게(못 읽었으면 바뀐 걸로)
+    line = None  # 파일 사본 비교 한 줄 — 13개 앱 공통(슬라이드 돌려받음이 '못 읽음'뿐이라 세션이 뭘 고쳤는지 몰랐다, 2026-11-16)
+    if doc is None and lock.get('beforeFile'):
+        after = snap_save(app, st, 'after')
+        line = craft_diff.diff(lock['beforeFile'], after) if after else None
+    shutil.rmtree(os.path.join(os.path.abspath(st.get('work') or '.'), SNAP), ignore_errors=True)
+    changed = line != '바뀐 것 없음' if line is not None else (before is None or doc is None or change_summary(before, doc) != '바뀐 것 없음')
+    if changed:
+        _write_json(status_file(ddir, app), {'last': 'person / 사람이 고침', 'dirty': True, 'person': True})  # 닫을 때 저장되게(못 읽었으면 바뀐 걸로)
     shot = os.path.join(os.path.abspath(st.get('work') or '.'), 'chammo-handback.png')
     try:
         with contextlib.redirect_stdout(io.StringIO()):
@@ -3544,7 +3705,9 @@ def takeover(ddir, app, st, onoff):
     except Exception:
         pass
     shot = shot if os.path.exists(shot) else None
-    if before is None or doc is None:  # 이 앱(또는 이때)은 문서 상태를 못 읽음 — 바뀐 게 없다고 하지 않고 화면으로
+    if line is not None:
+        print(line + (f' · 화면 {shot}' if shot else ''))
+    elif before is None or doc is None:  # 이 앱(또는 이때)은 문서 상태도 사본도 못 얻음 — 바뀐 게 없다고 하지 않고 화면으로
         print('바뀐 것은 문서 상태로 못 읽음 — 화면으로 확인' + (f' · 화면 {shot}' if shot else ''))
     else:
         print(handback_text(before, doc, shot))
@@ -3562,6 +3725,96 @@ def handback_text(before, after, shot):
         now.append(f'화면 {shot}')
     line = change_summary(before, after) + (f" · 지금 문서 {' · '.join(now)}" if now else '')
     return ' '.join(line.split())
+
+
+SNAP = '.chammo-snap'  # 돌려받음 비교용 사본 — 작업 폴더 안(포토·벡터는 밖을 거절), 비교 뒤 지운다
+SNAP_WAIT = 3.0  # 사본 저장을 기다리는 초
+SNAP_MAX = 64 * 1024 * 1024  # 이보다 큰 문서는 다시 열기 비교용으로 안 둔다(144MB PSD 같은 것 — 포토는 document.inspect 로 본다)
+
+
+def _own_name(app, st):
+    """지금 문서 이름(작업 폴더 기준) — 연 파일이 하나고 앱 자기 형식일 때만, 아니면 None"""
+    opened = st.get('opened') or list(st.get('sources') or {})
+    own = OPEN.get(base(app), (None, None, None))[1]
+    ext = (NATIVE.get(base(app)) or {}).get('ext') or ''
+    if len(opened) == 1 and (own is None or os.path.splitext(opened[0])[1].lower() in own | {ext.lower()}):
+        return opened[0]
+    return None
+
+
+def snap_save(app, st, tag):
+    """지금 문서를 앱 자기 형식으로 작업 폴더 SNAP/<tag>/ 에 저장 → 경로(못 쓰면 None). 이름은 문서와 같게(창 제목이 안 바뀌게).
+    저장하면 앱의 '지금 파일'이 사본으로 옮겨 가니 뒤에 작업 폴더 원래 자리에 한 번 더 저장해 되돌린다(사람 원본은 안 건드린다 — 닫을 때 옮긴다).
+    PDF 는 제자리 저장뿐이라 None"""
+    spec = NATIVE.get(base(app)) or {}
+    if not spec.get('save'):
+        return None
+    work = os.path.abspath(st.get('work') or '.')
+    name = _own_name(app, st)
+    if base(app) == 'pdfcraft':
+        return _snap_in_place(st, app, work, name, tag)
+    rel = os.path.join(SNAP, tag, os.path.splitext(name or 'untitled')[0] + (spec.get('ext') or ''))
+    full = os.path.join(work, rel)
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    before = _stamp(full)
+    c = Channel(st)
+    try:
+        ok = saved_in_time(full, before, c.call(*save_call(app, work, rel)), wait=SNAP_WAIT)
+        if name:
+            c.call(*save_call(app, work, name))
+    except CraftError:
+        ok = False
+    finally:
+        c.close()
+    return full if ok else None
+
+
+def _snap_in_place(st, app, work, name, tag):
+    """참모 PDF — 저장은 작업 폴더 그 파일에 제자리뿐이라 저장한 뒤 그 파일을 사본으로 뜬다(사람 원본은 닫을 때 옮긴다)"""
+    if not name:
+        return None
+    here = os.path.join(work, name)
+    before = _stamp(here)
+    c = Channel(st)
+    try:
+        saved_in_time(here, before, c.call(*save_call(app, work, name)), wait=SNAP_WAIT)  # 안 바뀌었으면 안 쓴다 — 그래도 그 파일이 지금 판
+    except CraftError:
+        return None
+    finally:
+        c.close()
+    full = os.path.join(work, SNAP, tag, name)
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    try:
+        shutil.copy2(here, full)
+    except OSError:
+        return None
+    return full
+
+
+def seen_file(ddir, path):
+    p = os.path.realpath(path)
+    return os.path.join(ddir, 'craft-native', 'seen', hashlib.sha1(p.encode('utf-8')).hexdigest()[:16] + os.path.splitext(p)[1].lower())
+
+
+def remember(ddir, path):
+    """세션이 본 판 — 다음에 열 때·changes 가 그 뒤 사람이 바꾼 것(Finder·Dock 에서 연 앱으로 고친 것도)을 비교한다"""
+    dst = seen_file(ddir, path)
+    try:
+        if os.path.getsize(path) > SNAP_MAX:
+            with contextlib.suppress(OSError):
+                os.remove(dst)
+            return
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copy2(path, dst + '.tmp')
+        os.replace(dst + '.tmp', dst)
+    except OSError:
+        pass
+
+
+def seen_changes(ddir, path):
+    """지난번 본 판 → 지금 파일 한 줄('바뀐 것 없음' 포함). 본 적 없으면 None"""
+    s = seen_file(ddir, path)
+    return craft_diff.diff(s, path) if os.path.exists(s) else None
 
 
 def eject(ddir, app, st):
@@ -3665,6 +3918,10 @@ def main(argv):
                     save_state(ddir, app, st)
                 if f:
                     open_file(ddir, app, f)
+                else:
+                    hint = recent_hint(ddir, app)
+                    if hint:
+                        print(hint, file=sys.stderr)
                 return 0
             touch_used(ddir, app)
             if not installed(root, app):
@@ -3694,6 +3951,27 @@ def main(argv):
             for r in recent(ddir):
                 if not rest or r.get('app') == app_key(rest[0]):
                     print(f"{r.get('at', '')}  {display(r['app']) if r.get('app') in APPS else r.get('app')}  {r['path']}{'' if os.path.exists(r['path']) else '  (gone / 없음)'}")
+            return 0
+        elif cmd == 'keep' and len(rest) >= 2:
+            f = os.path.abspath(os.path.expanduser(rest[0]))
+            note = set_keep(ddir, f, rest[1], project='--project' in rest)
+            print(f"{'이 프로젝트' if '--project' in rest else os.path.basename(f)}: {KEEP_WORDS[rest[1]]}{note}")
+            return 0
+        elif cmd == 'trash' and rest:
+            # 옛 판·사본을 치울 땐 rm 말고 이걸로 — 휴지통에서 되살린다
+            for f in rest:
+                if not os.path.lexists(f):
+                    raise CraftError(f'no such file / 파일 없음: {f}')
+                print(f'→ Trash / 휴지통: {to_trash(os.path.abspath(f), TRASH)}')
+            return 0
+        elif cmd == 'changes' and rest:
+            # 사람이 고쳤다는 파일 — 세션이 지난번 본 판(열기·닫기·changes 때 기억)과 비교한 한 줄, 그다음 지금 판을 본 것으로
+            f = os.path.abspath(os.path.expanduser(rest[0]))
+            if not os.path.isfile(f):
+                raise CraftError(f'no such file / 파일 없음: {rest[0]}')
+            ch = seen_changes(ddir, f)
+            print(ch if ch is not None else '처음 보는 파일 — 비교할 지난 판이 없음, 지금 판을 기억함 / first time seeing this file — remembered now')
+            remember(ddir, f)
             return 0
         elif cmd == 'update':
             apps = [app_key(rest[0])] if rest else [k for k in APPS if installed(root, k)]

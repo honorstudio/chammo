@@ -50,3 +50,9 @@ html.cv-block-dragging, html.cv-block-dragging * { cursor: grabbing !important; 
 .bn-drag-handle-menu .bn-menu-item { width: 32px; height: 32px; padding: 0; justify-content: center; }
 .bn-drag-handle-menu .doc-hm-ico { display: inline-flex; width: 16px; height: 16px; }
 .bn-drag-handle-menu .doc-hm-ico svg { width: 16px; height: 16px; }
+/* 물어보기(AskSelButton) — 서식 막대 끝, 스페이스 머리의 '참모에게 보내기'(kit-ib-m send-orch)와 같은 칸·아이콘(11-13 사용자 "아이콘 통일"). 앞 단추들과는 곧은 1px 줄로 가른다 */
+.bn-formatting-toolbar .doc-ask { position: relative; margin-left: 7px; overflow: visible; }
+.bn-formatting-toolbar .doc-ask::before { content: ''; position: absolute; left: -5px; top: 7px; bottom: 7px; width: 1px; background: var(--line); pointer-events: none; }
+.doc-ask-ico { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 7px; background: var(--orch-solid, var(--accent)); color: var(--orch-ink, var(--accent-ink)); }
+.doc-ask-ico svg { width: 15px; height: 15px; }
+@media (hover: hover) { .bn-formatting-toolbar .doc-ask:hover .doc-ask-ico { filter: brightness(1.08); } }

@@ -46,8 +46,9 @@ describe('어디에 뜨나', () => {
     expect(messenger).not.toMatch(/LinkBadge|<WinBadge/);
     expect(rust).toContain('bubble && (main_seen || desk)');
   });
-  it('얼굴(바탕 배지가 그릴 참모)은 설정 > 기능에서 켠 동안·참모 채팅이 있을 때·다른 기기를 안 볼 때만 적는다', () => {
-    expect(view).toContain('const faceId = bubble && chat && !far ?');
+  // 11-13 배지 끄기 검토: 끈 동안에도 적는다 — 보이기는 Rust watch 가 설정으로 정하고, 메인 화면이 멈춘 뒤 배지를 다시 켜도 얼굴이 남아 있게
+  it('얼굴(바탕 배지가 그릴 참모)은 참모 채팅이 있을 때·다른 기기를 안 볼 때 적는다(배지를 꺼도)', () => {
+    expect(view).toContain('const faceId = chat && !far ?');
     expect(app).toContain("bubble={features.bubble ? { onHide: () => saveFeature('bubble', false) } : null}");
   });
   it('앱 안 대화창은 참모 채팅 칸이 가려진 화면(팀 모드·홈)에서만 — 보이면 그 참모 채팅 탭으로', () => {

@@ -13,6 +13,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { envGet } = require('./winenv');
 
 const MARKER = 'ChammoChannel';
 const CHANNELS = ['chrome', 'chrome-beta'];
@@ -61,7 +62,8 @@ const VERSION_DIR = /^\d+\.\d+\.\d+\.\d+$/;
 
 /** 윈도우 — <루트>\Google\Chrome[ Beta]\Application 에 chrome.exe 가 있으면 그 옆 판 이름 폴더 중 가장 높은 것 */
 function winVersions({ env, exists, readdir }) {
-  const roots = ['LOCALAPPDATA', 'ProgramFiles', 'ProgramFiles(x86)'].map((k) => (env[k] || '').trim()).filter(Boolean);
+  // 대소문자 무시(src/winenv.js) — 사본 env 의 PROGRAMFILES 도 읽게(공개 이슈 #28)
+  const roots = ['LOCALAPPDATA', 'ProgramFiles', 'ProgramFiles(x86)'].map((k) => String(envGet(env, k) || '').trim()).filter(Boolean);
   const out = {};
   for (const [ch, name] of [['chrome', 'Chrome'], ['chrome-beta', 'Chrome Beta']]) {
     for (const root of roots) {
@@ -121,7 +123,7 @@ function pickRaw({ profileDir, want, env, platform, versions }) {
   const tooOld = (c) => known && last && versions[c] && cmpVersion(versions[c], last) === -1;
   const lowWarn = (c) => `${c} ${versions[c]} 은 이 프로필(${last})보다 낮은 판이라 못 열 수 있어요`;
 
-  const asked = normalize(want) || normalize(env.CHAMMO_BROWSER_CHANNEL);
+  const asked = normalize(want) || normalize(envGet(env, 'CHAMMO_BROWSER_CHANNEL'));
   if (asked) return { channel: asked, why: 'asked', ...(tooOld(asked) ? { warn: lowWarn(asked) } : {}) };
 
   // 프로필보다 낮은 판이면 열 수 있는 채널로 비킨다(누가 다른 채널로 열어 판을 올려 버렸을 때)

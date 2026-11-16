@@ -460,3 +460,50 @@ fn 파일에서도_구독을_합친다() {
     assert!(read_subs(&d).iter().any(|s| s.device == "fbf7"));
     let _ = std::fs::remove_dir_all(&d);
 }
+
+// ── 폰 화면이 열려 있으면 그 폰엔 안 보낸다(2026-11-13 사용자 — 폰을 보고 있는데 '새 메시지'가 또 떴다) ──
+// 폰 화면은 열려 있는 동안 3초마다 맥에 묻는다(domain/unreach OK_EVERY_MS). 방금 묻은 폰은 앞에 떠 있다 — 앱 안에 이미 보인다
+
+#[test]
+fn 방금_요청한_폰은_앞에_떠_있다고_본다() {
+    let t0 = std::time::Instant::now();
+    assert!(in_front(Some(t0), t0 + std::time::Duration::from_secs(3)));
+    assert!(!in_front(Some(t0), t0 + FRONT_FOR + std::time::Duration::from_millis(1)), "멈춘 지 오래면 뒤로 갔다(잠금·다른 앱)");
+    assert!(!in_front(None, t0), "한 번도 안 묻은 폰");
+}
+
+#[test]
+fn 요청_기록은_기기마다_따로() {
+    let t0 = std::time::Instant::now();
+    saw_at("front-a-7f3e", t0);
+    assert_eq!(seen_at("front-a-7f3e"), Some(t0));
+    assert_eq!(seen_at("front-b-7f3e"), None);
+}
+
+#[test]
+fn 앞에_뜬_폰은_계획에서_빼고_같은_주소_옛_기기로도_안_샌다() {
+    let mut list = vec![sub("old", &ep("phone"), 40)];
+    add_sub(&mut list, sub("new", &ep("phone"), 50));
+    list.push(sub("other", &ep("o"), 10));
+    list.push(sub("tail", &ep("t"), 10));
+    let devices = ids(&["old".into(), "new".into(), "other".into(), "tail".into()]);
+    let relayed = ids(&["old".into(), "new".into(), "other".into()]);
+    let mut p = plan(&list, &devices, &relayed);
+    drop_front(&mut p, |d| d == "new" || d == "tail");
+    assert_eq!(relay_to(&p), vec!["other"], "보고 있는 폰(new)도, 그 폰의 옛 기기(old)도 안 간다");
+    assert!(p.direct.is_empty(), "직통 폰도 같은 규칙");
+}
+
+#[test]
+fn 구독_넣기는_주소를_넘겨준_옛_기기를_돌려준다() {
+    // 맥이 그 옛 기기 줄을 빼려고(mobile_pair::retire_same_phone, 11-16 iPhone 8줄)
+    let d = std::env::temp_dir().join(format!("chammo-push-took-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    let s = |dev: &str, ep: &str| Sub { device: dev.into(), endpoint: ep.into(), p256dh: "k".into(), auth: "s".into(), at: 1, replaces: vec![] };
+    assert!(subscribe(&d, s("d1", "https://web.push.apple.com/a")).unwrap().is_empty(), "처음은 넘겨받은 것 없음");
+    assert!(subscribe(&d, s("d1", "https://web.push.apple.com/a")).unwrap().is_empty(), "같은 기기가 다시 넣기");
+    assert!(subscribe(&d, s("d9", "https://web.push.apple.com/b")).unwrap().is_empty(), "다른 주소는 남의 폰");
+    assert_eq!(subscribe(&d, s("d2", "https://web.push.apple.com/a")).unwrap(), vec!["d1".to_string()]);
+    let _ = std::fs::remove_dir_all(&d);
+}

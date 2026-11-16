@@ -241,6 +241,42 @@ pub fn plan(list: &[Sub], devices: &[String], relayed: &[String]) -> Plan {
     p
 }
 
+// ── 폰 화면이 열려 있나 — 열려 있으면 그 폰엔 푸시를 안 보낸다(2026-11-13 사용자 "화면이 열려 있으면 보내지 마") ──
+// 폰 화면은 열려 있는 동안 3초마다 맥에 묻는다(domain/unreach OK_EVERY_MS) — 홈 화면 앱은 뒤로 가면 몇 초 안에 멈춘다.
+// 그래서 이 시간 안에 짝지은 열쇠로 물어 온 폰은 앞에 떠 있고, 앱 안에 이미 보인다
+
+/// 마지막 요청에서 이만큼 안이면 앞에 떠 있다 — 묻기 간격(3초)의 두 배 남짓, 느린 LTE 한 번까지
+pub const FRONT_FOR: std::time::Duration = std::time::Duration::from_secs(8);
+static SEEN: Mutex<Option<std::collections::HashMap<String, std::time::Instant>>> = Mutex::new(None);
+
+/// 짝지은 기기가 방금 맥에 물었다(mobile_http 열쇠 확인 통과 때)
+pub fn saw(device: &str) {
+    saw_at(device, std::time::Instant::now());
+}
+
+pub(crate) fn saw_at(device: &str, now: std::time::Instant) {
+    let mut g = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    let m = g.get_or_insert_with(Default::default);
+    if m.len() > 64 {
+        m.retain(|_, t| now.saturating_duration_since(*t) < FRONT_FOR);
+    }
+    m.insert(device.to_string(), now);
+}
+
+pub(crate) fn seen_at(device: &str) -> Option<std::time::Instant> {
+    SEEN.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(device).copied())
+}
+
+pub fn in_front(seen: Option<std::time::Instant>, now: std::time::Instant) -> bool {
+    seen.is_some_and(|t| now.saturating_duration_since(t) < FRONT_FOR)
+}
+
+/// 앞에 떠 있는 폰은 계획에서 뺀다 — 계획을 다 짠 뒤에 빼야 그 폰의 옛 기기(같은 주소)가 주인으로 올라와 대신 받지 않는다
+pub fn drop_front(p: &mut Plan, front: impl Fn(&str) -> bool) {
+    p.relay.retain(|(d, _)| !front(d));
+    p.direct.retain(|s| !front(&s.device));
+}
+
 /// 중계 /v0/push/notify 가 받는 암호문 상한(바이트) — 중계 PUSH_BODY_MAX 와 같은 값
 pub const RELAY_BODY_MAX: usize = 2048;
 
@@ -338,8 +374,9 @@ fn sub_log(line: &str) {
     let _ = line;
 }
 
-/// 넣기·빼기는 기기별로만, 기록(notify.log 'push-sub')을 남긴다 — 구독이 사라졌을 때 누가 뺐는지 알 수 있게(2026-10-03)
-pub fn subscribe(dir: &Path, s: Sub) -> Result<(), String> {
+/// 넣기·빼기는 기기별로만, 기록(notify.log 'push-sub')을 남긴다 — 구독이 사라졌을 때 누가 뺐는지 알 수 있게(2026-10-03).
+/// 돌려주는 것 = 이 주소를 쥐고 있던 다른 기기(같은 폰 앱을 다시 짝지음) — 부르는 쪽이 그 옛 기기 줄을 뺀다(11-16)
+pub fn subscribe(dir: &Path, s: Sub) -> Result<Vec<String>, String> {
     let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut list = load_subs(dir)?;
     let (device, from) = (s.device.clone(), origin(&s.endpoint));
@@ -349,7 +386,7 @@ pub fn subscribe(dir: &Path, s: Sub) -> Result<(), String> {
     // 같은 폰 앱을 다시 짝지어 옛 기기 구독을 합쳤으면 기록에 남긴다 — '알림 두 번'을 나중에 기록으로 가리려고
     let merged = if took.is_empty() { String::new() } else { format!(" — 같은 주소 옛 기기 {} 합침", took.join(",")) };
     sub_log(&format!("add {device} {from} (전체 {}){merged}", list.len()));
-    Ok(())
+    Ok(took)
 }
 
 pub fn unsubscribe(dir: &Path, device: &str, endpoint: &str) -> Result<(), String> {
@@ -437,7 +474,15 @@ pub fn send_all(title: &str, body: &str, target: &str) {
     let relay_of: std::collections::HashMap<String, String> = devices.iter().filter_map(|id| pair.relay_of(id).map(|r| (id.clone(), r))).collect();
     let relayed: Vec<String> = devices.iter().filter(|id| relay_of.contains_key(*id)).cloned().collect();
     // 같은 폰 앱(같은 구독 주소)은 한 번만 — 다시 짝지어 남은 옛 기기 줄엔 안 보낸다
-    let Plan { relay, direct: subs } = plan(&all, &devices, &relayed);
+    let mut p = plan(&all, &devices, &relayed);
+    let now = std::time::Instant::now();
+    let front: Vec<String> = devices.iter().filter(|d| in_front(seen_at(d), now)).cloned().collect();
+    if !front.is_empty() {
+        drop_front(&mut p, |d| front.iter().any(|f| f == d));
+        let short: Vec<String> = front.iter().map(|d| d.chars().take(8).collect()).collect();
+        crate::claude::log_out("push", &format!("폰 화면이 열려 있어 건너뜀 — {}", short.join(",")));
+    }
+    let Plan { relay, direct: subs } = p;
     crate::phone_relay::notify_phones(&dir, relay.iter().filter_map(|(id, s)| Some(relay_notify_body(relay_of.get(id)?, s.as_ref(), &msg))).collect());
     if subs.is_empty() {
         return;

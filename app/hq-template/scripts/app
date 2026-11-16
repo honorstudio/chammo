@@ -508,7 +508,7 @@ def browser(data, home, verb, arg, wait):
     l = r.get('link') or {}
     t = tilde(d, home)
     if not l.get('available'):
-        return 1, f'browser automation is not installed — ask the user to press Install in Settings → Features → Browser automation / 브라우저 자동화가 안 깔려 있어 — 사용자에게 설정 → 기능 → 브라우저 자동화의 설치를 부탁해 ({t})'
+        return 1, f'the assistant browser is not installed — ask the user to press Install on the Settings › Browser › Assistant browser row / 참모 브라우저가 안 깔려 있어 — 사용자에게 설정 › 브라우저 › 참모 브라우저 줄의 설치를 부탁해 ({t})'
     if not l.get('connected'):
         return 3, f'not connected / 안 붙어 있어: {t} — scripts/app browser connect {arg}'
     tools = f"mcp__{l.get('name')}__* (browser_ask_human)"

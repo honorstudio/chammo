@@ -10,7 +10,8 @@ __doc__ = """Routines — recurring jobs that wake up on a schedule, do one run 
 맥은 launchd 항목 하나(app.chammo.routines.<데이터 폴더>)가 1분마다 `tick` 으로 때가 된 예약만 돌린다 — 예약마다 항목을 걸면
 걸 때마다 '백그라운드 활동' 알림이 뜨고 로그인 항목에 python 이 쌓였다(2026-10-03). 앱이 깔려 있으면 앱 실행 파일(--routine-tick)로 건다.
 
-  scripts/routine new <name> "<schedule>" "<what to do each run>" [--in <folder>]
+  scripts/routine new <name> "<schedule>" "<what to do each run>" [--in <folder>] [--model sonnet|opus|haiku|fable] [--effort low|medium|high|xhigh]
+                                            (--model/--effort: the session's model — light daily jobs on sonnet medium save usage)
   scripts/routine list                      JSON: name, schedule, enabled, next run, last result
   scripts/routine run <name>                run once now
   scripts/routine tick                      run every routine that is due (launchd calls this every minute)
@@ -1060,8 +1061,17 @@ def project_dir(given, data, home):
     return p
 
 
-def new(name, schedule, what, cwd=None, data=None, home=None, run=subprocess.run, claude=None, python=None, uid=None, win=None, now=None, apps=None, allow_test=None):
+MODEL = re.compile(r'^(?:sonnet|opus|haiku|fable|claude-[a-z0-9.-]{1,40})$')
+EFFORT = ('low', 'medium', 'high', 'xhigh', 'max')
+
+
+def new(name, schedule, what, cwd=None, data=None, home=None, run=subprocess.run, claude=None, python=None, uid=None, win=None, now=None, apps=None, allow_test=None,
+        model=None, effort=None):
     win = os.name == 'nt' if win is None else win
+    if model is not None and not MODEL.match(model):
+        raise ValueError(f'--model: sonnet | opus | haiku | fable | claude-… — got {model!r}')
+    if effort is not None and effort not in EFFORT:
+        raise ValueError(f'--effort: {" | ".join(EFFORT)} — got {effort!r}')
     now = now or datetime.datetime.now()
     if not NAME.match(name or '') or '..' in name:
         raise ValueError(f'routine name must be lowercase letters, digits, - _ . : {name!r}')
@@ -1087,6 +1097,7 @@ def new(name, schedule, what, cwd=None, data=None, home=None, run=subprocess.run
     claude = claude or find_claude(home) or os.path.join(home, '.local/bin/claude')
     cfg = {'name': name, 'schedule': schedule, 'cwd': cwd if cwd else os.path.normpath(d),  # 윈도우는 C:/…\\routines\\x 처럼 섞였다
            'claude': claude, 'enabled': True, 'created': datetime.date.today().isoformat()}
+    cfg.update({k: v for k, v in (('model', model), ('effort', effort)) if v})
     _save(cfg, data)
     if not cwd:
         _trust(d, home)
@@ -1285,7 +1296,8 @@ def _run_now(name, data=None, run=subprocess.run, scheduled=False, now=None, hom
             except OSError:
                 pass  # 못 적어도 띄워는 본다 — 실패하면 아래서 이유가 남는다
         try:
-            r = run([cfg['claude'], '--bg', '--dangerously-skip-permissions', '-n', session, prompt], cwd=cfg['cwd'],
+            pick = [x for k in ('model', 'effort') if isinstance(cfg.get(k), str) and (MODEL.match(cfg[k]) or cfg[k] in EFFORT) for x in (f'--{k}', cfg[k])]
+            r = run([cfg['claude'], '--bg', '--dangerously-skip-permissions', *pick, '-n', session, prompt], cwd=cfg['cwd'],
                     capture_output=True, text=True, env=dict(os.environ, CHAMMO_HOME=data), timeout=SPAWN_TIMEOUT, **claude_txt())
         except subprocess.TimeoutExpired:  # 멈춘 건 다시 해도 또 멈춘다 — 실패로 남기고 따라잡기(CATCHUP_MIN 뒤)에 맡긴다
             r = type('R', (), {'returncode': None, 'stdout': '', 'stderr': f'claude --bg did not answer in {SPAWN_TIMEOUT}s'})()
@@ -1475,7 +1487,8 @@ def main(argv):
                 raise ValueError('--in needs a project folder / --in 에 프로젝트 폴더를 줘')
             else:
                 cwd = None
-            out = new(rest[0], rest[1], rest[2], cwd=cwd, allow_test=allow)
+            opt = lambda k: rest[rest.index(k) + 1] if k in rest[:-1] else None
+            out = new(rest[0], rest[1], rest[2], cwd=cwd, allow_test=allow, model=opt('--model'), effort=opt('--effort'))
         elif cmd == 'list':
             out = list_routines()
         elif cmd == 'tick':

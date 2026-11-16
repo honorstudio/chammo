@@ -34,11 +34,22 @@ pub async fn team_locker_cached(window: tauri::WebviewWindow, team: String) -> R
     bg_job(move |d, kc, _| Ok(app::cached(d, kc, &team))).await
 }
 
-/// 끌어 넣기 — 뒤에서 하나씩 올리고 바로 돌아간다(진행은 team_locker_poll)
+/// 폴더는 팀 보관함에 안 올린다(바로가기는 다른 기기에서 안 열린다) — 빼고 남은 파일, 뺀 폴더 이름 한 줄(없으면 None)
+pub(crate) fn skip_dirs(paths: Vec<PathBuf>) -> (Vec<PathBuf>, Option<String>) {
+    let (dirs, files): (Vec<PathBuf>, Vec<PathBuf>) = paths.into_iter().partition(|p| p.is_dir());
+    if dirs.is_empty() {
+        return (files, None);
+    }
+    let names = dirs.iter().map(|p| format!("‘{}’", crate::locker_link::nfc(&p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()))).collect::<Vec<_>>().join(", ");
+    let line = if crate::i18n::is_en() { format!("{names} {} a folder", if dirs.len() > 1 { "are each" } else { "is" }) } else { format!("{names} 는 폴더예요") };
+    (files, Some(line))
+}
+
+/// 끌어 넣기 — 뒤에서 하나씩 올리고 바로 돌아간다(진행은 team_locker_poll). 폴더가 섞이면 파일은 올리고 폴더 이름 한 줄로 거절(11-16 — 전엔 조용히 안 올라갔다)
 #[tauri::command]
 pub async fn team_locker_put(window: tauri::WebviewWindow, team: String, paths: Vec<String>, folder: Option<String>) -> Result<(), String> {
     ui_only(&window)?;
-    let paths = files(paths)?;
+    let (paths, skipped) = skip_dirs(files(paths)?);
     let folder = folder.unwrap_or_default();
     // 사람이 끌어 넣은 파일 — 배경 몫에 안 막히게 사람 몫으로(team_relay::as_human)
     std::thread::spawn(move || {
@@ -49,7 +60,7 @@ pub async fn team_locker_put(window: tauri::WebviewWindow, team: String, paths: 
             }
         });
     });
-    Ok(())
+    skipped.map_or(Ok(()), Err)
 }
 
 /// 화면이 2초마다 — 올리는 중 줄 + 소켓이 새 판을 알렸나(데이터 폴더·메모리만, 사용자 폴더 안 건드림).
@@ -368,5 +379,23 @@ mod run_gate_tests {
         let body = src.split("#[cfg(test)]").next().unwrap();
         assert_eq!(body.matches("crate::platform::open_path(").count(), 2);
         assert_eq!(body.matches("run_gate(&p, run_ok.unwrap_or(false))").count(), 2);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // 11-16 — 팀 보관함에 폴더를 끌어 놓으면 조용히 아무것도 안 올라갔다. 파일만 올리고 폴더는 이름 한 줄로(전체 경로 없이)
+    #[test]
+    fn 폴더는_빼고_이름만_한_줄() {
+        let d = std::env::temp_dir().join(format!("chammo-tlput-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("Selects")).unwrap();
+        std::fs::write(d.join("a.jpg"), "a").unwrap();
+        let (files, line) = super::skip_dirs(vec![d.join("a.jpg"), d.join("Selects")]);
+        assert_eq!(files, vec![d.join("a.jpg")]);
+        let line = line.unwrap();
+        assert!(line.contains("‘Selects’") && !line.contains(&*d.to_string_lossy()), "{line}");
+        assert_eq!(super::skip_dirs(vec![d.join("a.jpg")]).1, None);
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

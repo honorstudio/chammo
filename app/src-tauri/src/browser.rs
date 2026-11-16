@@ -18,10 +18,15 @@ pub const FILES: &[(&str, &str)] = &[
     ("src/setup.js", include_str!("../../../tools/chammo-browser/src/setup.js")),
     ("src/focus.js", include_str!("../../../tools/chammo-browser/src/focus.js")),
     ("src/window.js", include_str!("../../../tools/chammo-browser/src/window.js")),
+    ("src/keepvisible.js", include_str!("../../../tools/chammo-browser/src/keepvisible.js")),
+    ("src/cdprace.js", include_str!("../../../tools/chammo-browser/src/cdprace.js")),
+    ("src/winenv.js", include_str!("../../../tools/chammo-browser/src/winenv.js")),
     ("src/live.js", include_str!("../../../tools/chammo-browser/src/live.js")),
     ("src/minimize.js", include_str!("../../../tools/chammo-browser/src/minimize.js")),
     ("src/place-at-launch.js", include_str!("../../../tools/chammo-browser/src/place-at-launch.js")),
     ("src/guard.js", include_str!("../../../tools/chammo-browser/src/guard.js")),
+    ("src/memcap.js", include_str!("../../../tools/chammo-browser/src/memcap.js")),
+    ("src/memcap-run.js", include_str!("../../../tools/chammo-browser/src/memcap-run.js")),
     ("src/check.js", include_str!("../../../tools/chammo-browser/src/check.js")),
     ("src/features.js", include_str!("../../../tools/chammo-browser/src/features.js")),
     ("src/appcopy.js", include_str!("../../../tools/chammo-browser/src/appcopy.js")),
@@ -53,6 +58,12 @@ pub fn node_major(version: &str) -> Option<u32> {
 
 pub fn tool_dir(data: &Path) -> PathBuf {
     data.join("tools/chammo-browser")
+}
+
+/// 세션 래퍼가 크롬을 못 찾으면 남기는 표시 — tools/chammo-browser/src/guard.js missingFile 과 같은 자리.
+/// 설치가 끝나 '설치' 단추가 숨은 뒤엔 사람이 누를 게 없었다(공개 이슈 #28). 설치 한 바퀴(다시 찾기)가 지운다
+pub fn missing_mark(data: &Path) -> PathBuf {
+    tool_dir(data).join(".missing")
 }
 
 /// 앱이 원하는 @playwright/mcp 버전(실행 파일에 넣은 package.json 의 dependencies)
@@ -114,6 +125,8 @@ pub struct BrowserStatus {
     pub checked: bool,
     /// 다 됨 — 설정 줄이 '준비됐어요'
     pub ready: bool,
+    /// 세션이 크롬을 못 찾았다(래퍼가 남긴 missing_mark) — 그동안 ready 가 아니라 '다시 찾기' 단추(공개 이슈 #28)
+    pub missing: bool,
 }
 
 /// Playwright 의 chrome 채널이 찾는 자리(맥 1곳, 윈도우 LOCALAPPDATA·ProgramFiles·ProgramFiles(x86)).
@@ -142,6 +155,7 @@ fn browser_status_now() -> BrowserStatus {
     let h = crate::browser_setup::have(data);
     let home = crate::config::home();
     let user_chrome = std::path::Path::new(&home).join("Applications/Google Chrome.app");
+    let missing = missing_mark(data).is_file();
     let chrome = h.chrome_beta || user_chrome.exists() || chrome_paths(cfg!(windows), |k| std::env::var(k).ok()).iter().any(|p| Path::new(p).exists());
     BrowserStatus {
         node_ok: node.is_some(),
@@ -152,7 +166,8 @@ fn browser_status_now() -> BrowserStatus {
         chrome,
         chrome_beta: h.chrome_beta,
         checked: h.checked,
-        ready: crate::browser_setup::plan(h).is_empty(),
+        ready: crate::browser_setup::ready(h, missing),
+        missing,
     }
 }
 

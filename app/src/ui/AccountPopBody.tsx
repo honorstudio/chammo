@@ -13,7 +13,7 @@ export type PopBodyProps = {
   /** 그 오류가 그 계정으로 로그인하면 풀리는 것(갱신 막힘·죽은 갱신 토큰) — 오류 줄 옆에 '로그인해서 바꾸기' */
   fix?: boolean;
   onFix?: () => void;
-  /** 다른 계정 줄을 눌렀다 — 그 칸으로 바꾸고 고정 */
+  /** 다른 계정 줄을 눌렀다 — 무엇을 할지(바꾸기·로그인·약관 풀고 바꾸기)는 팝오버가 그 줄 pick 으로 */
   onUse: (id: string) => void;
   onAuto: (on: boolean) => void;
   onSettings: () => void;
@@ -46,7 +46,7 @@ export function AccountPopBody({ rows, head, auto, busy, error, fix, onFix, onUs
           );
           return r.on
             ? <div key={r.id} className="acct-pop-row acct-pop-cur" aria-current="true" title={r.tip}>{inner}</div>
-            : <button key={r.id} type="button" className="acct-pop-row" disabled={busy} title={r.tip} aria-label={tr(`${r.name} 계정으로 바꾸기`, `Switch to ${r.name}`)} onClick={() => onUse(r.id)}>{inner}</button>;
+            : <button key={r.id} type="button" className="acct-pop-row" disabled={busy} title={r.tip} aria-label={r.pick === 'login' ? tr(`${r.name} 계정 로그인`, `Sign in to ${r.name}`) : tr(`${r.name} 계정으로 바꾸기`, `Switch to ${r.name}`)} onClick={() => onUse(r.id)}>{inner}</button>;
         })}
       </div>
       {error && (

@@ -63,8 +63,8 @@ describe('누르는 곳 — 말풍선 그림·파일, 파일 카드가 같은 �
     expect(chat).toMatch(/className="chat-thumb"[^>]*onClick=\{\(\) => void openChatFile\(src, by\)\}/);
     expect(chat).not.toMatch(/setBig/);
   });
-  it('말풍선 파일(#file 경로)도 누르는 단추 — openChatFile(x.path, by)', () => {
-    expect(chat).toMatch(/<button[^>]*className="chat-file"[^>]*onClick=\{\(\) => void openChatFile\(x\.path, by\)\}/);
+  it('말풍선 파일(#file 경로)도 누르는 단추 — openChatFile(x.path, by, x.at) — #sel·#area 는 그 줄·상자로', () => {
+    expect(chat).toMatch(/<button[^>]*className="chat-file"[^>]*onClick=\{\(\) => void openChatFile\(x\.path, by, x\.at\)\}/);
   });
   it('파일 단추 글자는 11px 그대로 — .cv button { font: inherit } 보다 무겁게(하네스에서 13.5px 로 덮인 것)', () => {
     expect(css.length).toBeGreaterThan(0);

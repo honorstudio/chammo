@@ -255,7 +255,7 @@ pub fn put_file_as(dir: &Path, kc: &dyn Store, http: &dyn Http, team: &str, room
     let (team, _) = team_of(&st, team)?;
     let name = name.to_string();
     if !path.is_file() {
-        return Err(format!("파일이 아니야(폴더는 아직 못 올려): {name}"));
+        return Err(if path.is_dir() { format!("‘{name}’ 는 폴더예요") } else { format!("‘{name}’ 가 없어요") });
     }
     // 같은 자리에 같은 파일을 다시 넣으면(못 보내 다시 끌어 옴·폰 다시 보내기) 앞서 올린 것을 준다 — 사람 파일만(프로필·글은 늘 새로)
     let key = if kind == "file" { Some(crate::team_locker_sent::Key::of(&team, room, &core::safe_path(folder), &core::safe_file_name(&name), path)?) } else { None };

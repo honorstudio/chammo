@@ -43,6 +43,8 @@ pub const TEMPLATE: &[TemplateFile] = &[
     // Craft 앱(ArtCraft 오픈소스): 웹판 받기·SHA 대조·127.0.0.1 서빙·주소 미리보기 + 맥 앱을 조작 채널로 띄워 참모가 명령으로 — 앱은 안 거친다
     TemplateFile { path: "scripts/craft", body: include_str!("../../hq-template/scripts/craft"), exec: true },
     TemplateFile { path: "scripts/craft_win.py", body: include_str!("../../hq-template/scripts/craft_win.py"), exec: false },
+    // 사람이 참모 앱에서 고친 문서 전후 한 줄(돌려받음·다시 열기·changes) — craft 가 import 한다
+    TemplateFile { path: "scripts/craft_diff.py", body: include_str!("../../hq-template/scripts/craft_diff.py"), exec: false },
     // 다른 기기 참모에게 말 넣고 답 받기 — 앱(app.jsonl)을 거친다, 열쇠는 앱 키체인에만(ADR 0007)
     TemplateFile { path: "scripts/peer", body: include_str!("../../hq-template/scripts/peer"), exec: true },
     // 팀 메신저(중계 서버) — 앱(app.jsonl)을 거친다, 기기 열쇠는 앱 키체인에만, 이 길 말은 늘 참모 말(ADR 0012)
@@ -51,6 +53,12 @@ pub const TEMPLATE: &[TemplateFile] = &[
     TemplateFile { path: "scripts/team_nopy.sh", body: include_str!("../../hq-template/scripts/team_nopy.sh"), exec: true },
     // scripts/task 가 import 하는 모듈(교훈 → 프로젝트 스킬) — 직접 실행하지 않는다
     TemplateFile { path: "scripts/lesson_skill.py", body: include_str!("../../hq-template/scripts/lesson_skill.py"), exec: false },
+    // 알아서 기억(ADR 0032) — 되풀이한 말 → 규칙·단계 올림·참모별 칸. memory 는 명령줄·훅, automem.py 는 그 모듈(task 도 import)
+    TemplateFile { path: "scripts/memory", body: include_str!("../../hq-template/scripts/memory"), exec: true },
+    TemplateFile { path: "scripts/automem.py", body: include_str!("../../hq-template/scripts/automem.py"), exec: false },
+    // 정리꾼 — 30일 넘게 안 열린 교훈 스킬 보관(되돌림 restore)·겹친 교훈 합치기. 매주 memory 예약이 부른다. lesson_budget.py 는 그 모듈
+    TemplateFile { path: "scripts/tidy", body: include_str!("../../hq-template/scripts/tidy"), exec: true },
+    TemplateFile { path: "scripts/lesson_budget.py", body: include_str!("../../hq-template/scripts/lesson_budget.py"), exec: false },
     TemplateFile { path: ".claude/skills/hq-browser/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-browser/SKILL.md"), exec: false },
     TemplateFile { path: ".claude/skills/hq-folders/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-folders/SKILL.md"), exec: false },
     TemplateFile { path: ".claude/skills/hq-routine/SKILL.md", body: include_str!("../../hq-template/.claude/skills/hq-routine/SKILL.md"), exec: false },
@@ -193,6 +201,11 @@ pub fn pin_data_dir(dir: &Path, data_dir: &str) -> std::io::Result<()> {
     if !deny.iter().any(|x| x == "AskUserQuestion") {
         deny.push(serde_json::Value::String("AskUserQuestion".into()));
     }
+    // 알아서 기억(ADR 0032) — 세션 시작에 그 참모 칸·공통 규칙을 싣고(SessionStart), 끝내기 전 영어 검사(Stop).
+    // 이미 깐 HQ 의 settings.json 은 앱이 통째로 안 덮으니 여기서 우리 줄만 한 번 넣는다(사용자 훅은 그대로)
+    for (event, arg) in [("SessionStart", "start"), ("Stop", "stop")] {
+        ensure_hook(&mut v, event, &format!("scripts/memory hook {arg}"));
+    }
     if v == before {
         return Ok(());
     }
@@ -200,6 +213,24 @@ pub fn pin_data_dir(dir: &Path, data_dir: &str) -> std::io::Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     write_replace(&path, &(serde_json::to_string_pretty(&v).unwrap_or_default() + "\n"))
+}
+
+/// hooks.<event> 에 `"$CLAUDE_PROJECT_DIR"/<tail>` 명령이 없으면 한 묶음 더한다. hooks·event 가 객체·배열이 아니면(사람이 다르게 쓴 것) 건드리지 않는다
+fn ensure_hook(v: &mut serde_json::Value, event: &str, tail: &str) {
+    if v["hooks"].is_null() {
+        v["hooks"] = serde_json::json!({});
+    }
+    if !v["hooks"].is_object() {
+        return;
+    }
+    if v["hooks"][event].is_null() {
+        v["hooks"][event] = serde_json::json!([]);
+    }
+    let Some(list) = v["hooks"][event].as_array_mut() else { return };
+    let has = list.iter().any(|g| g["hooks"].as_array().is_some_and(|hs| hs.iter().any(|h| h["command"].as_str().is_some_and(|c| c.contains(tail)))));
+    if !has {
+        list.push(serde_json::json!({ "hooks": [{ "type": "command", "command": format!("\"$CLAUDE_PROJECT_DIR\"/{tail}") }] }));
+    }
 }
 
 /// 옆에 다 쓴 뒤 바꿔 끼운다 — 쓰다 꺼져 반쪽 파일이 남지 않게
@@ -600,6 +631,28 @@ mod tests {
         pin_data_dir(&d, "/Users/me/demo-data").unwrap();
         let again: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(d.join(".claude/settings.json")).unwrap()).unwrap();
         assert_eq!(again, v);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn 기억_훅을_한_번씩_넣고_사용자_훅은_그대로() {
+        // 알아서 기억(ADR 0032) — 이미 깐 HQ 에도 SessionStart·Stop 훅이 들어가야 참모 칸이 실리고 영어 검사가 돈다
+        let d = temp("mem-hooks");
+        install(&d, false).unwrap();
+        std::fs::write(d.join(".claude/settings.json"), r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"my-stop"}]}]}}"#).unwrap();
+        pin_data_dir(&d, "/Users/me/demo-data").unwrap();
+        pin_data_dir(&d, "/Users/me/demo-data").unwrap();
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(d.join(".claude/settings.json")).unwrap()).unwrap();
+        let cmds = |e: &str| -> Vec<String> {
+            v["hooks"][e].as_array().unwrap().iter().flat_map(|g| g["hooks"].as_array().unwrap().iter().map(|h| h["command"].as_str().unwrap().to_string())).collect()
+        };
+        assert_eq!(cmds("Stop"), vec!["my-stop".to_string(), "\"$CLAUDE_PROJECT_DIR\"/scripts/memory hook stop".to_string()]);
+        assert_eq!(cmds("SessionStart"), vec!["\"$CLAUDE_PROJECT_DIR\"/scripts/memory hook start".to_string()]);
+        // hooks 가 객체가 아니면(사람이 다르게 쓴 것) 안 건드린다
+        std::fs::write(d.join(".claude/settings.json"), r#"{"hooks":[1]}"#).unwrap();
+        pin_data_dir(&d, "/Users/me/demo-data").unwrap();
+        let w: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(d.join(".claude/settings.json")).unwrap()).unwrap();
+        assert_eq!(w["hooks"], serde_json::json!([1]));
         let _ = std::fs::remove_dir_all(&d);
     }
 

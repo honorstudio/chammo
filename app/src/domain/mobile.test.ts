@@ -22,7 +22,7 @@ describe('예약 담당 참모', () => {
 describe('세션 목록의 컨텍스트', () => {
   it('ctx 칸을 sessionId 별로 — domain/ctx 파서 그대로', () => {
     const json = JSON.stringify([{ id: 'a', sessionId: 's1', ctx: { sessionId: 's1', used: 73, ts: 5 } }, { id: 'b', sessionId: 's2' }]);
-    expect(ctxFromAgents(json)).toEqual({ s1: { used: 73, ts: 5 } });
+    expect(ctxFromAgents(json)).toEqual({ s1: { used: 73 } }); // ts 는 화면 값에 안 싣는다(8447dad1, 11-13 perf)
     expect(ctxFromAgents('nope')).toEqual({});
   });
 });

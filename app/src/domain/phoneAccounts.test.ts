@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import macRs from '../../src-tauri/src/mobile.rs?raw';
 import css from '../ui/mobile/mobile.css?raw';
 import { ACCOUNTS_CHANGED } from './accounts';
-import { headLeft, headUsage, accountHead, confirmText, phoneAccountError, phoneAccountRows, readPhoneAccounts } from './phoneAccounts';
+import { headLeft, headUsage, accountHead, confirmText, phoneAccountError, phoneAccountRows, phoneLoginNeeded, readPhoneAccounts } from './phoneAccounts';
 
 const NOW = new Date(2026, 9, 5, 14, 0).getTime();
 const H = 3_600_000;
@@ -125,5 +125,24 @@ describe('폰 계정 시트', () => {
     expect(headLeft(readPhoneAccounts(raw()), status, NOW)).toBe(60);
     expect(headLeft(null, status, NOW)).toBe(58);
     expect(headLeft(null, '{}', NOW)).toBeNull();
+  });
+});
+
+describe('폰 계정 시트 — 막힌 칸 누르기(2026-11-13 로그인 필요 칸을 바꾸면 첫 칸으로 되돌아감)', () => {
+  const blocked = (why: string) => raw({ auto: { on: true, slots: { a2: { why, blockedUntil: NOW + 20 * 24 * H } } } });
+
+  it('로그인 필요 칸은 pick=login — 폰은 바꾸기 확인 대신 이유 한 줄(맥에서 로그인)', () => {
+    const [cur, r] = phoneAccountRows(readPhoneAccounts(blocked('auth'))!, NOW);
+    expect([cur!.pick, r!.pick, r!.rest]).toEqual(['switch', 'login', '로그인 필요']);
+    expect(phoneLoginNeeded(r!)).toBe('보조 계정은 로그인이 풀렸어요 — 맥에서 위 계정 메뉴를 열고 그 계정을 눌러 다시 로그인해 주세요');
+  });
+
+  it('약관 칸은 pick=terms(맥이 그 칸 약관 막힘만 풀고 바꾼다), 한도 칸은 switch', () => {
+    expect(phoneAccountRows(readPhoneAccounts(blocked('terms'))!, NOW)[1]!.pick).toBe('terms');
+    expect(phoneAccountRows(readPhoneAccounts(blocked('five'))!, NOW)[1]!.pick).toBe('switch');
+  });
+
+  it('맥이 needsLogin 으로 거절하면(그새 막힘) 같은 이유 글', () => {
+    expect(phoneAccountError('needsLogin')).toBe('그 계정은 로그인이 풀렸어요 — 맥에서 위 계정 메뉴를 열고 그 계정을 눌러 다시 로그인해 주세요');
   });
 });

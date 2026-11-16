@@ -15,17 +15,18 @@ export function visit(n: Nav, cur: string, next: string): Nav {
 /** ⌘[·마우스 뒤로가 기록이 없을 때 갈 곳 — 가운데가 문서면 문서 '뒤로' 버튼과 같은 위 칸(up), 그 밖은 없음 */
 export const keyFallback = (dir: -1 | 1, pick: string, up: string): string | undefined => (dir < 0 && pick.startsWith('d:') && up ? up : undefined);
 
-export function goBack(n: Nav, cur: string): { nav: Nav; to: string } | null {
+export function goBack(n: Nav, cur: string, gone: (p: string) => boolean = () => false): { nav: Nav; to: string } | null {
   const back = [...n.back];
   let to = back.pop();
-  while (to !== undefined && to === cur) to = back.pop();
+  // 그사이 사라진 화면(꺼진 브라우저·Craft 칸)도 건너뛴다 — 가면 탭 줄만 남은 빈 칸이었다(2026-11-16)
+  while (to !== undefined && (to === cur || gone(to))) to = back.pop();
   if (to === undefined) return null;
   return { nav: { back, fwd: [cur, ...n.fwd].slice(0, KEEP) }, to };
 }
 
 /** 앞으로 */
-export function goForward(n: Nav, cur: string): { nav: Nav; to: string } | null {
-  const [to, ...fwd] = n.fwd;
+export function goForward(n: Nav, cur: string, gone: (p: string) => boolean = () => false): { nav: Nav; to: string } | null {
+  const [to, ...fwd] = n.fwd.filter((p) => !gone(p));
   if (to === undefined) return null;
   return { nav: { back: [...n.back, cur].slice(-KEEP), fwd }, to };
 }

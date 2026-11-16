@@ -8,10 +8,8 @@ import { docRel } from '../../domain/paths';
 
 /** 지금 문서 폴더 — 상대 경로를 풀 때 */
 export const DocDirContext = createContext('');
-/** 페이지 블록을 누르면(스페이스가 받아 연다) */
-export const OPEN_PAGE = 'cv-open-page';
-/** 어떤 페이지 제목이 바뀌면(첫 줄 # 제목) — 블록 이름을 따라 바꾼다 */
-export const PAGE_TITLE = 'cv-page-title';
+import { OPEN_PAGE, PAGE_TITLE } from './pageEvents';
+export { OPEN_PAGE, PAGE_TITLE };
 
 const absOf = (dir: string, href: string) => docRel(dir, href);
 

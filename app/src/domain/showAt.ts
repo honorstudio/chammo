@@ -22,8 +22,8 @@ export function parseAt(raw: unknown): ShowAt | undefined {
 /** 같은 곳을 가리키는지 비교하는 열쇠 — 렌더마다 새로 만든 at 객체도 내용이 같으면 같다(효과가 객체 참조에 걸려 매번 다시 스크롤하던 것, 2026-10-23) */
 export const atKey = (at?: ShowAt): string => (at ? [at.line, at.lineEnd, at.find, at.page, at.box?.join(',')].map((v) => v ?? '').join('|') : '');
 
-/** 마크다운 한 줄에서 화면에 보이는 글 — 칸이 있으면 칸들 */
-function cells(line: string): string[] {
+/** 마크다운 한 줄에서 화면에 보이는 글 — 칸이 있으면 칸들(고른 글 → 줄 찾기도 같은 잣대, domain/askPick) */
+export function mdCells(line: string): string[] {
   let t = line.trim();
   if (/^\|?\s*:?-{2,}/.test(t) || /^([-*_])\1{2,}$/.test(t)) return []; // 표 구분선·가로줄
   t = t.replace(/^>+\s*/, '').replace(/^#{1,6}\s+/, '').replace(/^([-*+]|\d+[.)])\s+(\[[ xX]\]\s+)?/, '');
@@ -37,7 +37,7 @@ const count = (hay: string, needle: string) => { let n = 0; for (let i = hay.ind
 /** 원본 줄 번호(1부터) → 그려진 화면에서 찾을 글과 그 글이 몇 번째 나오는지. 빈 줄이면 아래로 내려가 첫 글 있는 줄 */
 export function lineNeedle(src: string, line: number, raw = false): { needle: string; nth: number } | null {
   const lines = src.split('\n');
-  const cellsOf = (l: string) => (raw ? (l.trim() ? [l.trim()] : []) : cells(l)); // raw = 글 파일(그대로 보인다)
+  const cellsOf = (l: string) => (raw ? (l.trim() ? [l.trim()] : []) : mdCells(l)); // raw = 글 파일(그대로 보인다)
   for (let i = Math.max(0, line - 1); i < lines.length; i++) {
     const cs = cellsOf(lines[i]!);
     if (!cs.length) continue;

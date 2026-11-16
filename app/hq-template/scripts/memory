@@ -1,0 +1,18 @@
+#!/bin/sh
+''':'
+# sh 로 읽으면 맞는 파이썬을 골라 다시 실행한다 — 윈도우의 python3 는 스토어 대리 실행기(종료 49)라 py -3 → python 중 도는 것
+[ "$OS" = Windows_NT ] || exec python3 "$0" "$@"
+for p in "py -3" python; do $p -c '' >/dev/null 2>&1 && exec $p "$0" "$@"; done
+exit 0
+':'''
+__doc__ = """Auto memory / 알아서 기억 — scripts/memory help. Logic lives in automem.py next to this file (ADR 0032)."""
+import os, sys
+for _io in (sys.stdin, sys.stdout, sys.stderr):  # 윈도우 파이썬 기본은 cp949 — 한글·'—' 를 UTF-8 로(2026-11-01 win-text H1)
+    if _io and hasattr(_io, 'reconfigure') and (_io.encoding or '').lower().replace('-', '') != 'utf8':
+        _io.reconfigure(encoding='utf-8', errors='replace')
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[0])))  # 링크로 불려도 그 폴더(개인 HQ scripts/)의 automem·task 를 쓴다
+import automem
+
+if __name__ == '__main__':
+    sys.exit(automem.cli(sys.argv[1:]))

@@ -127,6 +127,10 @@
 /* 브라우저 자동화 확인 목록(Node · 크롬 베타 · 도구 부품 · 시험 열기) — 점 하나로 상태, 진행은 막대 + 단계 글 한 줄 */
 .su-checks { list-style: none; margin: 0 0 4px 36px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12.5px; color: var(--text-2); }
 .su-checks li { display: inline-flex; align-items: center; gap: 7px; }
+/* 참모 브라우저 메모리 상한 한 줄(BrowserMemCap) — 표시 자리만큼 들여 줄 글과 맞춘다 */
+.su-memcap { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 0 0 8px 36px; font-size: 12.5px; color: var(--text-2); }
+.su-memcap input { width: 64px; height: 32px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--text); font-size: 13px; }
+.su-memcap input:focus { outline: none; border-color: var(--accent); }
 .su-checks small { color: var(--text-3); font-size: 11.5px; }
 .su-dot { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--text-3); box-sizing: border-box; }
 .su-checks .st-ok .su-dot { background: var(--tag-done-ink); border-color: var(--tag-done-ink); }

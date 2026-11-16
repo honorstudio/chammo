@@ -100,6 +100,8 @@ pub enum Error {
     Denied,
     /// Claude Code 세션이 토큰을 갱신하는 중(갱신 잠금) — 잠시 뒤 다시
     Busy,
+    /// 사람이 고른 칸이 로그인 막힘(자동 상태 why=auth) — 바꾸지 않는다. 바꾸고 고정해도 다음 자동 전환 차례가 첫 칸으로 되돌렸다(2026-11-13)
+    NeedsLogin,
     /// 끼울 칸 토큰을 미리 갱신하지 못했다(dead = 갱신 토큰이 죽음 · network · http4xx 등)
     Refresh(String),
     Store(String),
@@ -120,6 +122,7 @@ impl Error {
             Error::Moved => "moved".into(),
             Error::Denied => "denied".into(),
             Error::Busy => "busy".into(),
+            Error::NeedsLogin => "needsLogin".into(),
             Error::Refresh(m) => format!("refresh:{m}"),
             Error::Store(m) => format!("store:{m}"),
             Error::Io(m) => format!("io:{m}"),
@@ -576,12 +579,36 @@ pub fn restore(store: &dyn Store, live: &Live, list: &Path, which: &str) -> Resu
 /// 손으로 바꾸기(폰) — 바꿔 끼운 뒤 그 칸에 고정 + 바꾼 시각. 데스크톱은 화면이 두 번 부른다(ui/accountSwitch switchPinned).
 /// 고정은 실제로 로그인 표시가 그 칸과 맞을 때만(바꾸기가 끝까지 됐을 때)
 pub fn switch_pinned(store: &dyn Store, live: &Live, list: &Path, id: &str, now_ms: i64) -> Result<Pool, Error> {
+    pick_gate(list, id, now_ms)?;
     let pool = switch(store, live, list, id)?;
     let on = read_oauth(&live.claude_json).as_ref().and_then(key);
     if pool.current.as_deref() == Some(id) && slot(&pool, id).and_then(|a| key(&a.oauth)) == on && on.is_some() {
         return patch_auto(list, &serde_json::json!({ "pinned": id, "switchedAt": now_ms }));
     }
     Ok(pool)
+}
+
+/// 사람이 고른 칸의 막힘(화면 domain/accounts rowPick 과 같은 판단) — 로그인 막힘이면 NeedsLogin(로그인은 맥 계정 메뉴에서),
+/// 약관 막힘이면 그 칸 막힘만 풀고(openedAt = 지금) 저장. 한도 막힘은 고정 문턱(99%)이 맡아 그대로
+fn pick_gate(list: &Path, id: &str, now_ms: i64) -> Result<(), Error> {
+    let mut pool = load(list)?;
+    let Some(slot) = pool.auto.get_mut("slots").and_then(|s| s.get_mut(id)).and_then(Value::as_object_mut) else {
+        return Ok(());
+    };
+    if !slot.get("blockedUntil").and_then(Value::as_f64).is_some_and(|t| t > now_ms as f64) {
+        return Ok(());
+    }
+    match slot.get("why").and_then(Value::as_str) {
+        Some("auth") => Err(Error::NeedsLogin),
+        Some("terms") => {
+            for k in ["blockedUntil", "why", "blockFp"] {
+                slot.remove(k);
+            }
+            slot.insert("openedAt".into(), now_ms.into());
+            save(list, &pool)
+        }
+        _ => Ok(()),
+    }
 }
 
 /// 자동 상태 윗단 키만 합친다(null 이면 그 키 지움). 화면이 보내는 값이라 모양·크기를 본다

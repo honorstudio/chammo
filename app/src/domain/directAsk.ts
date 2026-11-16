@@ -25,6 +25,8 @@ export type DirectCard = {
   code?: string;
   /** 새 기기 허용 카드의 그 기기 id(설정 기기 관리 줄이 이 카드로 답한다) */
   dev?: string;
+  /** 새 기기 허용 카드의 그 기기 종류(phone·mac·win) — 폰이면 알림을 폰에 안 보낸다(cardPushesPhones) */
+  devKind?: string;
   /** 보안 번호 카드(sub 'safety') — 그 사람 계정·갈래(바뀜·갈림)·이름. code 는 보안 번호 30자리 */
   acct?: string; safety?: 'changed' | 'forked'; who?: string;
   /** 갈림 카드 — '다시 받기'한 사슬로 띄운 카드인가(이때만 받아들이기) */
@@ -44,6 +46,14 @@ const KINDS: DirectKind[] = ['pay', 'send', 'delete', 'ops', 'login', 'link', 'o
 export const LINK_FROM = '@link';
 type Row = Record<string, unknown> & { type?: string; id?: string; ts?: string; from?: string };
 const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
+
+/** 이 카드 알림을 폰에도 푸시하나 — 폰 연결 카드(새 폰 허용·폰 숫자 확인·폰 QR 허용)는 그 폰이 지금 하고 있는 일이라 맥에만.
+ *  폰을 다시 이을 때 그 폰에 카드 알림이 또 떴다(2026-11-13). 앱이 쓴 연결 카드(@link)만 갈래를 본다 — 세션 카드는 늘 폰에도 */
+export function cardPushesPhones(c: DirectCard): boolean {
+  if (c.kind !== 'link' || c.from !== LINK_FROM) return true;
+  if (c.sub === 'phone' || c.sub === 'phone-link') return false;
+  return !(c.sub === 'device' && c.devKind === 'phone');
+}
 
 export function directCards(log: string, env: Env): DirectCard[] {
   const rows: Row[] = [];
@@ -65,7 +75,7 @@ export function directCards(log: string, env: Env): DirectCard[] {
       yes: str(r.yes) ?? tr('승인', 'Approve'), no: str(r.no) ?? tr('거절', 'Decline'),
       options: Array.isArray(r.options) ? r.options.filter((o): o is string => typeof o === 'string') : [],
       state: 'wait', lastTs: r.ts ?? '', until: str(r.until), sub: str(r.sub),
-      code: (str(r.sub) === 'safety' ? /^(\d{5} ){5}\d{5}$/ : /^\d{3} \d{3}$/).test(str(r.code) ?? '') ? str(r.code) : undefined, dev: str(r.dev),
+      code: (str(r.sub) === 'safety' ? /^(\d{5} ){5}\d{5}$/ : /^\d{3} \d{3}$/).test(str(r.code) ?? '') ? str(r.code) : undefined, dev: str(r.dev), devKind: str(r.devKind),
     };
     if (c.sub === 'safety') Object.assign(c, { acct: str(r.acct), who: str(r.who), safety: r.safety === 'forked' ? 'forked' : 'changed', refetched: r.refetched === true });
     const isLink = kind === 'link' && c.from === LINK_FROM;

@@ -26,6 +26,9 @@ printf '%s' "$inp" | "$(dirname "$0")/orch-roster" 2>/dev/null
 # Skill nudge — situational guides live in HQ skills (.claude/skills/hq-*); name the one this prompt needs (scripts/skill-hint)
 # 스킬 환기 — 상황별 안내는 HQ 스킬에 있다. 이 지시에 맞는 스킬 이름을 한 줄로(scripts/skill-hint, 2026-10-06)
 printf '%s' "$inp" | "$(dirname "$0")/skill-hint" 2>/dev/null
+# Rules the user kept repeating (level 2 of auto memory) — one line on every prompt; nothing when there are none (scripts/memory, ADR 0032)
+# 알아서 기억 2단계 — 사용자가 되풀이한 규칙을 매 지시 한 줄로. 없으면 아무것도 안 찍는다
+grep -q '"level": [23]' "$d/memory/rules.json" 2>/dev/null && printf '%s' "$inp" | "$(dirname "$0")/memory" hook prompt 2>/dev/null
 # Screen now — the app writes <data>/view.txt (line 1 = app pid, line 2 = screen); added only while that app is alive
 # 지금 보는 화면 — 앱이 <데이터>/view.txt 에 적는다(첫 줄 = 앱 pid, 둘째 줄 = 화면). 앱이 살아 있을 때만 붙인다
 # 윈도우 Git Bash 의 kill -0 은 윈도우 pid 를 못 본다(No such process) — 그땐 tasklist 로
@@ -46,8 +49,18 @@ if [ -f "$d/view.txt" ]; then
 fi
 # Sent from the phone — the app's phone server writes <data>/mobile-sent.json {id, at} right before sending; tell the assistant when it is this session and under a minute old
 # 폰에서 보낸 지시 — 이 세션 것이고 1분 안이면 알린다
-sid=$(printf '%s' "$inp" | $PY -c 'import sys,json;print(json.load(sys.stdin).get("session_id",""))' 2>/dev/null)
-if [ -n "$sid" ] && [ -f "$d/mobile-sent.json" ]; then
+# 표시 파일이 2분 넘게 묵었으면 '1분 안' 검사는 늘 거짓이다(앱이 보내기 직전 at=지금 으로 쓴다) — 그땐 파이썬을 안 띄운다.
+# 말마다 파이썬 6번이 부하 높은 날 훅을 몇 초씩 잡았다(11-13 perf-night). find 가 못 재면(윈도우 FIND.EXE 등) 거르지 않는다
+fresh() {
+  [ -f "$1" ] || return 1
+  r=$(find "$1" -prune -mmin -3 2>/dev/null) || return 0
+  [ -n "$r" ]
+}
+sid=""
+if fresh "$d/mobile-sent.json" || fresh "$d/messenger-sent.json"; then
+  sid=$(printf '%s' "$inp" | $PY -c 'import sys,json;print(json.load(sys.stdin).get("session_id",""))' 2>/dev/null)
+fi
+if [ -n "$sid" ] && fresh "$d/mobile-sent.json"; then
   if $PY - "$d/mobile-sent.json" "$sid" <<'PY' 2>/dev/null
 import json, sys, time
 for _io in (sys.stdin, sys.stdout, sys.stderr):  # 윈도우 파이썬 기본은 cp949 — PYTHONUTF8 없이 떠도(데몬 env 세션·작업 스케줄러) 한글·'—' 를 UTF-8 로(2026-11-01 win-text H1)
@@ -63,7 +76,7 @@ PY
 fi
 # Sent from Telegram — the app's messenger bridge writes <data>/messenger-sent.json {id, at, channel} right before typing; same rule as the phone
 # 텔레그램에서 보낸 지시 — 앱 메신저 브리지가 치기 직전 <데이터>/messenger-sent.json 을 남긴다(폰과 같은 규칙, 2026-10-08)
-if [ -n "$sid" ] && [ -f "$d/messenger-sent.json" ]; then
+if [ -n "$sid" ] && fresh "$d/messenger-sent.json"; then
   if $PY - "$d/messenger-sent.json" "$sid" <<'PY' 2>/dev/null
 import json, sys, time
 m = json.load(open(sys.argv[1], encoding="utf-8"))

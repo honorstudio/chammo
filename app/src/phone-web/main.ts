@@ -11,6 +11,7 @@ import { homeUrl, readLink, saveLink, type RelayLink } from './link';
 import { planPair } from './pairPlan';
 import { call } from './relayClient';
 import { unlinkPhone, wipeAll } from './reset';
+import { lostStore, markLost } from './lostMark';
 import { fetchShell } from './shell';
 
 const TOKEN_KEY = 'chammo.token'; // data/web.ts 와 같은 칸
@@ -117,6 +118,7 @@ async function open(link: RelayLink) {
     location.replace(homeUrl(location.search));
   } catch (e) {
     if (e instanceof TrustError) {
+      markLost(lostStore, e.why, Date.now()); // 다시 이은 뒤 맥 기록에 까닭 한 줄(lostMark)
       return screen('이 폰 연결이 풀렸어요', '다시 로그인하면 바로 연결돼요.', [
         { label: '재연결', primary: true, run: () => void unlinkPhone().finally(() => location.replace('/pair')) },
         { label: '다시 해 보기', run: () => void open(link) },

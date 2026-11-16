@@ -1,6 +1,6 @@
 import '@blocknote/mantine/style.css';
 import { useEffect, useRef, useState } from 'react';
-import { getDefaultReactSlashMenuItems, SideMenuController, SuggestionMenuController, useCreateBlockNote } from '@blocknote/react';
+import { FormattingToolbar, FormattingToolbarController, getDefaultReactSlashMenuItems, getFormattingToolbarItems, SideMenuController, SuggestionMenuController, useCreateBlockNote } from '@blocknote/react';
 import { filterSuggestionItems } from '@blocknote/core/extensions';
 import { BlockNoteView } from '@blocknote/mantine';
 import { ko } from '@blocknote/core/locales';
@@ -11,6 +11,7 @@ import './editorTone.css';
 import { installBlockDrag } from './blockDrag';
 import { installBlockPick } from './blockPick';
 import { DocSideMenu } from './HandleMenu';
+import { AskSelButton } from './AskSelButton';
 import { installImeEnter } from './imeEnter';
 import { cellRangeAt, installTableSelect, isCellPick, oneCellRange } from './tableSelect';
 import { linesAsBlocks } from '../../domain/pasteLines';
@@ -243,6 +244,7 @@ export default function SpaceEditor({ md, docPath, personal, onReady, onChange, 
         theme={theme}
         slashMenu={false}
         sideMenu={false}
+        formattingToolbar={false}
         onChange={() => {
           if (!ready.current) return;
           sync.edits.current++;
@@ -251,6 +253,10 @@ export default function SpaceEditor({ md, docPath, personal, onReady, onChange, 
           void sync.normalize().then((out) => { if (mine) saveSoon(sync.session, out); onChange(out); });
         }}
       >
+        {/* 글을 고르면 뜨는 서식 막대 — 기본 단추 + 끝에 '물어보기'(고른 글·자리를 참모 입력칸에, askOrch). 내 메모는 빼고 */}
+        <FormattingToolbarController formattingToolbar={() => (
+          <FormattingToolbar>{getFormattingToolbarItems()}{!personal && <AskSelButton key="ask" docPath={docPath} />}</FormattingToolbar>
+        )} />
         {/* 손잡이 메뉴는 아이콘만(HandleMenu.tsx) */}
         <SideMenuController sideMenu={DocSideMenu} />
         {/* "/" 메뉴 — 기본 블록(한글 이름 더함) + "페이지"(하위 페이지를 만들고 이 자리에 링크, 노션처럼 — 2026-09-30 사용자) */}

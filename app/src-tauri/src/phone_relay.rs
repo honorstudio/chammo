@@ -333,7 +333,9 @@ fn mail_submit(body: &Value, h: &crate::device_link::Hello, dir: &std::path::Pat
     match grant_phone(h, &st, gen, &devices, mac, reply) {
         Ok(()) => {
             log("메일 코드로 폰 허용");
-            crate::claude::notify(crate::i18n::tr("새 폰이 메일 코드로 연결됐어요", "A new phone connected with an email code").into(), crate::i18n::tr(&format!("{} — 내가 한 일이 아니면 설정 > 기기 관리에서 끊어 주세요", h.name), &format!("{} — if this wasn't you, remove it in Settings > Devices", h.name)).into(), None);
+            // 맥에만 — 코드를 넣은 그 폰엔 안 보낸다(2026-11-13: 같은 폰의 옛 기기 구독으로 그 폰에 떴다). '내가 아니면 끊어라'는
+            // 이 맥 알림과, 코드를 받은 계정 메일(코드 메일 자체가 '내가 한 일이 아니면 무시' 기록)에 남는다
+            crate::claude::notify_local(crate::i18n::tr("새 폰이 메일 코드로 연결됐어요", "A new phone connected with an email code").into(), crate::i18n::tr(&format!("{} — 내가 한 일이 아니면 설정 > 기기 관리에서 끊어 주세요", h.name), &format!("{} — if this wasn't you, remove it in Settings > Devices", h.name)).into());
         }
         Err(e) => log(&format!("메일 코드 허용 실패 {e}")),
     }

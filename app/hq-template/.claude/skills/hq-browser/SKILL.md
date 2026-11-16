@@ -19,8 +19,9 @@ description: 브라우저 일(사이트 열기·눌러 보기·로그인 유지)
   세션은 사용자가 그 프로젝트 `CLAUDE.local.md` 에 적어 둔 계정으로 묻지 않고 다시 로그인한다 — 계정을 못 찾거나 2단계 코드·패스키·캡차일 때만 `browser_ask_human` 이 사람에게 묻는다.
   비밀번호는 MCP 도구 인자로 넘기지 말고 로그인 명령이 그 파일에서 읽어 넣게 한다(아래 '사이트 로그인'). 사용자에게 비밀번호를 치게 하지 않는다 — 넘기는 건 2단계(앱 승인·문자 코드)와 계정을 못 찾을 때뿐, `browser_ask_human` 이 시간 초과면 턴을 끝내지 말고 다시 부르게 한다.
   데이터 폴더는 `D="${CHAMMO_HOME:-$HOME/.chammo}"`, 그 node 는 `N="$D/tools/bin/node"; [ -x "$N" ] || N=node`.
-  안 깔려 있거나 세션이 브라우저가 없다고 하면 사용자에게 설정 → 기능 → 브라우저 자동화의 **설치**를 눌러 달라고 한다(없는 것만
-  받는다 — Node·크롬 베타·부품, 관리자 암호 없음). `npx playwright install`·`browser_install` 도구는 직접 쓰지 않는다.
+  안 깔려 있으면 사용자에게 설정 › 브라우저 › 참모 브라우저 줄의 **설치**를, 세션이 크롬을 못 찾았다고 하면 같은 줄의 **다시 찾기**를 눌러 달라고 한다(없는 것만
+  받는다 — Node·크롬 베타·부품, 관리자 암호 없음 — 누른 뒤 그 세션을 다시 켠다). `npx playwright install`·`browser_install` 도구는 직접 쓰지 않는다.
+  사람이 창을 직접 봐야 하는 프로필(오래 도는 수집 등)은 `<데이터>/browser/keep-visible.json` 에 `["이름", "앞자리*"]` — 윈도우에서 숨은 데스크톱·작업표시줄 빼기를 안 한다.
 - **사이트 로그인**(네이버·구글·쇼핑몰 관리자 등): 세션이 "못 한다"·"비밀번호를 칠 수 없다"며 사람에게 넘기기 전에 이 순서를 따르게 한다.
   ① 계정은 그 프로젝트의 gitignore 된 `CLAUDE.local.md` 칸 — 제목에 사이트 이름, 아래에 `- 아이디: …`·`- 비밀번호: …`·`- 로그인 주소: https://…` 세 줄.
   명령은 칸의 로그인 주소와 **등록 도메인이 같은 곳에만** 친다 — 서브도메인(nid.naver.com·www.naver.com)은 같은 사이트, 다른 도메인이면 부른 주소든 넘어간 화면이든 치기 직전에 멈추고 5. 주소 줄이 없으면 제목에 그 사이트 영문 이름(`naver`)이나 도메인(`naver.com`)이 낱말째 있어야 한다.
@@ -63,9 +64,10 @@ description: 브라우저 일(사이트 열기·눌러 보기·로그인 유지)
   2FA (app approval, SMS code, passkey, captcha) or a missing account goes to the person via `browser_ask_human`; if that
   times out, the session calls it again instead of ending its turn.
   The data folder is `D="${CHAMMO_HOME:-$HOME/.chammo}"` and its node `N="$D/tools/bin/node"; [ -x "$N" ] || N=node`.
-  Not installed, or a session says the browser is missing? Ask the user to press
-  **Install** in Settings → Features → Browser automation (it fetches only what is missing: Node, Chrome Beta, parts — no
-  admin password). Never run `npx playwright install` or the `browser_install` tool yourself.
+  Not installed? Ask the user to press **Install** on the Settings › Browser › Assistant browser row; if a session says it couldn't find Chrome,
+  **Find again** on the same row (it fetches only what is missing: Node, Chrome Beta, parts — no admin password — then restart that session).
+  Never run `npx playwright install` or the `browser_install` tool yourself.
+  Profiles a person must see directly (long-running collection, etc.) go in `<data>/browser/keep-visible.json` as `["name", "prefix*"]` — on Windows they are not sent to the hidden desktop or taken off the taskbar.
 - **Signing in to a site** (Naver, Google, a shop admin…): before a session says "I can't" or "I can't type passwords" and hands it to the person, have it follow this order.
   ① The account lives in that project's git-ignored `CLAUDE.local.md` — a heading with the site name, then three lines `- ID: …`, `- Password: …` and `- Login URL: https://…` (Korean keys work too).
   The command types only where the **registrable domain matches** the section's login URL — subdomains (nid.naver.com, www.naver.com) count as the same site; any other domain, whether the URL it was given or a page it got redirected to, stops it right before typing with 5. Without a URL line the heading must contain the site's name (`naver`) or domain (`naver.com`) as a whole word.

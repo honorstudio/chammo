@@ -63,7 +63,7 @@ describe('다시 잇기 — 이미 있는 계정 로그인 길로', () => {
     expect(app).toMatch(/onClick=\{[^}]*unlinkPhone\(\)/);
   });
   it('안내 글이 QR 이 아니라 다시 잇기다', () => {
-    const t = netText(new TrustError());
+    const t = netText(new TrustError('relay401'));
     expect(t).toContain('풀렸어요');
     expect(t).not.toContain('QR');
     expect(t).not.toContain('저절로');

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { accountsApi } from '../data/tauri';
-import { ACCOUNTS_CHANGED, accountError, addState, moved, pinText, slotText, slotUsageText, type AccountsView } from '../domain/accounts';
+import { ACCOUNTS_CHANGED, accountError, accountLoginCommand, addState, moved, pinText, rowPick, slotText, slotUsageText, type AccountsView } from '../domain/accounts';
 import { readAuto, slotStatus } from '../domain/accountAuto';
-import { pinActive, switchPinned } from './accountSwitch';
+import { pickSwitch, pinActive, startLogin, useAccountLogin } from './accountSwitch';
 import { setupCommand } from '../domain/setup';
 import { machine, tr } from '../i18n';
 import { TerminalPane } from './TerminalPane';
@@ -69,6 +69,12 @@ export function AccountsSection({ title, claude, fontSize }: { title: string; cl
     setNewName('');
     setAdding({ start: v?.liveEmail ?? null });
   };
+  // 로그인 필요 칸 — '이 계정으로' 대신 그 계정 로그인(막힌 칸으로 바꾸면 자동 전환이 첫 칸으로 되돌린다, 2026-11-13). 창을 닫아도 로그인이 끝나면 자동 전환이 마무리
+  const [relogin, setRelogin] = useAccountLogin((err) => { if (err) setError(accountError(err)); void read(); });
+  const startRelogin = async (id: string, email: string) => {
+    if (await act(() => startLogin(id))) setRelogin({ id, email });
+  };
+
   const keepNew = async () => {
     if (await act(async () => pinActive(await accountsApi.capture(newName.trim() || undefined)))) setAdding(null);
   };
@@ -91,6 +97,7 @@ export function AccountsSection({ title, claude, fontSize }: { title: string; cl
         {list.map((a, i) => {
           const on = a.id === view?.active;
           const st = slotStatus(auto.slots[a.id], now, auto.pinned === a.id);
+          const pick = rowPick(st.kind);
           return (
             <div className="su-row acct-row" key={a.id}>
               <span className="acct-order">{i + 1}</span>
@@ -109,7 +116,9 @@ export function AccountsSection({ title, claude, fontSize }: { title: string; cl
               <div className="su-row-act acct-act">
                 <IconButton tone="line" label={tr('위로', 'Up')} disabled={busy || i === 0} onClick={() => void act(() => accountsApi.reorder(moved(ids, i, -1)))}><IconChevronUp /></IconButton>
                 <IconButton tone="line" label={tr('아래로', 'Down')} disabled={busy || i === list.length - 1} onClick={() => void act(() => accountsApi.reorder(moved(ids, i, 1)))}><IconChevronDown /></IconButton>
-                {!on && <button className="btn pri su-mini" disabled={busy || !!adding} onClick={() => void act(() => switchPinned(a.id))}>{tr('이 계정으로', 'Use this')}</button>}
+                {!on && (pick === 'login'
+                  ? <button className="btn pri su-mini" disabled={busy || !!adding || !!relogin} onClick={() => void startRelogin(a.id, a.email)}>{tr('로그인', 'Sign in')}</button>
+                  : <button className="btn pri su-mini" disabled={busy || !!adding} onClick={() => void act(() => pickSwitch(a.id, pick))}>{tr('이 계정으로', 'Use this')}</button>)}
                 {/* 빼기는 두 번 — 웹뷰 confirm 창 대신 그 자리에서 한 번 더 묻는다 */}
                 {removing === a.id
                   ? <>
@@ -149,8 +158,15 @@ export function AccountsSection({ title, claude, fontSize }: { title: string; cl
         </div>
         <p className="su-hint">{tr('"이 계정으로"를 누르면 그 계정에 머물러요(고정). 그 계정이 다 차면 다시 자동으로 넘어가요. 이미 돌고 있는 세션도 다음 요청부터 새 계정을 써요.', 'Choosing "Use this" pins that account until it fills up, then auto-switch resumes. Running sessions use the new account from their next request.')}</p>
       </>}
+      {relogin && (
+        <div className="su-term">
+          <TerminalPane key={`acct-relogin-${relogin.id}`} command={accountLoginCommand(claude, relogin.email, tr('끝났어요. 잠시 뒤 이 계정으로 바뀌어요.', 'Done. It will switch to this account in a moment.'))}
+            title={tr('Claude 로그인', 'Claude sign-in')} subtitle={relogin.email || tr('브라우저에서 로그인하고 돌아오세요', 'Sign in in the browser, then come back')} fontSize={fontSize}
+            controls={<IconButton label={tr('닫기', 'Close')} onClick={() => setRelogin(null)}><IconClose /></IconButton>} />
+        </div>
+      )}
       {!adding
-        ? <IconButton size="l" tone="line" className="su-add-wide" label={tr('계정 추가', 'Add account')} disabled={busy} onClick={() => void startAdd()}><IconPlus /></IconButton>
+        ? <IconButton size="l" tone="line" className="su-add-wide" label={tr('계정 추가', 'Add account')} disabled={busy || !!relogin} onClick={() => void startAdd()}><IconPlus /></IconButton>
         : (
           <div className="su-rows">
             <div className="su-hint">{tr('아래 터미널에서 브라우저가 열려요. 새 계정으로 로그인하고 돌아오면 보관 버튼이 켜져요. 지금 계정은 이미 목록에 있어요', 'A browser opens from the terminal below. Sign in with the new account and come back. The Keep button lights up. Your current sign-in is already kept.')}</div>

@@ -48,6 +48,11 @@ pub fn plan(h: Have) -> Vec<Step> {
     v
 }
 
+/// 설정 줄 '준비됐어요' — 받을 게 없고, 세션이 크롬을 못 찾았다는 표시도 없을 때(공개 이슈 #28)
+pub fn ready(h: Have, missing: bool) -> bool {
+    plan(h).is_empty() && !missing
+}
+
 /// 전체 진행(0~100) — i 번째 단계가 frac 만큼. frac 을 모르면 None(막대가 흐른다)
 pub fn overall(steps: &[Step], i: usize, frac: Option<f64>) -> Option<u8> {
     let total: u32 = steps.iter().map(|s| s.spec().1).sum();
@@ -232,6 +237,8 @@ pub fn run(data: &Path) -> Result<(), String> {
     clean_work(&work);
     std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
     let _ = std::fs::remove_file(bp::checked_mark(data));
+    // 다시 찾기 — 표시를 지우고 시험 열기까지(checked 를 지웠으니 plan 에 Check 가 들어간다). 시험이 실패하면 '다시 시도'
+    let _ = std::fs::remove_file(crate::browser::missing_mark(data));
     let steps = plan(have(data));
     let mut result = Ok(());
     for (i, step) in steps.iter().enumerate() {
@@ -337,6 +344,15 @@ mod tests {
         assert_eq!(plan(Have { checked: false, ..all }), vec![Step::Check]); // 옛 설치(시험 표시 없음)는 시험만
         assert_eq!(plan(Have { chrome_beta: false, ..all }), vec![Step::Chrome, Step::Check]);
         assert_eq!(plan(Have::default()), vec![Step::Node, Step::Chrome, Step::Parts, Step::Check]);
+    }
+
+    #[test]
+    fn 세션이_크롬을_못_찾았으면_다_깔려_있어도_준비됨이_아니다() {
+        let all = Have { node: true, chrome_beta: true, parts: true, checked: true };
+        assert!(ready(all, false));
+        assert!(!ready(all, true), "공개 이슈 #28 — 준비됨이면 단추가 숨어 사람이 누를 게 없었다");
+        assert!(!ready(Have { checked: false, ..all }, false));
+        assert!(crate::browser::missing_mark(Path::new("/d")).ends_with("tools/chammo-browser/.missing"), "래퍼 guard.js missingFile 과 같은 자리");
     }
 
     #[test]

@@ -5,7 +5,13 @@ import type { RefKind } from '../domain/refChips';
 
 /** plain = 이름표 없이 글 그대로 입력칸에(내 메모 보내기 아이콘 — 메모 글 통째, 11-05 사용자).
  *  file = 그 파일을 첨부 칩(#file)으로(폰 문서 보기 '참모에게 보내기', 11-06 — 데스크톱 SendToOrch 와 같은 일) */
-export type RefAsk = { kind: RefKind; who: string; text: string; plain?: boolean; file?: { path: string; name: string } };
+export type RefAsk = { kind: RefKind; who: string; text: string; plain?: boolean; file?: { path: string; name: string };
+  /** 이름표 바로 뒤에 붙여 보낼 자리 — #sel1 "경로:줄", #area1 "경로" box=…(domain/askPick, 11-13 물어보기) */
+  at?: string;
+  /** 인용 블록 머리(#sel 의 파일:줄 · 제목) — 화면 칩은 who(파일:줄)만 */
+  head?: string;
+  /** 받은 입력칸이 매긴 이름표(#area2 등) — 그림 상자 번호를 칩 번호와 맞춘다 */
+  onLabel?: (label: string) => void };
 type Got = (r: RefAsk) => void;
 
 const bus = new EventTarget();

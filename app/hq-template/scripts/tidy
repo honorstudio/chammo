@@ -1,0 +1,320 @@
+#!/bin/sh
+''':'
+# sh 로 읽으면 맞는 파이썬을 골라 다시 실행한다 — 윈도우의 python3 는 스토어 대리 실행기(종료 49)라 py -3 → python 중 도는 것
+[ "$OS" = Windows_NT ] || exec python3 "$0" "$@"
+for p in "py -3" python; do $p -c '' >/dev/null 2>&1 && exec $p "$0" "$@"; done
+echo "python not found — install Python 3 (winget install Python.Python.3.12)" >&2; exit 127
+':'''
+__doc__ = """정리꾼 — 메모리·교훈·교훈 스킬에서 겹치는 것과 안 쓰는 교훈 스킬을 찾는다(eta-bot curator 에서 배움, 2026-10-31). 주 1회 예약이 부른다.
+
+  scripts/tidy scan [--json]          읽기만 — 바꿀 목록(모드와 상관없이)
+  scripts/tidy run                    예약이 부른다. 모드 apply(기본) = 아래 '바로'를 하고 결과 한 줄 + 목록 / report = 목록만(사람이 일부러 끌 때만 —
+                                      보고만 하고 멈추면 6주 동안 보관 0건이었다, 11-16 점검)
+  scripts/tidy mode [report|apply]    지금 모드 보기·바꾸기(<데이터>/tidy.json)
+  scripts/tidy restore <스킬 이름>     보관한 교훈 스킬을 제자리로
+
+apply 가 바로 하는 것(되돌릴 수 있는 것만):
+  - 합치기: 같은 교훈 줄이 넓은 칸(_common·_app)과 프로젝트에 둘 다 있으면 프로젝트 쪽을 뺀다 — 넓은 칸에 그대로 남는다
+  - 보관: 만든 지 30일 넘었는데 30일 동안 세션이 한 번도 안 연 교훈 스킬 → <교훈>/_archive/skills/<이름>/ (restore 로 되돌림)
+    '열림' = ~/.claude/projects 세션 기록(하위 에이전트 포함)의 Skill 도구 호출이나 <이름>/SKILL.md 를 Read·cat 한 것(11-16 — 붙은 횟수만 세면
+    붙기만 하고 안 열린 스킬은 못 잡고, 안 붙었는데 열린 스킬은 잘못 잡았다). '붙음'(send 의 lessons.skills, 없으면 scripts/lesson_budget.py 잣대)은 보고에만
+판단이 필요한 건 목록으로만 — '비슷한 묶음'(메모리·교훈·스킬 줄이 같은 말): 예약 세션이 읽고 합친다(메모리는 남길 파일에 합치고
+  나머지 파일은 같은 폴더 _archive/ 로 옮긴 뒤 MEMORY.md 줄을 뺀다). 지우기는 카드 — 교훈 task lesson-drop, 메모리 direct ask --kind delete.
+기록: <교훈>/tidy.jsonl. 예약 거는 법은 docs/plans/2026-10-31-lesson-budget.md
+"""
+import datetime, importlib.machinery, importlib.util, itertools, json, os, re, shutil, sys
+for _io in (sys.stdin, sys.stdout, sys.stderr):  # 윈도우 파이썬 기본은 cp949 — 한글·'—' 를 UTF-8 로(2026-11-01 win-text H1)
+    if _io and hasattr(_io, 'reconfigure') and (_io.encoding or '').lower().replace('-', '') != 'utf8':
+        _io.reconfigure(encoding='utf-8', errors='replace')
+sys.dont_write_bytecode = True
+HERE = os.path.dirname(os.path.abspath(__file__))  # 링크(개인 HQ scripts/tidy)로 불리면 그 폴더의 task — 개인판은 폰 앱 칸(_app)이 있다
+sys.path.insert(0, HERE)
+_l = importlib.machinery.SourceFileLoader('task', os.path.join(HERE, 'task'))
+task = importlib.util.module_from_spec(importlib.util.spec_from_loader('task', _l))
+_l.exec_module(task)
+import lesson_budget
+lesson_skill = task.lesson_skill
+
+MEM_ROOT = os.path.expanduser('~/.claude/projects')
+DAYS = 30
+SIMILAR = 0.55   # 짧은 쪽 낱말 중 이만큼이 겹치면 같은 말(10-31 실측: 0.55 위는 거의 다 진짜 겹침, 0.5 아래는 우연)
+MEM_LINE = re.compile(r'^- \[(.+?)\]\((.+?\.md)\)\s*[—-]?\s*(.*)$')
+APP = getattr(task, 'APP', None)  # 폰 앱 칸(_app)은 개인판 task 에만 — 공개판엔 없다
+is_app = getattr(task, 'is_app', lambda p: False)
+BROAD = tuple(x for x in (task.COMMON, APP) if x)
+
+
+def _now():
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def _ts(s):
+    try:
+        t = datetime.datetime.fromisoformat(s)
+        return t if t.tzinfo else t.replace(tzinfo=datetime.timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def entries():
+    """[{where, text, path}] — 메모리 목차 줄·교훈 줄·살아 있는 교훈 스킬 줄"""
+    out = []
+    for proj in sorted(os.listdir(MEM_ROOT)) if os.path.isdir(MEM_ROOT) else []:
+        idx = os.path.join(MEM_ROOT, proj, 'memory', 'MEMORY.md')
+        for l in lesson_skill._read(idx).splitlines():
+            m = MEM_LINE.match(l.strip())
+            if m:
+                out.append({'where': '메모리 ' + (proj.split('-Desktop-dev-', 1)[-1] if '-Desktop-dev-' in proj else proj), 'text': f'{m.group(1)} — {m.group(3)}', 'path': os.path.join(os.path.dirname(idx), m.group(2))})
+    for f in sorted(os.listdir(task.LESSONS)) if os.path.isdir(task.LESSONS) else []:
+        if f.endswith('.md'):
+            out += [{'where': f'교훈 {f[:-3]}', 'text': l, 'path': os.path.join(task.LESSONS, f)} for l in task._lines(f[:-3])]
+    for scope, name, rec in skills():
+        out += [{'where': f'스킬 {name}', 'text': l, 'path': rec['path']} for l in rec.get('lines', [])]
+    return out
+
+
+def skills():
+    """[(칸, 이름, 기록)] 지금 살아 있는 우리 교훈 스킬"""
+    env = task.lesson_env()
+    scopes = dict.fromkeys(r.get('project') for r in lesson_skill._records(env) if r.get('project'))
+    return [(s, n, r) for s in scopes for n, r in lesson_skill.active_skills(env, s).items() if os.path.exists(r['path'])]
+
+
+def dups():
+    """넓은 칸(공통·앱)에 똑같이 있는 프로젝트 교훈 — 앱 칸은 폰 앱 프로젝트에만 붙으니 앱 프로젝트에서만 겹친 것으로 본다(10-31 리뷰)"""
+    common = {l: task.COMMON for l in task._lines(task.COMMON)}
+    app = {l: APP for l in task._lines(APP)} if APP else {}
+    out = []
+    for f in sorted(os.listdir(task.LESSONS)) if os.path.isdir(task.LESSONS) else []:
+        p = f[:-3]
+        if f.endswith('.md') and p not in BROAD:
+            broad = {**app, **common} if is_app(p) else common
+            out += [{'project': p, 'line': l, 'kept': broad[l]} for l in task._lines(p) if l in broad]
+    return out
+
+
+def similar(items):
+    ws = [lesson_budget.words(e['text']) for e in items]
+    df = {}
+    for s in ws:
+        for w in s:
+            df[w] = df.get(w, 0) + 1
+    common = max(3, len(items) * 0.01)  # 여기저기 나오는 낱말은 같은 말의 근거가 못 된다(줄 2천 개면 20줄)
+    ws = [{w for w in s if df[w] <= common} for s in ws]
+    parent = list(range(len(items)))
+
+    def root(i):
+        while parent[i] != i:
+            i = parent[i]
+        return i
+    index = {}  # 앞 세 글자(두 글자 말은 통째)가 같은 줄끼리만 견준다 — 줄 천 개를 다 견주면 2분 넘게 걸렸다
+    for i, s in enumerate(ws):
+        for w in s:
+            index.setdefault(w[:3], set()).add(i)
+    shared = {}
+    for ids in index.values():
+        for ij in itertools.combinations(sorted(ids), 2):
+            shared[ij] = shared.get(ij, 0) + 1
+    pairs = []
+    for (i, j), n in sorted(shared.items()):
+        if n < 2:
+            continue  # 한 낱말만 겹친 짝은 같은 말이 아니다
+        if items[i]['text'] == items[j]['text'] or min(len(ws[i]), len(ws[j])) < 3:
+            continue  # 똑같은 줄은 dups 몫, 낱말 셋 안 되는 줄은 근거가 모자란다
+        s = sum(1 for w in ws[i] if any(lesson_budget._same(w, x) for x in ws[j])) / min(len(ws[i]), len(ws[j]))
+        if s >= SIMILAR:
+            pairs.append((s, i))
+            parent[root(j)] = root(i)
+    groups, score = {}, {}
+    for i in range(len(items)):
+        groups.setdefault(root(i), []).append(items[i])
+    for s, i in pairs:
+        score[root(i)] = max(score.get(root(i), 0), s)
+    return sorted(({'score': round(score[k], 2), 'members': g} for k, g in groups.items() if len(g) > 1), key=lambda g: -g['score'])
+
+
+def _opened_name(use):
+    """도구 호출 하나가 연 교훈 스킬 이름들 — Skill 도구(폴더 붙은 'web:lesson-x' 도), SKILL.md Read, cat 같은 셸 읽기"""
+    inp = use.get('input') if isinstance(use.get('input'), dict) else {}
+    if use.get('name') == 'Skill':
+        n = str(inp.get('skill') or '').rsplit(':', 1)[-1].strip().lstrip('/')
+        return [n] if n else []
+    text = str(inp.get('file_path') or '') if use.get('name') == 'Read' else str(inp.get('command') or '') if use.get('name') == 'Bash' else ''
+    return SKILL_PATH.findall(text)
+
+
+SKILL_PATH = re.compile(r'([A-Za-z0-9_.-]+)/SKILL\.md')
+
+
+def opened(since):
+    """{스킬 이름: 연 횟수} — MEM_ROOT 아래 세션 기록(*.jsonl, 하위 에이전트 포함)에서 since 뒤 assistant 도구 호출만.
+    지시 글(사람 줄)에 이름·경로가 들어 있는 건 '붙음'이지 연 게 아니라 안 센다(11-16 규칙 점검)"""
+    out = {}
+    cut = since.timestamp()
+    for root, _, files in os.walk(MEM_ROOT):
+        for f in files:
+            path = os.path.join(root, f)
+            try:
+                if not f.endswith('.jsonl') or os.path.getmtime(path) < cut:
+                    continue
+                fh = open(path, 'rb')
+            except OSError:
+                continue
+            with fh:
+                for raw in fh:
+                    if b'tool_use' not in raw or (b'"Skill"' not in raw and b'SKILL.md' not in raw):
+                        continue  # 기록이 10GB 쯤이라 json 은 걸릴 만한 줄만 푼다
+                    try:
+                        row = json.loads(raw)
+                    except ValueError:
+                        continue
+                    if not isinstance(row, dict) or row.get('type') != 'assistant' or (_ts(row.get('timestamp')) or since) <= since:
+                        continue
+                    content = (row.get('message') or {}).get('content')
+                    for use in content if isinstance(content, list) else []:
+                        if isinstance(use, dict) and use.get('type') == 'tool_use':
+                            for n in _opened_name(use):
+                                out[n] = out.get(n, 0) + 1
+    return out
+
+
+def stale(now=None):
+    """30일 동안 세션이 한 번도 안 연 교훈 스킬. '붙음'(send 기록)은 보고에만 — 붙기만 하고 안 열리면 쓸모가 없다"""
+    now = now or _now()
+    since = now - datetime.timedelta(days=DAYS)
+    env = task.lesson_env()
+    born = {}
+    for r in lesson_skill._records(env):
+        if r.get('action') == 'promote' and _ts(r.get('ts')):
+            born.setdefault(r['skill'], _ts(r['ts']))
+    sends = [e for e in task.read_events() if isinstance(e, dict) and e.get('type') == 'send' and (_ts(e.get('ts')) or since) > since]
+    opens = opened(since)
+    seen = {}
+    app = lambda p: bool(p) and seen.setdefault(p, is_app(p))  # 폴더를 뒤지니 프로젝트마다 한 번
+    out = []
+    for scope, name, rec in skills():
+        if opens.get(name):
+            continue
+        mine = [e for e in sends if scope == task.COMMON or (APP and scope == APP and app(e.get('project'))) or e.get('project') == scope]
+        attached = sum(1 for e in mine if (name in (e['lessons'].get('skills') or []) if isinstance(e.get('lessons'), dict)
+                       else lesson_budget.pick([('s', f"{name}: {rec.get('desc', '')}")], e.get('title', ''))[0]))
+        b = born.get(name) or now
+        out.append({'scope': scope, 'skill': name, 'born': b.date().isoformat(), 'path': rec['path'], 'sends': len(mine),
+                    'attached': attached, 'opened': 0, 'young': b > since})
+    return out
+
+
+def candidates():
+    """[{project, lines}] 후보칸(<교훈>/candidates/*.md — 위험 낱말로 자동으로 안 붙인 회신 교훈)에 남은 줄. 쓰기만 하고 읽는 길이 없어
+    6주간 130줄 쌓였다(11-16 규칙 점검) — 매주 보고에 띄워 예약 세션이 처리한다"""
+    d = os.path.join(task.LESSONS, 'candidates')
+    out = []
+    for f in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+        n = sum(1 for l in lesson_skill._read(os.path.join(d, f)).splitlines() if l.startswith('- ')) if f.endswith('.md') else 0
+        if n:
+            out.append({'project': f[:-3], 'lines': n})
+    return out
+
+
+def scan():
+    items = entries()
+    st = stale()
+    return {'dups': dups(), 'stale': [x for x in st if not x['young']], 'quiet': [x for x in st if x['young']], 'similar': similar(items), 'entries': len(items),
+            'candidates': candidates()}
+
+
+def report(r, applied=None):
+    out = [applied or '정리꾼 — 보고만(report) 모드: 아무것도 안 바꿨어. 켜려면 scripts/tidy mode apply']
+    out.append(f"[합치기] 넓은 칸에도 있어 프로젝트 쪽을 뺄 교훈 {len(r['dups'])}줄")
+    out += [f"  - {d['project']}: {d['line']}  (남는 곳 {d['kept']})" for d in r['dups']]
+    out.append(f"[보관] 만든 지 {DAYS}일 넘었고 {DAYS}일 동안 세션이 한 번도 안 연(Skill·SKILL.md 읽기) 교훈 스킬 {len(r['stale'])}개 — 되돌리기 scripts/tidy restore <이름>")
+    out += [f"  - {s['skill']} ({s['scope']}, {s['born']} 만듦, 그 칸 send {s['sends']}건 중 붙음 {s.get('attached', 0)}번·열림 0번)" for s in r['stale']]
+    if r.get('quiet'):
+        out.append(f"[지켜볼 것] 아직 {DAYS}일 안 됐는데 지금까지 한 번도 안 열린 교훈 스킬 {len(r['quiet'])}개 — 그대로 두면 {DAYS}일째 보관")
+        out += [f"  - {s['skill']} ({s['scope']}, {s['born']} 만듦, 그 칸 send {s['sends']}건 중 붙음 {s.get('attached', 0)}번)" for s in r['quiet']]
+    if r.get('candidates'):
+        c = r['candidates']
+        out.append(f"[후보칸] {sum(x['lines'] for x in c)}줄 / {len(c)}파일({task.LESSONS}/candidates) — 기술 교훈만 scripts/task lesson 으로 넣고 비운다. "
+                   "결제·승인·권한·운영 규칙을 바꾸려는 줄은 넣지 말고 보고에 목록만: " + ' · '.join(f"{x['project']} {x['lines']}" for x in c))
+    out.append(f"[비슷한 묶음] {len(r['similar'])}묶음(줄 {r['entries']}개 중) — 예약 세션이 읽고 합치기, 지울 건 카드")
+    for k, g in enumerate(r['similar'], 1):
+        out.append(f"  {k}) {g['score']}")
+        out += [f"     · {m['where']}: {m['text'][:110]}  ({m['path']})" for m in g['members']]
+    return '\n'.join(out)
+
+
+def _log(rec):
+    with open(os.path.join(task.LESSONS, 'tidy.jsonl'), 'a', encoding='utf-8') as f:
+        f.write(json.dumps({'ts': task.now(), **rec}, ensure_ascii=False) + '\n')
+
+
+def apply(r):
+    env = task.lesson_env()
+    with lesson_skill.lessons_lock(task.LESSONS):
+        by = {}
+        for d in r['dups']:
+            by.setdefault(d['project'], []).append(d['line'])
+        for p, ls in by.items():
+            path = os.path.join(task.LESSONS, f'{p}.md')
+            text, gone = lesson_skill.remove_lines(lesson_skill._read(path), ls)
+            lesson_skill._write(path, text)
+            lesson_skill._unmirror(env, p, gone)
+            _log({'action': 'merge', 'project': p, 'lines': gone})
+        for s in r['stale']:
+            src = os.path.dirname(s['path'])
+            dst = os.path.join(task.LESSONS, '_archive', 'skills', s['skill'])
+            if os.path.exists(dst):
+                dst += '-' + _now().strftime('%Y%m%d%H%M')
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.move(src, dst)
+            lesson_skill._sync_pointer(env, s['scope'])
+            _log({'action': 'shelve', 'scope': s['scope'], 'skill': s['skill'], 'from': src, 'to': dst})
+    return f"정리꾼: 교훈 합침 {len(r['dups'])}줄 · 안 쓴 교훈 스킬 보관 {len(r['stale'])}개 · 비슷한 묶음 {len(r['similar'])}개는 아래 — 읽고 합쳐"
+
+
+def restore(name):
+    recs = [json.loads(l) for l in lesson_skill._read(os.path.join(task.LESSONS, 'tidy.jsonl')).splitlines() if l.strip()]
+    last = next((r for r in reversed(recs) if r.get('skill') == name and r.get('action') in ('shelve', 'unshelve')), None)
+    if not last or last['action'] != 'shelve' or not os.path.isdir(last['to']) or os.path.exists(last['from']):
+        print(f'{name}: 보관한 기록이 없거나 제자리에 이미 있어', file=sys.stderr)
+        return 2
+    with lesson_skill.lessons_lock(task.LESSONS):
+        shutil.move(last['to'], last['from'])
+        lesson_skill._sync_pointer(task.lesson_env(), last['scope'])
+        _log({'action': 'unshelve', 'scope': last['scope'], 'skill': name, 'from': last['to'], 'to': last['from']})
+    print(f'{name} 되돌림 — {last["from"]}')
+    return 0
+
+
+def mode(value=None):
+    path = os.path.join(task.DATA, 'tidy.json')
+    if value:
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump({'mode': value}, f)
+    try:
+        return json.load(open(path, encoding='utf-8')).get('mode', 'apply')
+    except (OSError, ValueError):
+        return 'apply'  # 설정이 없으면 보관까지 — 되돌림은 tidy restore
+
+
+def main(a):
+    cmd = a[0] if a else ''
+    if cmd == 'scan':
+        r = scan()
+        print(json.dumps(r, ensure_ascii=False, indent=1) if '--json' in a else report(r))
+        return 0
+    if cmd == 'run':
+        r = scan()
+        print(report(r, apply(r) if mode() == 'apply' else None))
+        return 0
+    if cmd == 'mode' and (len(a) == 1 or a[1] in ('report', 'apply')):
+        print(mode(a[1] if len(a) > 1 else None))
+        return 0
+    if cmd == 'restore' and len(a) == 2:
+        return restore(a[1])
+    print(__doc__, file=sys.stderr)
+    return 2
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))

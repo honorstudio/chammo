@@ -1,0 +1,60 @@
+<!doctype html>
+<html>
+  <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /><title>acct login e2e</title>
+  <script>
+    // Tauri 대신 — 계정 칸 셋을 메모리에 들고 Rust accounts_cmd 처럼 답한다. 토큰·키체인·진짜 로그인은 없다(지어낸 계정만).
+    // k = 첫 칸(멀쩡), m = 로그인 필요(보관 토큰 401), t = 지금 계정(고정), p = 약관 동의 필요. __login('m') = 앱 안 터미널 로그인이 끝난 것처럼
+    const DAY = 86400000, now0 = Date.now();
+    const S = window.__S = {
+      accounts: [
+        { id: 'k', name: 'kimchi', email: 'kimchi@example.com', plan: 'Max 20x' },
+        { id: 'm', name: 'mandu.studio', email: 'mandu@example.com', plan: 'Max 5x' },
+        { id: 't', name: 'tteok', email: 'tteok@example.com', plan: 'Max 5x' },
+        { id: 'p', name: 'pajeon', email: 'pajeon@example.com', plan: 'Pro' },
+      ],
+      active: 't',
+      fresh: {}, // 새로 로그인한 칸 — 사용량 주소가 ok
+      usageMode: 'ok', // 'rate' = 사용량 주소가 쉬는 중(자동 전환이 못 물어 본다 — 제일 나쁜 경우)
+      auto: {
+        v: 3, on: true, pinned: 't', switchedAt: now0 - DAY,
+        slots: {
+          k: { seenAt: now0, five: { used: 83, resetsAt: now0 + 3 * 3600000 } },
+          m: { why: 'auth', blockedUntil: now0 + 29 * DAY, openedAt: now0 - 10 * DAY },
+          t: { seenAt: now0, five: { used: 6, resetsAt: now0 + 3 * 3600000 } },
+          p: { why: 'terms', blockedUntil: now0 + 29 * DAY, openedAt: now0 - 2 * DAY },
+        },
+      },
+    };
+    const view = () => {
+      const a = S.accounts.find((x) => x.id === S.active);
+      return { accounts: S.accounts, active: S.active, liveEmail: a?.email ?? null, livePlan: a?.plan ?? null, auto: JSON.parse(JSON.stringify(S.auto)) };
+    };
+    const got = (id) => {
+      if (S.usageMode === 'rate') return { who: id, status: 'rate' };
+      if (id === 'm' && !S.fresh.m) return { who: id, status: 'auth' };
+      return { who: id, status: 'ok', five: { used: 10, resetsAt: Date.now() + 3 * 3600000 } };
+    };
+    window.__login = (id) => { S.active = id; S.fresh[id] = true; }; // claude auth login 이 그 계정으로 끝남
+    window.__calls = [];
+    window.__TAURI_INTERNALS__ = {
+      transformCallback: () => 0,
+      invoke: async (cmd, args) => {
+        window.__calls.push({ cmd, args, at: Date.now(), active: S.active });
+        switch (cmd) {
+          case 'accounts_view': case 'accounts_capture': return view();
+          case 'accounts_switch':
+            if (args.expect != null && args.expect !== S.active) throw 'moved';
+            S.active = args.id; return view();
+          case 'accounts_auto_patch':
+            for (const [k, v] of Object.entries(args.patch)) { if (v === null) delete S.auto[k]; else S.auto[k] = JSON.parse(JSON.stringify(v)); }
+            return view();
+          case 'accounts_usage': return [...args.ids.map(got), ...(args.live ? [got(S.active)] : [])];
+          case 'read_usage_at': throw 'none';
+          case 'pty_open': return 1;
+          default: return null;
+        }
+      },
+    };
+  </script></head>
+  <body style="margin:0"><div id="root"></div><script type="module" src="./main.tsx"></script></body>
+</html>

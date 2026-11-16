@@ -774,3 +774,44 @@ fn 계정_정보_응답에서_주인을_읽는다() {
     assert_eq!(crate::accounts_refresh::profile_owner(r#"{"error":"x"}"#), None);
     assert_eq!(crate::accounts_refresh::profile_owner("nope"), None);
 }
+
+// 2026-11-13 계정 메뉴 '로그인 필요' 줄: 막힌 칸을 사람이 고르면 바꾸고 고정해도 다음 자동 전환 차례가 첫 칸으로 되돌렸다.
+// 폰 바꾸기(switch_pinned)는 로그인 막힘이면 바꾸지 않고 needsLogin, 약관 막힘이면 그 칸 막힘만 풀고 바꾼다
+#[test]
+fn 폰_바꾸기_로그인_막힌_칸이면_안_바꾸고_needs_login() {
+    let e = Env::two("phone-auth");
+    patch_auto(&e.list, &json!({ "pinned": "a2", "switchedAt": 1, "slots": { "a1": { "why": "auth", "blockedUntil": 9_000, "openedAt": 3 } } })).unwrap();
+    let err = switch_pinned(&e.store, &e.live, &e.list, "a1", 5_000).unwrap_err();
+    assert_eq!(err, Error::NeedsLogin);
+    assert_eq!(err.code(), "needsLogin");
+    let p = e.pool();
+    assert_eq!(p.current.as_deref(), Some("a2"));
+    assert_eq!(e.live_tok().as_deref(), Some("tokB"));
+    assert_eq!((p.auto["pinned"].clone(), p.auto["slots"]["a1"]["why"].clone()), (json!("a2"), json!("auth")));
+}
+
+#[test]
+fn 폰_바꾸기_로그인_막힘이_지났거나_한도_막힘이면_그대로_바꾼다() {
+    let e = Env::two("phone-auth-old");
+    patch_auto(&e.list, &json!({ "slots": { "a1": { "why": "auth", "blockedUntil": 4_000 } } })).unwrap();
+    assert_eq!(switch_pinned(&e.store, &e.live, &e.list, "a1", 5_000).unwrap().current.as_deref(), Some("a1"));
+    let e = Env::two("phone-five");
+    patch_auto(&e.list, &json!({ "slots": { "a1": { "why": "five", "blockedUntil": 9_000 } } })).unwrap();
+    let p = switch_pinned(&e.store, &e.live, &e.list, "a1", 5_000).unwrap();
+    assert_eq!(p.current.as_deref(), Some("a1"));
+    assert_eq!(p.auto["slots"]["a1"]["why"], json!("five")); // 한도 막힘은 고정 문턱(99%)이 맡는다 — 안 건드린다
+}
+
+#[test]
+fn 폰_바꾸기_약관_막힌_칸은_그_칸_막힘만_풀고_바꾼다() {
+    let e = Env::two("phone-terms");
+    patch_auto(&e.list, &json!({ "slots": {
+        "a1": { "why": "terms", "blockedUntil": 9_000, "blockFp": 7, "fp": 7, "seenAt": 2 },
+        "a2": { "why": "terms", "blockedUntil": 9_000 },
+    } })).unwrap();
+    let p = switch_pinned(&e.store, &e.live, &e.list, "a1", 5_000).unwrap();
+    assert_eq!(p.current.as_deref(), Some("a1"));
+    assert_eq!(p.auto["pinned"], json!("a1"));
+    assert_eq!(p.auto["slots"]["a1"], json!({ "fp": 7, "seenAt": 2, "openedAt": 5_000 }));
+    assert_eq!(p.auto["slots"]["a2"]["why"], json!("terms")); // 다른 칸은 그대로
+}

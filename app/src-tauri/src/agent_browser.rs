@@ -2259,8 +2259,13 @@ pub fn watch_hidden() {
         let mut popup_at: Option<Instant> = None;
         let mut rehome_at: Option<Instant> = None;
         let mut has = false;
+        // 윈도우 안전망 — 보이는 데스크톱에 올라온 우리 세션 크롬 창을 작업표시줄에서 뺀다(옛 판 지킴이 크롬 등, win_stray)
+        #[cfg(windows)]
+        let mut stray = crate::win_stray::State::default();
         loop {
             std::thread::sleep(watch_sleep(has));
+            #[cfg(windows)]
+            crate::win_stray::tick(&mut stray);
             let lives = agent_lives();
             has = !lives.is_empty();
             // 세션 크롬이 떠 있는 동안은 가짜 화면을 살려 둔다(없으면 띄운다 — 옛 래퍼가 부탁 없이 띄운 크롬도)

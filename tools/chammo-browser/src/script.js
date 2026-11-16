@@ -222,11 +222,13 @@ async function hold(o, { out = (r) => process.stdout.write(`${JSON.stringify(r)}
   let live = null;
   let closing = false;
   let tick = null;
+  let mem = null; // 메모리 상한 감시(src/memcap-run.js)
   const portFile = path.join(profileDir, 'DevToolsActivePort');
   async function shutdown(why) {
     if (closing) return;
     closing = true;
     if (tick) clearInterval(tick);
+    if (mem) mem.stop();
     log(`닫음: ${why}`);
     if (ctx) await Promise.race([ctx.close().catch(() => {}), new Promise((r) => setTimeout(r, 10_000))]);
     if (live) live.closed();
@@ -236,6 +238,7 @@ async function hold(o, { out = (r) => process.stdout.write(`${JSON.stringify(r)}
     process.exit(0);
   }
   for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => shutdown(sig));
+  require('./cdprace').guardHold({ log }); // 처리 안 된 거절(대화상자 경합 등)로 지킴이가 죽으면 주인 스크립트가 크롬을 잃는다
   process.on('SIGHUP', () => {}); // 터미널이 닫혀도 주인 스크립트가 살아 있으면 지킨다
   process.stdout.on('error', () => {}); // launch 가 먼저 끊고 가도
 
@@ -247,13 +250,15 @@ async function hold(o, { out = (r) => process.stdout.write(`${JSON.stringify(r)}
     if (pick.warn) log(pick.warn);
     if (pick.note) log(pick.note);
     // 맥이면 래퍼와 같은 'Chammo Browser' 사본으로 — Dock·⌘Tab 에서 사용자 크롬과 갈리게(src/appcopy.js). 채널은 그대로
-    const picked = sessionChrome(chromeLaunch(pick.channel ? { env: { ...process.env, CHAMMO_BROWSER_CHANNEL: pick.channel } } : {}));
-    if (!picked.found) throw new Error('이 기계엔 세션 브라우저(크롬)가 없어요 — Chammo 설정 > 브라우저 자동화에서 "설치"를 눌러 주세요');
+    // 채널은 인자로(env 사본은 윈도우에서 대소문자를 가린다, 공개 이슈 #28) — 직접 고른 게 아니면 없을 때 깔린 다른 크롬으로
+    const picked = sessionChrome(chromeLaunch(pick.channel ? { channel: pick.channel, soft: pick.why !== 'asked' } : {}));
+    require('./guard').markMissing(paths.dataDir(), !picked.found, profile);
+    if (!picked.found) throw new Error('크롬을 못 찾았어요 — Chammo 설정 > 브라우저 > 참모 브라우저에서 "다시 찾기"를 눌러 주세요');
     const channel = picked.channel || 'chrome';
     // 창 자리는 MCP 래퍼와 같은 규칙(가짜 화면 → 화면 밖) — --no-view 는 앱 화면 연결만 끈다(창은 그대로 사람 화면 밖)
     const feature = liveMod.enabled(paths.dataDir());
     const appHere = fs.existsSync(path.join(paths.dataDir(), 'config.json'));
-    const place = o.headless ? { pos: null, size: null, offPos: null } : placement({ profile, watchable: feature, appHere, vdFile: path.join(paths.ROOT, 'vdisplay.json'), ask: () => askApp(paths.dataDir()) });
+    const place = o.headless ? { pos: null, size: null, offPos: null } : placement({ profile, watchable: feature, appHere, vdFile: path.join(paths.ROOT, 'vdisplay.json'), ask: () => askApp(paths.dataDir()), keep: require('./keepvisible').keepVisible(paths.dataDir(), profile) });
     deskHook(place, profile);
     live = feature && o.view ? liveMod.createLive({ profile, root: paths.ROOT, profileDir, pid: process.pid, ppid: o.session || 0 }) : null;
     if (live) live.reset();
@@ -326,6 +331,8 @@ async function hold(o, { out = (r) => process.stdout.write(`${JSON.stringify(r)}
     }
     // 주소는 패스키 감시를 붙인 뒤에 알린다 — 손님이 받자마자 연 페이지의 부름도 보게
     out({ ok: true, wsEndpoint: wsOf(port), shared: false, holder: process.pid, profile, channel, ...(pick.warn ? { warn: pick.warn } : {}) });
+    // 메모리 상한 — 넘으면 제일 큰 탭을 닫고, 또 넘으면 이 크롬을 끈다(크롬이 닫히면 위 'close' 로 지킴이도 끝난다). 헤드리스·--no-view 도
+    mem = require('./memcap-run').attach({ profile, sessionPid: o.session || 0, via: 'script', log });
     if (live) {
       live.onCall('script', {});
       live.onResult('script', { content: [] });

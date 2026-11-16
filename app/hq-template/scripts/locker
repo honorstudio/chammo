@@ -8,7 +8,7 @@ echo "python not found — install Python 3 (winget install Python.Python.3.12)"
 __doc__ = """File locker — the user's locker is a real folder per assistant (~/Documents/Chammo/<assistant>/), the same in Finder and the app.
 파일 보관함 — 참모마다 진짜 폴더(~/Documents/Chammo/<참모>/). 파인더와 앱이 같은 모양이다.
 
-  scripts/locker add <file> [<file> ...] [--folder <a/b>] [--to <assistant>]
+  scripts/locker add <file|folder> [...] [--folder <a/b>] [--to <assistant>]
   scripts/locker ls [--folder <a/b>] [--to <assistant>]
   scripts/locker folder <a/b> [--to <assistant>]
   scripts/locker give <locker file> [<locker file> ...] <project folder>
@@ -16,13 +16,13 @@ __doc__ = """File locker — the user's locker is a real folder per assistant (~
 
 Each file has one home; everything else is a shortcut (symlink). add decides by where the file came from — Downloads, Desktop,
 screenshots and chat attachments are copied (the locker becomes home, the original is untouched); anything already settled
-(project folders, Documents …) or over 500MB gets a shortcut. No folder → the top of the locker (a new assistant folder starts with one folder, '자료').
+(project folders, Documents …) or over 500MB gets a shortcut. A folder goes in as a linked folder (a shortcut; its files are untouched). No folder → the top of the locker (a new assistant folder starts with one folder, '자료').
 give hands locker files to a project session: the file moves to <project>/assets/보관함/ and a shortcut stays in the locker
 (a file that already lives elsewhere is copied). Prints the new path — send THAT path in your message. back undoes a give.
 Files you only show go through `scripts/show`. The locker belongs to the assistant running this; --to picks another by name.
-파일마다 집은 하나, 나머지는 바로가기. add 는 어디서 왔나로 정한다(다운로드·데스크톱·스크린샷·채팅 첨부는 복사, 자리 잡은 곳·500MB 넘는 건 바로가기).
+파일마다 집은 하나, 나머지는 바로가기. add 는 어디서 왔나로 정한다(다운로드·데스크톱·스크린샷·채팅 첨부는 복사, 자리 잡은 곳·500MB 넘는 건 바로가기, 폴더는 연결 폴더).
 give 는 프로젝트 세션에 넘기기 전에 — 파일이 <프로젝트>/assets/보관함/ 으로 이사하고 보관함엔 바로가기. 찍힌 새 경로를 메시지에 쓴다."""
-import json, os, shutil, sys
+import json, os, shutil, sys, unicodedata
 for _io in (sys.stdin, sys.stdout, sys.stderr):  # 윈도우 파이썬 기본은 cp949 — PYTHONUTF8 없이 떠도(데몬 env 세션·작업 스케줄러) 한글·'—' 를 UTF-8 로(2026-11-01 win-text H1)
     if _io and hasattr(_io, 'reconfigure') and (_io.encoding or '').lower().replace('-', '') != 'utf8':
         _io.reconfigure(encoding='utf-8', errors='replace')
@@ -261,7 +261,49 @@ def sub_dir(owner, rel, make=False):
     return p
 
 
+LINKS = '.chammo-links'  # 연결 폴더 표식 — 앱 locker_link::LINKS 와 같다
+
+
+def connect(src, owner, rel, home, data, root):
+    """폴더 넣기 = 연결 폴더(앱 locker_link::connect 와 같은 규칙) — 원본 폴더 안은 안 건드리고 보관함엔 링크만,
+    가리키는 곳은 표식에 먼저 적는다(링크만 남고 표식이 없으면 앱이 안 연다). 이미 이은 폴더면 그 링크"""
+    real, h = os.path.realpath(src), os.path.realpath(home)
+    if real == h or not within(real, h):
+        raise ValueError(f'folders link only from inside home (not home itself) / 홈 밖이거나 홈 자체는 못 연결해: {src}')
+    parts = os.path.relpath(real, h).split(os.sep)
+    if parts[0] == 'Library' or any(x.startswith('.') for x in parts):
+        raise ValueError(f'sensitive folder (dot folder·Library) / 민감한 폴더라 못 연결해: {src}')
+    d, r = os.path.realpath(data), os.path.realpath(root)
+    if within(real, d) or within(d, real) or within(real, r) or within(r, real):
+        raise ValueError(f"the app data folder or the locker can't be linked / 앱 데이터·보관함은 못 연결해: {src}")
+    marks = os.path.join(owner, LINKS)
+    try:
+        with open(marks, encoding='utf-8') as f:
+            targets = [l.strip() for l in f if l.strip()]
+    except OSError:
+        targets = []
+    if real in targets:
+        for cur, dirs, _ in os.walk(owner):
+            dirs[:] = [x for x in dirs if not x.startswith('.')]
+            for x in list(dirs):
+                q = os.path.join(cur, x)
+                if os.path.islink(q):
+                    dirs.remove(x)
+                    if os.readlink(q) == real:
+                        return q, real
+    folder = sub_dir(owner, rel, make=True)
+    dest = unique(folder, unicodedata.normalize('NFC', safe_name(os.path.basename(real), '폴더')), split_ext=False)
+    part = marks + '.part'
+    with open(part, 'w', encoding='utf-8') as f:
+        f.write(''.join(t + '\n' for t in dict.fromkeys(targets + [real])))
+    os.replace(part, marks)
+    os.symlink(real, dest, target_is_directory=True)
+    return dest, real
+
+
 def add(src, owner, rel, home, data, root, settled, roots=()):
+    if os.path.isabs(src) and os.path.isdir(src):
+        return connect(src, owner, rel, home, data, root)
     real, why = check_add(src, home, data, root, roots)
     if not real:
         raise ValueError(why)

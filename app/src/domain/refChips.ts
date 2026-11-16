@@ -3,7 +3,8 @@
 import { tr } from '../i18n';
 import type { ChatRef } from './chat';
 
-export type RefKind = 'chat' | 'task' | 'goal';
+/** sel·area = 스페이스 문서 고른 글·그림 상자(domain/askPick, 11-13) */
+export type RefKind = 'chat' | 'task' | 'goal' | 'sel' | 'area';
 export type RefJob = { title: string; task: string; target: string; state: string };
 
 const GOAL_JOBS = 6;
@@ -16,9 +17,9 @@ export function nextRefLabel(refs: ChatRef[], kind: RefKind, floor = 0): string 
 }
 
 /** 입력칸에 참조 하나 — 쓰던 글 뒤에 이름표(띄어 붙임)와 칩. 홈 미니 대화가 쓴다(채팅 입력칸은 #chat 번호를 따로 들어서 자기 것) */
-export function addRef(draft: string, refs: ChatRef[], r: { kind: RefKind; who: string; text: string }): { draft: string; refs: ChatRef[] } {
+export function addRef(draft: string, refs: ChatRef[], r: { kind: RefKind; who: string; text: string; at?: string; head?: string }): { draft: string; refs: ChatRef[] } {
   const label = nextRefLabel(refs, r.kind);
-  return { draft: `${draft}${draft && !/\s$/.test(draft) ? ' ' : ''}${label} `, refs: [...refs, { label, who: r.who, text: r.text }] };
+  return { draft: `${draft}${draft && !/\s$/.test(draft) ? ' ' : ''}${label} `, refs: [...refs, { label, who: r.who, text: r.text, ...(r.at ? { at: r.at } : {}), ...(r.head ? { head: r.head } : {}) }] };
 }
 
 /** 일 하나 — 제목 (task id, 세션, 상태) */

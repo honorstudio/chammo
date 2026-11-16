@@ -1460,16 +1460,28 @@ pub fn os_notify_off(v: Option<&str>) -> bool {
     v == Some("1")
 }
 
-/// macOS 알림. .app 으로 돌면 앱 이름·아이콘으로(notify_mac, 누르면 target 으로 이동),
-/// `tauri dev` 맨 실행 파일이면 osascript 로 대신한다(글자는 argv 로 넘겨 따옴표 이스케이프 문제를 피한다)
+/// 화면이 부르는 맥 알림 — phones=false 면 폰 푸시 없이 맥에만(폰을 다시 이을 때 그 폰에 알림이 쏟아졌다, 2026-11-13)
 #[tauri::command]
-pub fn notify(title: String, body: String, target: Option<String>) {
-    log_out("notify", &format!("{title} — {}", body_note(&body)));
+pub fn notify(title: String, body: String, target: Option<String>, phones: Option<bool>) {
+    notify_to(title, body, target, phones.unwrap_or(true))
+}
+
+/// 맥에만 뜨는 알림 — 폰엔 안 보낸다(방금 그 폰이 한 일을 그 폰에 알리는 것 같은)
+pub fn notify_local(title: String, body: String) {
+    notify_to(title, body, None, false)
+}
+
+/// macOS 알림. .app 으로 돌면 앱 이름·아이콘으로(notify_mac, 누르면 target 으로 이동),
+/// `tauri dev` 맨 실행 파일이면 osascript 로 대신한다(글자는 argv 로 넘겨 따옴표 이스케이프 문제를 피한다). phones 면 폰 푸시도
+pub(crate) fn notify_to(title: String, body: String, target: Option<String>, phones: bool) {
+    log_out("notify", &format!("{title} — {}{}", body_note(&body), if phones { "" } else { " · 맥만" }));
     if os_notify_off(std::env::var("CHAMMO_NO_OS_NOTIFY").ok().as_deref()) {
         return;
     }
     // 폰 푸시도 같이 — 이 알림은 이미 domain/notify 정책·'참모 창 보고 있으면 안 보냄'을 거쳤다(ui/notifier)
-    crate::push::send_all(&title, &body, target.as_deref().unwrap_or(""));
+    if phones {
+        crate::push::send_all(&title, &body, target.as_deref().unwrap_or(""));
+    }
     if crate::notify_mac::send(&title, &body, target.as_deref().unwrap_or("")) { // 윈도우는 토스트(notify_other)
         return;
     }
@@ -1511,6 +1523,17 @@ mod watched_tests {
         assert!(!watched(false, false, true), "다른 창이 앞");
         assert!(!watched(true, false, false), "숨김(트레이)");
         assert!(!watched(false, true, false));
+    }
+
+    #[test]
+    fn 맥에만_뜨는_알림은_폰_푸시를_안_부른다() {
+        // 2026-11-13: 폰을 다시 이을 때 그 폰에 알림이 여러 개 — 폰에 안 보낼 알림(메일 코드 연결·새 폰 허용 카드)은 phones=false
+        let src = include_str!("claude.rs");
+        let body = &src[src.find("pub(crate) fn notify_to(").unwrap()..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        assert!(body.contains("if phones {"), "폰 푸시는 phones 일 때만");
+        let local = &src[src.find("pub fn notify_local(").unwrap()..];
+        assert!(local[..local.find("\n}\n").unwrap()].contains("notify_to(title, body, None, false)"));
     }
 }
 

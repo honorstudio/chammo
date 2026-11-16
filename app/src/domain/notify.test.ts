@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { setLang } from '../i18n';
 import { blockedBody, cardTarget, cardToken, nativeWhenFocused, toWithdraw, NOTIFY_GAP_MS, noteKey, noteTarget, readNoteTarget, shouldNotify, wants, type Note } from './notify';
+import notifierSrc from '../ui/notifier.ts?raw';
+import tauriSrc from '../data/tauri.ts?raw';
+import appSrc from '../App.tsx?raw';
 
 describe('wants — 어떤 알림을 보내나 (사용자 2026-09-27 "필요한 것만")', () => {
   it('결정 대기(task ask·로그인 오류)·권한 창 자동 허용 실패는 늘 보낸다', () => {
@@ -184,5 +187,16 @@ describe('카드가 닫히면 알림을 거둔다(10-26 "인증했으면 다른 
   });
   it('꼬리는 카드 알림 갈 곳의 끝과 맞는다', () => {
     expect(cardTarget('orch-1', `d:${'ab12cd34'}`).endsWith(`:${cardToken('ab12cd34')}`)).toBe(true);
+  });
+});
+
+// 2026-11-13: 폰에 안 보낼 알림(그 폰이 지금 하는 일)은 맥에만 — notify 에 phones 를 넘긴다
+describe('폰 푸시 빼기 길', () => {
+  it('notifier 가 phones 를 Rust notify 로 넘긴다', () => {
+    expect(notifierSrc).toMatch(/notify\(n\.title, n\.body\.slice\(0, 120\), noteTarget\(n\), n\.phones\)/);
+    expect(tauriSrc).toMatch(/invoke<void>\('notify', \{ title, body, target, phones \}\)/);
+  });
+  it('직접 답하기 카드 알림은 cardPushesPhones 로 정한다', () => {
+    expect(appSrc).toContain('phones: cardPushesPhones(c)');
   });
 });

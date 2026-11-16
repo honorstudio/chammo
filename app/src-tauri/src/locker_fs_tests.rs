@@ -1228,3 +1228,47 @@ fn 큰_홈_밖_파일_거절_문구는_설정_언어로() {
     assert!(!en.chars().any(|c| ('가'..='힣').contains(&c)), "{en}");
     assert!(big_outside_msg("ko", p).starts_with("500MB 넘는 홈 밖 파일은"));
 }
+
+// 11-16 — 보관함에 폴더를 끌어 놓으면 '폴더는 못 넣어 — 파일만: <전체 경로>' 띠가 떴다. 폴더는 연결 폴더(링크)로 넣는다 — 원본은 안 건드린다
+#[cfg(unix)]
+#[test]
+fn 끌어_놓은_폴더는_연결_폴더로_들어가고_풀어도_원본은_남는다() {
+    let w = W::new("dropdir");
+    let src = w.home.join("Desktop/사진/26-11-12 촬영/Selects");
+    put(&src.join("a.jpg"), "a");
+    put(&src.join("안/b.jpg"), "b");
+    let d = owner_dir(&w.root, "s-1", "디자인").unwrap();
+    let a = add_from(&w.ctx(), &d, "", &src, true).unwrap();
+    assert!(a.link, "링크로");
+    assert_eq!(a.path, d.join("Selects"));
+    assert!(std::fs::symlink_metadata(&a.path).unwrap().file_type().is_symlink(), "복사가 아니라 바로가기");
+    // 보관함 목록에서 폴더처럼 열려 안이 보인다(연결 폴더)
+    let t = tree(&d);
+    let top = t.iter().find(|e| e.rel == "Selects").expect("목록에 보인다");
+    assert!(top.dir && top.linked, "{top:?}");
+    assert!(t.iter().any(|e| e.rel == "Selects/a.jpg"), "안 파일이 보인다");
+    // 같은 폴더를 또 놓으면 하나로
+    assert_eq!(add_from(&w.ctx(), &d, "", &src, true).unwrap().path, a.path);
+    // 원본은 그대로, 연결을 풀어도 원본은 남는다
+    crate::locker_link::disconnect(&d, "Selects").unwrap();
+    assert!(!exists_any(&a.path));
+    assert_eq!(std::fs::read_to_string(src.join("a.jpg")).unwrap(), "a");
+    assert_eq!(std::fs::read_to_string(src.join("안/b.jpg")).unwrap(), "b");
+    // 참모 길(add)도 같다
+    assert!(add(&w.ctx(), &d, "", &src).unwrap().link);
+}
+
+#[test]
+fn 화면_실패_줄은_이름과_짧은_까닭만() {
+    let p = Path::new("/H/Desktop/captureone/26-11-12 촬영/Selects");
+    let ko = fail_line("ko", p, "Permission denied (os error 13)");
+    assert_eq!(ko, "‘Selects’ 를 못 넣었어 — 권한 없음");
+    assert_eq!(fail_line("en", p, "Operation not permitted (os error 1)"), "Couldn't add ‘Selects’ — no permission");
+    // 전체 경로는 안 나온다
+    for e in ["없는 파일: /H/Desktop/captureone/26-11-12 촬영/Selects", "홈 폴더 밖 파일은 못 넣어: /Volumes/a/Selects", "민감한 폴더라 못 연결해(점 폴더·Library): /H/Library/Selects", "폴더 바로가기를 못 만들었어(윈도우 개발자 모드 필요): os error 1314", &big_outside_msg("ko", p), "알 수 없는 일: /H/a"] {
+        let l = fail_line("ko", p, e);
+        assert!(!l.contains("/H/") && !l.contains("/Volumes") && !l.contains("os error"), "{l}");
+        assert!(l.starts_with("‘Selects’ 를 못 넣었어 — ") && l.chars().count() < 40, "{l}");
+    }
+    assert_eq!(fail_line("ko", p, "없는 파일: /a"), "‘Selects’ 를 못 넣었어 — 없음");
+}

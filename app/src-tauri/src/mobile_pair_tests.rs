@@ -717,3 +717,67 @@ fn pe_컴퓨터_줄은_폰_줄_상한을_안_먹는다() {
     assert_eq!(st.list().iter().filter(|d| !d.peer).count(), MAX_DEVICES);
     assert!(st.relay_peer_line("dev-imac").is_some(), "컴퓨터 줄은 폰 상한에 안 걸린다");
 }
+
+// ── 같은 폰이 다시 로그인해 새 줄이 쌓이던 것(11-16 홈 기기 칸 iPhone 8줄) ──
+// 다시 로그인하면 폰 저장소가 지워져 옛 열쇠 증명이 없다 — 남는 건 그 폰 앱의 푸시 구독 주소 하나뿐(push.rs replaces)
+
+fn linked(st: &Devices, dev: &str, now: SystemTime) -> String {
+    let t = st.pair_linked(&Pairing { name: "iPhone", home: false, prev: None, peer: false, chammo: None }, relay(dev), now).unwrap();
+    st.check(&t, now).unwrap()
+}
+
+#[test]
+fn 같은_구독_주소를_넘겨받으면_옛_폰_줄은_빠지고_중계_기기도_끊을_대기열에() {
+    let st = Devices::memory();
+    let now = SystemTime::now();
+    let old = linked(&st, "r-old", now);
+    let new = linked(&st, "r-new", now + Duration::from_secs(60));
+    assert_eq!(st.list().len(), 2, "다시 로그인한 폰은 새 중계 기기라 처음엔 새 줄");
+    assert_eq!(st.retire_same_phone(&new, &[old.clone()]).unwrap(), 1);
+    let ids: Vec<String> = st.list().into_iter().map(|d| d.id).collect();
+    assert_eq!(ids, vec![new.clone()], "지금 줄만 남는다");
+    assert!(st.pending_revokes().contains(&"r-old".to_string()), "옛 중계 기기는 계정에서도 끊는다");
+    assert!(!st.pending_revokes().contains(&"r-new".to_string()));
+}
+
+#[test]
+fn 구독_넘겨받기로는_지금_줄_컴퓨터_줄_모르는_줄을_안_뺀다() {
+    let st = Devices::memory();
+    let now = SystemTime::now();
+    let me = linked(&st, "r1", now);
+    st.add_test("peer0001", &"p".repeat(64), "참모 · PC", true);
+    assert_eq!(st.retire_same_phone(&me, &[me.clone(), "peer0001".into(), "없는줄".into()]).unwrap(), 0);
+    assert_eq!(st.list().len(), 2);
+    // 넘겨받은 쪽이 폰 줄이 아니거나(컴퓨터·이미 끊긴 줄) 없으면 아무것도 안 뺀다
+    let other = linked(&st, "r2", now);
+    assert_eq!(st.retire_same_phone("peer0001", &[other.clone()]).unwrap(), 0);
+    assert_eq!(st.retire_same_phone("끊긴줄", &[other.clone()]).unwrap(), 0);
+    assert_eq!(st.list().len(), 3);
+}
+
+fn phone(id: &str, name: &str, home: bool, used: u64) -> Device {
+    Device { id: id.into(), name: name.into(), hash: id.into(), created: used, last_seen: Some(used), home, group: None, paired: None, peer: false, node: None, no_locker: false, relay: None, chammo: None }
+}
+
+#[test]
+fn 같은_이름_새_줄이_있으면_2주_안_쓴_옛_폰_줄은_정리() {
+    const DAY: u64 = 24 * 60 * 60 * 1000;
+    let now = 100 * DAY;
+    let mut l = vec![
+        phone("old15", "iPhone", false, now - 15 * DAY),
+        phone("old13", "iPhone", false, now - 13 * DAY),
+        phone("new", "iPhone", false, now - DAY),
+        phone("ipad", "iPad", false, now - 20 * DAY),
+        phone("home", "iPhone", true, now - 20 * DAY),
+    ];
+    let mut pc = phone("pc", "iPhone", false, now - 20 * DAY);
+    pc.peer = true;
+    l.push(pc);
+    let gone: Vec<String> = prune(&mut l, now, None).into_iter().map(|r| r.id).collect();
+    assert_eq!(gone, vec!["old15".to_string()], "같은 이름·같은 칸의 더 새 줄이 있고 2주 넘게 안 쓴 폰 줄만");
+    let left: Vec<&str> = l.iter().map(|d| d.id.as_str()).collect();
+    assert_eq!(left, vec!["old13", "new", "ipad", "home", "pc"], "다른 기종·홈 화면 앱 칸·컴퓨터 줄·2주 안 된 줄은 그대로");
+    // 같은 이름 줄이 하나뿐이면 2주가 넘어도 30일까진 남는다
+    let mut one = vec![phone("solo", "iPhone", false, now - 20 * DAY)];
+    assert!(prune(&mut one, now, None).is_empty());
+}

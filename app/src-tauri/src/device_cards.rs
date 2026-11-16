@@ -40,7 +40,7 @@ pub fn device_row(id: &str, d: &DeviceName, ts: &str) -> Value {
     if outsider(d) {
         let (name, kind) = (clean(&d.name, 64), kind_word(&d.kind));
         return json!({
-            "ts": ts, "type": "ask", "id": id, "from": crate::direct::LINK_FROM, "cwd": "", "kind": crate::direct::LINK_KIND, "sub": DEVICE_SUB, "dev": d.id,
+            "ts": ts, "type": "ask", "id": id, "from": crate::direct::LINK_FROM, "cwd": "", "kind": crate::direct::LINK_KIND, "sub": DEVICE_SUB, "dev": d.id, "devKind": d.kind,
             "q": crate::i18n::tr(&format!("{kind} {name} 를 내 기기로 확인할까요? 숫자를 넣으면 이 기기도 내 메시지를 읽어요"), &format!("Confirm {kind} {name} as your device? Enter its number and it can read your messages")),
             "detail": crate::i18n::tr("이미 로그인된 기기예요 · 내가 쓰는 기기가 아니면 빼기", "Already signed in · Remove it if it isn't yours"),
             "what": crate::i18n::tr("내 기기 확인", "Confirm my device"),
@@ -54,7 +54,8 @@ pub fn device_row(id: &str, d: &DeviceName, ts: &str) -> Value {
     let when = if since > 0 { crate::direct::iso_of_ms(since) } else { ts.to_string() };
     let kind = kind_word(&d.kind);
     json!({
-        "ts": ts, "type": "ask", "id": id, "from": crate::direct::LINK_FROM, "cwd": "", "kind": crate::direct::LINK_KIND, "sub": DEVICE_SUB, "dev": d.id,
+        // devKind — 화면이 폰 기기 카드는 폰 푸시 없이 맥에만 알린다(그 폰이 다시 로그인한 것이라 그 폰에 또 알리면 소음, 2026-11-13)
+        "ts": ts, "type": "ask", "id": id, "from": crate::direct::LINK_FROM, "cwd": "", "kind": crate::direct::LINK_KIND, "sub": DEVICE_SUB, "dev": d.id, "devKind": d.kind,
         "q": crate::i18n::tr(&format!("새 기기가 내 Chammo 계정에 로그인했어요 — {kind} {name}, 허용할까요?"), &format!("A new device signed in to your Chammo account — {kind} {name}. Allow it?")),
         "detail": crate::i18n::tr(&format!("{} · 내가 로그인한 게 아니면 거절", if place.is_empty() { "어디서인지 모름".to_string() } else { place.clone() }), &format!("{} · Decline if it wasn't you", if place.is_empty() { "Unknown place".to_string() } else { place })),
         "what": crate::i18n::tr("새 기기 허용", "Allow new device"),

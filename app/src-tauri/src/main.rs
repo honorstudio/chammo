@@ -18,6 +18,8 @@ mod org_policy;
 mod perm_card;
 mod perm_card_cmd;
 mod orch_bubble;
+// 메뉴 '참모 배지' 체크 항목(보기 메뉴·윈도우 트레이) — 누르면 Rust 가 설정 bubble 을 바로 바꾼다
+mod bubble_menu;
 mod phone_black;
 #[cfg(test)]
 mod offmain_scan;
@@ -50,6 +52,7 @@ mod craft_input;
 mod accessory;
 mod browser_pane;
 mod win_desk;
+mod win_stray;
 #[cfg(windows)]
 mod browser_pane_win;
 #[cfg(windows)]
@@ -216,6 +219,7 @@ mod browser_fix;
 mod browser_get;
 mod browser_node;
 mod browser_parts;
+mod browser_memcap;
 mod browser_setup;
 mod base_tools;
 mod routines;
@@ -391,6 +395,8 @@ fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Men
         .item(&item("font_down", tr("글자 작게", "Smaller Text"), Some(&*platform::accel("CmdOrCtrl+-")))?)
         .item(&item("font_reset", tr("글자 원래 크기", "Actual Size"), Some(&*platform::accel("CmdOrCtrl+0")))?)
         .separator()
+        // 떠 있는 참모 배지 켜고 끄기 — 설정 › 기능 bubble 과 같은 값, 누르면 Rust 가 바로(bubble_menu.rs, 2026-11-13 사용자)
+        .item(&CheckMenuItem::with_id(app, bubble_menu::MENU_ID, bubble_menu::label(i18n::is_en()), true, f.bubble, None::<&str>)?)
         .item(&Submenu::with_items(app, tr("화면 모드", "Appearance"), true, &[
             &CheckMenuItem::with_id(app, "theme_system", tr("시스템 따라감", "Follow System"), true, theme::saved().is_none(), None::<&str>)?,
             &CheckMenuItem::with_id(app, "theme_light", tr("라이트", "Light"), true, theme::saved() == Some(tauri::Theme::Light), None::<&str>)?,
@@ -448,6 +454,7 @@ pub fn refresh_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         if let Ok(m) = build_menu(&h) {
             let _ = h.set_menu(m);
         }
+        tray::refresh(&h); // 윈도우 트레이 ✓·글자도(맥은 트레이가 없어 그냥 지나간다)
         wizard_menu(&h);
     });
 }
@@ -575,6 +582,7 @@ fn app_quit_shown() {
 fn rebuild_menu(app: tauri::AppHandle) -> Result<(), String> {
     let menu = build_menu(&app).map_err(|e| e.to_string())?;
     app.set_menu(menu).map(|_| ()).map_err(|e| e.to_string())?;
+    tray::refresh(&app); // 윈도우 트레이 ✓(참모 배지)·글자(언어)도
     wizard_menu(&app); // 마법사를 마치면 앱이 저장 뒤 이걸 불러 메뉴줄이 다시 보인다
     Ok(())
 }
@@ -665,6 +673,11 @@ fn main() {
             }
             if id == "app_quit" {
                 to_background(app);
+                return;
+            }
+            // 참모 배지 — 화면(__menu)을 거치지 않는다: 메인 창 화면이 멈춰도 배지를 다시 켜 대화할 수 있게(11-05 TDZ). 트레이 항목도 이리 온다
+            if id == bubble_menu::MENU_ID {
+                bubble_menu::toggle(app);
                 return;
             }
             // 완전히 종료 — 웹이 종료 창을 못 띄우면(굳음) 4초 뒤 앱만 끈다(quit.rs). 창은 아래 route_menu 가 부탁한다
@@ -924,6 +937,7 @@ fn main() {
             team_locker_cmd::team_locker_give,
             team_locker_cmd::team_locker_give_folder,
             orch_bubble::orch_bubble_main,
+            bubble_menu::bubble_rescue,
             orch_bubble::bubble_screens,
             orch_bubble::bubble_place,
             orch_bubble::bubble_view,
@@ -1069,6 +1083,9 @@ fn main() {
             project::project_new,
             browser::browser_status,
             browser_setup::browser_setup_start,
+            browser_memcap::browser_memcap_get,
+            browser_memcap::browser_memcap_set,
+            browser_memcap::browser_memcap_events,
             agent_browser::agent_dialog_wrapper,
             agent_browser::agent_permission,
             agent_browser::agent_fedcm,

@@ -5783,3 +5783,13 @@ fn 폰_직통_줄의_숨긴_수에_결제_관문_물음도_든다() {
     let f3 = Fake { task_log: log, phone_acct: Some(phone_world()), ..Default::default() };
     assert_eq!(json_of(&handle(&with_tok(get("/api/phone-account"), &tok), &g3, &f3))["hidden"].as_u64(), Some(0));
 }
+
+#[test]
+fn 짝지은_열쇠로_물어_온_폰은_화면이_열린_것으로_적힌다() {
+    // 2026-11-13: 폰을 보고 있는데 푸시가 또 떴다 — 열쇠 확인을 통과한 요청마다 push 가 그 기기를 '앞에 떠 있음'으로 본다
+    let g = gate();
+    assert_eq!(device_of(&with_cookie(get("/api/env")), &g).as_deref(), Some("test0001"));
+    assert!(crate::push::in_front(crate::push::seen_at("test0001"), std::time::Instant::now()));
+    // 열쇠 없는 요청은 안 적는다
+    assert_eq!(device_of(&get("/api/env"), &g), None);
+}

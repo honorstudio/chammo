@@ -11,6 +11,7 @@ import { afterSwitch, applyApi, changedKeys, fmtUntil, markNudged, migrate, read
 import type { SessionActivity } from './TaskPanel';
 import { tr } from '../i18n';
 import { notifyOnce } from './notifier';
+import { loginHeld, loginTick } from './accountSwitch';
 
 /** 자동 전환 판단 주기 */
 const AUTO_EVERY_MS = 15_000;
@@ -37,13 +38,21 @@ export function useAccountAuto(accounts: AccountsView | null, acts: SessionActiv
   round.current = () => {
     // accounts 는 '돌 때'만 알려 준다 — 판단은 새로 읽은 걸로
     const accounts = accountsRef.current;
-    if (!accounts || !accounts.accounts.length || busy.current || Date.now() < restUntil.current) return;
+    if (!accounts || !accounts.accounts.length || busy.current || (Date.now() < restUntil.current && !loginHeld())) return;
     busy.current = true;
     void (async () => {
       let switched = false; // = 화면 갱신 신호를 보낼까
       try {
         const v = await accountsApi.view();
         if (!v.accounts.length) return;
+        // 사람이 그 계정으로 로그인하는 중 — 판단은 쉬고, 로그인이 끝났으면 창이 닫혀 있어도 여기서 마무리(막힘 풀고 바꾸기+고정)
+        if (loginHeld()) {
+          const r = await loginTick(v).catch((e: unknown) => {
+            notifyOnce({ kind: 'accounts', session: 'accounts-login', orch: false, title: tr('로그인한 계정으로 못 바꿨어', 'Could not switch to the signed-in account'), body: accountError(String(e)) });
+            return 'done' as const;
+          });
+          if (r !== 'none') return; // 끝났거나 상한이면 다음 차례부터 평소대로
+        }
         let before = readAuto(v.auto);
         let seen = JSON.stringify(v.auto ?? null); // 마지막으로 본(또는 내가 쓴) 저장 상태
         const moved = async () => JSON.stringify((await accountsApi.view()).auto ?? null) !== seen;

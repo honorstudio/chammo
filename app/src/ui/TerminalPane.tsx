@@ -5,6 +5,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { findPathsWrapped, resolveLink } from '../domain/links';
 import '@xterm/xterm/css/xterm.css';
 import { imeBridgeOn, imeStep, normalizeInput, yieldsToXterm } from '../domain/imeBridge';
+import { imeKeypressGuard } from '../domain/imeKeypress';
 import { macKeySequence, ctrlLetter } from '../domain/macKeys';
 import { copyKeyAction, parseOsc52, winPasteKeys, winTermKey } from '../domain/clipboard';
 import { IS_WIN } from '../domain/reader';
@@ -18,7 +19,7 @@ import { reattachEvery } from '../domain/busyGate';
 import { busyNow, turns } from './busyNow';
 import { usePttLive } from './pttLive';
 import { pendingWrites } from '../domain/ptyWrites';
-import { imeMode, imeNoSwallow, imeTrace } from './imeTrace';
+import { imeMode, imeNoKeypressGuard, imeNoSwallow, imeTrace } from './imeTrace';
 import { seqShape, traceOf } from '../domain/imeGuard';
 import { currentContrast, currentTheme, darkQuery } from './termTheme';
 import { IconNote } from './Icons';
@@ -248,7 +249,10 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
       if (text) void writeClipboard(text).catch(() => {});
       return true;
     });
+    const imeKeypress = imeKeypressGuard();
     term.attachCustomKeyEventHandler((e) => {
+      // 입력기가 먹은 키(229) 뒤 keypress 는 xterm 이 보내니 입력칸엔 안 넣는다 — 넣으면 xterm 의 입력칸 비교가 같은 글자를 또 보낸다(공개 이슈 #13, domain/imeKeypress)
+      if (imeKeypress(e) && !imeNoKeypressGuard) e.preventDefault();
       const win = IS_WIN ? winTermKey(e, term.hasSelection()) : null;
       if (win === 'paste') return false; // 웹뷰가 붙여넣는다(xterm 이 ^V 를 보내지 않게만)
       if (win) {
@@ -559,7 +563,7 @@ function installImeTrace(term: Terminal): () => void {
   const ta = term.textarea;
   const root = term.element;
   if (!ta || !root) return () => {};
-  const TRACE = ['keydown', 'keyup', 'beforeinput', 'input', 'compositionstart', 'compositionupdate', 'compositionend'];
+  const TRACE = ['keydown', 'keypress', 'keyup', 'beforeinput', 'input', 'compositionstart', 'compositionupdate', 'compositionend'];
   const trace = (e: Event) => {
     if (!imeTrace) return; // 진단 설정은 창이 뜬 뒤에 도착할 수 있어서 늘 걸어 두고 여기서 본다
     const k = e as KeyboardEvent & InputEvent & CompositionEvent;

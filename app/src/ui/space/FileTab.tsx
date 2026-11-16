@@ -5,7 +5,7 @@ import { imageWidth, shownPercent, toggleFitActual } from '../../domain/imageFit
 import { IS_WIN, docUrl, kindOf, pageDoc } from '../../domain/reader';
 import { isCurationHtml } from '../../domain/curation';
 import { tr } from '../../i18n';
-import { IconMaximize, IconRefresh, IconReveal, IconRestore } from '../Icons';
+import { IconBoxPick, IconMaximize, IconRefresh, IconReveal, IconRestore } from '../Icons';
 import { IconButton } from '../kit/IconButton';
 import { ExtraDoc, HtmlFrame } from '../reader/Reader';
 import { OfficeDoc } from './Preview';
@@ -16,6 +16,7 @@ import { applyAnchor, markAnchor, useWheelZoom } from '../zoomAnchor';
 import { useImageFit, useImagePan } from '../imageFit';
 import { dragOut } from './dragPath';
 import { useImageBox } from './imageBox';
+import { useBoxPick } from './BoxPick';
 import { flashWhenReady } from '../flash';
 import type { ShowAt } from '../../domain/showAt';
 import { lockerApi } from './useLocker';
@@ -82,6 +83,9 @@ export function FileTab({ path, where, attachTo, onAttach, onBig, big = false, o
   useLayoutEffect(() => applyAnchor(imgBox.current), [z]);
   useImagePan(() => imgBox.current, (at) => zoomTo(toggleFitActual(z, fit), at));
   const boxAt = useImageBox(imgBox, focus?.at?.box, [focus?.key, natural, z]);
+  // 영역 고르기 — 끌어 상자를 긋고 참모에게 물어보기(BoxPick, 11-13 사용자). 켜 있는 동안 끌기는 상자 긋기(그림 이동·바깥 끌기 대신)
+  const [picking, setPicking] = useState(false);
+  const pick = useBoxPick(imgBox, path, picking && kind === 'image');
   useWheelZoom(() => (own ? imgBox.current : null), (dir, at) => zoomTo(stepZoom(Math.round(shownPercent(z, fit)), dir, IMAGE_STEPS), at));
   // 그림을 끌면 바깥 앱으로(창 밖이면 맥 끌기, 10-30 사용자) — 칸이 넘치면 끌기는 그림 이동(useImagePan) 몫
   const out = dragOut(path);
@@ -97,6 +101,7 @@ export function FileTab({ path, where, attachTo, onAttach, onBig, big = false, o
         <span className="cv-sp" />
         {zoomUi}
         {kind === 'html' && <IconButton label={tr('다시 불러오기', 'Reload')} onClick={() => setReload((n) => n + 1)}><IconRefresh /></IconButton>}
+        {kind === 'image' && pick.can && <IconButton pressed={picking} label={tr('영역 고르기', 'Pick areas')} onClick={() => setPicking((p) => !p)}><IconBoxPick /></IconButton>}
         <CraftOpenChip path={path} />
         {/* 팀 파일(데이터 폴더에 풀어 둔 평문)은 파인더로 안 연다 — 머리 내려받기가 다운로드 폴더에 꺼낸다 */}
         {!isTeamCache(path) && <IconButton label={tr('폴더에서 보기', 'Show in folder')} onClick={() => void lockerApi.reveal(path).catch(() => {})}><IconReveal /></IconButton>}
@@ -107,8 +112,8 @@ export function FileTab({ path, where, attachTo, onAttach, onBig, big = false, o
         {gate ? null
           : kind === 'web' ? <WebPage url={path} />
           : kind === 'image' ? <><div className={`pv-image ${z === FIT ? 'fit' : ''}`} ref={imgBox} onPointerDown={imgOut}><img src={docUrl(path)} alt="" draggable={false} onLoad={onLoad}
-            style={width ? { maxWidth: 'none', maxHeight: 'none', width: `${width}px` } : undefined} />{boxAt && <span className="pv-box" style={boxAt} />}</div>
-            {natural > 0 && <span className="pv-pct" aria-hidden>{Math.round(shownPercent(z, fit))}%</span>}</>
+            style={width ? { maxWidth: 'none', maxHeight: 'none', width: `${width}px` } : undefined} />{boxAt && <span className="pv-box" style={boxAt} />}{pick.layer}</div>
+            {natural > 0 && <span className="pv-pct" aria-hidden>{Math.round(shownPercent(z, fit))}%</span>}{pick.bar}</>
           : kind === 'video' ? <video className="pv-video" src={docUrl(path)} controls playsInline />
           : kind === 'html' ? <div className="rd-zoombox"><HtmlFrame className="rd-frame" src={docUrl(path)} zoom={zoom} point={focus?.at} pointKey={focus?.key} record={path} /></div>
           : kind === 'pdf' ? <Suspense fallback={<div className="cv-blank">{tr('여는 중', 'Opening')}</div>}><PdfView path={path} zoom={zoom} at={focus?.at} atKey={focus?.key} /></Suspense>

@@ -1103,3 +1103,19 @@ fn ml_옛_판엔_메일_알림도_없다() {
     assert!(notes.borrow().is_empty());
 }
 
+
+#[test]
+fn 홈_기기_칸은_같은_이름_컴퓨터를_한_줄로() {
+    // 11-16 홈 기기 칸 DESKTOP 두 줄 — 같은 PC 가 테일넷 짝(옛)과 중계 짝으로 따로 남았다. 최근에 닿은 쪽 하나만
+    let s = |id: &str, name: &str, ok: Option<u64>, paired: u64| Saved { id: id.into(), name: name.into(), ip: "100.64.0.1".parse().unwrap(), port: 47123, paired_at: paired, last_ok: ok, relay_x: None, device: None };
+    let out: Vec<String> = one_per_name(vec![
+        s("nOld", "DESKTOP-X", Some(5), 1),
+        s("relay:r1", "desktop-x", Some(9), 2),
+        s("nMac", "iMac", None, 3),
+        s("nMac2", "iMac", None, 1),
+    ])
+    .into_iter()
+    .map(|x| x.id)
+    .collect();
+    assert_eq!(out, vec!["relay:r1".to_string(), "nMac".to_string()], "이름은 대소문자 무시, 닿은 때가 같거나 없으면 늦게 짝지은 쪽, 처음 나온 자리 순서");
+}

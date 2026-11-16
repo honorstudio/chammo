@@ -434,6 +434,17 @@ pub fn reload_config() -> Config {
     current()
 }
 
+/// 참모 배지(bubble) 하나만 바꿔 저장 — 메뉴 '참모 배지'(bubble_menu.rs)가 화면을 안 거치고 부른다. 나머지 칸은 지금 값 그대로
+pub fn set_bubble(on: bool) -> Result<(), String> {
+    let mut c = current();
+    c.features.bubble = on;
+    write_file(&c)?;
+    if let Ok(mut g) = CURRENT.write() {
+        *g = Some(c);
+    }
+    Ok(())
+}
+
 /// 설정 저장. 앱은 저장 뒤 창을 다시 연다(언어·비서 이름은 뜰 때 정해서)
 #[tauri::command]
 pub fn write_config<R: tauri::Runtime>(app: tauri::AppHandle<R>, config: Config) -> Result<(), String> {

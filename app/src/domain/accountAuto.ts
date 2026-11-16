@@ -394,6 +394,16 @@ export function markDead(s: AutoState, id: string, now: number): AutoState {
   return { ...s, slots: { ...s.slots, [id]: { ...s.slots[id], authAt: now } } };
 }
 
+/** 사람이 그 칸 계정으로 새로 로그인했다 — 로그인 막힘·401 기록을 푼다(한도 막힘은 그대로). 사용량 주소가 쉬는 중이면 applyApi 가
+ *  못 풀어서, 로그인해서 바꾸고 고정해도 다음 차례 step 이 막힌 칸이라며 첫 칸으로 되돌렸다(2026-11-13). 새 토큰도 죽었으면 다음 401 에 다시 막힌다 */
+export function clearAuth(s: AutoState, id: string, now: number): AutoState {
+  const x = s.slots[id];
+  if (!x || (x.authAt === undefined && x.why !== 'auth')) return s;
+  const { authAt: _a, ...rest } = x;
+  const slot = rest.why === 'auth' ? (({ blockedUntil: _b, why: _w, blockFp: _f, ...o }) => ({ ...o, openedAt: now }))(rest) : rest;
+  return { ...s, slots: { ...s.slots, [id]: slot } };
+}
+
 /** 약관 카드 [다시 시도] — 약관으로 막힌 칸을 푼다(only 면 그 칸만, 한도·로그인 막힘은 그대로). 아직 동의 전이면 다음 오류에 또 막힌다 */
 export function clearTerms(s: AutoState, now: number, only?: string): AutoState {
   const slots = { ...s.slots };

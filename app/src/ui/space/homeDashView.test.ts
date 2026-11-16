@@ -17,7 +17,7 @@ describe('홈 대시보드 HA', () => {
     const b = view.slice(view.indexOf('main = homeDash({'), view.indexOf('} else if (atHome && orchHome) {'));
     expect(b).toMatch(/orch: goOrch/);
     // 그 참모 탭이 기억하던 화면 그대로 — 다른 참모면 탭 바꾸기(switchTo)와 같은 길, 지금 참모면 홈 열기 전 화면(10-24 ⌘1 이 홈으로 돌아오던 것)
-    expect(view).toMatch(/const goOrch = \(id: string\) => \{[^\n]*setPick\(ownPick\(screens\.current\.get\(id\)\?\.pick, id, homeOf\(o\)\)\); else switchTo\(id, 'home'\); onChatTab\?\.\(id\);/);
+    expect(view).toMatch(/const goOrch = \(id: string\) => \{[^\n]*setPick\(ownPick\(screens\.current\.get\(id\)\?\.pick, id, homeOf\(o\), gone\)\); else switchTo\(id, 'home'\); onChatTab\?\.\(id\);/);
     expect(b).toMatch(/session: \(t\) => \{ const s = findTarget\(sessions, t\)/);
     expect(b).toMatch(/feature: \(k\) => featureTo\(k, 'open'\)/);
   });
