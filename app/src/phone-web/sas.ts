@@ -1,6 +1,7 @@
 // 폰 숫자 확인(ADR 0014) — QR 대신 양쪽 화면 6자리. 컴퓨터 쪽은 Rust device_link(같은 식·같은 표식).
 // 5단계: ① 폰 cP → ② 컴퓨터 cM → ③ 폰 nP → ④ 컴퓨터 nM(cM 과 대조) → 숫자 → ⑤ 토큰. 양쪽이 봉해 두고 연다 —
 // 중계는 어느 쪽 숫자든 알기 전에 패를 먼저 깨야 해서 숫자를 미리 맞추지 못한다(리뷰 2차 심각)
+import { deviceUa } from './homeFirst';
 import { b64 } from './tunnel';
 
 const enc = new TextEncoder();
@@ -33,9 +34,10 @@ export class LinkRun {
   private done = false;
   constructor(private k: { pt: Uint8Array; mt: Uint8Array; sign: Uint8Array; dev: string }, private np: Uint8Array = crypto.getRandomValues(new Uint8Array(16))) {}
   /** ① 인사 — cP 만, nP 는 아직. 내 기기 id 를 봉한 상자에 넣는다(컴퓨터가 허브가 말한 기기와 대조) */
-  async link1(ua = typeof navigator === 'undefined' ? '' : navigator.userAgent) {
+  async link1(ua = typeof navigator === 'undefined' ? '' : deviceUa(navigator.userAgent, navigator.maxTouchPoints ?? 0)) {
     this.sent1 = true;
-    return { step: 'link1', sign: b64(this.k.sign), x: b64(this.k.pt), ua, commit: b64(await commitOf(this.k.pt, this.np)), dev: this.k.dev };
+    // direct = 같은 계정 바로 연결(2026-11-18 결정 A)을 받을 줄 안다 — 옛 맥은 이 칸을 모르고 숫자로 간다
+    return { step: 'link1', sign: b64(this.k.sign), x: b64(this.k.pt), ua, commit: b64(await commitOf(this.k.pt, this.np)), dev: this.k.dev, direct: true };
   }
   /** ② 컴퓨터 cM 을 받았다 → ③ 이제야 nP 를 연다 */
   async link2(cm: Uint8Array): Promise<{ step: 'link3'; nP: string }> {

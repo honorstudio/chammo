@@ -274,6 +274,8 @@ const MAIN_OK: &[&str] = &[
     "login::login_save", "login::login_terms_retry", "login_keep::load_keep", "review::write_review_state", "remote::load", "tts::supertonic_status",
     "tama::read_tama", "tama::write_tama", "tama::read_gacha", "tama::write_gacha", "tama::write_office", "tama::read_space_log",
     "orch_pins::read_order", "orch_pins::read_pins", "orch_pins::set_pin", "orch_pins::write_order", "orch_roles::read_roles", "orch_roles::write_roles",
+    // 키즈 칸·아이 집(<데이터>/kids/…) — 참모가 새로 태어날 때 옛 칸을 비킨다(세션 끄기는 retire 안에서 다른 스레드)
+    "kids_life::retire",
     // 입력칸 쓰던 글 <데이터>/drafts.json
     "drafts::load", "drafts::write",
     "reader::with_store", "reader::changed", "reader::read_curation_state", "reader::save_curation", "reader::save_curation_state",

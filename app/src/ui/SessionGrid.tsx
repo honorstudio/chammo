@@ -6,7 +6,8 @@ import { chatHeadPane, paneToFocus, visiblePanes, type LayoutAction, type PaneLa
 import { orchestratorLike, type Session } from '../domain/session';
 import { pasteSequence } from '../domain/memo';
 import { enterDelay, typedChunks } from '../domain/chat';
-import { enterTask, escPlan, typeQueue } from '../domain/chatQueue';
+import { enterTask, typeQueue, type SendOutcome } from '../domain/chatQueue';
+import { cutTurn, CUT_WAIT_MS, escWhy, type EscResult } from '../domain/cutSend';
 import { HOLD_MAX, LINK_WAIT, paneLinks } from '../domain/paneLinks';
 import { linkNotice, slowLinks } from '../domain/busyGate';
 import { useBusy } from './busyNow';
@@ -24,7 +25,7 @@ import { attachCommand } from '../domain/termCommand';
 import { IS_WIN } from '../domain/reader';
 import { imagePasteKey } from '../domain/keys';
 import { runModelPick, type PickResult, type PickWant } from './chat/modelPickRun';
-import { chatSendLog, claudeDefaults, pickLog } from '../data/tauri';
+import { chatSendLog, claudeDefaults, cutMark, cutWait, pickLog } from '../data/tauri';
 import { orchColor, useAvatars } from './avatar';
 import { bodyColor } from '../domain/avatar';
 import { orchVars } from '../domain/orchTheme';
@@ -64,6 +65,8 @@ type Props = {
   memo?: MemoHooks;
   /** 채팅 입력칸 위 한 줄(참모 깨우는 중) — 이 격자의 채팅 모두에 */
   chatNotice?: ReactNode;
+  /** 칸마다 위 한 줄(참모 자동 정리 고리 등) — 연결 안내가 먼저, 없으면 이것, 그다음 chatNotice */
+  noteOf?: (s: Session) => ReactNode;
   /** 칸을 다른 화면이 덮고 있다(팀 모드·다른 기기 참모·기기 보기) — 채팅 읽기를 늦춘다 */
   covered?: boolean;
   /** 한 열로 세로 쌓기 — 사무실 모드 오른쪽 대화 세션 열 */
@@ -107,13 +110,14 @@ const linkNow = new Map<string, LinkState>();
 const retakes = new Map<string, () => void>();
 /** 붙은 보기에 치는 데 쓰는 최대 — 긴 글도 몇 초면 끝난다. 넘기면 버리고 다음 말로(채팅은 입력을 되살린다, 2026-10-24 윈도우 '어떤 말도 안 감') */
 const TYPE_TIMEOUT = 30_000;
-/** 다 쳤으면 true, 못 쳤으면(보기가 안 붙음·치기 거절·시간 넘김) false. 'inflight' = 쳤고 입력칸에서 빠졌는데 기록엔 아직(훅이 도는 중 — Rust pty_type) */
-function typeAndSend(id: string, text: string, enter = true, again = false): Promise<boolean | 'inflight'> {
+/** 다 쳤으면 true, 못 쳤으면(보기가 안 붙음·치기 거절·시간 넘김) false. 'inflight' = 쳤고 입력칸에서 빠졌는데 기록엔 아직(훅이 도는 중 — Rust pty_type),
+ *  'landed' = 기록에 든 걸 봤다, 'stuck' = 다시 쳐 봐도 입력칸에 그대로(domain/chatQueue pendMark) */
+function typeAndSend(id: string, text: string, enter = true, again = false): Promise<SendOutcome> {
   // 블랙박스 — 이 길엔 로그가 없어 '전달 안 됨'이 어디서 멈췄는지 못 가렸다(2026-11-05). 글 내용은 안 남긴다
   const asked = Date.now();
   const note = (s: string) => chatSendLog(`${id} ${s}`);
   note(`in link=${linkNow.get(id) ?? '-'} pane=${links.get(id) ? 1 : 0} chars=${[...text].length}`);
-  let inflight = false;
+  let got: SendOutcome = true;
   return typing.push(id, async () => {
     // 끊김이 굳은 칸이면 바로 실패 — 앞 말만 drop 되고 줄 뒤 말은 80초 기다리다 세션이 돌아오면 몰래 쳐졌다(리뷰).
     // 다른 창에 쫓겨난 칸(윈도우)은 세션이 살아 있다 — 다시 붙여 되찾고 붙을 때까지 기다린다(2026-10-30 '다시 보내도 안 감')
@@ -127,8 +131,8 @@ function typeAndSend(id: string, text: string, enter = true, again = false): Pro
     const r = await api.type(typedChunks(text), enter ? enterDelay(text.length, IS_WIN) : undefined, again || undefined);
     // 칸 보기가 죽어 있었다 — 세션엔 Rust 가 새로 붙어 넣었다(기록 확인). 칸을 다시 붙인다(EOF 가 안 와 저절로는 안 붙는다)
     if (r === 'dead') { note('dead-view reattach'); api.reattach?.(); }
-    inflight = r === 'inflight';
-  }, HOLD_MAX + LINK_WAIT + TYPE_TIMEOUT).then(() => { note(`ok ms=${Date.now() - asked}${inflight ? ' inflight' : ''}`); return inflight ? 'inflight' as const : true; }, (e: unknown) => { note(`fail ${e instanceof Error ? e.message : String(e)} ms=${Date.now() - asked}`); return false; });
+    if (r === 'inflight' || r === 'landed' || r === 'stuck') got = r;
+  }, HOLD_MAX + LINK_WAIT + TYPE_TIMEOUT).then(() => { note(`ok ms=${Date.now() - asked}${got === true ? '' : ` ${got}`}`); return got; }, (e: unknown) => { note(`fail ${e instanceof Error ? e.message : String(e)} ms=${Date.now() - asked}`); return false; });
 }
 
 /** 입력칸 지우기(백스페이스 n개) — 앞 글을 치는 중이면 그 뒤에. 지운 뒤 칠 글은 typeAndSend 가 다시 이 뒤에 줄 선다 */
@@ -137,14 +141,26 @@ function clearInput(id: string, api: PaneApi | undefined, n: number) {
   void typing.push(id, () => api.type(['\x7f'.repeat(n)]).then(() => {}));
 }
 
-/** 세션에 Esc 한 번 — Claude 는 쉴 때 Esc 두 번을 '입력칸 지우기'로 받아 걸린 말이 흔적 없이 지워졌다. 거른 건 false(domain/chatQueue escPlan) */
-function escOnce(id: string, api: PaneApi | undefined): boolean {
-  const now = Date.now();
-  if (!api || !escPlan(now, escAt.get(id) ?? 0, typing.busyUntil(id))) return false;
-  escAt.set(id, now);
-  void typing.push(id, () => api.type(['\x1b']).then(() => {}));
-  return true;
+/** 세션에 Esc 한 번 — Claude 는 쉴 때 Esc 두 번을 '입력칸 지우기'로 받아 걸린 말이 흔적 없이 지워졌다(domain/cutSend escWhy).
+ *  넣었으면 넣은 뒤에 'sent'. 거른 것도 블랙박스에 — 끊고 보내기가 Esc 를 글보다 먼저 넣었나 가리려고(2026-11-17) */
+async function escNow(id: string, api: PaneApi | undefined): Promise<EscResult> {
+  const why = api ? escWhy(Date.now(), escAt.get(id) ?? 0, typing.busyUntil(id)) : 'none';
+  if (why !== 'ok') return why;
+  escAt.set(id, Date.now());
+  await typing.push(id, () => api!.type(['\x1b']).then(() => {}));
+  return 'sent';
 }
+function escOnce(id: string, api: PaneApi | undefined): void {
+  void escNow(id, api).then((r) => chatSendLog(`${id} esc=${r}`), () => chatSendLog(`${id} esc=fail`));
+}
+/** 끊고 보내기 — 기록 끝 재기 → Esc → 기록에 끊김이 붙을 때까지(domain/cutSend) */
+const cutFor = (id: string, api: () => PaneApi | undefined) => cutTurn({
+  mark: () => cutMark(id),
+  esc: () => escNow(id, api()),
+  wait: (from) => cutWait(id, from, CUT_WAIT_MS),
+  sleep: (ms) => new Promise((ok) => setTimeout(ok, ms)),
+  log: (s) => chatSendLog(`${id} ${s}`),
+});
 const cumulative = (fr: number[]) => {
   const total = fr.reduce((a, b) => a + b, 0);
   let acc = 0;
@@ -155,7 +171,7 @@ const cumulative = (fr: number[]) => {
  * 세션 여러 개를 격자로 + 접은 창은 아래 띠. 띠의 창은 attach 를 떼어 둔다(메모리).
  * 경계선을 끌면 열·줄 비율이 바뀌고, 머리줄을 끌어 다른 창에 놓으면 자리가 바뀐다
  */
-export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, onMessage, fontSize, home, onFocusSession, initialFocus, focusRequest, onFocusRequestDone, gridId, onStop, titleOf = paneTitle, subOf, memo, chatNotice, covered = false, column, chat, ctxOf, modelOf, pinnedIds = [], onReorder, statusOf = sessionStatus, headSlot }: Props) {
+export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, onMessage, fontSize, home, onFocusSession, initialFocus, focusRequest, onFocusRequestDone, gridId, onStop, titleOf = paneTitle, subOf, memo, chatNotice, noteOf, covered = false, column, chat, ctxOf, modelOf, pinnedIds = [], onReorder, statusOf = sessionStatus, headSlot }: Props) {
   const panes = useRef(new Map<string, PaneApi>());
   // 모델 칩 — 바꾸는 동안 지금 모델·에포트(상태줄)를 새로 읽게(일하는 중엔 화면 글로는 끝을 못 알아본다)
   const modelOfRef = useRef(modelOf);
@@ -455,7 +471,7 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
                           ctx={ctxOf?.(s)}
                           modelInfo={modelOf?.(s)}
                           cwd={s.cwd}
-                          notice={noticeOf(id, s) ?? chatNotice}
+                          notice={noticeOf(id, s) ?? noteOf?.(s) ?? chatNotice}
                           covered={covered}
                           link={linkOf[id]}
                           pickModel={(want) => pickFor(id, s, want)}
@@ -467,6 +483,7 @@ export function SessionGrid({ extraOf, sessions, claudeBin, layout, dispatch, on
                             return sent;
                           }}
                           interrupt={() => escOnce(id, panes.current.get(id))}
+                          cutTurn={() => cutFor(id, () => panes.current.get(id))}
                           rawKeys={async (seq) => { for (const k of seq) { panes.current.get(id)?.raw(k); await new Promise((r) => setTimeout(r, 120)); } }}
                           onTerminal={() => showTerm(id, true)}
                           onInputFocus={() => panes.current.get(id)?.claimPtt()}

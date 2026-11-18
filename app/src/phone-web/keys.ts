@@ -51,7 +51,7 @@ export const keyPlan = (have: { sign?: unknown; x?: unknown } | null | undefined
 export class NoKeysError extends Error {
   override name = 'NoKeysError';
   constructor() {
-    super('이 폰 열쇠가 없어요');
+    super('이 기기 열쇠가 없어요');
   }
 }
 

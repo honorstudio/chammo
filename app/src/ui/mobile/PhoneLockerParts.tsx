@@ -7,20 +7,29 @@ import { useMdSave } from './useMdSave';
 import { IconFolder, IconFolderPlus } from '../Icons';
 import { BottomSheet } from './kit';
 import { tr } from '../../i18n';
+import { HOLD_MS, holdMoved } from '../../domain/hold';
+import { pressFeel } from './hold';
 
 /** 길게 누른 것 — 경로(기록·폴더 안 파일), 폴더 안 바로가기면 그 자리 rel */
 export type Held = { path: string; name: string; rel?: string; link?: boolean };
 
-/** 손가락으로 0.45초 — 메뉴. 움직이면(스크롤) 취소, 메뉴를 띄운 손은 떼도 열기로 안 친다(말풍선 속 링크도 안 따라간다) */
+/** 손가락으로 HOLD_MS(0.45초) — 메뉴. 그 전에 눌린 느낌(pressFeel), 움직이면(스크롤) 취소, 메뉴를 띄운 손은 떼도 열기로 안 친다(말풍선 속 링크도 안 따라간다).
+ *  data-hold — 사파리 글 고르기·말풍선·끌어 올리기를 막는 표시(ui/mobile/hold installHoldGuard·mobile.css) */
 export function usePress(onOpen: () => void, onHold: () => void) {
   const t = useRef<number | undefined>(undefined);
   const at = useRef<{ x: number; y: number } | null>(null);
   const held = useRef(false);
-  const stop = () => { window.clearTimeout(t.current); at.current = null; };
-  useEffect(() => () => window.clearTimeout(t.current), []);
+  const feel = useRef<(fired?: boolean) => void>(() => {});
+  const stop = () => { window.clearTimeout(t.current); at.current = null; feel.current(); };
+  useEffect(() => () => { window.clearTimeout(t.current); feel.current(); }, []);
   return {
-    onPointerDown: (e: React.PointerEvent) => { held.current = false; at.current = { x: e.clientX, y: e.clientY }; t.current = window.setTimeout(() => { held.current = true; at.current = null; onHold(); }, 450); },
-    onPointerMove: (e: React.PointerEvent) => { if (at.current && Math.hypot(e.clientX - at.current.x, e.clientY - at.current.y) > 8) stop(); },
+    'data-hold': '',
+    onPointerDown: (e: React.PointerEvent) => {
+      held.current = false; at.current = { x: e.clientX, y: e.clientY };
+      feel.current(); feel.current = pressFeel(e.currentTarget);
+      t.current = window.setTimeout(() => { held.current = true; at.current = null; feel.current(true); onHold(); }, HOLD_MS);
+    },
+    onPointerMove: (e: React.PointerEvent) => { if (at.current && holdMoved(e.clientX - at.current.x, e.clientY - at.current.y)) stop(); },
     onPointerUp: stop, onPointerCancel: stop, onPointerLeave: stop,
     onContextMenu: (e: React.MouseEvent) => e.preventDefault(),
     onClick: (e: React.MouseEvent) => { if (held.current) { held.current = false; e.preventDefault(); return; } onOpen(); },

@@ -31,6 +31,9 @@ import { shouldShowTour, tourVisible } from './domain/tour';
 import type { Gate } from './domain/loginGate';
 import { useWorkFeed } from './ui/gacha/useWorkFeed';
 import { orchColor } from './domain/avatar';
+import { bootFace, keepLost, lostAsStopped, splitOff } from './domain/bootFace';
+import { railRows } from './domain/railRows';
+import { BootRollcall, type BootFacts } from './ui/boot/BootRollcall';
 import { ReplayPage } from './ui/ReplayPage';
 import { LoadFloat } from './ui/LoadFloat';
 import { useLoad } from './ui/useLoad';
@@ -42,7 +45,7 @@ import { claudeUpdateNote, verLabel } from './domain/updates';
 import { useUpdates } from './ui/useUpdates';
 import { useAccessWatch } from './ui/useAccessWatch';
 import { AccessBanners } from './ui/AccessBanners';
-import { OPEN_SETUP, SPACE_NAV, spaceCmd } from './ui/space/navSignal';
+import { OPEN_SETUP, SPACE_NAV, openShellTab, spaceCmd } from './ui/space/navSignal';
 import type { SetupStart } from './domain/settingsTabs';
 import { LoginGate } from './ui/LoginGate';
 import { FirstRun } from './ui/FirstRun';
@@ -54,7 +57,8 @@ import { getAppEnv, listSessionsAllRaw, listSessionsRaw, readSay, writeVoiceMode
 import { freshReplies, heldTarget, parseSay, pickSay, routeReply, takeHeld, talkedTo, voiceTurn, type ReplySeen, type VoiceHeld } from './domain/voice';
 import { baseVoice, voiceFor } from './domain/avatar';
 import { avatarSnapshot, refreshAvatars, setAvatarTts } from './ui/avatar';
-import { blockedBody, cardTarget, cardToken, readNoteTarget } from './domain/notify';
+import { blockedBody, cardTarget, cardToken } from './domain/notify';
+import { heldNote, NOTE_HELD, noteClickPlan, parseHeld } from './domain/noteClick';
 import { notifyOnce } from './ui/notifier';
 import { AgentAskHost, AskCards, browserMenu, browserOwnsKey, openAgentModal, PopupCards } from './ui/AgentBrowserModal';
 import { useDirectCards } from './ui/useDirectCards';
@@ -81,7 +85,9 @@ import { Confirm, NameNew } from './ui/OrchDialogs';
 import { consentBeforeSpawn, isDisclaimerError } from './domain/bypassConsent';
 import { FIRST_SPAWN_KEY, firstSpawnDue } from './domain/firstRun';
 import { dupRenames, labelRenames, nickProblem, renamesToSend, splitOrchName, withNick, type RenameSent } from './domain/orchLabel';
-import { orchIntro } from './domain/orchIntro';
+import { orchIntro, orchIntroKids } from './domain/orchIntro';
+import { kidsSet } from './data/tauri';
+import { avatarKey } from './domain/avatar';
 import { markReader, ReaderPanel, readerFocused } from './ui/reader/ReaderPanel';
 import { selectAllHere } from './ui/selectAll';
 import { IS_WIN, type Surface } from './domain/reader';
@@ -104,13 +110,13 @@ import { ProjectBar } from './ui/ProjectBar';
 import { SessionGrid, type MemoHooks } from './ui/SessionGrid';
 import { MemoPanel } from './ui/MemoPanel';
 import { useLessons } from './ui/useLessons';
-import { groupRequest } from './domain/lessons';
+import { groupRequest, lessonScope } from './domain/lessons';
 import { useMemos } from './ui/useMemos';
 import { useNotesPlace } from './ui/notes/useNotesPlace';
-import { notesShareDone } from './data/tauri';
+import { notesShareDone, notifyClickTake } from './data/tauri';
 import { attachToChat, textToTerminal } from './ui/fileDrop';
 import { askRef } from './ui/refBus';
-import { TerminalPane } from './ui/TerminalPane';
+import { TerminalPane, clearShellAt } from './ui/TerminalPane';
 import { StoppedStrip } from './ui/StoppedStrip';
 import { isRemoteTarget } from './domain/orphans';
 import { allDue, singleFlight } from './domain/pollGate';
@@ -122,6 +128,7 @@ import { setOrchRoleData, saveOrchRole, orchRoleOf, onOrchRolesSaved } from './u
 import { autoRestore, parseSnap, stepSnapshot, type LiveSnap, type SnapSession } from './domain/revive';
 import { useLostTriage } from './ui/useLostTriage';
 import { useAutoTidy } from './ui/useAutoTidy';
+import { useChiefCompact } from './ui/useChiefCompact';
 import { useGoalStall } from './ui/useGoalStall';
 import { useFolderPrompt } from './ui/useFolderPrompt';
 import { useOrchRevive } from './ui/useOrchRevive';
@@ -158,7 +165,6 @@ import { FAR_BLOCKED, FAR_NUM, FAR_PICK, farActive, useFarMode } from './ui/far/
 import { useTeamMode } from './ui/team/useTeamMode';
 import { FloatHost } from './ui/space/OrchBubble';
 import { CONVO as TEAM_CONVO } from './domain/teamLayout';
-import { teamTarget } from './domain/teamChat';
 import type { SettingsTab } from './domain/settingsTabs';
 import { useRemoteCards } from './ui/useRemoteCards';
 import { IconButton } from './ui/kit/IconButton';
@@ -167,6 +173,8 @@ import { sessionOrigins } from './data/tauri';
 import { BUSY_POLL, listErrorText } from './domain/busyGate';
 import { busyNow } from './ui/busyNow';
 import { appendTaskEvent, removeSession, daemonStartedAt, readOrchPins, setOrchPin, readOrchOrder, setOrchOrder, readOrchRoles, readLiveSnap, resumeSession, writeLiveSnap, newSession, readAutoAllow, readCtx, sendToSession, setBadge, stopSession, writeClipboard } from './data/tauri';
+import { useKidsChat } from './ui/kids/useKidsChat';
+import { withoutKids } from './domain/kids';
 import { parseAllowLog, type AllowLog } from './domain/autoAllow';
 import { useAutoAllow } from './ui/useAutoAllow';
 import { useOrgPolicy } from './ui/useOrgPolicy';
@@ -578,6 +586,7 @@ export default function App() {
     else if (sc.type === 'selectAll') selectAllHere(readerOpen && readerFocused(), document.querySelector('.reader-panel'));
     else if (sc.type === 'toggleSidebar') setSidebarOpen((o) => !o);
     else if (sc.type === 'toggleTasks') setTasksOpen((o) => !o);
+    else if (sc.type === 'search' && sc.k && clearShellAt(document.activeElement)) { /* ⌘K 를 셸 탭에서 — 화면 지우기(iTerm 처럼), ⌘F 는 그대로 찾기 */ }
     else if (sc.type === 'search' && (window as unknown as { __docFind?: () => void }).__docFind) (window as unknown as { __docFind: () => void }).__docFind(); // 문서가 열려 있으면 문서 찾기
     else if (sc.type === 'search') {
       setSidebarOpen(true);
@@ -621,6 +630,11 @@ export default function App() {
       // ⌘T = 보관함에 빈 문서(보관함 '+ → 새 문서'와 같은 길). 스페이스가 없는 터미널 뷰에선 놓을 자리가 없다
       if (spaceShownRef.current) spaceCmd('newDoc');
       else setError(tr(`새 문서는 채팅 뷰에서 — 새 세션은 ${keyLabel('⌘⇧T', IS_WIN)}`, `New document works in the chat view — new session is ${keyLabel('⌘⇧T', IS_WIN)}`));
+    }
+    else if (sc.type === 'newShell') {
+      // ⌥⌘T = 그냥 셸 탭(스페이스 탭 줄) — 터미널 뷰엔 탭 줄이 없다
+      if (spaceShownRef.current) openShellTab();
+      else setError(tr('새 터미널은 채팅 뷰에서', 'New terminal works in the chat view'));
     }
     else if (sc.type === 'goHome') spaceCmd('home'); // ⌘⇧H — 고른 참모의 홈 고정 탭
     // ⌘`(⌘₩) — 홈 대시보드 켜기·보던 화면으로(2026-10-25 사용자). 터미널 뷰엔 대시보드가 없어 open home 과 같이 참모 화면
@@ -834,16 +848,19 @@ export default function App() {
   const visibleSessions = useMemo(() => sessions.filter((s) => !closing.has(s.id)), [sessions, closing]);
   // 참모 고정 — 폰과 같은 <데이터>/orch-pins.json, 5초마다 다시 읽는다(폰에서 고정해도 따라오게). 고정한 참모가 사이드바·채팅 탭·홈 맨 위
   const [orchPins, setOrchPins] = useState<string[]>([]);
+  // 고정·순서·맡은 일을 처음 받았나(1·2·4) — 켤 때 점호가 셋 다 온 뒤에 걷힌다(실패도 받은 걸로)
+  const [metaSeen, setMetaSeen] = useState(0);
+  const seenMeta = (bit: number) => setMetaSeen((m) => m | bit);
   useEffect(() => {
     let alive = true;
-    const load = () => void readOrchPins().then((v) => { if (alive) setOrchPins((o) => (o.join() === v.join() ? o : v)); }, () => {});
+    const load = () => void readOrchPins().then((v) => { if (alive) { setOrchPins((o) => (o.join() === v.join() ? o : v)); seenMeta(1); } }, () => seenMeta(1));
     load();
     const stop = every(load, 5000);
     return () => { alive = false; stop(); };
   }, []);
   // 참모 순서 — 채팅 탭을 끌어 옮기거나 ⌃⇧PageUp 으로 옮긴 것(<데이터>/orch-order.json, 폰도 읽는다). 채팅 탭·⌘1~9·사이드바·홈이 같은 줄(domain/orchOrder)
   const [orchOrder, setOrchOrderState] = useState<string[]>([]);
-  useEffect(() => { void readOrchOrder().then(setOrchOrderState, () => {}); }, []);
+  useEffect(() => { void readOrchOrder().then((v) => { setOrchOrderState(v); seenMeta(2); }, () => seenMeta(2)); }, []);
   /** shown = 지금 보이는 참모 대화 id 순서. 바로 바꿔 보이고 맥에 저장(실패하면 저장된 걸 다시 읽는다) */
   const moveOrch = (shown: string[], from: string, to: string) => {
     setOrchOrderState((cur) => {
@@ -887,7 +904,7 @@ export default function App() {
   const [orchRoles, setOrchRoles] = useState<RoleMap>({});
   useEffect(() => {
     let alive = true;
-    const load = () => void readOrchRoles().then((v) => { if (alive) setOrchRoles((o) => { const n = parseRoles(JSON.stringify(v)); return JSON.stringify(o) === JSON.stringify(n) ? o : n; }); }, () => {});
+    const load = () => void readOrchRoles().then((v) => { if (alive) { setOrchRoles((o) => { const n = parseRoles(JSON.stringify(v)); return JSON.stringify(o) === JSON.stringify(n) ? o : n; }); seenMeta(4); } }, () => seenMeta(4));
     load();
     const stop = every(load, 5000);
     const off = onOrchRolesSaved((m) => setOrchRoles(m));
@@ -908,6 +925,35 @@ export default function App() {
     await writeLiveSnap(JSON.stringify(next)).catch(() => {});
   };
   const isLostOrch = (s: SnapSession) => isHqOrch(s, env?.orchestratorCwd ?? '');
+  // 재부팅(데몬 다시 뜸)으로 꺼진 참모 — 띠 위 제자리에 깨울 차례로(켤 때 점호 v3, SpaceView splitOff)
+  // 깨우다 실패한 참모(대화 id) — 띠 깨울 차례 칸이 못 깸으로(켤 때 점호 v3). 살아나면 뺀다
+  const [wakeFailed, setWakeFailed] = useState<Set<string>>(() => new Set());
+  const failWake = (sid: string) => setWakeFailed((o) => (o.has(sid) ? o : new Set([...o, sid])));
+  useEffect(() => {
+    if (!wakeFailed.size) return;
+    const alive = new Set(sessions.map((x) => x.sessionId));
+    if ([...wakeFailed].some((k) => alive.has(k))) setWakeFailed((o) => new Set([...o].filter((k) => !alive.has(k))));
+  }, [sessions, wakeFailed]);
+  // 위 띠 깨울 차례 — 재시작 정리가 참모를 기록에서 빼도(깨우기는 useOrchRevive) 깰 때까지 남긴다(domain/bootFace keepLost). 같은 값이면 같은 배열이라 두 번 불러도 같다
+  const lostSeen = useRef<SnapSession[]>([]);
+  const lostOrchs = useMemo(() => (lostSeen.current = keepLost(lostSeen.current, lost.filter(isLostOrch), navOrchs)), [lost, navOrchs, env]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 켤 때 점호(ui/boot) — 띠와 같은 줄(순서·고정·깨울 차례)과 쉬는 칸, 얼굴은 domain/bootFace
+  // 점호가 걷히면 덮개와 이 계산을 뺀다(켜진 동안 매 갱신마다 돌지 않게)
+  const [bootDone, setBootDone] = useState(false);
+  const bootFacts = useMemo((): BootFacts | null => {
+    if (bootDone) return null;
+    const cwd = env?.orchestratorCwd ?? '';
+    const sp = splitOff({ stopped: stoppedOrchs(resumable(stopped, sessions), cwd, navOrchs), lost: lostOrchs, live: navOrchs, now: Date.now(), daemonAt: snapRef.current?.daemon ?? null });
+    const rows = railRows({ live: navOrchs, stopping: new Set(), starting: startingOrchs, lost: sp.lostTop.map(lostAsStopped), failed: wakeFailed, prev: [], order: orchOrder, pins: orchPins });
+    const face = (r: (typeof rows)[number]) => (r.live ? bootFace({ live: r.live }) : r.phase === 'starting' ? 'waking' : r.failed ? 'failed' : 'queue');
+    const info = (x: { name: string }) => ({ name: x.name, label: orchDisplay(x as Session) || seenName(x.name), color: orchColor(x.name) });
+    return {
+      // 재부팅으로 꺼진 참모(lost)는 재시작 기록(snapReady)이면 안다 — 꺼진 목록(stoppedReady, 가장 늦게 온다)은 쉬는 칸 숫자에만 쓰고 기다리지 않는다
+      sessions: sessionsSeen, meta: metaSeen === 7, all: snapReady, restKnown: stoppedReady, noChat: navOrchs.length === 0,
+      top: rows.map((r) => ({ key: r.key, ...info(r.live ?? r.off!), face: face(r) })),
+      rest: sp.resting.map((x) => ({ key: x.sessionId || x.id, ...info(x), face: 'resting' as const })),
+    };
+  }, [bootDone, env, stopped, sessions, navOrchs, lostOrchs, startingOrchs, wakeFailed, orchOrder, orchPins, sessionsSeen, metaSeen, snapReady, stoppedReady]); // eslint-disable-line react-hooks/exhaustive-deps
   const { hold: lostHold, open: lostOpen } = useLostTriage({
     lost, ready: snapReady && stoppedReady, sessions, events: taskEvents, orchs: groups.orchestrators, front: groups.orchestrator,
     // 꺼진 세션은 살아 있는 목록에 없다 — 그 세션을 목록 맨 앞에 넣어 맡은 일(heir)이 알아보게
@@ -916,11 +962,11 @@ export default function App() {
     autoRevive: features.autoRevive, devRoot: env?.devRoot, extras: env?.extraProjects ?? [], update: updateSnap,
   });
   /** nick 이 있으면 '참모-N · 별명'(N 은 꺼진 참모 번호까지 피해서, 새 참모 창에서 별명을 비우면 '참모-N'), 없으면 첫 참모 이름(설정 이름) — 자동 시작·빈 화면 버튼 */
-  const spawnOrchestrator = async (nick?: string, role = '') => {
+  const spawnOrchestrator = async (nick?: string, role = '', kid: { child: string } | null = null) => {
     if (!env || spawningRef.current) return; // + 를 연달아 눌러도 하나만(띄우는 데 1초 남짓)
     spawningRef.current = true;
     setSpawning(true);
-    const again = () => void spawnOrchestrator(nick, role);
+    const again = () => void spawnOrchestrator(nick, role, kid);
     try {
       // 새 컴퓨터는 bypass 경고에 아직 동의 안 했다 — 띄우면 'requires accepting the disclaimer' 로 실패하니 카드부터(2026-10-21 새 윈도우 PC)
       if (consentBeforeSpawn(await bypassConsent().catch(() => null)) === 'ask') { setConsentAsk(() => again); return; }
@@ -928,7 +974,9 @@ export default function App() {
       if (nick !== undefined) setCreating(name);
       // 맡은 일·태어난 때를 먼저 적는다 — 꺼진 참모를 지워 번호가 다시 쓰이면 옛 맡은 일·기록이 새 참모에 붙었다(2026-10-04 QA ⑥·리뷰)
       await saveOrchRole(name, role, true).catch(() => {});
-      await spawnSession(env.orchestratorCwd, name, orchIntro());
+      // 키즈 참모로 만들면 띄우기 전에 칸을 적는다 — 첫 인사가 키즈 판, 아이 세션은 kids_set 이 띄운다(따로 알림은 안 보냄)
+      const kidOk = !!kid && features.kids && (await kidsSet(avatarKey(name), true, kid.child, 5, true).then(() => true, () => false));
+      await spawnSession(env.orchestratorCwd, name, kidOk ? orchIntroKids(kid!.child) : orchIntro());
       await refresh();
     } catch (e: unknown) {
       if (isDisclaimerError(String(e))) setConsentAsk(() => again); // 띠 대신 동의 카드 — 누르면 다시 띄운다
@@ -1166,8 +1214,10 @@ export default function App() {
 
   // 세션 메모(⌘M) — 프로젝트별 HOLO MEMO 파일. 머리줄엔 최근 한 줄, 열린 창 위엔 메모판
   const memos = useMemos(sessions.map((s) => s.project));
-  // 같은 창 '교훈' 탭 — 참모 지시에 붙는 프로젝트 교훈(scripts/task lesson). 열린 창의 프로젝트만 읽는다
-  const lessons = useLessons(sessions.find((s) => s.id === memoOpen)?.project ?? null);
+  // 같은 창 '교훈' 탭 — 참모 지시에 붙는 프로젝트 교훈(scripts/task lesson). 참모 창이면 그 참모 기억 칸(참모는 모두 HQ 폴더라 프로젝트로 고르면 다 같았다)
+  const memoSession = sessions.find((s) => s.id === memoOpen);
+  const lessonScopeName = memoSession ? lessonScope(memoSession, groups.orchestrators.some((o) => o.id === memoSession.id)) : null;
+  const lessons = useLessons(lessonScopeName);
   const lessonErr = (e: unknown) => setError(tr(`교훈 수정 실패: ${String(e)}`, `Could not update the lesson: ${String(e)}`));
   const memo: MemoHooks = {
     note: (s) => memos.items(s.project).at(-1)?.text,
@@ -1182,7 +1232,7 @@ export default function App() {
         onCopy={(text) => void writeClipboard(text).catch(() => {})}
         onRemove={(item) => void memos.remove(s.project, item).catch((e: unknown) => setError(tr(`메모 삭제 실패: ${String(e)}`, `Could not delete the note: ${String(e)}`)))}
         onClose={() => setMemoOpen(null)}
-        lessons={{ mine: lessons.mine, common: lessons.common }}
+        lessons={lessonScopeName ? { scope: lessonScopeName, mine: lessons.mine, common: lessons.common } : undefined}
         onRemoveLesson={(name, l) => void lessons.remove(name, l).catch(lessonErr)}
         onPromoteLesson={(l) => void lessons.promote(l).catch(lessonErr)}
         onGroupLessons={groups.orchestrator ? () => {
@@ -1198,7 +1248,9 @@ export default function App() {
 
   // 도구 권한 창은 앱이 이름으로 Allow 를 찾아 자동 허용 (결정 대기함엔 선택지 질문·민감한 창만 남는다)
   const orgPol = useOrgPolicy(sessions); // 회사 정책이면 권한 창을 사람 카드로(ADR 0023)
-  useAutoAllow(sessions, env?.devRoot, loadAllowLog, orgPol.blocked, taskEvents, groups.orchestrators);
+  // 아이 세션(키즈 모드)은 빼고 — 자동 허용이 다른 세션 메시지 전달까지 눌러 막힘이 풀린다(domain/kids)
+  const allowable = useMemo(() => withoutKids(sessions, env?.dataDir ?? ''), [sessions, env?.dataDir]);
+  useAutoAllow(allowable, env?.devRoot, loadAllowLog, orgPol.blocked, taskEvents, groups.orchestrators);
   // 하위 세션 선택지 창은 참모에게 넘긴다 — 참모가 골라 답하거나 사용자에게 묻는다. 사용자가 그 화면을 보고 있으면 안 넘긴다
   const subSessions = useMemo(() => [...groups.helpers, ...groups.loose, ...groups.projects.flatMap((p) => p.sessions)], [groups]);
   // 보고 없이 멈춘 예약(scripts/routine tick 의 stall) — 예약 세션은 세션 목록 밖이라 맨 앞 참모에게 한 줄
@@ -1215,8 +1267,10 @@ export default function App() {
   useAskWake(agentLives, sessions);
   // 직접 답하기 카드 — 하위 세션이 본인 승인을 원하면 맡긴 참모 채팅에 카드(사람이 누르면 그 세션에 사람 말로)
   // 살아 있나·이름은 폴더로 거르기 전 전체 목록(allSessions)으로 — 워크트리로 들어가 사이드바에서 빠진 세션 카드가 꺼짐으로 숨었다(2026-10-05 아이맥)
+  // 키즈 참모 보호자 채팅에 아이 화면 대화(두 세션 한 줄기, ui/kids/useKidsChat)
+  const kidsExtra = useKidsChat(groups.orchestrators, features.kids);
   const direct = useDirectCards(allSessions, allActs, taskEvents, groups.orchestrators, agentLives, (c, name, owner) => notifyOnce({
-    kind: 'human', session: c.from, orch: false, ...(owner ? { go: cardTarget(owner.id, cardToken(c.id)) } : {}), phones: cardPushesPhones(c),
+    kind: 'human', session: c.from, orch: false, go: owner ? cardTarget(owner.id, cardToken(c.id)) : 'inbox', phones: cardPushesPhones(c),
     title: tr(`${josa(name, '이', '가')} 네 답을 기다려`, `${name} needs your answer`),
     body: `${kindView(c.kind).word}${c.amount ? ` ${c.amount}` : ''} — ${c.q}`,
   }), async (c) => {
@@ -1228,6 +1282,12 @@ export default function App() {
   // 세션 자동 정리 — 끝나고 조용한 팀 세션을 맡긴 참모에게 한 줄(갱신·끄기·워크트리 정리는 참모 몫, domain/autoTidy · 2026-10-23 사용자)
   useAutoTidy({ on: features.autoTidy, subs: subSessions, helpers: groups.helpers, acts: allActs, events: taskEvents, asking: direct.inboxCards.filter(needsAnswer).map((c) => c.from),
     front: groups.orchestrator, orchs: groups.orchestrators, sessions, heir: heirOf });
+  // 참모·프로젝트 대화 자동 정리 — 참모 40% 넘고 10분 조용하면 인계 뒤 /compact(domain/chiefCompact · 2026-11-17 사용자)
+  // 프로젝트 세션도 같은 스위치로 — 50% 넘고 10분 조용하면 docs/starter.md 인계 뒤 /compact, 끝나면 맡긴 참모에게 한 줄(domain/projectCompact · 11-17 사용자 "참모들 말고 그냥 프로젝트들은?")
+  const compacting = useChiefCompact({ on: features.chiefCompact, orchs: groups.orchestrators, projects: groups.projects.flatMap((p) => p.sessions), events: taskEvents, sessions,
+    watching: (s) => selected.kind === 'project' && selected.name === s.project,
+    statusOf: (s) => allActs.find((x) => x.session.id === s.id)?.status ?? 'unknown',
+    activityOf: (s) => (s.sessionId ? activity[s.sessionId] : undefined), ctx, chatTab, asking: direct.inboxCards.filter(needsAnswer).map((c) => c.from) });
   // 오래 멈춘 목표 — 같은 스위치, 그 목표를 맡긴 참모 입력칸에 한 줄(domain/goalStall)
   useGoalStall({ on: features.autoTidy, orchs: groups.orchestrators, events: taskEvents, sessions });
   // 팀 성능 예산 넘침 — Rust 가 쌓은 알림(배경 몫 넘김·사람 동작 429)을 앱 업데이트 맡은 참모에게 [앱] 한 줄(domain/perfAlert · 10-31 사용자)
@@ -1365,7 +1425,8 @@ export default function App() {
     markPending(x.sessionId);
     markResuming(x.sessionId);
     setHomeResume(x.sessionId);
-    void resumeSession(x.cwd, x.sessionId, x.id).then(() => refresh(), (e: unknown) => { setHomeResume(null); setError(tr(`${orchDisplay(x) || x.name} 이어서 켜기 실패: ${String(e)}`, `Could not resume ${orchDisplay(x) || x.name}: ${String(e)}`)); });
+    setWakeFailed((o) => (o.has(x.sessionId) ? new Set([...o].filter((k) => k !== x.sessionId)) : o));
+    void resumeSession(x.cwd, x.sessionId, x.id).then(() => refresh(), (e: unknown) => { setHomeResume(null); failWake(x.sessionId); setError(tr(`${orchDisplay(x) || x.name} 이어서 켜기 실패: ${String(e)}`, `Could not resume ${orchDisplay(x) || x.name}: ${String(e)}`)); });
   };
   useEffect(() => {
     if (!homeResume) return;
@@ -1388,7 +1449,7 @@ export default function App() {
       markResuming(s.sessionId);
       if (lastFront.current.prev === s.id || lastFront.current.id === s.id) setHomeResume(s.sessionId);
       // 복사본으로 떨어지지 않게(copy=false) — 옛 번호를 기다리는 되살리기가 30초마다 또 복사본을 띄웠다(0.3.6 리뷰). 실패면 다음 차례에 다시, 3번이면 카드
-      await resumeSession(s.cwd, s.sessionId, s.id, false).catch((e: unknown) => setError(tr(`${orchDisplay(s) || s.name} 다시 켜기 실패: ${String(e)}`, `Could not restart ${orchDisplay(s) || s.name}: ${String(e)}`)));
+      await resumeSession(s.cwd, s.sessionId, s.id, false).catch((e: unknown) => (failWake(s.sessionId), setError(tr(`${orchDisplay(s) || s.name} 다시 켜기 실패: ${String(e)}`, `Could not restart ${orchDisplay(s) || s.name}: ${String(e)}`))));
     },
   });
   // 깨우는·새로 켜는 동안 참모 채팅 입력칸 위 한 줄(2026-10-12 rail-wake) — 채팅은 뜰 때까지 앞 참모에 남아서, 그사이 친 말이 엉뚱한 참모로 가지 않게
@@ -1449,6 +1510,9 @@ export default function App() {
     // 꺼진 세션 줄 — 누르면 아무 일 없었다(ux-daily M8). 할 수 있는 건 줄의 '이어서 켜기'·'끝난 걸로'
     if (!s) { setError(tr('세션이 꺼져 있어. 이어서 켜거나 끝난 걸로 해 줘', 'Session is off. Resume it or mark it done')); return; }
     teamMode.leave(); // 팀 모드면 그 세션이 팀 대화·팀 스페이스 밑에 가려진다(10-26 사용자 — 종 카드 열기가 안 먹었다)
+    // 다른 기기 보기·원격 참모 채팅도 채팅 칸을 덮는다 — 안 걷으면 옮겨 가도 안 보였다(11-18 알림 누름)
+    if (remoteChat) setRemoteChat(null);
+    if (farMode.far) farMode.back();
     // 참모(들)는 프로젝트가 아니라 참모 화면에, 도우미는 도우미 화면에 있다
     const orch = groups.orchestrators.some((o) => o.id === s.id);
     const helper = groups.helpers.some((h) => h.id === s.id);
@@ -1470,22 +1534,36 @@ export default function App() {
     ...inbox.map((i) => ({ key: `i:${i.key}`, rank: itemRank(i), who: i.project, node: <InboxCard item={i} blockedWhy={(it) => replyBlocked(it, sessions)} onReply={replyItem} onOpen={openTarget} onDismiss={dismissItem} /> })),
   ];
   const inboxHot = inboxPages.some((p) => p.rank < 2);
-  // macOS 알림을 누르면 Rust(notify_mac)가 창을 앞으로 가져오고 window.__notifyClick('<갈 곳>') 을 부른다
+  // 알림을 누르면 Rust(deep_link::open_notify — 맥 알림·윈도우 토스트)가 창을 앞으로 가져오고 window.__notifyClick('<갈 곳>') 을 부른다.
+  // 화면이 덜 떴으면 그 부름이 버려지니 Rust 가 들고 있다가 화면이 켜질 때 notify_click_take 로 넘긴다. 세션 목록이 오기 전이면 기다렸다 간다(domain/noteClick, 11-18 사용자)
   const noteClickRef = useRef<(t: string) => void>(() => {});
   const teamOpenRef = useRef<(room: string) => void>(() => {});
   teamOpenRef.current = teamMode.openRoom;
   noteClickRef.current = (raw) => {
-    const room = teamTarget(raw); // 팀 메신저 새 말(team_alert) — 그 대화로
-    if (room) { teamOpenRef.current(room); return; }
-    const t = readNoteTarget(raw);
-    if (t?.to === 'inbox') setInboxOpen(true);
-    else if (t?.to === 'session') openTarget(t.id);
+    const p = noteClickPlan(raw, sessionsSeen);
+    if (p.do === 'wait') { try { sessionStorage.setItem(NOTE_HELD, JSON.stringify({ raw, at: Date.now() })); } catch { /* 못 두면 이번 누름만 놓친다 */ } }
+    else if (p.do === 'team') teamOpenRef.current(p.room); // 팀 메신저 새 말(team_alert) — 그 대화로
+    else if (p.do === 'inbox') setInboxOpen(true);
+    else if (p.do === 'settings') { setSettingsTab(p.tab); setSettingsOpen(true); }
+    else if (p.do === 'session') openTarget(p.id);
     // 그 카드 — 데스크톱은 그 참모로 가고, 결정(w:)은 결정 대기함을, 직접 카드(d:)는 그 참모 채팅 끝에 있다
-    else if (t?.to === 'card') { openTarget(t.orch); if (t.card.startsWith('w:')) setInboxOpen(true); const b = readAskCardKey(t.card); if (b) openAgentModal(b.profile, b.pid); }
+    else if (p.do === 'card') { openTarget(p.orch); if (p.card.startsWith('w:')) setInboxOpen(true); const b = readAskCardKey(p.card); if (b) openAgentModal(b.profile, b.pid); }
   };
+  // 세션 목록이 오면 기다리던 누름으로 — 켜는 중 화면이 다시 읽혀도 남게 sessionStorage 에 둔다(domain/noteClick parseHeld)
+  useEffect(() => {
+    if (!sessionsSeen) return;
+    let raw: string | null = null;
+    try {
+      raw = heldNote(parseHeld(sessionStorage.getItem(NOTE_HELD)), Date.now());
+      sessionStorage.removeItem(NOTE_HELD);
+    } catch { /* 못 읽으면 기다린 누름은 없는 것 */ }
+    if (raw) noteClickRef.current(raw);
+  }, [sessionsSeen]);
   useEffect(() => {
     const w = window as unknown as { __notifyClick?: (t: string) => void };
-    w.__notifyClick = (t) => noteClickRef.current(t);
+    // 받았으니 Rust 가 든 누름은 비운다 — 안 비우면 화면을 다시 읽을 때 같은 누름으로 또 옮긴다
+    w.__notifyClick = (t) => { void notifyClickTake().catch(() => {}); noteClickRef.current(t); };
+    void notifyClickTake().then((t) => { if (t) noteClickRef.current(t); }, () => {});
     return () => { delete w.__notifyClick; };
   }, []);
   // 참모 scripts/app — Rust(appctl.rs)가 app.jsonl 새 줄을 window.__appctl 로 넘긴다. 무엇을 할지는 domain/appctl
@@ -1856,7 +1934,7 @@ export default function App() {
               </span>
             </div>
             <ChatVoice.Provider value={features.voice ? { on: voice, toggle: () => turnVoice(!voice) } : null}>
-            <FloatHost>{(floating) => <SessionGrid column chat={floating ? 'tabs' : chatView} extraOf={(s) => [...direct.extraOf(s), ...askExtra(s), ...takeoverExtra(s), ...termsExtra(s), ...fileExtra(s)]} ctxOf={ctxOf} modelOf={modelOf} sessions={groups.orchestrators} onReorder={reorderOrchPanes} pinnedIds={groups.orchestrators.filter((o) => o.sessionId && orchPins.includes(o.sessionId)).map((o) => o.id)} claudeBin={bin} fontSize={fontSize} home={env?.home} titleOf={(s) => orchDisplay(s) || assistant()} subOf={(s) => orchRoleOf(s.name)?.text} {...gridFocus('orch-col')} onStop={(s, why) => closeSession(s, why)} layout={layoutOf('orch-col')} dispatch={dispatchFor('orch-col')} onMessage={onMessage} memo={memo} headSlot={chatHeadSlot} chatNotice={wakeNote} covered={chatCovered} />}</FloatHost>
+            <FloatHost>{(floating) => <SessionGrid column chat={floating ? 'tabs' : chatView} extraOf={(s) => [...direct.extraOf(s), ...askExtra(s), ...takeoverExtra(s), ...termsExtra(s), ...fileExtra(s), ...kidsExtra.extraOf(s)]} ctxOf={ctxOf} modelOf={modelOf} sessions={groups.orchestrators} onReorder={reorderOrchPanes} pinnedIds={groups.orchestrators.filter((o) => o.sessionId && orchPins.includes(o.sessionId)).map((o) => o.id)} claudeBin={bin} fontSize={fontSize} home={env?.home} titleOf={(s) => orchDisplay(s) || assistant()} subOf={(s) => orchRoleOf(s.name)?.text} {...gridFocus('orch-col')} onStop={(s, why) => closeSession(s, why)} layout={layoutOf('orch-col')} dispatch={dispatchFor('orch-col')} onMessage={onMessage} memo={memo} headSlot={chatHeadSlot} noteOf={(s) => (compacting[s.id] ? <><span className="spin" /><span>{tr('대화 정리 중', 'Tidying chat')}</span></> : kidsExtra.todayOf(s))} chatNotice={wakeNote} covered={chatCovered} />}</FloatHost>
             </ChatVoice.Provider>
             {/* 그 기기를 보는데 아직 고른 참모가 없다(읽는 중·그 기기에 참모 없음) — 이 맥 채팅이 비치지 않게 덮는다(잘못 친 말이 이 맥 참모로 가지 않게) */}
             {farMode.far && !remoteChat && <div className="och-remote"><div className="far-empty"><b>{farMode.farView?.paused ? tr('그 기기와 연결이 멈췄어요', 'The link to that device is paused') : farMode.farView?.cut ? tr('그 기기에 안 닿아요', "Can't reach that device") : farMode.farView?.none ? tr('그 기기에 떠 있는 참모가 없어요', 'No assistant running on that device') : tr('그 기기 참모를 읽는 중…', 'Loading assistants on that device…')}</b></div></div>}
@@ -1899,7 +1977,7 @@ export default function App() {
             orchHome={homeNode}
             homeDash={homeDashNode}
             idle={idleProjects.map((n) => ({ name: n, root: projectDir(n, env?.devRoot ?? '', env?.extraProjects ?? []) }))}
-            stopped={resumable(stopped, sessions, pending)} orchCwd={env?.orchestratorCwd ?? ''}
+            stopped={resumable(stopped, sessions, pending)} orchCwd={env?.orchestratorCwd ?? ''} lostOrchs={lostOrchs} daemonAt={snapRef.current?.daemon ?? null} wakeFailed={wakeFailed}
             tasks={{ orphaned: splitCards(localCards, Date.now()).orphaned, known: knownSessions, canResume: (c) => !!orphanSession(c.target, stopped), onResume: resumeOrphan, onFinish: finishOrphan }}
             onResume={(x) => { markPending(x.sessionId); markResuming(x.sessionId); void resumeSession(x.cwd, x.sessionId, x.id).then(() => onMessage(null), (e: unknown) => onMessage(tr(`이어서 띄우기 실패: ${String(e)}`, `Resume failed: ${String(e)}`))); }} onWakeOrch={resumeFromHome}
             onChatTab={(id) => { setRemoteChat(null); focusedBy.current.set('orch-col', id); setChatTab(id); setFocusReq((r) => ({ key: 'orch-col', id, n: (r?.n ?? 0) + 1 })); }}
@@ -2084,6 +2162,7 @@ export default function App() {
 
   return (
     <OrchActionsProvider pins={orchPins} onPin={pinOrch} onNick={wantNick} onStop={(s, why) => closeSession(s, why)} onRemove={(id) => { markPending(stopped.find((x) => x.id === id)?.sessionId ?? id); void removeSession(id, `menu ${stopped.find((x) => x.id === id)?.name ?? ''}`).then(() => refresh(), (e: unknown) => setError(tr(`지우기 실패: ${String(e)}`, `Remove failed: ${String(e)}`))); }}>
+      {bootFacts && <BootRollcall enabled={space && !firstRun} facts={bootFacts} onDone={() => setBootDone(true)} />}
       {consentAsk && <Confirm
         title={tr('확인 없이 실행하는 모드에 동의', 'Allow running without confirmations')}
         body={tr(`${assistant()}와 세션은 Claude Code를 확인 없이 실행하는 모드(${SKIP_FLAG})로 돌아요. Claude Code의 경고예요.\n· 위험한 명령도 묻지 않고 실행해요.\n· 인터넷이 제한되고 쉽게 되돌릴 수 있는 환경(컨테이너·가상 머신)에서만 쓰라고 권해요.\n· 이 모드에서 생긴 일은 동의한 사람 책임이에요.\n${assistant()}에게 결제·운영 전엔 먼저 물으라고 시키지만, 완전히 막진 못해요. 동의하면 이 컴퓨터의 Claude Code 설정에 기록돼요. 터미널에서 켜는 Claude Code도 이 경고를 다시 띄우지 않아요.`,
@@ -2091,7 +2170,7 @@ export default function App() {
         ok={tr('동의', 'Agree')}
         onCancel={() => setConsentAsk(null)}
         onOk={() => { const next = consentAsk; setConsentAsk(null); void bypassConsentAccept().then(next, (e: unknown) => setError(tr(`동의를 못 적었어요: ${String(e)}`, `Could not record the agreement: ${String(e)}`))); }} />}
-      {naming && <NameNew baseName={nextOrchestratorName([...navOrchs, ...offOrchList].map((s) => s.name))} color={orchColor(nextOrchestratorName([...navOrchs, ...offOrchList].map((s) => s.name)))} check={(v) => nickProblem(v, [...navOrchs, ...offOrchList].map((x) => orchDisplay(x)))} onCancel={() => setNaming(false)} onMake={(v, role) => { setNaming(false); void spawnOrchestrator(v, role); }} />}
+      {naming && <NameNew baseName={nextOrchestratorName([...navOrchs, ...offOrchList].map((s) => s.name))} color={orchColor(nextOrchestratorName([...navOrchs, ...offOrchList].map((s) => s.name)))} check={(v) => nickProblem(v, [...navOrchs, ...offOrchList].map((x) => orchDisplay(x)))} onCancel={() => setNaming(false)} kids={features.kids} onMake={(v, role, kid) => { setNaming(false); void spawnOrchestrator(v, role, kid); }} />}
     <StopBridge to={askStopRef} />
     <div className="shell">
     {setup}
@@ -2104,12 +2183,13 @@ export default function App() {
     <AgentAskHost lives={agentLives} nameOf={(l) => askName(l, allSessions)} notify={(profile, reason, name, l) => {
       // 갈 곳 = 맡긴 참모 채팅의 그 부름 카드 — 예전엔 session:<프로필> 이라 폰에서 눌러도 못 갔다(2026-10-24 트레이더)
       const owner = askPlaced([l], allSessions, taskEvents, groups.orchestrators, groups.orchestrator, heirOf)[0]?.owner;
-      notifyOnce({ kind: 'human', session: profile, orch: false, ...(owner ? { go: askTarget(owner.id, l) } : {}), ...askNotice(name, reason) });
+      // 주인 참모를 못 찾으면 결정 대기함(브라우저 칸에 같은 카드) — session:<프로필> 은 세션이 아니라 '꺼져 있어'가 떴다(11-18)
+      notifyOnce({ kind: 'human', session: profile, orch: false, go: owner ? askTarget(owner.id, l) : 'inbox', ...askNotice(name, reason) });
     }}
       notifyPopup={(l, name) => {
         // 갈 곳 = 그 브라우저(부름 카드와 같은 모양) — 누르면 칸·모달이 바로 크롬 창을 꺼낸다(2026-11-02 사용자: session:<프로필> 이라 세션 화면만 열렸다)
         const go = popupTarget(l, allSessions, taskEvents, groups.orchestrators, groups.orchestrator, heirOf);
-        notifyOnce({ kind: 'human', session: l.profile, orch: false, ...(go ? { go } : {}), ...popupNotice(name, l.popupKind) });
+        notifyOnce({ kind: 'human', session: l.profile, orch: false, go: go ?? 'inbox', ...popupNotice(name, l.popupKind) });
       }} onPopupCards={setPopupCards} />
     {licensesOpen && <LicensesDialog onClose={() => setLicensesOpen(false)} />}
     <CraftOpenAsk />

@@ -6,8 +6,8 @@ import { parseLkPick } from './lockerTree';
 /** 보관함 화면 자리인가(홈 l:<참모>#h 는 아님) — 폴더 탭이 돌아갈 곳 */
 const isFolderPick = (pick: string) => pick.startsWith('l:') && !pick.endsWith('#h');
 
-/** 열쇠 그대로가 화면 키인 탭 — 세션 s:<id>·시안 검토 c:<경로>·Craft 맥 앱 k:<앱>(비추기 칸, 2026-10-16) */
-const keyIsPick = (key: string) => key.startsWith('s:') || key.startsWith('c:') || key.startsWith('k:');
+/** 열쇠 그대로가 화면 키인 탭 — 세션 s:<id>·시안 검토 c:<경로>·Craft 맥 앱 k:<앱>(비추기 칸, 2026-10-16)·셸 sh:<번호>(11-17) */
+const keyIsPick = (key: string) => key.startsWith('s:') || key.startsWith('c:') || key.startsWith('k:') || key.startsWith('sh:');
 
 /** 탭 열쇠 → 화면 키 — 파일은 경로(d:<경로>), 나머지는 열쇠 그대로(패널 하나로 S4: 세션 '크게' = 가운데 탭) */
 export const tabPick = (key: string) => (keyIsPick(key) ? key : `d:${key}`);

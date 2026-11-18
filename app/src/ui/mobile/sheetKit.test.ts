@@ -5,7 +5,7 @@ import css from './mobile.css?raw';
 
 const files = import.meta.glob('./*.{ts,tsx}', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
 const src = (name: string) => files[`./${name}`] ?? '';
-const screens = Object.entries(files).filter(([f]) => !/\.test\.ts$/.test(f) && f !== './BottomSheet.tsx' && f !== './useSheetDrag.ts');
+const screens = Object.entries(files).filter(([f]) => !/\.test\.ts$/.test(f) && f !== './BottomSheet.tsx' && f !== './useSheetDrag.ts' && f !== './padMode.ts'); // padMode = 패드 위 막대 자리(대시보드 머리줄 포털) — 시트 아님
 const rule = (sel: string) => {
   const m = new RegExp(`(?:^|\\})\\s*${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`, 'm').exec(css.replace(/\/\*[\s\S]*?\*\//g, ''));
   return m?.[1] ?? '';

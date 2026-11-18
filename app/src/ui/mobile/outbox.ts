@@ -6,7 +6,8 @@
 // 꼬리 앞을 거슬러 읽어 들어간 말이면 뺀다 — '못 받았어요'는 그렇게 기록을 다 본 뒤에만(2026-10-11 사용자 "아직도 마지막 메세지 남아있는 버그")
 import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { readTranscriptBefore, sendStatus, sendTextToSession } from '../../data/web';
-import { chatStart } from '../space/useChatItems';
+import { chatQueue, chatStart } from '../space/useChatItems';
+import { inQueue } from '../../domain/chatQueue';
 import type { ChatItem } from '../../domain/chat';
 import { addOut, applyStatus, beforeTail, dueForCheck, findEarlier, markOut, newOut, readOutbox, retryOut, settleOut, writeOutbox, type OutMsg, type Store } from '../../domain/mobileOutbox';
 import { tr } from '../../i18n';
@@ -69,6 +70,9 @@ export function sendOut(session: string, text: string, retryId?: string): Promis
   return deliver(at).then((r) => ({ id: at, ...r }));
 }
 
+/** 세션별 대화 기록 번호 — 늦은 말 확인이 그 기록의 Claude 대기열을 본다(줄 선 말은 10분이 지나도 기다린다) */
+const sidOf = new Map<string, string>();
+
 /** 세션별 쉬기 시작한 때 — 쉬는 동안만(일하는 중이면 지운다). 쳤다는 말이 기록에 끝내 없나 가를 때(applyStatus) */
 const idleFrom = new Map<string, number>();
 
@@ -81,7 +85,8 @@ async function checkLate() {
     for (const m of list.filter((x) => dueForCheck(x, Date.now()))) {
       try {
         const s = await sendStatus(m.id);
-        set(applyStatus(list, m.id, s.state, s.error, Date.now(), looked.has(m.id), idleFrom.get(m.session)));
+        const sid = sidOf.get(m.session);
+        set(applyStatus(list, m.id, s.state, s.error, Date.now(), looked.has(m.id), idleFrom.get(m.session), !!sid && inQueue(chatQueue(sid), m)));
       } catch { /* 연결이 또 끊김 — 다음 차례에 */ }
     }
   } finally {
@@ -129,7 +134,7 @@ export function useOutbox(session: string, items: ChatItem[], sid?: string, idle
   const ids = mine.map((m) => m.id).join();
   useEffect(() => {
     set(settleOut(list, session, items, Date.now()));
-    if (sid) lookBack(session, sid, items);
+    if (sid) { sidOf.set(session, sid); lookBack(session, sid, items); }
   }, [session, sid, items, ids]);
   const itemsRef = useRef(items);
   itemsRef.current = items;

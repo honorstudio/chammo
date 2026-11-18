@@ -30,7 +30,8 @@ import { CalBlock } from '../team/CalBlock';
 import { TeamList } from '../team/TeamList';
 import { ProfilesCtx, type Profiles } from '../team/useProfiles';
 import { BottomSheet, SheetHostProvider } from './BottomSheet';
-import { IconBtn } from './kit';
+import { IconBtn, SkelRows } from './kit';
+import { remember, remembered } from './memo';
 import { BetaTag } from '../kit/BetaTag';
 import { PhoneTeamLocker } from './PhoneTeamLocker';
 import { pro } from '@pro/index';
@@ -53,9 +54,11 @@ const keep = (k: string, v: unknown) => { try { localStorage.setItem(k, JSON.str
 /** 팀 읽기 — 팀 탭을 보는 동안 4초, 아니면 30초(탭바 안 읽은 수만). 읽음은 이 폰 값과 같은 계정 다른 기기 값(feed.reads) 중 큰 것 */
 export function usePhoneTeam(api: TeamPhoneApi, active: boolean) {
   const [feed, setFeed] = useState<TeamFeed | null>(null);
+  // 한 번도 못 받았나 — 받기 전엔 뼈대, 못 받았으면 그 말(받기 전에 '아직 팀이 없어요'가 먼저 떴다, 2026-11-16)
+  const [failed, setFailed] = useState(false);
   const [local, setRead] = useState<Record<string, number>>(() => load(READ_KEY, {}));
   const read = useMemo(() => mergedRead(local, feed?.reads, feed?.view?.rooms ?? []), [local, feed]);
-  const refresh = useCallback(() => void api.feed().then(setFeed, () => {}), [api]);
+  const refresh = useCallback(() => void api.feed().then((f) => { setFeed(f); setFailed(false); }, () => setFailed(true)), [api]);
   useEffect(() => {
     refresh();
     const t = window.setInterval(refresh, active ? 4000 : 30_000);
@@ -72,13 +75,14 @@ export function usePhoneTeam(api: TeamPhoneApi, active: boolean) {
     const seq = feed && me ? pushRead(room, feed.items, feed.reads?.[room] ?? {}, me, document.visibilityState === 'visible') : null;
     if (seq) void api.read(room, seq).catch(() => {});
   };
-  return { feed, cs, rs, read, unread: unreadTotal([...rs, ...cs]), refresh, markRoom };
+  return { feed, failed, cs, rs, read, unread: unreadTotal([...rs, ...cs]), refresh, markRoom };
 }
 
 /** 프로필판 — 본 판 번호(rev)를 들고 4초마다. 실패는 아는 판 둔 채 다음에 다시(맥 재시작 한 번에 기본값으로 굳지 않게) */
 function usePhoneProfiles(api: TeamPhoneApi, teamId: string): Profiles {
-  const [board, setBoard] = useState<ProfileBoard | null>(null);
-  const known = useRef<ProfileBoard | null>(null);
+  // 지난번 판(메모리 기억, 팀마다) — 탭을 오갈 때마다 빈 판에서 다시 받아 계정 이름·기본 얼굴로 먼저 그렸다(2026-11-16)
+  const [board, setBoard] = useState<ProfileBoard | null>(() => (teamId ? remembered<ProfileBoard>(`teamProfiles:${teamId}`) ?? null : null));
+  const known = useRef<ProfileBoard | null>(board);
   const rev = useRef(0);
   const busy = useRef(false);
   // 지금 팀 — 팀을 바꾸는 사이 늦게 온 앞 팀 판은 버린다(데스크톱 useProfiles 와 같은 까닭)
@@ -93,13 +97,16 @@ function usePhoneProfiles(api: TeamPhoneApi, teamId: string): Profiles {
       if (!n || n === known.current) return;
       known.current = n;
       rev.current = n.rev;
+      remember(`teamProfiles:${teamId}`, n);
       setBoard(n);
     }, () => {}).finally(() => { busy.current = false; });
   }, [api, teamId]);
   useEffect(() => {
-    known.current = null;
-    rev.current = 0;
-    setBoard(null);
+    // 보이는 판은 기억한 것, 판 번호도 그 판 것(같으면 맥이 same 만 준다 — 바뀐 판만 새로 그린다)
+    const had = teamId ? remembered<ProfileBoard>(`teamProfiles:${teamId}`) ?? null : null;
+    known.current = had;
+    rev.current = had?.rev ?? 0;
+    setBoard(had);
     read();
     const t = window.setInterval(read, 4000);
     return () => window.clearInterval(t);
@@ -187,7 +194,7 @@ export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: Re
     setSheet(false);
     setSeg('chat');
     setSel(c.key);
-  }, [open, t.cs, opened]);
+  }, [open, t.rs, t.cs, opened]); // 방 목록(rs)이 늦게 와도 — 빠져 있으면 알림으로 연 단톡방이 안 열렸다(11-18)
   const [handed, setHanded] = useState<Record<string, string>>(() => load(HANDED_KEY, {}));
   const cur = [...t.rs, ...cs].find((c) => c.key === sel) ?? null;
   // 같은 말을 2분 안에 다시 보내면(실패 뒤 다시 누름) 같은 cid — 맥·서버가 한 번만 저장한다
@@ -262,7 +269,8 @@ export function PhoneTeam({ api, t, orch, open, kb }: { api: TeamPhoneApi; t: Re
         </div>
       )}
       <div className="m-team-body">
-        {!view?.joined ? <div className="tmx-none">{tr(`아직 팀이 없어요 — 위 '팀' 을 눌러 만들거나 초대 링크로 들어가요. 처음이면 ${machine()} 설정 > 계정에서 Chammo 계정에 로그인해요`, `No team yet — tap Team above to create one or join with an invite link. First time? Sign in to your Chammo account in ${machine()} Settings > Account`)}</div>
+        {!t.feed ? (t.failed ? <div className="tmx-none">{tr('아직 대화를 못 받아 왔어요', "Couldn't load your chats yet")}</div> : <div className="tmx-list" aria-busy="true"><SkelRows n={3} size={40} /></div>)
+          : !view?.joined ? <div className="tmx-none">{tr(`아직 팀이 없어요 — 위 '팀' 을 눌러 만들거나 초대 링크로 들어가요. 처음이면 ${machine()} 설정 > 계정에서 Chammo 계정에 로그인해요`, `No team yet — tap Team above to create one or join with an invite link. First time? Sign in to your Chammo account in ${machine()} Settings > Account`)}</div>
           : seg === 'chat' ? <div className="tmx-list"><TeamList convos={cs} rooms={t.rs} sel={null} onPick={(c: Convo) => setSel(c.key)} /></div>
           : seg === 'home' ? <div className="m-team-home"><TeamHome key={view.teamId} teamId={view.teamId} team={view.team} members={view.members} icon={profiles.board?.teamIcon || undefined} api={posts} Dialog={HomeSheet} homeApi={homeApi} sources={homeSources} phone
               calBlock={(_b, editing) => <CalBlock teamId={view.teamId} wide={false} editing={editing} api={api.cal} onOpen={() => setSeg('cal')} />} /></div>

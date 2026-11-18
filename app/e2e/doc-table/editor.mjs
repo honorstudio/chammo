@@ -5,7 +5,7 @@
 // node app/e2e/doc-table/editor.mjs — 맥 전용(swiftc). 창은 화면 밖, 클립보드는 끝나면 되돌린다. 실패하면 종료 1
 import { PA, click, ready, start, xy } from './kit.mjs';
 
-const { run, ok, done } = await start();
+const { run, ok, done, crash } = await start();
 const M = '?p=/E/misc.md';
 const key = (code, chars, mods) => ({ key: code, chars, ...(mods ? { mods } : {}) });
 const ESC = key(53, '\x1b'), ENTER = key(36, '\r'), BS = key(51, '\x7f'), SDOWN = key(125, '', ['shift']);
@@ -76,6 +76,8 @@ try {
     ok('옮긴 뒤에도 고른 채로', picked === '["둘","셋"]', picked);
     ok('md 목록이 둘로 안 갈림', JSON.parse(saved).includes('# 여러 블록\n\n- 둘\n- 셋\n\n첫 문단\n\n- 하나'), saved);
   }
+} catch (e) {
+  crash(e);
 } finally {
   done();
 }

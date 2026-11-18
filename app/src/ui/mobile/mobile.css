@@ -76,12 +76,13 @@ button { font: inherit; color: inherit; }
 .m-bubble { max-width: 86%; padding: 9px 13px; white-space: pre-wrap; word-break: break-word; font-size: 14.5px; }
 .m-me { align-self: flex-end; background: var(--accent); color: var(--accent-ink); border-radius: 16px 16px 4px 16px; }
 .m-ai { align-self: flex-start; background: var(--surface); border-radius: 16px 16px 16px 4px; box-shadow: 0 0 0 1px var(--line); }
-.m-pending { opacity: .6; }
-/* 못 보낸 말 — 말풍선 아래 이유 + 다시 보내기·지우기 */
-.m-out-failed { align-self: flex-end; max-width: 86%; display: flex; flex-direction: column; align-items: flex-end; }
-.m-out-failed .m-bubble { max-width: 100%; opacity: .75; }
-.m-out-row { display: flex; align-items: center; margin-right: -10px; }
-.m-out-why { font-size: 12.5px; color: var(--blocked); padding-right: 2px; }
+.m-out-wait { align-self: flex-end; max-width: 86%; display: flex; align-items: flex-end; gap: 6px; }
+.m-out-wait .m-bubble { max-width: 100%; min-width: 0; }
+.m-unread { flex: none; width: 6px; height: 6px; margin-bottom: 10px; border-radius: 50%; background: var(--text-3); opacity: .55; }
+/* 못 보낸 말·답을 못 받은 말 — 점 자리에 다시 보내기 아이콘(누르는 칸 44px, 말풍선 쪽으로 붙임) + 말풍선 살짝 흐리게. 빼기는 길게 누르기 메뉴(2026-11-17 사용자) */
+.m-icon.m-again { color: var(--danger-ink); margin: 0 -10px -6px -12px; }
+.m-icon.m-again svg { width: 18px; height: 18px; }
+.m-me.m-dim { opacity: .7; }
 .m-tools, .m-note { align-self: flex-start; font-size: 12.5px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .m-relay { align-self: center; max-width: 92%; font-size: 13px; padding: 8px 12px; border-radius: 12px; background: var(--surface-2); color: var(--text-2); white-space: pre-wrap; max-height: 8em; overflow: hidden; }
 
@@ -419,6 +420,9 @@ button { font: inherit; color: inherit; }
 .m-new { display: flex; flex-direction: column; gap: 8px; padding: 4px 0 8px; }
 .m-new .m-sect { margin: 8px 0 0; }
 .m-new-input { height: 44px; padding: 0 14px; border-radius: 12px; border: 0; box-shadow: var(--hair-in) var(--line); background: var(--surface); color: var(--text); font: inherit; font-size: 16px; }
+/* 새 참모 창 '키즈 참모' 스위치 줄 — 더보기 줄 스위치(.m-mo-row·.m-toggle)를 그대로, 창 안쪽이라 옆 여백 없이 */
+.m-new .m-new-kids { min-height: 44px; padding: 0 4px; }
+.m-new .m-new-kids b { flex: 1; font-weight: 500; }
 .m-new-row { display: flex; justify-content: flex-end; gap: 8px; }
 .m-home > .m-brand { align-self: flex-start; }
 .m-home { height: 100%; overflow-y: auto; padding: calc(env(safe-area-inset-top) + 24px) 16px calc(24px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 10px; }
@@ -625,6 +629,11 @@ a.m-file { color: inherit; text-decoration: none; }
 /* 참모 줄 마지막 말 자리 — 늘 한 줄 높이(받으면서 줄이 커져 목록이 들썩였다), 아직이면 회색 뼈대 */
 .m-orch-sub { min-height: 18px; }
 .m-skel-line { flex: 0 1 60%; height: 10px; border-radius: 5px; background: var(--surface-2); }
+/* 받기 전 뼈대 — 참모 바꾸기 시트를 이 폰에서 처음 열 때(고정·순서·프사를 아직 모름). 기본 순서·기본 색으로 그렸다가 바뀌던 것 대신(2026-11-16) */
+.m-orch-skel { flex: none; }
+.m-skel-name { flex: 0 1 40%; height: 14px; border-radius: 7px; background: var(--surface-2); }
+.m-av-skel { flex: none; display: inline-block; border-radius: 50%; background: var(--surface-2); }
+.m-far-pill.m-far-skel { width: 116px; background: var(--surface-2); border-color: transparent; }
 
 /* 첫 화면 스플래시 — 앱 바탕색에 파란 모찌가 숨쉬고, 다 받으면 150ms 에 걷힌다(2026-10-03 사용자). 홈 화면 앱 시작 그림과 같은 모양 */
 /* 첫 켜기 스플래시는 mobile.html 의 #boot-splash(JS 전부터 보이게 인라인 스타일) */
@@ -659,6 +668,17 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-menu-item.m-danger-ink { color: #d33b3b; }
 /* 길게 누르기 중 사파리 글 고르기·미리보기 막기 */
 .m-swipe-front { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+/* 길게 누르기(11-18 사용자 아이패드 "길게 누른 액션 느낌이 아니라 그냥 블록 지정") — 대상(data-hold: 밀기 줄·보관함 칸·말풍선·팀 파일)은
+   사파리 글 고르기·말풍선·끌어 올리기(패드) 없이 우리 메뉴만. 때는 domain/hold, 막기는 ui/mobile/hold */
+[data-hold] { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-user-drag: none; }
+[data-hold] img { -webkit-user-drag: none; -webkit-touch-callout: none; }
+/* 폰 화면 단추·탭·머리·탭바도 글 고르기 없음 — .m-chrome 은 MobileApp 이 html 에 단다(아이 화면 빼고). 읽을 글(파일 보기·팀 대화 글)은 그대로 */
+.m-chrome :is(button, [role="button"], [role="tab"], label, .m-dash-head, .m-tabbar) { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.m-chrome :is(input, textarea, [contenteditable="true"]) { -webkit-user-select: text; user-select: text; }
+/* 눌린 느낌 — PRESS_MS 가만히 누르면 살짝 작아지고 어두워짐, 메뉴가 뜨면 돌아온다. 돌아오는 움직임은 특정도 0(:where) — 칸마다 있던 transition 이 이긴다 */
+:where([data-hold], .m-swipe) { transition: transform .15s ease, filter .15s ease; }
+.m-holding { transform: scale(.97); filter: brightness(.94); transition: transform .33s cubic-bezier(.2, .8, .2, 1), filter .33s ease; }
+@media (prefers-reduced-motion: reduce) { .m-holding { transform: none; } }
 /* 화면 읽기(VoiceOver)만 닿는 메뉴 버튼 — 길게 누르기를 대신 */
 .m-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .m-sr:focus { position: absolute; z-index: calc(var(--z-base) + 2); top: 4px; right: 4px; width: auto; height: auto; margin: 0; padding: 6px 10px; clip: auto; border-radius: 8px; background: var(--surface); box-shadow: 0 0 0 2px var(--working); }
@@ -1273,6 +1293,10 @@ a.m-file { color: inherit; text-decoration: none; }
 .m-mo-right { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 6px; color: var(--text-3); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .m-mo-n { min-width: 22px; height: 22px; padding: 0 6px; box-sizing: border-box; border-radius: 11px; background: var(--working); color: #fff; font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
 .m-mo-static { cursor: default; }
+/* 새 세션 모델 줄 — 고르기 둘(손가락 44px), 좁으면 이름 밑으로 */
+.m-mo-model { flex-wrap: wrap; row-gap: 8px; padding-top: 12px; padding-bottom: 12px; }
+.m-mo-model > .m-mo-right { flex: 1 1 100%; justify-content: stretch; gap: 8px; overflow: visible; }
+.m-mo-model select { flex: 1 1 0; min-width: 0; min-height: 44px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); color: var(--text); font-size: 15px; }
 .m-al-sec { margin: 10px 2px 4px; color: var(--text-3); font-size: 13px; font-weight: 650; }
 .m-al-wait { display: flex; flex-direction: column; gap: 8px; }
 /* 답 기다림 한 장씩(시안 inbox-today V2P) — 넘기기·답한 직후엔 카드 안 누름을 잠깐 안 받는다(따닥이 다음 결제 승인에 떨어지지 않게) */
@@ -1352,3 +1376,62 @@ a.m-file { color: inherit; text-decoration: none; }
 /* 폰 DM 보관함(이 대화 파일) — 시트 본문 여백 안에 줄 묶음, 누르는 줄은 손가락 커서 없이 눌림만 */
 .m-room-files .m-team-lk { margin: 4px 0 16px; }
 .m-room-files .tmx-lk-row { width: 100%; color: inherit; background: none; text-align: left; font: inherit; }
+
+/* ── 패드(11-18 사용자 '추천대로' — 시안 docs/design-drafts/ipad-layout v1: 가로 A 맥 그대로 · 세로 B). 판정은 domain/padLayout(폭 700·높이 600, 3칸은 1000)
+   폰 화면엔 안 걸린다 — 전부 .m-tb 아래(.m-pad 는 이미 다른 칸이 쓴다). 띠 68 · 채팅 400 · 세로 판 min(520, 64%) — 시안의 76% 는 채팅을 너무 가렸다 */
+.m-tb { display: flex; background: var(--panel); }
+.m-tb > .m-tabpage { position: relative; left: auto; right: auto; flex: 1; min-width: 0; }
+.m-tb-rail { flex: none; width: 68px; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: calc(env(safe-area-inset-top) + 8px) 0 calc(env(safe-area-inset-bottom) + 10px); background: var(--panel); border-right: 1px solid var(--line); }
+.m-tb-faces { flex: 1; min-height: 0; width: 100%; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 2px 0 8px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
+.m-tb-faces > * { flex: none; }
+.m-tb-face { all: unset; box-sizing: border-box; position: relative; flex: none; width: 56px; height: 56px; display: flex; align-items: center; justify-content: center; border-radius: 16px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.m-tb-face.m-cur { background: var(--surface); box-shadow: 0 0 0 2px var(--fc, var(--accent)); }
+.m-tb-ib { all: unset; box-sizing: border-box; position: relative; flex: none; width: 48px; height: 48px; display: inline-flex; align-items: center; justify-content: center; border-radius: 14px; color: var(--text-2); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.m-tb-ib svg { width: 22px; height: 22px; }
+.m-tb-ib.m-on { background: var(--surface); color: var(--text); box-shadow: inset 0 0 0 1px var(--line); }
+.m-tb-new { color: var(--text-3); box-shadow: inset 0 0 0 1px var(--line); margin-top: 4px; }
+.m-tb-ib .tmx-ur { position: absolute; right: 2px; top: 2px; }
+@media (hover: hover) { .m-tb-face:not(.m-cur):hover, .m-tb-ib:not(.m-on):hover { background: color-mix(in srgb, var(--text) 6%, transparent); } }
+/* 3칸 — 위 막대(대시보드 머리줄 포털) · 채팅 · 스페이스 */
+.m-tb .m-space { display: grid; position: relative; height: 100%; min-height: 0; grid-template-columns: 400px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "top top" "chat dash"; }
+.m-tb-top { grid-area: top; min-width: 0; padding: env(safe-area-inset-top) 18px 0 18px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.m-tb-top .m-dash-head { min-height: 60px; }
+.m-tb-top .m-rt-btn.m-on { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.m-tb-chat { grid-area: chat; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--panel); border-right: 1px solid var(--line); }
+.m-tb-dash { grid-area: dash; position: relative; min-width: 0; min-height: 0; background: var(--panel); }
+.m-tb .m-dash { padding: 4px 24px calc(24px + env(safe-area-inset-bottom)); }
+.m-tb-view { position: absolute; inset: 0; z-index: calc(var(--z-base) + 2); background: var(--panel); overflow: auto; }
+.m-tb .m-bubble { font-size: 15px; }
+/* 세로 — 띠 + 채팅, 스페이스는 오른쪽에서 밀어 여는 판(위 막대 단추·Esc·덮개 눌러 닫기) */
+.m-tb-two .m-space { grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "chat"; }
+.m-tb-two .m-tb-chat { border-right: 0; }
+.m-tb-two .m-tb-dash { grid-area: chat; justify-self: end; width: min(520px, 64%); z-index: calc(var(--z-base) + 6); border-radius: 18px 0 0 18px; box-shadow: -16px 0 36px rgba(0, 0, 0, .14), -1px 0 0 var(--line); overflow: hidden; transform: translateX(105%); visibility: hidden; transition: transform .36s cubic-bezier(.22, 1, .36, 1), visibility 0s .36s; }
+.m-tb-two .m-tb-open > .m-tb-dash { transform: none; visibility: visible; transition-delay: 0s; }
+.m-tb-scrim { grid-area: chat; z-index: calc(var(--z-base) + 5); border: 0; padding: 0; background: rgba(0, 0, 0, .16); opacity: 0; pointer-events: none; transition: opacity .3s; }
+.m-tb-open > .m-tb-scrim { opacity: 1; pointer-events: auto; }
+@media (prefers-reduced-motion: reduce) { .m-tb-two .m-tb-dash, .m-tb-scrim { transition: none; } }
+/* 늘어나던 것(11-18 전수조사) — 시트는 가운데 600, 길게 누르기 메뉴는 440, 크게 보기 글은 800 줄, 팀·메모는 가운데 760 */
+.m-tb .m-pick { left: max(0px, calc(50% - 300px)); right: max(0px, calc(50% - 300px)); }
+.m-tb .m-menu { align-self: center; width: min(440px, calc(100% - 16px)); margin-left: 0; margin-right: 0; }
+.m-tb .m-view-body { padding-left: max(16px, calc(50% - 400px)); padding-right: max(16px, calc(50% - 400px)); }
+.m-tb-narrow { position: relative; height: 100%; max-width: 760px; margin: 0 auto; }
+/* 키즈 참모 보호자 채팅(아홉째 조각, ui/mobile/usePhoneKids) — 아이 화면 대화는 옅은 면 + 전체 테두리(왼쪽 색 띠 없음), 앱 줄은 작은 회색 */
+.m-kid-row { align-self: stretch; display: flex; }
+.m-kid { max-width: 86%; padding: 8px 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-2); }
+.m-kid-who { font-size: 12px; font-weight: 600; color: var(--text-3); margin-bottom: 2px; }
+.m-kid-text { font-size: 15px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.m-kid-app { display: flex; gap: 6px; min-width: 0; padding: 0 4px; font-size: 12px; color: var(--text-3); }
+.m-kid-app b { flex: none; font-weight: 600; }
+.m-kid-app span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* '오늘 만든 것' 한 줄 — 입력칸 위. 데스크톱과 같은 KidsTodayCard(.kt*), 폰은 손가락 44px */
+.m-kt { flex: none; margin: 0 12px 6px; padding: 2px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); font-size: 13px; color: var(--text-2); }
+.m-kt .kt { display: flex; flex-direction: column; min-width: 0; }
+.m-kt .kt-line { min-height: 44px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-kt .kt-works { margin: 0; padding: 0 0 6px; list-style: none; display: flex; flex-direction: column; }
+.m-kt .kt-works li { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.m-kt .kt-title { flex: none; min-height: 44px; padding: 0; border: 0; background: none; color: var(--text); font: inherit; font-weight: 600; }
+.m-kt .kt-steps { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); }
+.m-kt .kt-back { position: fixed; inset: 0; z-index: var(--z-modal); display: grid; place-items: center; padding: 16px; background: rgba(0, 0, 0, .5); }
+.m-kt .kt-frame { position: relative; width: min(900px, 100%); aspect-ratio: 1180 / 820; border-radius: 12px; overflow: hidden; background: #fff; }
+.m-kt .kt-frame iframe { width: 100%; height: 100%; border: 0; }
+.m-kt .kt-close { position: absolute; top: 6px; right: 6px; width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 50%; background: rgba(255, 255, 255, .85); color: #2b2b33; }

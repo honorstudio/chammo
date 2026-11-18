@@ -102,6 +102,8 @@ pub struct Seen {
     pub computers: Vec<(String, String)>,
     /// 내 계정 허용 폰(중계 기기 id, /v0/me/devices kind phone·status approved) — 폰 줄 확인용(11-09 2차)
     pub phones: Vec<String>,
+    /// 지금 중계 허브에 붙어 있는 내 계정 컴퓨터(/v0/me/self computers[].online — 허브 DO 가 아는 지금 값). 기기 관리 '붙음'(11-18 사용자: 켜진 아이맥이 꺼짐으로)
+    pub online: Vec<String>,
 }
 
 /// 판정(망 없음) — bound = 그 짝에 묶인 상대 기기 id
@@ -162,6 +164,14 @@ pub fn computers_of(v: &serde_json::Value) -> Vec<(String, String)> {
                 .filter_map(|c| Some((c["id"].as_str().filter(|d| valid_dev(d))?.to_string(), c["tunnelPub"].as_str().unwrap_or("").to_string())))
                 .collect()
         })
+        .unwrap_or_default()
+}
+
+/// /v0/me/self 응답 → 지금 허브에 붙은 컴퓨터 id(online 이 true 인 것만 — 대기 기기는 서버가 null 을 준다)
+pub fn online_of(v: &serde_json::Value) -> Vec<String> {
+    v["computers"]
+        .as_array()
+        .map(|a| a.iter().filter(|c| c["online"] == true).filter_map(|c| c["id"].as_str().filter(|d| valid_dev(d)).map(str::to_string)).collect())
         .unwrap_or_default()
 }
 
@@ -281,8 +291,8 @@ pub fn my_device() -> Option<String> {
     mine_of(&state()).map(|m| m.device)
 }
 
-/// (컴퓨터, 폰) — 둘 다 받아야 적는다
-fn fetch(st: &crate::team_relay::TeamState) -> Result<(Vec<(String, String)>, Vec<String>), String> {
+/// (컴퓨터, 폰, 붙은 컴퓨터) — 둘 다 받아야 적는다
+fn fetch(st: &crate::team_relay::TeamState) -> Result<(Vec<(String, String)>, Vec<String>, Vec<String>), String> {
     let k = crate::team_relay::device_keys(&crate::team_relay_keys::store(), st)?;
     let get = |path: &str| -> Result<serde_json::Value, String> {
         let (code, v) = crate::team_relay::call(&crate::team_relay::Curl, &st.server, &k, Some(&st.device_id), "GET", path, None)?;
@@ -291,7 +301,8 @@ fn fetch(st: &crate::team_relay::TeamState) -> Result<(Vec<(String, String)>, Ve
         }
         Ok(v)
     };
-    Ok((computers_of(&get("/v0/me/self")?), phones_of(&get("/v0/me/devices")?)))
+    let me = get("/v0/me/self")?;
+    Ok((computers_of(&me), phones_of(&get("/v0/me/devices")?), online_of(&me)))
 }
 
 /// 지금 나 + 서버 목록 — 1분 넘게 묵었으면 다시 묻는다(force = 1분 안 것도 다시, 짝지을 때). 실패는 15초에 한 번만 다시
@@ -314,7 +325,7 @@ fn current(force: bool) -> (Option<Mine>, Option<Seen>) {
     let mut g = CACHE.lock().unwrap_or_else(|e| e.into_inner());
     match got {
         // 물은 때(시작)로 적는다 — 늦게 끝난 옛 물음이 그 뒤 물음 결과를 덮지 않게(공격 리뷰 3)
-        Ok((computers, phones)) if g.seen.as_ref().is_none_or(|s| s.mine != me || s.at_ms <= now) => g.seen = Some(Seen { mine: me.clone(), at_ms: now, computers, phones }),
+        Ok((computers, phones, online)) if g.seen.as_ref().is_none_or(|s| s.mine != me || s.at_ms <= now) => g.seen = Some(Seen { mine: me.clone(), at_ms: now, computers, phones, online }),
         Ok(_) => {}
         Err(e) => crate::claude::log_out("peer", &format!("계정 확인(중계 /v0/me/self) 실패 — {e}")),
     }
@@ -520,6 +531,18 @@ pub fn forget() {
     g.recheck_ms = 0;
     drop(g);
     *SHARED.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// 기기 관리 '붙음' — 지금 허브에 붙은 내 계정 컴퓨터 id. 1분 캐시(current)라 화면이 5초마다 불러도 중계엔 1분에 한 번.
+/// 로그인 전·못 물었으면 None — 화면이 마지막 시각으로 가른다
+pub fn online_now() -> Option<Vec<String>> {
+    current(false).1.map(|s| s.online)
+}
+
+/// 망을 부를 수 있어 뒤 스레드에서(동기 명령은 메인 스레드라 화면이 멈춘다)
+#[tauri::command]
+pub async fn devices_online() -> Option<Vec<String>> {
+    tauri::async_runtime::spawn_blocking(online_now).await.ok().flatten()
 }
 
 #[cfg(test)]

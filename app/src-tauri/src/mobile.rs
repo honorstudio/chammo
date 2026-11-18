@@ -410,7 +410,7 @@ pub fn https_check_reason(code: Option<i32>, http: &str) -> Option<String> {
         (Some(c), _) => format!("curl {c}"),
         (None, _) => "curl ?".to_string(),
     };
-    Some(format!("{} ({what})", crate::i18n::tr("테일스케일 https 주소가 안 열려서 폰은 http 주소로 붙어요 — 폰 마이크는 안 돼요", "The Tailscale HTTPS address did not open, so the phone uses the plain HTTP address — the phone mic won't work")))
+    Some(format!("{} ({what})", crate::i18n::tr("테일스케일 https 주소가 안 열려서 폰·태블릿은 http 주소로 붙어요 — 마이크는 안 돼요", "The Tailscale HTTPS address did not open, so phones and tablets use the plain HTTP address — the mic won't work")))
 }
 
 fn https_check(dns: &str, ip: Ipv4Addr) -> Option<String> {
@@ -724,7 +724,7 @@ fn start_locked<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), Stri
     // 진짜 앱이 '다른 serve'로 보고 물러나 사용자 폰이 못 붙었다(2026-10-03). 시험 폴더면 serve 는 아예 안 건드린다(127.0.0.1:<포트>로 바로)
     let mut https_fix = None;
     let (https, https_note) = if let Some(e) = loopback_err {
-        (false, Some(format!("{} ({e})", crate::i18n::tr("다른 프로그램이 이 포트를 쓰고 있어 테일스케일 https 는 안 걸었어요 — 폰은 http 주소로 붙어요", "Another program is using this port, so Tailscale HTTPS was not set up — the phone uses the plain HTTP address"))))
+        (false, Some(format!("{} ({e})", crate::i18n::tr("다른 프로그램이 이 포트를 쓰고 있어 테일스케일 https 는 안 걸었어요 — 폰·태블릿은 http 주소로 붙어요", "Another program is using this port, so Tailscale HTTPS was not set up — phones and tablets use the plain HTTP address"))))
     } else if let Some(skip) = https_skip(&t, serve_allowed()) {
         https_fix = skip.fix_url();
         (false, Some(skip.note()))
@@ -824,7 +824,7 @@ pub(crate) fn tailscale_installed() -> bool {
 
 /// 테일스케일이 없을 때 화면에 남길 한 줄 — 오류가 아니라 중계 길 안내(계정이 있으면 화면이 안 띄운다)
 fn no_tailscale_note() -> String {
-    crate::i18n::tr("Chammo 계정에 로그인하면 폰이 어디서나 붙어요.", "Sign in to your Chammo account and your phone connects from anywhere.").to_string()
+    crate::i18n::tr("Chammo 계정에 로그인하면 폰·태블릿이 어디서나 붙어요.", "Sign in to your Chammo account and your phone or tablet connects from anywhere.").to_string()
 }
 
 /// 살려 두기 고리가 바깥에 묻는 것 — 시험은 가짜로 갈아 끼운다
@@ -1049,7 +1049,7 @@ pub struct EntryQr {
 #[tauri::command]
 pub fn phone_entry_qr() -> Result<EntryQr, String> {
     let st = crate::team_relay::load_state(crate::config::data_dir());
-    let web = crate::team_relay::phone_web(&st).ok_or_else(|| crate::i18n::tr("폰 입구 주소가 없어요", "No phone entry address").to_string())?;
+    let web = crate::team_relay::phone_web(&st).ok_or_else(|| crate::i18n::tr("폰·태블릿 입구 주소가 없어요", "No phone or tablet entry address").to_string())?;
     let url = crate::phone_relay::entry_url(&web);
     Ok(EntryQr { qr_svg: qr_svg(&url), url })
 }
@@ -1162,6 +1162,10 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
             "hqDir": crate::config::fwd(&self.hq_dir()),
             // 붙은 컴퓨터 — 폰 글이 '맥'/'PC'를 고른다(윈도우 PC 에 붙은 폰에도 '맥에서 열어 주세요'가 떴다, 2026-10-05)
             "os": std::env::consts::OS,
+            // 설정 키즈 모드 — 폰 새 참모 창이 '키즈 참모' 스위치를 보일지
+            "kids": c.features.kids,
+            // 키즈 참모 키 — 폰 길게 누르기 메뉴 '아이 화면으로'(키즈 모드가 꺼져 있으면 빈 목록)
+            "kidsOrchs": if c.features.kids { crate::kids::read_in(crate::config::data_dir()).orchs.into_keys().collect::<Vec<_>>() } else { vec![] },
             // 폰 프로필 창의 '기본' 목소리 — 설정이 Supertonic 이 아니면 null(참모마다 목소리를 못 바꾼다). 명령 원문은 안 낸다
             "voiceBase": crate::tts::base_voice(&home, &c.tts_command),
             // 이 컴퓨터 이름 — 폰 기기 줄 첫 단추가 '이 맥' 대신 이 이름(짝지은 기기들 이름과 나란히, 2026-10-23 사용자 "무슨 뜻인지 안 읽혀")
@@ -1182,10 +1186,42 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
     fn resume(&self, cwd: &str, session_id: &str, id: &str) -> Result<String, String> {
         crate::claude::resume_blocking(cwd, session_id, (!id.is_empty()).then_some(id))
     }
+    fn kids_say(&self, key: &str, text: &str, cid: &str) -> Result<(), String> {
+        let (id, msg) = crate::kids_pad::say_prepare(key, text, cid)?;
+        self.send(&id, &msg)
+    }
+    fn kids_log(&self, key: &str) -> Vec<crate::kids_wire::Row> {
+        crate::kids_pad::log_blocking(key)
+    }
+    fn kids_voice(&self) -> bool {
+        let ok = crate::kids_voice::stt_ready() && crate::kids_voice::tts_ready();
+        if ok {
+            crate::kids_voice::warm();
+        }
+        ok
+    }
+    fn kids_peek(&self, wav: &[u8], cid: &str) -> Result<(String, bool), String> {
+        crate::kids_voice::peek(wav, cid)
+    }
+    fn kids_hear(&self, key: &str, wav: &[u8], cid: &str) -> Result<String, String> {
+        crate::kids_voice::hear(key, wav, cid, |id, msg| self.send(id, msg))
+    }
+    fn kids_clip(&self, key: &str, cid: &str, n: usize) -> Result<Option<Vec<u8>>, ()> {
+        crate::kids_voice::clip(key, cid, n)
+    }
+    fn kids_pre(&self, i: usize) -> Option<Vec<u8>> {
+        // 기다리지 않는다 — 아직이면 404 not ready 로 바로(만들기는 뒤에서 한 번). 기다리면 20개 요청이 중계 일꾼을 다 잡는다(11-18)
+        crate::kids_voice::pre_clip(i)
+    }
+    fn kid_start(&self, key: &str) {
+        crate::kids::start_bg(key.to_string());
+    }
     fn spawn(&self, cwd: &str, name: &str) -> Result<String, String> {
         // 데스크톱 새 참모와 같은 첫 지시(자기소개, domain/orchIntro — 글이 같은지 orchIntro.test 가 대조) — 질문으로 끝나면 결정 대기로 뜬다
         let prompt = crate::i18n::tr("[앱] 안녕! 네 이름과 맡은 일로 2~3줄 자기소개해 줘 — 누구고, 뭘 맡았고, 이런 걸 시키면 된다는 예 하나. 영어 직함 없이 우리말로, 도구는 쓰지 말고, 질문으로 끝내지 마.", "[앱] Hi! Introduce yourself in 2-3 lines from your name and role — who you are, what you handle, and one example of what to ask you. Write in English, don't use tools, and don't end with a question.");
-        crate::claude::spawn_blocking(cwd, name, prompt)
+        // 키즈 참모로 만들었으면 키즈 판 첫 인사(kids_life::intro, 데스크톱 domain/orchIntro 와 같은 글)
+        let kid = crate::kids_life::intro_for(name);
+        crate::claude::spawn_blocking(cwd, name, kid.as_deref().unwrap_or(prompt))
     }
     fn push_key(&self) -> Result<String, String> {
         crate::push::vapid(crate::config::data_dir()).map(|v| v.public_b64())
@@ -1323,6 +1359,18 @@ impl<R: tauri::Runtime> Backend for MacBackend<R> {
         let r = crate::accounts_cmd::phone_auto_on(on);
         self.accounts_changed();
         r.and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+    }
+    fn default_model(&self) -> serde_json::Value {
+        crate::default_model::current_view()
+    }
+    fn set_default_model(&self, model: &str, effort: &str) -> Result<(), String> {
+        crate::config::set_default_model(model, effort)?;
+        use tauri::Manager;
+        // 메인 화면 설정도 파일 값으로 — 안 그러면 맥 설정 화면을 저장할 때 옛 값으로 덮는다(메뉴 참모 배지와 같은 길, bubble_menu)
+        if let Some(w) = self.app.get_webview_window("main") {
+            let _ = w.eval(r#"window.__appctl && window.__appctl({"action":"config","arg":"reload"})"#);
+        }
+        Ok(())
     }
     fn voice_on(&self) -> bool {
         std::fs::read_to_string(self.data_dir().join("voice.json")).is_ok_and(|t| t.contains("\"on\":true"))

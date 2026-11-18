@@ -488,7 +488,7 @@ def _lines(project):
 
 def lesson_env():
     return lesson_skill.Env(LESSONS, DEV, LOG, T, add_lesson, append, now,
-                            me=os.environ.get('CLAUDE_CODE_SESSION_ID'), lesson_max=LESSON_MAX)
+                            me=os.environ.get('CLAUDE_CODE_SESSION_ID'), lesson_max=LESSON_MAX, hq=HQ)
 
 
 def lessons_of(project):
@@ -543,13 +543,14 @@ def mirror_lesson(project, line):
     root = os.path.join(DEV, project)
     if not os.path.isdir(root):
         return False
+    path = lesson_skill.local_md(DEV, project, HQ)  # HQ 가 곧 이 프로젝트면 .claude/worktrees/ 아래 — 참모 턴엔 안 실리게
     if repo_kind(root) != 'none':
         try:
-            if subprocess.run(['git', '-C', root, 'check-ignore', '-q', 'CLAUDE.local.md'], capture_output=True).returncode != 0:
+            if subprocess.run(['git', '-C', root, 'check-ignore', '-q', os.path.relpath(path, root)], capture_output=True).returncode != 0:
                 return False
         except OSError:  # no git on this PC (Windows with Python only) — can't tell it's ignored, so don't write
             return False
-    path = os.path.join(root, 'CLAUDE.local.md')
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     body = open(path, encoding='utf-8').read() if os.path.exists(path) else ''
     write_kept(path, with_lesson(body, T('## 교훈', '## Lessons'), line,
                                  T('(확인된 것 — 같은 벽에 두 번 안 박게)', '(confirmed — so nobody hits the same wall twice)')))

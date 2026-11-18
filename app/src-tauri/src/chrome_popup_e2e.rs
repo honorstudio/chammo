@@ -1,6 +1,7 @@
 //! 크롬 자체 창(패스키) 알아보기를 진짜 크롬 베타로 끝에서 끝까지 — 평소엔 안 돈다(창이 뜨는 맥 화면이 있어야 한다).
 //! `CHAMMO_HOME=<빈 시험 폴더> cargo test chrome_popup_e2e -- --ignored --nocapture --test-threads=1`
-//! 창 자리는 CHAMMO_TEST_WIN_POS=x,y(기본 -2850,1000 = 이 맥의 가짜 화면 'Chammo agents') — 사용자 화면에 안 띄운다.
+//! 창 자리는 CHAMMO_TEST_WIN_POS=x,y 로 꼭 준다(지금 떠 있는 가짜 화면 'Chammo agents' 안 좌표) — 박아 둔 기본 좌표는 화면 배치가 바뀌면 사람 화면에 떴다.
+//! 화면 밖 좌표는 안 된다: 크롬이 --window-position 을 보이는 화면 안으로 끌어온다
 //! 세션 크롬처럼 앱을 가린(⌘H) 채로 localhost 페이지가 패스키를 부르면 → 앱 감시(watch_popups)가 popup 을 내고, 요청을 끊으면 내린다
 use super::*;
 use std::io::{Read, Write};
@@ -9,6 +10,11 @@ const BETA: &str = "/Applications/Google Chrome Beta.app/Contents/MacOS/Google C
 const PAGE: &str = "<!doctype html><title>pk</title><button id=b style='position:fixed;left:0;top:0;width:200px;height:100px'>get</button>\
 <script>b.onclick=()=>{window.r='pending';window.ac=new AbortController();navigator.credentials.get({signal:window.ac.signal,publicKey:{challenge:new Uint8Array(32),rpId:'localhost',userVerification:'preferred',timeout:120000}})\
 .then(()=>{window.r='ok'},e=>{window.r='err:'+e.name})}</script>";
+
+/// 크롬 창 자리 — 없으면 크롬을 안 띄우고 멈춘다(사람 화면에 안 뜨게)
+fn win_pos() -> String {
+    std::env::var("CHAMMO_TEST_WIN_POS").expect("CHAMMO_TEST_WIN_POS=x,y — 가짜 화면(Chammo agents) 안 좌표를 줘. 기본 좌표로 사람 화면에 띄우지 않는다")
+}
 
 struct Chrome {
     child: std::process::Child,
@@ -56,7 +62,7 @@ fn chrome_popup_e2e() {
     let dir = std::env::temp_dir().join(format!("chammo-pk-e2e-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let pos = std::env::var("CHAMMO_TEST_WIN_POS").unwrap_or_else(|_| "-2850,1000".into());
+    let pos = win_pos();
     // 세션 크롬과 같은 키체인 인자 — 패스키 창은 이 인자와 무관하다(실측)지만 같은 조건으로
     let child = crate::platform::command(BETA)
         .args(["--remote-debugging-port=0", "--no-first-run", "--no-default-browser-check", "--use-mock-keychain", "--password-store=basic", "--test-type", "--window-size=1200,800", "about:blank"])
@@ -131,7 +137,7 @@ fn peek_cross_display_e2e() {
     let dir = std::env::temp_dir().join(format!("chammo-xd-e2e-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let pos = std::env::var("CHAMMO_TEST_WIN_POS").unwrap_or_else(|_| "-2886,1465".into());
+    let pos = win_pos();
     let child = crate::platform::command(BETA)
         .args(["--remote-debugging-port=0", "--no-first-run", "--no-default-browser-check", "--use-mock-keychain", "--password-store=basic", "--test-type", "--window-size=1400,836", "about:blank"])
         .arg(format!("--window-position={pos}"))

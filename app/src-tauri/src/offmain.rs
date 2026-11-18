@@ -25,7 +25,7 @@ pub const READ: &[&str] = &[
     // 화면이 넘긴 아무 경로·설정에 적힌 경로
     "open_target", "sheet_open", "tts_warm", "agent_drop_files", "read_memos",
     // portable-pty 가 부르는 스레드에서 cwd(devRoot 프로젝트)를 is_dir 로 본다
-    "pty_open",
+    "pty_open", "shell_open",
     // 모드 목록 — 사용자가 더한 모드 폴더(scripts/app mode add)를 stat·읽기
     "mode_list", "mode_state", "rebuild_menu",
     // Craft 독 — 앱 번들(devRoot 에 빌드한 판일 수 있다) Info.plist stat, 최근 파일(사용자 문서) exists

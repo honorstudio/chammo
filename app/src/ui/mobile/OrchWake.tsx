@@ -80,11 +80,11 @@ export function useWake(live: Session[], onArrive: (id: string) => void) {
       if ((await respawnOrch(r.off.sessionId)).already) { setNote({ text: wakeAlreadyText(), error: false }); window.dispatchEvent(new Event(OFF_REFRESH)); }
     } catch (e) { setWoke(null); fail(e, 'wake'); }
   };
-  const make = async (nick: string, role = ''): Promise<boolean> => {
+  const make = async (nick: string, role = '', kid: { child: string } | null = null): Promise<boolean> => {
     if (woke) return false;
     setNote(null);
     try {
-      const name = await spawnOrch(nick, role);
+      const name = await spawnOrch(nick, role, kid);
       setWoke({ name, at: Date.now() });
       return true;
     } catch (e) {
@@ -151,15 +151,18 @@ export function OffOrchList({ rows, orchs, wake, swipe }: { rows: HomeRow[]; orc
 }
 
 /** 새 참모 이름 짓기 — 별명만(무슨 일을 시킬지로). 겹치면 바로 알린다(서버도 다시 본다) */
-export function NewOrchForm({ title, taken, wake, onDone }: { title: string; taken: string[]; wake: Wake; onDone: () => void }) {
+export function NewOrchForm({ title, taken, wake, onDone, kids = false }: { title: string; taken: string[]; wake: Wake; onDone: () => void; kids?: boolean }) {
   const [v, setV] = useState('');
+  // 키즈 참모로 만들기 — 맥 설정 키즈 모드가 켜졌을 때만(데스크톱 NameNew 와 같은 칸)
+  const [kidOn, setKidOn] = useState(false);
+  const [child, setChild] = useState('');
   const [role, setRole] = useState(''); // 맡은 일 — 이름과 따로, 비워도 된다(2026-10-04)
   const [sending, setSending] = useState(false);
   const problem = v.trim() ? nickProblem(v, taken) : null;
   const submit = async () => {
     if (!v.trim() || problem || sending) return;
     setSending(true);
-    const ok = await wake.make(v, role);
+    const ok = await wake.make(v, role, kids && kidOn ? { child: child.trim() } : null);
     setSending(false);
     if (ok) onDone();
   };
@@ -169,6 +172,15 @@ export function NewOrchForm({ title, taken, wake, onDone }: { title: string; tak
       <input id="m-new-nick" className="m-new-input" value={v} maxLength={24} autoFocus enterKeyHint="done" placeholder={tr('부를 이름 — 예: 뽀삐, 개발', 'A name — e.g. Poppy, Dev')} onChange={(e) => setV(e.target.value)} />
       {problem && <div className="m-error">{problem}</div>}
       <PhoneRoleField value={role} onChange={setRole} />
+      {kids && (
+        <>
+          <button type="button" role="switch" aria-checked={kidOn} className="m-mo-row m-new-kids" onClick={() => setKidOn((x) => !x)}>
+            <b>{tr('키즈 참모', 'Kids assistant')}</b>
+            <span className={kidOn ? 'm-toggle m-on' : 'm-toggle'} aria-hidden="true"><i /></span>
+          </button>
+          {kidOn && <input className="m-new-input" value={child} maxLength={24} enterKeyHint="done" aria-label={tr('아이 이름', "Child's name")} placeholder={tr('아이 이름', "Child's name")} onChange={(e) => setChild(e.target.value)} />}
+        </>
+      )}
       <div className="m-new-row">
         <button type="button" className="m-btn" onClick={onDone}>{tr('취소', 'Cancel')}</button>
         <button type="submit" className="m-send" disabled={!v.trim() || !!problem || sending}>{tr('만들기', 'Create')}</button>

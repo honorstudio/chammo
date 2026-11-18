@@ -44,7 +44,7 @@ describe('기능 켜기', () => {
   });
 
   it('꺼 둔 기능의 단축키는 막는다', () => {
-    const off = { office: false, gacha: false, review: false, voice: false, autoRevive: false, autoTidy: false, agentView: false, computerUse: false, usagePing: false, craftBasics: false, bubble: false, bubbleDesk: false, git: false, animation: 'auto' as const };
+    const off = { office: false, gacha: false, review: false, voice: false, autoRevive: false, autoTidy: false, chiefCompact: false, agentView: false, computerUse: false, usagePing: false, craftBasics: false, bubble: false, bubbleDesk: false, git: false, animation: 'auto' as const, kids: false };
     expect(allowed({ type: 'goto', to: 'office' }, off)).toBe(false);
     expect(allowed({ type: 'goto', to: 'review' }, off)).toBe(false);
     expect(allowed({ type: 'goto', to: 'all' }, off)).toBe(true);

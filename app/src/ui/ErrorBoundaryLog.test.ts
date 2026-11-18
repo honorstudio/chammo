@@ -2,10 +2,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const calls: string[] = [];
+const extra: [string | undefined, string | undefined][] = [];
 const cfg: { bubble: boolean | null } = { bubble: null };
 vi.mock('../data/tauri', () => ({
   bumpUsage: () => {},
-  uiCrash: (m: string) => { calls.push(m); return Promise.reject(new Error('폰엔 앱 명령이 없다')); },
+  uiCrash: (m: string, name?: string, stack?: string) => { calls.push(m); extra.push([name, stack]); return Promise.reject(new Error('폰엔 앱 명령이 없다')); },
   readConfig: () => (cfg.bubble === null ? Promise.reject(new Error('폰엔 앱 명령이 없다')) : Promise.resolve({ features: { bubble: cfg.bubble } })),
   bubbleRescue: () => Promise.resolve(),
 }));
@@ -13,7 +14,7 @@ vi.mock('../data/tauri', () => ({
 const { ErrorBoundary } = await import('./ErrorBoundary');
 
 describe('ErrorBoundary — 멈춘 걸 앱 기록에 남긴다', () => {
-  beforeEach(() => { calls.length = 0; cfg.bubble = null; });
+  beforeEach(() => { calls.length = 0; extra.length = 0; cfg.bubble = null; });
   it('잡은 오류 글을 uiCrash 로 넘긴다', () => {
     new ErrorBoundary({ children: null }).componentDidCatch(new ReferenceError("Cannot access 'ko' before initialization."));
     expect(calls).toEqual(["Cannot access 'ko' before initialization."]);
@@ -21,6 +22,13 @@ describe('ErrorBoundary — 멈춘 걸 앱 기록에 남긴다', () => {
   it('Error 가 아닌 것도 글로', () => {
     new ErrorBoundary({ children: null }).componentDidCatch('문자열 던짐');
     expect(calls).toEqual(['문자열 던짐']);
+    expect(extra).toEqual([[undefined, undefined]]);
+  });
+  it('오류 보고용으로 오류 이름·스택을 같이 넘긴다(Rust 가 우리 번들 줄칸만 고른다, ADR 0033)', () => {
+    const e = new TypeError('x');
+    e.stack = 'render@tauri://localhost/assets/index-A.js:1:2';
+    new ErrorBoundary({ children: null }).componentDidCatch(e);
+    expect(extra).toEqual([['TypeError', 'render@tauri://localhost/assets/index-A.js:1:2']]);
   });
   it('기록 명령이 실패해도(폰·브라우저) 던지지 않는다', async () => {
     expect(() => new ErrorBoundary({ children: null }).componentDidCatch(new Error('x'))).not.toThrow();

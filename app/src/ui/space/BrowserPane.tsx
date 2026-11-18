@@ -38,7 +38,7 @@ export function BrowserPane({ live, name, onHide, onClosed, openMenu }: { live: 
   const stage = useRef<HTMLDivElement>(null);
   const profile = live.profile;
   const api = useMemo(() => ({
-    place: (rect: unknown, vh: number, visible: boolean) => invoke<string>('browser_pane_place', { profile, rect, vh, visible }),
+    place: (rect: unknown, vh: number, visible: boolean, covered: boolean) => invoke<string>('browser_pane_place', { profile, rect, vh, visible, covered }),
     still: () => invoke<string>('browser_pane_still', { profile }),
     detach: () => void invoke('browser_pane_detach', { profile }).catch(() => {}),
   }), [profile]);

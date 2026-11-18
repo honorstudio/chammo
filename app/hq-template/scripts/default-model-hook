@@ -1,0 +1,83 @@
+#!/bin/sh
+''':'
+# sh 로 읽으면 맞는 파이썬을 골라 다시 실행한다 — 윈도우의 python3 는 스토어 대리 실행기(종료 49)라 py -3 → python 중 도는 것
+[ "$OS" = Windows_NT ] || exec python3 "$0" "$@"
+for p in "py -3" python; do $p -c '' >/dev/null 2>&1 && exec $p "$0" "$@"; done
+exit 0  # 파이썬이 없으면 훅은 아무것도 안 한다(명령은 그대로 돈다)
+':'''
+__doc__ = """PreToolUse(Bash) hook — when the assistant starts a session with `claude --bg`, add the app's "new session default" model and effort
+(Settings > assistant: config.json defaultModel·defaultEffort). Empty = follow Claude Code's own default. Flags already given are kept.
+Only `claude --bg` at a command position is touched (not text inside a message), and only the options before ` -- `.
+
+PreToolUse(Bash) 훅 — 참모가 `claude --bg` 로 세션을 띄울 때 앱 설정의 '새 세션 기본 모델·노력값'을 붙인다(default_model.rs 와 같은 규칙).
+사용자 전역 ~/.claude/settings.json 은 안 바꾼다. 비면 아무것도 안 한다. 이미 준 --model·--effort 는 그대로."""
+import json, os, re, sys
+for _io in (sys.stdin, sys.stdout, sys.stderr):  # 윈도우 파이썬 기본은 cp949 — 한글 지시가 든 명령을 UTF-8 로
+    if _io and hasattr(_io, 'reconfigure') and (_io.encoding or '').lower().replace('-', '') != 'utf8':
+        _io.reconfigure(encoding='utf-8', errors='replace')
+
+MODELS = ('opus', 'sonnet', 'haiku', 'fable')
+EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')
+# 명령 자리(맨 앞·줄바꿈·; & | ( 뒤, then/do 뒤) + 앞에 붙은 VAR=값 + (경로/)claude + --bg
+CALL = re.compile(r'((?:^|[\n;&|(]|\bthen|\bdo)[ \t]*(?:\w+=\S*[ \t]+)*(?:[\w./~-]*/)?claude[ \t]+--bg)(?=[ \t\n]|$)')
+END = re.compile(r'[\n;&|]| -- ')
+
+
+def data_dir():
+    """Data folder — same rule as the app: $CHAMMO_HOME -> ~/.chammo (-> ~/.honor-orchestrator for old installs)"""
+    env = os.environ.get('CHAMMO_HOME', '').strip()
+    if env:
+        return os.path.expanduser(env)
+    home = os.path.expanduser('~')
+    new, old = os.path.join(home, '.chammo'), os.path.join(home, '.honor-orchestrator')
+    return old if not os.path.isdir(new) and os.path.isdir(old) else new
+
+
+def defaults():
+    try:
+        with open(os.path.join(data_dir(), 'config.json'), encoding='utf-8') as f:
+            c = json.load(f)
+    except (OSError, ValueError):
+        return '', ''
+    c = c if isinstance(c, dict) else {}
+    m = str(c.get('defaultModel') or '').strip().lower()
+    e = str(c.get('defaultEffort') or '').strip().lower()
+    return (m if m in MODELS else ''), (e if e in EFFORTS else '')
+
+
+def rewrite(cmd, model, effort):
+    out, at = [], 0
+    for m in CALL.finditer(cmd):
+        rest = cmd[m.end():]
+        stop = END.search(rest)
+        opts = ' ' + (rest[:stop.start()] if stop else rest) + ' '
+        add = [f'--{k} {v}' for k, v in (('model', model), ('effort', effort)) if v and not re.search(rf'\s--{k}(=|\s)', opts)]
+        out.append(cmd[at:m.end()])
+        if add:
+            out.append(' ' + ' '.join(add))
+        at = m.end()
+    out.append(cmd[at:])
+    return ''.join(out)
+
+
+def main():
+    try:
+        d = json.load(sys.stdin)
+    except ValueError:
+        return
+    if d.get('tool_name') != 'Bash':
+        return
+    inp = d.get('tool_input') or {}
+    cmd = inp.get('command')
+    if not isinstance(cmd, str) or '--bg' not in cmd:
+        return
+    model, effort = defaults()
+    if not (model or effort):
+        return
+    new = rewrite(cmd, model, effort)
+    if new != cmd:
+        print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'updatedInput': {**inp, 'command': new}}}, ensure_ascii=False))
+
+
+if __name__ == '__main__':
+    main()

@@ -13,7 +13,9 @@ import { SwipeRow } from './SwipeRow';
 const hm = (ts: string) => { const d = new Date(ts); return Number.isNaN(d.getTime()) ? '' : `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 const titleOf = (l: LockerLink) => { const t = linkTitle(l); return t.title || `${t.host}${t.rest}`; };
 
-export function PhoneLinks({ owner, links, whoOf, onChanged, onSay }: {
+export function PhoneLinks({ owner, links, loaded = true, whoOf, onChanged, onSay }: {
+  /** 목록을 받았나 — 모르면 '없어요' 대신 빈 칸 */
+  loaded?: boolean;
   owner: string;
   /** 모은 것 + 보여 준 주소(mergeLinks) */
   links: LockerLink[];
@@ -69,7 +71,7 @@ export function PhoneLinks({ owner, links, whoOf, onChanged, onSay }: {
           inputMode="url" autoCapitalize="off" autoCorrect="off" spellCheck={false} />
         <IconBtn label={tr('넣기', 'Add')} disabled={busy || !text.trim()} onClick={() => void add()}><IconPlus /></IconBtn>
       </form>
-      {links.length === 0 ? <p className="m-muted m-sm">{tr('아직 주고받은 링크가 없어요 — 대화에 주소가 오가면 여기 모여요', 'No links yet — addresses from your chats gather here')}</p> : logDays(links).map((g) => (
+      {links.length === 0 && !loaded ? <div className="m-lk-list" aria-busy="true" /> : links.length === 0 ? <p className="m-muted m-sm">{tr('아직 주고받은 링크가 없어요 — 대화에 주소가 오가면 여기 모여요', 'No links yet — addresses from your chats gather here')}</p> : logDays(links).map((g) => (
         <section key={g.label}>
           <div className="m-sect">{g.label}</div>
           <div className="m-lkl-list">{g.items.map(row)}</div>

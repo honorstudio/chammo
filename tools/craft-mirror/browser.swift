@@ -53,6 +53,7 @@ final class BrowserMirror: NSObject, SCStreamOutput, SCStreamDelegate {
     var scale: CGFloat = 2
     var paused = false
     var hostHidden = true
+    var covered = false   // 웹 팝오버가 칸을 덮음 — 뷰는 숨기되(팝오버가 위에 보이게) 받기는 계속, 웹이 still 로 그 자리에 갈아 끼운다(11-18 사용자)
     var picking = false
     var occObs: NSObjectProtocol?
     var liveAt: CFTimeInterval = 0  // 받기를 (다시) 켠 때 — 그 뒤 한 장이라도 왔나(gotFrame)
@@ -77,7 +78,7 @@ final class BrowserMirror: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     /// 칸 자리(웹뷰 왼쪽 위 기준 CSS 점)·보임 + 받을 창 자리·툴바 높이 — 웹이 바뀔 때·0.5초마다 알려 준다
-    func place(_ r: CGRect, vh: CGFloat, visible: Bool, win: CGRect, top: CGFloat) {
+    func place(_ r: CGRect, vh: CGFloat, visible: Bool, covered: Bool = false, win: CGRect, top: CGFloat) {
         guard let host = view.superview else { return }
         let web = Mirror.findWeb(host) ?? host
         let wf = web === host ? host.bounds : web.frame
@@ -87,6 +88,7 @@ final class BrowserMirror: NSObject, SCStreamOutput, SCStreamDelegate {
         let f = host.backingAlignedRect(NSRect(x: wf.minX + r.minX, y: y, width: max(0, r.width), height: max(0, r.height)), options: .alignAllEdgesOutward)
         if f != view.frame { view.frame = f }
         hostHidden = !visible || r.width < 40 || r.height < 40
+        self.covered = hostHidden && covered && r.width >= 40 && r.height >= 40
         if hostHidden { view.isHidden = true } else if view.layer?.contents != nil { view.isHidden = false }
         if status == 2 { return }
         if win.width > 50, win.height > top + 50 {
@@ -190,10 +192,10 @@ final class BrowserMirror: NSObject, SCStreamOutput, SCStreamDelegate {
         DispatchQueue.main.async { if self.stream === s { self.status = 4; self.stream = nil } }
     }
 
-    /// 안 보는 동안(칸 숨김·앱 창 가려짐) 받기를 멈춘다 — 부하 0. 다시 열면 첫 그림까지 0.06초 안(spike A5)
+    /// 안 보는 동안(칸 숨김·앱 창 가려짐) 받기를 멈춘다 — 부하 0. 다시 열면 첫 그림까지 0.06초 안(spike A5). 덮였을 땐 계속 받는다(웹이 still 로 그린다)
     func updatePause() {
         guard let s = stream, let w = window else { return }
-        let off = !w.occlusionState.contains(.visible) || hostHidden
+        let off = !w.occlusionState.contains(.visible) || (hostHidden && !covered)
         if off && !paused {
             paused = true
             s.stopCapture(completionHandler: nil)
@@ -217,13 +219,16 @@ final class BrowserMirror: NSObject, SCStreamOutput, SCStreamDelegate {
         return (try? data.write(to: URL(fileURLWithPath: path))) != nil
     }
 
+    /// 덮인 동안 still 이 초당 5번 — 매번 새로 만들면 아깝다
+    static let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+
     static func image(of obj: Any?) -> CGImage? {
         guard let obj else { return nil }
         let t = CFGetTypeID(obj as CFTypeRef)
         if t == CGImage.typeID { return (obj as! CGImage) }
         guard t == IOSurfaceGetTypeID() else { return nil }
         let ci = CIImage(ioSurface: unsafeBitCast(obj as AnyObject, to: IOSurfaceRef.self))
-        return CIContext(options: [.useSoftwareRenderer: false]).createCGImage(ci, from: ci.extent)
+        return ciContext.createCGImage(ci, from: ci.extent)
     }
 
     /// 그림이 놓인 자리(뷰 안, 비율 유지 가운데) — 칸 크기 = 페이지 크기면 뷰 전체
@@ -380,7 +385,7 @@ public func browserMirrorPlace(_ h: UnsafeMutableRawPointer?, _ x: Double, _ y: 
                                _ wx: Double, _ wy: Double, _ ww: Double, _ wh: Double, _ top: Double) {
     guard let h else { return }
     Unmanaged<BrowserMirror>.fromOpaque(h).takeUnretainedValue()
-        .place(CGRect(x: x, y: y, width: w, height: hh), vh: vh, visible: visible != 0, win: CGRect(x: wx, y: wy, width: ww, height: wh), top: top)
+        .place(CGRect(x: x, y: y, width: w, height: hh), vh: vh, visible: visible == 1, covered: visible == 2, win: CGRect(x: wx, y: wy, width: ww, height: wh), top: top)
 }
 
 @_cdecl("browser_mirror_status")

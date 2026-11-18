@@ -6,23 +6,30 @@ import { orchSort } from './orchOrder';
 import type { Session } from './session';
 import type { StoppedSession } from './stopped';
 
-export type RailPhase = 'live' | 'stopping' | 'starting';
+export type RailPhase = 'live' | 'stopping' | 'starting' | 'lost';
 /** key = 대화 id(되살려도 같다) — 켜는 중 줄이 살아나면 같은 키라 같은 칸이 그대로 살아난다. 새로 만드는 참모는 new:<이름> */
-export type RailRow = { key: string; phase: RailPhase; name: string; live?: Session; off?: StoppedSession; waking: boolean };
+/** lost = 재부팅으로 꺼져 깨울 차례(켤 때 점호 v3, 쉬는 칸으로 안 내려간다) · failed = 그 참모를 켜다 실패(못 깸) */
+export type RailRow = { key: string; phase: RailPhase; name: string; live?: Session; off?: StoppedSession; waking: boolean; failed?: boolean };
 
 const liveKey = (s: Session) => s.sessionId ?? s.id;
 
 /**
  * live = 살아 있는 참모(끄는 중 포함, 이미 정렬된 순서), stopping = 끄는 중 세션 id, starting = 켜는 중(꺼진 참모 모양 — 새 참모는 creatingRow),
- * startingIds = 아직 켜는 중인 대화 id(목록 갱신 사이 찰나 메우기 — 없으면 starting 의 것), prev = 지난번 줄
+ * startingIds = 아직 켜는 중인 대화 id(목록 갱신 사이 찰나 메우기 — 없으면 starting 의 것), prev = 지난번 줄,
+ * lost = 재부팅으로 꺼진 참모(bootFace splitOff 의 lostTop) — 순서 자리에 깨울 차례로, failed = 켜기에 실패한 대화 id
  */
-export function railRows(o: { live: Session[]; stopping: Set<string>; starting: StoppedSession[]; startingIds?: Set<string>; prev: RailRow[]; order?: string[]; pins?: string[] }): RailRow[] {
+export function railRows(o: { live: Session[]; stopping: Set<string>; starting: StoppedSession[]; startingIds?: Set<string>; prev: RailRow[]; order?: string[]; pins?: string[]; lost?: StoppedSession[]; failed?: Set<string> }): RailRow[] {
   const rows: RailRow[] = o.live.map((s) => ({ key: liveKey(s), phase: o.stopping.has(s.id) ? 'stopping' : 'live', name: s.name, live: s, waking: false }));
   const have = new Set(rows.map((r) => r.key));
   for (const x of o.starting) {
     if (have.has(x.sessionId)) continue; // 살아났는데 켜는 중 목록에도 남은 찰나
     have.add(x.sessionId);
     rows.push({ key: x.sessionId, phase: 'starting', name: x.name, off: x, waking: !x.sessionId.startsWith('new:') });
+  }
+  for (const x of o.lost ?? []) {
+    if (have.has(x.sessionId)) continue; // 살아났거나 깨우는 중 — 그 줄이 먼저
+    have.add(x.sessionId);
+    rows.push({ key: x.sessionId, phase: 'lost', name: x.name, off: x, waking: false, ...(o.failed?.has(x.sessionId) ? { failed: true } : {}) });
   }
   // 갱신 사이 찰나 — 두 목록 어디에도 없지만 아직 끄는 중·켜는 중이면 지난 자리에 마지막 모습으로
   const startingIds = o.startingIds ?? new Set(o.starting.map((x) => x.sessionId));
@@ -41,9 +48,15 @@ export function railMoved(prev: string[], next: string[]): boolean {
   return prev.length !== next.length || prev.some((k, i) => k !== next[i]);
 }
 
+/** 쉬는 칸에서 고른 참모 — 지난 줄 모양(sig, 쉬는 참모는 r:키)에 쉬는 칸으로 있었으면 'rest'(쉬는 칸 자리에서 위 띠 제자리로 올라간다) */
+export function riseFrom(prevSig: string[] | null, key: string): 'rest' | null {
+  return prevSig?.includes(`r:${key}`) ? 'rest' : null;
+}
+
 /** 호버 카드·넓은 띠 맡은 일 자리에 들어갈 한 줄 */
-export function phaseWord(phase: RailPhase, waking: boolean): string | undefined {
+export function phaseWord(phase: RailPhase, waking: boolean, failed = false): string | undefined {
   if (phase === 'stopping') return tr('끄는 중…', 'Stopping…');
+  if (phase === 'lost') return failed ? tr('못 깸 — 누르면 다시 깨움', 'Failed to wake — click to retry') : tr('깨울 차례 — 누르면 바로 깨움', 'Waiting to wake — click to wake now');
   if (phase === 'starting') return waking ? tr('깨우는 중…', 'Waking…') : tr('켜는 중…', 'Starting…');
   return undefined;
 }

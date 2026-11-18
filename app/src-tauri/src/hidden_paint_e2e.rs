@@ -2,7 +2,7 @@
 //! 먼저 래퍼를 시험 홈으로 띄워 정품 크롬을 연다(세션 크롬과 같은 조건 — 플레이라이트가 붙어 있어야 한다):
 //! `CHAMMO_HOME=<시험 홈> CHAMMO_BROWSER_HOME=<시험 홈>/browser CHAMMO_BROWSER_CHANNEL=chrome node tools/chammo-browser/bin/chammo-browser-mcp.js <시험 프로필>` + 아무 페이지 navigate
 //! `CHAMMO_HOME=<빈 시험 폴더> CHAMMO_TEST_PROFILE_DIR=<시험 홈>/browser/profiles/<시험 프로필> cargo test hidden_paint_e2e -- --ignored --nocapture --test-threads=1`
-//! CHAMMO_TEST_VD=x,y,w,h(가짜 화면, 크롬 좌표 — 기본 -2910,956,1440,900) · CHAMMO_TEST_REAL_POS=x,y(가린 채 잠깐 옮길 진짜 화면 자리 — 기본 맥북 -1300,100).
+//! CHAMMO_TEST_VD=x,y,w,h(지금 떠 있는 가짜 화면, 크롬 좌표) · CHAMMO_TEST_REAL_POS=x,y(가린 채 잠깐 옮길 진짜 화면 자리) — 둘 다 꼭 준다(박아 둔 기본 좌표는 화면 배치가 바뀌면 사람 화면에 떴다).
 //! 진짜 화면 자리는 **가린 뒤에만** 옮긴다 — 사람 눈엔 안 보인다. 실측(정품 154): 가린 채 옮기면 rAF 1.5초 0~4번·screencast 0장, 되돌려도 그대로일 때가 있고,
 //! 가짜 화면에서 잠깐 보였다 다시 가리면 rAF 180번·screencast 2초 120장(베타 156 은 안 멈춘다)
 use super::*;
@@ -18,8 +18,9 @@ fn wait_for<T>(what: &str, secs: u64, mut f: impl FnMut() -> Option<T>) -> T {
     }
 }
 
-fn nums(key: &str, default: &str) -> Vec<f64> {
-    std::env::var(key).unwrap_or_else(|_| default.into()).split(',').filter_map(|s| s.trim().parse().ok()).collect()
+/// 좌표 env — 없으면 크롬을 안 옮기고 멈춘다(사람 화면에 안 뜨게)
+fn nums(key: &str) -> Vec<f64> {
+    std::env::var(key).unwrap_or_else(|_| panic!("{key} 를 줘 — 기본 좌표로 사람 화면에 띄우지 않는다")).split(',').filter_map(|s| s.trim().parse().ok()).collect()
 }
 
 #[test]
@@ -27,9 +28,9 @@ fn nums(key: &str, default: &str) -> Vec<f64> {
 fn hidden_paint_e2e() {
     let home = std::env::var("HOME").unwrap_or_default();
     assert!(!crate::config::is_real_data(&home, crate::config::data_dir()), "CHAMMO_HOME 을 시험 폴더로 줘");
-    let v = nums("CHAMMO_TEST_VD", "-2910,956,1440,900");
+    let v = nums("CHAMMO_TEST_VD");
     let vd = crate::vdisplay::Rect { x: v[0], y: v[1], w: v[2], h: v[3] };
-    let real = nums("CHAMMO_TEST_REAL_POS", "-1300,100");
+    let real = nums("CHAMMO_TEST_REAL_POS");
     // 래퍼(chammo-browser-mcp)가 시험 홈에 띄운 크롬에 붙는다 — 플레이라이트가 붙은 세션 크롬과 맨 크롬은 가림에 달리 군다(맨 크롬은 가짜 화면에서 가리기만 해도 멈춤, 실측)
     let dir = PathBuf::from(std::env::var("CHAMMO_TEST_PROFILE_DIR").expect("CHAMMO_TEST_PROFILE_DIR = 래퍼가 띄운 시험 프로필 폴더"));
     let profile = dir.file_name().unwrap().to_string_lossy().to_string();

@@ -6,6 +6,7 @@
 // 버튼은 누르는 자리 44px·아이콘은 작게. 글 칸은 6줄(화면이 작으면 그보다 작게)까지 늘고 그 뒤로는 안에서 스크롤
 // 음성이 나오는 동안 참모 프사는 말하는 참모 프사·색으로 바뀌고 소리 크기대로 빛난다(speaker, ui/mobile/usePhoneSpeaker) — 다른 참모면 누르면 그 참모로
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { enterSendsNow } from '../../domain/padKeys';
 import { attachFile } from '../../data/web';
 import { IconArrowUp, IconClose, IconPlus, IconStop } from '../Icons';
 import { composerSlots, textMaxH } from '../../domain/phoneComposer';
@@ -41,6 +42,8 @@ type Props = {
   stopping: boolean;
   onStop: () => void;
   onChip: () => void;
+  /** 패드 + 하드웨어 키보드(화면 키보드가 안 떴을 때) — Enter 보내기·⇧Enter 줄바꿈(맥과 같은 키). 한글 조합 중 Enter 는 안 보낸다 */
+  enterSends?: boolean;
   onFocus: () => void;
   /** 아래 줄 가운데 칩 자리(모델·에포트 칩·일하는 중) */
   chip?: ReactNode;
@@ -61,7 +64,7 @@ function AttPic({ a }: { a: Att }) {
   return src ? <img src={src} alt="" /> : <span className="m-att-file" />;
 }
 
-export function Composer({ avatar, orchName, waiting, placeholder, draftKey, maxInputH, ctxPct, busy, stopping, onStop, onChip, onFocus, chip, voice, send, speaker }: Props) {
+export function Composer({ avatar, orchName, waiting, placeholder, draftKey, maxInputH, ctxPct, busy, stopping, onStop, onChip, onFocus, chip, voice, send, speaker, enterSends = false }: Props) {
   const [saved] = useState(() => readDraft(storage(), draftKey));
   const [draft, setDraft] = useState(saved.text);
   const [files, setFiles] = useState<Att[]>(saved.files);
@@ -201,7 +204,8 @@ export function Composer({ avatar, orchName, waiting, placeholder, draftKey, max
             ))}
           </div>
         )}
-        <textarea ref={box} value={draft} rows={1} placeholder={placeholder} onFocus={onFocus} onChange={(e) => setDraft(e.target.value)} />
+        <textarea ref={box} value={draft} rows={1} placeholder={placeholder} onFocus={onFocus} onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={enterSends ? (e) => { if (enterSendsNow(e)) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } } : undefined} />
         <div className="m-crow">
           <button type="button" className="m-cbtn" disabled={uploading} onClick={() => file.current?.click()} aria-label={uploading ? tr('올리는 중', 'Uploading') : tr('그림·파일 붙이기', 'Attach image or file')} title={tr('붙이기', 'Attach')}>
             <span className="m-cdot"><IconPlus /></span>

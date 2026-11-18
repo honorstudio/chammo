@@ -1,5 +1,5 @@
 // 참모 끄기·지우기·이름 바꾸기 — 채팅 탭·메뉴·대시보드 어디서든 같은 창(2026-09-30 사용자)
-import { createContext, useCallback, useContext, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import type { Session } from '../domain/session';
 import { assistant, tr } from '../i18n';
 import { ContextMenu, Confirm, Rename, type MenuItem } from './OrchDialogs';
@@ -10,6 +10,10 @@ import { AvatarPicker } from './avatar/AvatarPicker';
 import { orchestratorLike } from '../domain/session';
 import { orchRoleSet, saveOrchRole } from './orchRoleStore';
 import { trailingClick } from '../domain/ctxMenu';
+import { kidsRead, kidsTimeAdd, type KidsView } from '../data/tauri';
+import { avatarKey, resolveAvatar } from '../domain/avatar';
+import { useAvatars } from './avatar/store';
+import { KidsPreview } from './kids/KidsPreview';
 
 type Ctx = {
   /** label: 창에 보일 이름(프로젝트 세션은 프로젝트·작업공간 이름) — 없으면 별명·설정 이름 */
@@ -59,6 +63,18 @@ export function OrchActionsProvider({ pins = [], onPin, onNick, onStop, onRemove
   const [rename, setRename] = useState<Session | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const [avatar, setAvatar] = useState<{ s: Session; color: string } | null>(null);
+  // 키즈 참모 — 메뉴 맨 위 '아이 화면으로'(폰과 같은 말, 11-17 사용자 "프로필 창 안 단추는 찾기 어려움"). 설정 키즈 모드가 켜졌을 때만
+  const [kids, setKids] = useState<KidsView | null>(null);
+  const [kidView, setKidView] = useState<{ key: string; avatar: unknown } | null>(null);
+  const { saved } = useAvatars();
+  useEffect(() => {
+    let live = true;
+    const read = () => void kidsRead().then((v) => { if (live) setKids(v); }, () => {});
+    read();
+    const i = setInterval(read, 20_000);
+    return () => { live = false; clearInterval(i); };
+  }, []);
+  const kidsKey = (s: Session) => { const k = avatarKey(s.name); return kids?.on && kids.orchs[k] ? k : null; };
   const nameOf = useCallback((s: Session) => orchDisplay(s) || assistant(), []);
   const askStop = (s: Session, label?: string, why = 'confirm') => setAsk({
     title: tr(`${label ?? nameOf(s)} 끌까?`, `Stop ${label ?? nameOf(s)}?`),
@@ -84,7 +100,9 @@ export function OrchActionsProvider({ pins = [], onPin, onNick, onStop, onRemove
     askStop,
     askRename: setRename,
     askAvatar: (s, color) => setAvatar({ s, color }),
-    menu: (e, s, color) => openMenu(e, [
+    menu: (e, s, color) => openMenu(e, withKids(color && kidsKey(s) ? [{ label: tr('아이 화면으로', 'Open kids screen'), run: () => { const a = resolveAvatar(saved, s.name); setKidView({ key: kidsKey(s)!, avatar: a.kind === 'preset' ? { ...a, color: a.color ?? color } : a }); } },
+      // 오늘 쓴 시간을 이름에 — 보호자가 바로 보고 10분 더(여섯째 조각)
+      { label: kidsTimeLabel(kids?.time?.[kidsKey(s)!]), run: () => void kidsTimeAdd(kidsKey(s)!, 10).then(setKids, () => {}) }] : null, [
       // 고정 — 참모만(색을 넘기는 줄), 대화 id 가 있을 때
       ...(color && onPin && s.sessionId ? [pins.includes(s.sessionId)
         ? { label: tr('고정 풀기', 'Unpin'), run: () => onPin(s, false) }
@@ -93,7 +111,7 @@ export function OrchActionsProvider({ pins = [], onPin, onNick, onStop, onRemove
       ...(color ? [{ label: tr('프로필 바꾸기', 'Change avatar'), run: () => setAvatar({ s, color }) }] : []), // 참모만(도우미 줄은 색을 안 넘긴다)
       { label: tr('세션 끄기', 'Stop session'), danger: true, run: () => askStop(s, undefined, 'menu') },
       { label: tr('세션 지우기(끄고 목록에서 빼기)', 'Remove session (stop and delist)'), danger: true, run: () => askRemove(s) },
-    ]),
+    ])),
     openMenu,
     confirm: setAsk,
     nameOf,
@@ -103,6 +121,7 @@ export function OrchActionsProvider({ pins = [], onPin, onNick, onStop, onRemove
       {children}
       {menu && <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} items={menu.items} />}
       {ask && <Confirm title={ask.title} body={ask.body} ok={ask.ok} danger={ask.danger !== false} onCancel={() => setAsk(null)} onOk={() => { ask.run(); setAsk(null); }} />}
+      {kidView && <KidsPreview kidKey={kidView.key} avatar={kidView.avatar} onClose={() => setKidView(null)} />}
       {avatar && <AvatarPicker name={avatar.s.name || ''} label={nameOf(avatar.s)} color={avatar.color} nick={{ ...nickProps(avatar.s), onSave: (v) => saveNick(avatar.s, v) }} onClose={() => setAvatar(null)} />}
       {rename && <Rename {...nickProps(rename)}
         role={orchestratorLike(rename.name) ? orchRoleSet(rename.name) : undefined /* 맡은 일은 참모만(이름과 따로, 2026-10-04) */}
@@ -113,6 +132,17 @@ export function OrchActionsProvider({ pins = [], onPin, onNick, onStop, onRemove
         }} />}
     </C.Provider>
   );
+}
+
+/** 키즈 참모 메뉴 — '아이 화면으로'·시간을 맨 위에 두고 나머지와 줄로 나눈다 */
+function withKids(kid: MenuItem[] | null, rest: MenuItem[]): MenuItem[] {
+  return kid ? [...kid, ...rest.map((m, i) => (i === 0 ? { ...m, sep: true } : m))] : rest;
+}
+
+/** '아이 시간 10분 더 · 오늘 12/20분' */
+export function kidsTimeLabel(t?: { usedMs: number; limitMs: number }): string {
+  const m = (ms: number) => Math.floor(ms / 60_000);
+  return t ? tr(`아이 시간 10분 더 · 오늘 ${m(t.usedMs)}/${m(t.limitMs)}분`, `10 more min · today ${m(t.usedMs)}/${m(t.limitMs)} min`) : tr('아이 시간 10분 더', '10 more min');
 }
 
 /** 참모 이름(별명, 없으면 설정 이름) — 두 번 누르기·오른쪽 클릭으로 바꾸는 건 부르는 쪽에서 */

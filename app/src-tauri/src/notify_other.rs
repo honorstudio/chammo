@@ -17,6 +17,9 @@ pub fn send(title: &str, body: &str, target: &str) -> bool {
     use windows::core::HSTRING;
     use windows::Data::Xml::Dom::XmlDocument;
     use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
+    if crate::test_window::quiet() {
+        return true; // 시험판은 토스트를 안 낸다
+    }
     let Some(app) = APP.get() else { return false };
     let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_string_lossy().into_owned())).unwrap_or_default();
     let id = crate::platform::toast_app_id(&exe_dir, &app.config().identifier, tauri_winrt_notification::Toast::POWERSHELL_APP_ID);

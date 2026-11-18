@@ -7,12 +7,14 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appDir = path.resolve(here, '../..');
-export const PORT = 47452;
+export const PORT = Number(process.env.E2E_PORT ?? 47452);
 export const base = `http://127.0.0.1:${PORT}/`;
 
 export async function start() {
   const cache = fs.mkdtempSync(path.join(os.tmpdir(), 'doc-e2e-'));
   const wk = path.join(cache, 'wk');
+  // 포트에 옛 서버(끝난 시험이 남긴 vite)가 있으면 그걸 보고 엉뚱하게 통과·실패한다 — 시작 전에 비었나 본다
+  try { await fetch(base); console.log(`FAIL 포트 ${PORT} 에 이미 서버가 있다 — E2E_PORT=<빈 포트> 로 다시`); process.exit(1); } catch { /* 비었다 */ }
   execFileSync('swiftc', ['-O', path.join(here, 'wk.swift'), '-o', wk], { stdio: 'inherit' });
   const vite = spawn(path.join(appDir, 'node_modules/.bin/vite'), ['--config', path.join(here, 'vite.config.ts')], { cwd: appDir, env: { ...process.env, E2E_CACHE: path.join(cache, 'vite') }, stdio: 'ignore' });
   for (let i = 0; i < 80; i++) { try { if ((await fetch(base)).ok) break; } catch { /* 아직 */ } await new Promise((r) => setTimeout(r, 250)); }
@@ -25,6 +27,8 @@ export async function start() {
       const r = spawnSync(wk, [base + query, f], { encoding: 'utf8', timeout: 120_000 });
       return r.stdout.split('\n').filter((l) => l.startsWith('R ')).map((l) => JSON.parse(l.slice(2)).v);
     },
+    /** 하네스가 터졌을 때 — '모두 통과'로 끝나지 않게(try 의 catch 에서) */
+    crash(e) { failed++; console.log('FAIL 하네스', e); },
     ok(name, cond, extra = '') { if (!cond) failed++; console.log(`${cond ? 'ok  ' : 'FAIL'} ${name}${extra ? ` — ${extra}` : ''}`); },
     done() {
       vite.kill();

@@ -401,3 +401,42 @@ fn peer_line_over_the_tunnel_gets_peer_paths_but_not_pairing() {
     assert_eq!(r.status, 403, "{}", String::from_utf8_lossy(&r.body));
     assert!(be.calls().is_empty());
 }
+
+fn run_on(w: &mut World, s: &mut Session, c: &str, id: u64, m: &str, p: &str, h: Value, body: &[u8], be: &Fake) -> Resp {
+    let mut evs = vec![];
+    for f in req_frames(s, id, m, p, h, body) {
+        evs.extend(w.t.on_frame(&w.lines, "r1", c, &f));
+    }
+    let Some(Ev::Run(t)) = evs.pop() else { panic!("{evs:?}") };
+    let line = w.t.line(c).unwrap().to_string();
+    serve(&t, &line, &w.gate, be)
+}
+
+#[test]
+fn kids_pad_talks_through_the_tunnel() {
+    // 11-18 진짜 아이패드(중계 PWA): 고르기 → 녹음(큰 wav 조각) → 받아쓰기 → 답 조각·미리 만든 말까지 중계 문 + 폰 서버 문을 그대로 지나야 한다
+    let d = std::env::temp_dir().join(format!("chammo-relay-kids-{}-{}", std::process::id(), crate::mobile_pair::random_hex(4).unwrap()));
+    crate::kids::set_in(&d, "참모-2", Some(crate::kids::KidsOrch { child: "서아".into(), age: 5, since: 1 })).unwrap();
+    crate::kids_guard::set_pin_in(&d, "2580").unwrap();
+    let be = Fake::kids_at(d);
+    let mut w = world();
+    let mut s = connect(&mut w, "c1");
+    let json_h = json!({ "authorization": format!("Bearer {}", w.token), "content-type": "application/json" });
+    let wav_h = json!({ "authorization": format!("Bearer {}", w.token), "content-type": "audio/wav" });
+    let r = run_on(&mut w, &mut s, "c1", 1, "POST", "/api/kids/enter", json_h.clone(), r#"{"key":"참모-2"}"#.as_bytes(), &be);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(run_on(&mut w, &mut s, "c1", 2, "GET", "/api/kids/me", json_h.clone(), b"", &be).status, 200);
+    // 30초 남짓 녹음(16kHz 모노 16비트 ≈ 1MB 밑) — 조각 여럿으로 와서 다시 붙는다
+    let mut wav = b"RIFF\x24\0\0\0WAVEfmt ".to_vec();
+    wav.resize(900_000, 0);
+    let r = run_on(&mut w, &mut s, "c1", 3, "POST", "/api/kids/peek?cid=c1", wav_h.clone(), &wav, &be);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    let r = run_on(&mut w, &mut s, "c1", 4, "POST", "/api/kids/hear?cid=c1", wav_h.clone(), &wav, &be);
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert!(be.calls().iter().any(|c| c == &format!("kids-hear 참모-2 c1 {}", wav.len())), "{:?}", be.calls());
+    assert_eq!(run_on(&mut w, &mut s, "c1", 5, "GET", "/api/kids/voice?cid=c1&n=0", json_h.clone(), b"", &be).status, 200);
+    assert_eq!(run_on(&mut w, &mut s, "c1", 6, "GET", "/api/kids/pre?i=1", json_h.clone(), b"", &be).status, 200);
+    assert_eq!(run_on(&mut w, &mut s, "c1", 7, "POST", "/api/kids/tick", json_h.clone(), b"{}", &be).status, 200);
+    let r = run_on(&mut w, &mut s, "c1", 8, "POST", "/api/kids/leave", json_h, br#"{"pin":"2580"}"#, &be);
+    assert_eq!(r.status, 200);
+}

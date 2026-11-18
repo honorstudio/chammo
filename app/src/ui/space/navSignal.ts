@@ -11,3 +11,8 @@ export const spaceCmd = (c: SpaceCmd) => window.dispatchEvent(new CustomEvent<Sp
 // 설정 열기 신호 — 앱 서랍 '설치하기'(파이썬 없음) → App 이 설정을 그 작업과 함께 연다(점검 줄의 설치 터미널). detail = SetupStart
 export const OPEN_SETUP = 'open-setup';
 export const openSetup = (s: SetupStart) => window.dispatchEvent(new CustomEvent<SetupStart>(OPEN_SETUP, { detail: s }));
+
+// 새 셸 탭 신호 — ⌥⌘T·메뉴 '새 터미널'·프로젝트 오른쪽 클릭 '여기서 터미널' → SpaceView. cwd 가 없으면 지금 보는 프로젝트(없으면 devRoot)
+export const SHELL_OPEN = 'shell-open';
+export type ShellOpen = { cwd?: string };
+export const openShellTab = (cwd?: string) => window.dispatchEvent(new CustomEvent<ShellOpen>(SHELL_OPEN, { detail: { cwd } }));

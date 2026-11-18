@@ -136,3 +136,34 @@ describe('메일 코드를 켠 맥 — 숫자 대신 코드', () => {
     expect(sas).toBe(false);
   });
 });
+
+// 같은 Chammo 계정에 사람이 허용한 폰이면 숫자·메일 없이 바로(2026-11-18 사용자 결정 A, Rust phone_relay::link_direct_ok)
+describe('같은 계정 바로 연결', () => {
+  const direct = (extra: Record<string, unknown>) => async function (this: typeof mac, ws: FakeWs, m: { box: string }) {
+    const body = JSON.parse(dec.decode(await open(this.keys!.privateKey, this.pub, unb64(m.box)))) as Record<string, unknown>;
+    expect(body.step).toBe('link1');
+    expect(body.direct).toBe(true); // 새 판 폰은 바로 연결을 받을 줄 안다고 알린다 — 옛 맥은 모르고 숫자로
+    ws.push({ t: 'reply', box: b64(await seal(unb64(String(body.x)), enc.encode(JSON.stringify({ step: 'link5', ok: true, token: 'd'.repeat(43), device: 'dev-phone', mac: { id: 'mac1', name: 'MacBook' }, ...extra })))) });
+    ws.hubClose();
+  };
+  it('맥이 direct 로 답하면 숫자·사람 확인 없이 저장할 것을 돌려준다', async () => {
+    const was = mac.onKnock;
+    mac.onKnock = direct({ direct: true });
+    let sas = false, asked = false;
+    const { knockLink } = await import('./linkKnock');
+    const r = await knockLink('https://relay.test', 'dev-phone', computer(), () => { sas = true; }, async () => { asked = true; return true; }) as import('./knock').Paired;
+    mac.onKnock = was;
+    expect(r.token).toBe('d'.repeat(43));
+    expect(r.link).toMatchObject({ mac: 'mac1', device: 'dev-phone' });
+    expect(sas).toBe(false);
+    expect(asked).toBe(false);
+  });
+  it('direct 표시 없이 숫자 전에 온 link5 는 받지 않는다(가짜 컴퓨터일 수 있다)', async () => {
+    const was = mac.onKnock;
+    mac.onKnock = direct({});
+    const { knockLink, LINK_ERRORS } = await import('./linkKnock');
+    const run = knockLink('https://relay.test', 'dev-phone', computer(), () => {}, async () => true);
+    await expect(run).rejects.toThrow(LINK_ERRORS.key);
+    mac.onKnock = was;
+  });
+});

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """폰 허용 메일 코드 끝까지 — 진짜 맥 코드(시험 앱) ↔ 로컬 중계(wrangler dev, send_email 은 .eml 파일) ↔ 진짜 입구(참모 브라우저). 운영·진짜 계정에 안 닿는다.
-  run.py <작업 폴더> <중계 소스> <시험 앱 실행 파일> <dist>
+  run.py <작업 폴더> <중계 소스> <시험 앱 실행 파일> <dist>   (DRIVE=drive-direct.cjs 면 같은 계정 바로 연결 장면)
 시험 앱 틀은 scripts/perf-bench/app.py(가짜 HOME·임시 키체인). 끝나면 다 끈다."""
 import json, os, signal, subprocess, sys, time, uuid
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -45,7 +45,7 @@ try:
     else:
         print("허브에 안 붙음\n" + t[-800:])
     time.sleep(3)
-    r = subprocess.run(["node", os.path.join(HERE, "drive.cjs"), f"http://127.0.0.1:{E}", W], env=dict(env, GOOGLE=g, SUB=sub, MAC_NAME="perf-mac-2", DATA=data), capture_output=True, text=True, timeout=420)
+    r = subprocess.run(["node", os.path.join(HERE, os.environ.get("DRIVE", "drive.cjs")), f"http://127.0.0.1:{E}", W], env=dict(env, GOOGLE=g, SUB=sub, MAC_NAME="perf-mac-2", DATA=data), capture_output=True, text=True, timeout=420)
     print(r.stdout[-6000:], r.stderr[-1500:])
     code = r.returncode
     log = os.path.join(data, "notify.log")

@@ -1065,6 +1065,22 @@ MODEL = re.compile(r'^(?:sonnet|opus|haiku|fable|claude-[a-z0-9.-]{1,40})$')
 EFFORT = ('low', 'medium', 'high', 'xhigh', 'max')
 
 
+def launch_pick(cfg, data):
+    """--model·--effort — 예약에 정한 값, 없으면 앱 설정 '새 세션 기본값'(config.json defaultModel·defaultEffort, default_model.rs 와 같은 규칙)"""
+    try:
+        with open(os.path.join(data, 'config.json'), encoding='utf-8') as f:
+            app = json.load(f)
+    except (OSError, ValueError):
+        app = {}
+    app = app if isinstance(app, dict) else {}
+    out = []
+    for k, d in (('model', 'defaultModel'), ('effort', 'defaultEffort')):
+        v = cfg.get(k) if isinstance(cfg.get(k), str) and cfg.get(k) else app.get(d)
+        if isinstance(v, str) and (MODEL.match(v) if k == 'model' else v in EFFORT):
+            out += [f'--{k}', v]
+    return out
+
+
 def new(name, schedule, what, cwd=None, data=None, home=None, run=subprocess.run, claude=None, python=None, uid=None, win=None, now=None, apps=None, allow_test=None,
         model=None, effort=None):
     win = os.name == 'nt' if win is None else win
@@ -1296,7 +1312,7 @@ def _run_now(name, data=None, run=subprocess.run, scheduled=False, now=None, hom
             except OSError:
                 pass  # 못 적어도 띄워는 본다 — 실패하면 아래서 이유가 남는다
         try:
-            pick = [x for k in ('model', 'effort') if isinstance(cfg.get(k), str) and (MODEL.match(cfg[k]) or cfg[k] in EFFORT) for x in (f'--{k}', cfg[k])]
+            pick = launch_pick(cfg, data)
             r = run([cfg['claude'], '--bg', '--dangerously-skip-permissions', *pick, '-n', session, prompt], cwd=cfg['cwd'],
                     capture_output=True, text=True, env=dict(os.environ, CHAMMO_HOME=data), timeout=SPAWN_TIMEOUT, **claude_txt())
         except subprocess.TimeoutExpired:  # 멈춘 건 다시 해도 또 멈춘다 — 실패로 남기고 따라잡기(CATCHUP_MIN 뒤)에 맡긴다

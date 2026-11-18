@@ -1,11 +1,13 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { BrowserMemCap, memCapShown } from './BrowserMemCap';
 import { TtsField } from './TtsField';
-import { baseTools, setGitIdentity, appVersion, trustFolders, browserSetupStart, browserSetupState, browserStatus, checkEnv, claudeTrusted, projectAccess, notifyOpenSettings, notifyRequest, notifyStatus, axTrusted, screenTrusted, askPermission, createHq, folderStatus, getAppEnv, makeDir, openTarget, pickFolder, rebuildMenu, writeConfig, type Config, type FolderStatus } from '../data/tauri';
+import { KidsLockRow } from './kids/KidsLockRow';
+import { baseTools, setGitIdentity, appVersion, trustFolders, browserSetupStart, browserSetupState, browserStatus, checkEnv, claudeTrusted, projectAccess, notifyOpenSettings, notifyRequest, notifyStatus, axTrusted, screenTrusted, askPermission, createHq, folderStatus, getAppEnv, makeDir, openTarget, pickFolder, rebuildMenu, writeConfig, defaultModelView, type Config, type FolderStatus } from '../data/tauri';
 import { addExtraProject, addOpenFolder, claudeSignedInText, parseClaudeVersion, setupCommand, winSetupNotes, tildify, notifyRow, axRow, browserRow, browserChecklist, ghRow, gitIdentityRow, gitIdentityError, installState, loginRow, GET_URL, setupFailed, versionFit, type BrowserSetupState, type BrowserStatus, type EnvCheck, type NotifyStatus, type SetupTask, type SkipKey, type Trust } from '../domain/setup';
 import type { Animation, FeatureSwitch } from '../domain/config';
 import { firstTab, settingsEscCloses, settingsTabs, tabOf, type SettingsTab, type SetupStart } from '../domain/settingsTabs';
 import { BRAND } from '../domain/avatar';
+import { effortOptions, fixEffort, modelOptions, type DefaultModelView } from '../domain/defaultModel';
 import { josa, machine, tr, type Lang } from '../i18n';
 import { TerminalPane } from './TerminalPane';
 import { FULL_DISK_URL, wizardAccess, type Access } from '../domain/access';
@@ -87,8 +89,10 @@ const features = (): [FeatureSwitch, string, string][] => [
   ['bubble', tr('떠 있는 참모 배지', 'Floating assistant badge'), tr('앱 밖에도 늘 떠 있는 동그란 참모 얼굴이에요. 누르면 대화창이 열리고, 끌어서 옮겨요', 'One round assistant face floating above every window. Click to chat right there, drag to move it')],
   ['bubbleDesk', tr('앱을 내려도 참모 배지 띄우기', 'Keep the assistant badge when the app is hidden'), tr('앱을 최소화하거나 숨겨도 배지는 바탕 화면에 남아요. 누르면 앱 창 없이 대화창만 열려요', 'Minimize or hide the app and the badge stays on the desktop. Click to chat without bringing the app back')],
   ['autoTidy', tr('세션 자동 정리', 'Tidy sessions automatically'), tr('일이 끝나고 조용한 세션은 참모가 문서를 정리한 뒤 꺼요. 대화는 남아서 다시 켤 수 있어요. 오래 멈춘 목표도 참모가 챙겨요', 'Your assistant tidies up and stops sessions whose work is done and gone quiet. Conversations are kept, so they can be resumed. It also keeps an eye on goals that have stalled')],
+  ['chiefCompact', tr('대화 자동 정리', 'Compact chats automatically'), tr('참모·프로젝트 대화가 길어지면 쉬는 틈에 하던 일을 적어 두고 대화를 줄여요. 사용량이 덜 닳아요', 'When an assistant or project chat gets long, it notes what it was doing during a quiet moment and shortens the chat. Uses less of your limit')],
   // 익명 사용 신호(Rust usage_ping) — 무엇을 보내고 무엇을 안 보내는지 한 줄(2026-10-24 사용자 '기본 켬 + 끄기 + 알림')
-  ['usagePing', tr('익명 사용 통계', 'Anonymous usage statistics'), tr('기능별 횟수와 설치 번호·앱 판·OS 같은 정해 둔 값만 보내요. 대화·파일은 안 보내요', 'Counts and a few fixed values (install ID, app version, OS). Never chats or files')],
+  ['kids', tr('키즈 모드', 'Kids mode'), tr('참모 프로필에서 아이와 함께 쓸 참모를 정할 수 있어요', 'Lets you mark an assistant for your child in its profile')],
+  ['usagePing', tr('익명 사용 통계', 'Anonymous usage statistics'), tr('기능별 횟수·오류 난 자리와 설치 번호·앱 판·OS 같은 정해 둔 값만 보내요. 대화·파일은 안 보내요', 'Counts, error locations and a few fixed values (install ID, app version, OS). Never chats or files')],
   // 기본 참모 앱 다섯(Rust craft_basics → scripts/craft prefetch) — 나머지는 쓸 때 설치(2026-10-26 사용자)
   ['craftBasics', tr('기본 참모 앱 미리 받기', 'Install the basic Chammo apps ahead'), tr('표·PDF·슬라이드·문서·벡터를 미리 깔아 둬요(약 1.5GB). 나머지는 쓸 때 받아요. 남은 공간이 5GB보다 적으면 건너뛰어요', 'Pre-installs Grid, PDF, Slides, Word and Vector in the background (about 1.5 GB). The rest install when you use them. Skipped if under 5 GB is free')],
   ['autoRevive', tr('자동으로 다시 켜기', 'Auto-resume'), tr(`재시작으로 꺼진 세션 중 일이 남은 건 알아서 다시 켜요. 사람이 없는 ${machine()}용이에요`, `Resumes sessions a restart stopped mid-work, on its own. For unattended ${machine()}s`)],
@@ -578,6 +582,21 @@ export function Setup({ config, fontSize, onClose, start, tab: tab0 }: Props) {
             </span>
           </Field>
   );
+  // 새 세션 기본 모델·노력값(2026-11-17 사용자) — 앱이 띄우는 세션에만 붙는다. 첫 칸 '기본 (…)'은 Claude Code 전역 값
+  const [dm, setDm] = useState<DefaultModelView | null>(null);
+  useEffect(() => { void defaultModelView().then(setDm, () => {}); }, []);
+  const modelField = dm && (
+          <Field label={tr('새 세션 모델', 'New session model')}>
+            <span className="su-control su-model">
+              <select aria-label={tr('모델', 'Model')} value={draft.defaultModel ?? ''} onChange={(e) => setDraft((d) => ({ ...d, defaultModel: e.target.value, defaultEffort: fixEffort(e.target.value, d.defaultEffort ?? '') }))}>
+                {modelOptions(dm).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+              <select aria-label={tr('노력값', 'Effort')} value={draft.defaultEffort ?? ''} onChange={(e) => set('defaultEffort', e.target.value)}>
+                {effortOptions(dm, draft.defaultModel ?? '').map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </span>
+          </Field>
+  );
   const memoField = (
           <Field label={tr('메모 폴더', 'Notes folder')} hint={tr('프로젝트별 메모(⌘M)가 저장되는 곳.', 'Where per-project notes (⌘M) are saved.')}>
             {pick('memoDir', tr('메모를 저장할 폴더를 골라 주세요', 'Choose where notes are saved'))}
@@ -684,13 +703,14 @@ export function Setup({ config, fontSize, onClose, start, tab: tab0 }: Props) {
             <input type="checkbox" role="switch" className="cfg-sw" checked={draft.features[k]} onChange={(e) => set('features', { ...draft.features, [k]: e.target.checked })} />
           </label>
           {k === 'git' && gitIdBelow}
+          {k === 'kids' && draft.features.kids && <KidsLockRow />}
         </Fragment>
       ))}
     </div>
   );
   const featGrid = (
           <div className="su-feats">
-            {features().map(([k, label, text]) => (
+            {features().filter(([k]) => k !== 'kids').map(([k, label, text]) => ( // 키즈 모드는 첫 설치에 안 묻는다 — 필요한 사람만 설정에서 켠다
               <label key={k} className="su-feat">
                 <input type="checkbox" checked={draft.features[k]} onChange={(e) => set('features', { ...draft.features, [k]: e.target.checked })} />
                 <span><b>{label}</b><span>{text}</span></span>
@@ -737,11 +757,11 @@ export function Setup({ config, fontSize, onClose, start, tab: tab0 }: Props) {
   };
   const tabBody: Record<SettingsTab, ReactNode> = {
     general: <>{langField}{memoField}{draft.features.git && githubField}{searchField}</>,
-    agent: <>{nameField}{hqField}{devField}{extrasField}{opensField}{trustBlock}{switches(['autoRevive'])}</>,
+    agent: <>{nameField}{modelField}{hqField}{devField}{extrasField}{opensField}{trustBlock}{switches(['autoRevive'])}</>,
     // PR 리뷰는 git 을 쓸 때만(ADR 0024)
-    features: <>{axBlock}{screenBlock}{switches(['office', 'gacha', 'git', ...(draft.features.git ? ['review' as const] : []), 'bubble', 'bubbleDesk', 'autoTidy', 'craftBasics', 'usagePing'])}{animField}</>,
+    features: <>{axBlock}{screenBlock}{switches(['office', 'gacha', 'git', ...(draft.features.git ? ['review' as const] : []), 'bubble', 'bubbleDesk', 'autoTidy', 'craftBasics', ...(config.features.kids ? ['kids' as const] : []), 'usagePing'])}{animField}</>,
     voice: <>{notifyBlock}{switches(['voice'])}{ttsField}{talkField}</>,
-    devices: <DevicesSection title={tr('내 기기', 'My devices')} onAccount={() => setTab('accounts')} fallback={<><MobileSection title={tr('폰', 'Phone')} onAccount={() => setTab('accounts')} /><PeerSection title={tr('다른 기기 참모', 'Chammo on other devices')} /></>} />,
+    devices: <DevicesSection title={tr('내 기기', 'My devices')} onAccount={() => setTab('accounts')} fallback={<><MobileSection title={tr('폰·태블릿', 'Phone & tablet')} onAccount={() => setTab('accounts')} /><PeerSection title={tr('다른 기기 참모', 'Chammo on other devices')} /></>} />,
     messenger: <><TeamSoundSection title={tr('메신저 알림', 'Messenger alerts')} /><MessengerSection title={tr('텔레그램', 'Telegram')} /></>,
     // Chammo 계정이 맨 위 — 폰 중계·내 기기·메신저가 다 이 계정에 걸린다. Claude 계정 바꿔 끼우기는 맥 = 키체인, 윈도우 = 로그인 파일 + 자격 증명 관리자
     accounts: (<><TeamAccountSection title={tr('Chammo 계정', 'Chammo account')} onDevices={() => setTab('devices')} /><AccountsSection title={tr('Claude 계정', 'Claude accounts')} claude={check?.claudePath} fontSize={fontSize} /></>),

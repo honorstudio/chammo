@@ -1,6 +1,7 @@
 // 바닥 — 지금 참모의 대시보드(폰 홈·보관함 v1, 사용자 10/11 "추천대로"): 머리줄 · 홈 | 보관함 두 칸(데스크톱 나무 맨 위 두 줄과 같은 것).
 // 홈 = 나한테 필요 · 세션 줄(누르면 그 자리에서 마지막 세 줄) · 모드 카드 · 할 일·결정 한 줄 / 보관함 = 진행 중 칩 · 내 폴더 · 기록(PhoneLocker)
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { DASH_TAB, PadHead, padHeadOut } from './padMode';
 import { attachFile, lockerAdd, readAccounts, readFileText, readLoad, readLocker, readUsage } from '../../data/web';
 import { feedLoad } from '../calm';
 import { EMPTY_LOCKER } from '../../domain/locker';
@@ -56,11 +57,13 @@ const baseName = (p: string) => (p.startsWith('data:') ? tr('붙인 그림', 'Pa
 /** 위 칸 = 한 칸 목록(시안 docs/design-drafts/phone-tabs v2 A, 2026-10-11 사용자 — 탭 숫자 '일 6 · 할 일 6 · 결정 2'는 뜻을 몰랐다).
  *  사용자가 묻는 순서로: 나한테 필요(참모 색 옅은 면, 있을 때만) → 도는 일(점·이름·한 줄 3개 +N) · 오늘 끝남 한 줄 → 다음 할 일 문서 줄.
  *  늘 보이는 칸이라 하위 세션 꼬리(useSubTails, 15초)로 세션판·데스크톱과 같은 판단을 넣는다 */
-function TopList({ orch, events, sessions, waiting, direct, todo, onPeek, onPicker, onChat, onTodo, modes }: {
+function TopList({ orch, events, sessions, waiting, direct, todo, onPeek, onPicker, onChat, onTodo, modes, known = true }: {
   orch: Session; events: TaskEvent[]; sessions: Session[]; waiting: Waiting[]; direct: DirectCard[]; todo: { todo: number; decisions: number };
   onPeek: (s: Session) => void; onPicker: () => void; onChat: () => void; onTodo: () => void;
   /** 모드 카드(세션 줄 아래, 할 일·결정 위) */
   modes?: ReactNode;
+  /** 맡긴 일 기록을 한 번이라도 받았나 — 모르면 '없어요'를 안 띄운다 */
+  known?: boolean;
 }) {
   const now = Date.now();
   const targets = useMemo(() => { const g = orchTasks(events, sessions, orch.id, now); return [...g.ask, ...g.doing].map((t) => findTarget(sessions, t.target)).filter((x): x is Session => !!x); }, [events, sessions, orch.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -110,7 +113,7 @@ function TopList({ orch, events, sessions, waiting, direct, todo, onPeek, onPick
           )}
         </div>
       )}
-      {empty && <p className="m-muted m-sm">{tr('아직 시킨 일이 없어요', 'Nothing assigned yet')}</p>}
+      {empty && known && <p className="m-muted m-sm">{tr('아직 시킨 일이 없어요', 'Nothing assigned yet')}</p>}
       {modes}
       {(todo.todo > 0 || todo.decisions > 0) && (
         <button type="button" className="m-lnext m-todo" onClick={onTodo} aria-label={tr(`할 일 ${todo.todo} · 최근 결정 ${todo.decisions} — 문서 보기`, `To do ${todo.todo} · Recent decisions ${todo.decisions} — view document`)}>
@@ -138,11 +141,15 @@ type Props = {
   onOffice: () => void;
   /** HQ 폴더 — docs/starter.md 의 할 일·최근 결정(데스크톱 대시보드 목록과 같은 것) */
   hqDir: string;
+  /** 이 참모가 키즈 참모면 그 키 — 더보기 '아이 화면으로'(프로필 바꾸기, 여섯째 조각) */
+  kidsKey?: string;
   /** 설정 목소리(Supertonic 일 때만) — 프로필 창 '기본' 목소리, null 이면 목소리 칸을 안 보인다 */
   voiceBase: string | null;
   /** scripts/show 기록(/api/shows) — 채팅 안 파일 카드와 같이 OrchSpace 가 한 번 받아 나눠 준다. loaded = 한 번이라도 받았나 */
   showLog: string;
   showLoaded: boolean;
+  /** 맡긴 일 기록을 한 번이라도 받았나 */
+  tasksKnown?: boolean;
   /** 떠 있는 세션 브라우저 — 이 참모 것이면 대시보드 위에, 하위 세션 것은 그 세션 대화 위에 */
   lives: Live[];
   /** 폰 알림(웹 푸시) 켜기·끄기 — 더보기 시트 토글 */
@@ -166,7 +173,7 @@ const TODO_AT = { find: '다음 할 일' };
 const TAB_KEY = 'm.dashTab';
 const loadTab = (id: string): 'home' | 'locker' => { try { return (JSON.parse(localStorage.getItem(TAB_KEY) ?? '{}') as Record<string, string>)[id] === 'locker' ? 'locker' : 'home'; } catch { return 'home'; } };
 
-export function OrchDash({ orch, orchs, asking, sessions, events, routinesRunning, onRoutines, onSessions, onOffice, hqDir, voiceBase, lives, push, showLog, waiting, direct, waitSent, onPicker, onChat, onAsk }: Props) {
+export function OrchDash({ orch, orchs, asking, sessions, events, routinesRunning, onRoutines, onSessions, onOffice, hqDir, kidsKey, voiceBase, lives, push, showLog, showLoaded, tasksKnown = true, waiting, direct, waitSent, onPicker, onChat, onAsk }: Props) {
   const [pushHint, setPushHint] = useState<string | null>(null);
   // 켜진 알림을 끄려면 바로 끄지 않고 묻는다 — 상태 표시로 보고 눌렀다가 꺼졌다(2026-10-03 18:54). 이제 더보기 시트 토글에서(종은 알림 보기)
   const [askOff, setAskOff] = useState(false);
@@ -178,6 +185,12 @@ export function OrchDash({ orch, orchs, asking, sessions, events, routinesRunnin
   const [tab, setTabState] = useState<'home' | 'locker'>(() => loadTab(orch.id));
   useEffect(() => setTabState(loadTab(orch.id)), [orch.id]);
   const setTab = (t: 'home' | 'locker') => { setTabState(t); try { localStorage.setItem(TAB_KEY, JSON.stringify({ ...(JSON.parse(localStorage.getItem(TAB_KEY) ?? '{}') as object), [orch.id]: t })); } catch { /* 이번 실행만 */ } };
+  // 패드 ⌘⇧H·⌘⇧L(padKeys) — 홈·보관함 탭으로
+  useEffect(() => {
+    const on = (e: Event) => { const t = (e as CustomEvent<'home' | 'locker'>).detail; if (t === 'home' || t === 'locker') setTab(t); };
+    window.addEventListener(DASH_TAB, on);
+    return () => window.removeEventListener(DASH_TAB, on);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [peek, setPeek] = useState<Session | null>(null);
   const officeDot = officeDotOf(sessions, hqDir, lives);
   const busySubs = sessions.filter((s) => s.kind === 'background' && !orchs.some((o) => o.id === s.id) && (s.state === 'working' || s.state === 'blocked')).length;
@@ -203,7 +216,7 @@ export function OrchDash({ orch, orchs, asking, sessions, events, routinesRunnin
   const now = Date.now();
   const held = useMemo(() => heldIds(events, sessions, orch.id, now), [events, sessions, orch.id]); // eslint-disable-line react-hooks/exhaustive-deps
   // 보관함 — 서버가 폰에 열 수 있는 것만 준다(phone_view). 기록 = 이 참모·맡긴 세션이 보여 준 것 + 보관함 맨 위 낱 파일(데스크톱 lockerLog 와 같다)
-  const [lockerView, , kickLocker] = useMemoPoll('locker', () => readLocker().catch(() => EMPTY_LOCKER), 20_000, EMPTY_LOCKER);
+  const [lockerView, lockerKnown, kickLocker] = useMemoPoll('locker', () => readLocker().catch(() => EMPTY_LOCKER), 20_000, EMPTY_LOCKER);
   const owner = orch.name || orch.id;
   const shown = useMemo(() => dashFiles(showLog, orch.id, held, []), [showLog, orch.id, held]);
   const projects = useMemo(() => projectsOf(sessions.map((s) => s.cwd), hqDir), [sessions, hqDir]);
@@ -232,8 +245,9 @@ export function OrchDash({ orch, orchs, asking, sessions, events, routinesRunnin
   const bellLabel = tr(`알림${bellN > 0 ? ` — 답 기다림 ${bellN}` : ''}`, `Notifications${bellN > 0 ? ` — ${bellN} waiting for your reply` : ''}`);
   const alertRows = useMemo(() => (alertsOpen ? recentAlerts(events, orch.id, Date.now()) : []), [alertsOpen, events, orch.id]);
 
-  return (
-    <div className="m-dash">
+  // 패드면 머리줄(참모·부하·한도·종·사무실·더보기)은 위 막대로(PadHead 포털) — 상태·시트는 여기 그대로
+  const padHead = useContext(PadHead);
+  const headRow = (
       <header className="m-dash-head">
         {/* 한 줄 머리(시안 phone-dash H2) — 부하 = 이름 밑 점+숫자, 계정 = 남은 양 고리 버튼. 컨텍스트 고리는 입력창 참모 프사로 옮겼다(v2 A, 2026-10-11 사용자 "거슬림").
             오른쪽 = 고리·종·사무실·더보기(시안 phone-nav v1 B, 2026-10-24) — 이름은 두 줄까지 */}
@@ -267,8 +281,13 @@ export function OrchDash({ orch, orchs, asking, sessions, events, routinesRunnin
             aria-label={tr(`더보기${busySubs > 0 ? ` — 일하거나 묻는 세션 ${busySubs}` : ''}${routinesRunning > 0 ? ` — 도는 예약 ${routinesRunning}` : ''}`, `More${busySubs > 0 ? ` — ${busySubs} sessions working or asking` : ''}${routinesRunning > 0 ? ` — ${routinesRunning} scheduled running` : ''}`)}>
             <IconMore />{(busySubs > 0 || routinesRunning > 0) && <span className="m-rt-dot" aria-hidden="true" />}
           </button>
+          {padHead?.extra}
         </div>
       </header>
+  );
+  return (
+    <div className="m-dash">
+      {padHeadOut(headRow, padHead)}
       <PhoneLoginCard />
       {/* 알림 종 안내·오류 — 가운데 알림 모달. 홈 화면 앱 안내는 연결 버튼이 붙어 사람이 닫을 때까지 */}
       {(pushHint || push.error) && (
@@ -277,8 +296,8 @@ export function OrchDash({ orch, orchs, asking, sessions, events, routinesRunnin
         </Notice>
       )}
       {askOff && (
-        <div className="m-confirm" role="alertdialog" aria-label={tr('폰 알림 끄기 확인', 'Confirm turning off phone notifications')}>
-          <div>{tr('폰 알림을 끌까요? 참모가 물어도 폰에 안 와요.', 'Turn off phone notifications? You won\'t get asked on your phone.')}</div>
+        <div className="m-confirm" role="alertdialog" aria-label={tr('이 기기 알림 끄기 확인', 'Confirm turning off device notifications')}>
+          <div>{tr('이 기기 알림을 끌까요? 참모가 물어도 이 기기에 안 와요.', 'Turn off device notifications? You won\'t get asked on this device.')}</div>
           <div className="m-new-row">
             <button type="button" className="m-btn" onClick={() => setAskOff(false)}>{tr('취소', 'Cancel')}</button>
             <button type="button" className="m-send" onClick={() => { setAskOff(false); push.disable(); }}>{tr('끄기', 'Turn off')}</button>
@@ -295,14 +314,14 @@ export function OrchDash({ orch, orchs, asking, sessions, events, routinesRunnin
 
       {tab === 'home' ? (
         <>
-          <TopList orch={orch} events={events} sessions={sessions} waiting={waiting} direct={direct} todo={{ todo: plan.todo.length, decisions: plan.decisions.length }}
+          <TopList known={tasksKnown} orch={orch} events={events} sessions={sessions} waiting={waiting} direct={direct} todo={{ todo: plan.todo.length, decisions: plan.decisions.length }}
             onPeek={setPeek} onPicker={onPicker} onChat={onChat} onTodo={() => setTodoOpen(true)} modes={<PhoneModes keys={[orch.name, orch.id, orch.sessionId ?? '']} dash={owner} onAsk={onAsk} />} />
         </>
       ) : (
-        <PhoneLocker owner={owner} view={lockerView} shown={shown} projects={projects} chips={chips} whoOf={who} onReload={kickLocker} onUpload={upload}
+        <PhoneLocker owner={owner} view={lockerView} loaded={lockerKnown && showLoaded} shown={shown} projects={projects} chips={chips} whoOf={who} onReload={kickLocker} onUpload={upload}
           onOpen={(path, name) => setView({ path, ts: '', by: 'me', name, ...((p) => (p ? { at: p } : {}))(shown.find((f) => f.path === path)?.at) })} />
       )}
-      {moreOpen && <MoreSheet busy={busySubs} routines={routinesRunning} left={left} push={push} onSessions={onSessions} onRoutines={onRoutines}
+      {moreOpen && <MoreSheet kidsKey={kidsKey} busy={busySubs} routines={routinesRunning} left={left} push={push} onSessions={onSessions} onRoutines={onRoutines}
         onAccount={() => setAcctOpen(true)} onPush={bell} onClose={() => setMoreOpen(false)} />}
       {alertsOpen && <AlertsSheet rows={alertRows} onClose={() => setAlertsOpen(false)}
         nameOf={(t) => seenName(findTarget(sessions, t)?.name || t)} onOpen={(r) => { const s = findTarget(sessions, r.target); if (s) setPeek(s); }}

@@ -1,6 +1,7 @@
 // 폰 뽑기·스킨(시안 docs/design-drafts/phone-gacha v1 B "방이 무대", 2026-10-23 사용자) — 폰 사무실 방 아래 칸의 뽑기·스킨 탭.
 // 폰은 요청만 보내고 굴리기·장착은 맥 앱 한 줄(domain/phoneGacha, 폰 서버 /api/gacha). 기계 그림은 데스크톱 MachineCanvas·machine.ts 그대로
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
+import { remember, remembered } from './memo';
 import { CATALOG, itemOf, PITY, PRICE, PRICE_TEN, rarityLabel, type EquipKind, type PullResult, type Rarity } from '../../domain/gacha';
 import { makeGachaSender, parseView, PHONE_SLOTS, shortName, slotList, type PhoneGachaView, type PhoneReply, type OfficeOp, type Preview, type SendBody, type SlotFilter } from '../../domain/phoneGacha';
 import { gachaRequest, readGachaView } from '../../data/web';
@@ -16,11 +17,13 @@ import { skinOf } from '../office/skins';
 
 const why = (w: string) => ({ spot: tr('자리가 겹쳐', 'That spot is taken'), short: tr('코인이 모자라', 'Not enough coins'), 'not-owned': tr('아직 안 가진 거야', "You don't own that yet"), unknown: tr('모르는 아이템이야', 'Unknown item'), off: tr(`${machine()}에서 뽑기가 꺼져 있어`, `Gacha is turned off on the ${machine()}`) } as Record<string, string>)[w] ?? w;
 const noAnswer = () => tr(`${machine()}이 답이 없어 — 잠깐 뒤에 다시`, `The ${machine()} isn't answering — try again in a moment`);
+const GACHA_KEY = 'gachaView';
 const makeRid = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`.padEnd(8, '0');
 
 /** 폰 뽑기 상태 — 보기는 30초마다·요청 뒤 바로, 요청은 실패하면 같은 요청 id 로 다시(코인 두 번 안 빠짐) */
 export function usePhoneGacha() {
-  const [view, setView] = useState<PhoneGachaView | null>(null);
+  // 지난번 보기(메모리 기억) — 사무실에 들어올 때마다 빈 보기(기본 스킨·자리)로 그렸다가 바뀌었다(2026-11-16)
+  const [view, setView] = useState<PhoneGachaView | null>(() => remembered<PhoneGachaView>(GACHA_KEY) ?? null);
   const [err, setErr] = useState<string | null>(null);
   /** 요청이 도는 중 — 단추를 흐리게(같은 단추 따닥이 따로 과금되지 않게, 문지기는 makeGachaSender) */
   const [busy, setBusy] = useState(false);
@@ -28,7 +31,7 @@ export function usePhoneGacha() {
   /** 맥이 답을 안 할 때 — 단추를 잠깐 흐리게(10초 뒤 다시 누르면 같은 요청 id 로) */
   const [stalled, setStalled] = useState(false);
   useEffect(() => { if (!stalled) return; const t = setTimeout(() => setStalled(false), 10_000); return () => clearTimeout(t); }, [stalled]);
-  const load = useCallback(() => readGachaView().then((t) => { setView(parseView(t)); setErr(null); }, () => setErr(tr(`${machine()}에 못 닿았어`, `Can't reach the ${machine()}`))), []);
+  const load = useCallback(() => readGachaView().then((t) => { const v = parseView(t); remember(GACHA_KEY, v); setView(v); setErr(null); }, () => setErr(tr(`${machine()}에 못 닿았어`, `Can't reach the ${machine()}`))), []);
   useEffect(() => {
     void load();
     const id = setInterval(() => void load(), 30_000);

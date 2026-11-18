@@ -51,7 +51,7 @@ let keepOffice = 0;
 export default function PhoneOffice({ sessions, orchs, hqDir, lives, onBack, current, onTalk, onWide }: { sessions: Session[]; orchs: Session[]; hqDir: string; lives: Live[]; onBack: () => void;
   /** 지금 말하는 참모(입력칸 대상) — 방에서 고리 */ current: string; /** 참모를 누름 — 사무실을 안 떠나고 말 상대만 바꾼다 */ onTalk: (id: string) => void;
   /** 뽑기·스킨 시트가 열린 동안 true — MobileApp 이 아래 채팅창을 숨겨 시트가 그만큼 커진다(10-24 사용자 "활성화된 동안 채팅창 사라지면") */ onWide?: (wide: boolean) => void }) {
-  const [raw] = useMemoPoll('office', () => readOffice(), 15_000, '{}');
+  const [raw, officeKnown] = useMemoPoll('office', () => readOffice(), 15_000, '{}');
   const shape = useMemo(() => parseOffice(raw), [raw]);
   const tails = useSubTails(sessions);
   const acts = useMemo(() => {
@@ -99,6 +99,8 @@ export default function PhoneOffice({ sessions, orchs, hqDir, lives, onBack, cur
   const base = cur === 0 ? look.skin ?? shape.skins[0] ?? 'wood' : previewSkin ?? g.view?.offices?.[cur]?.skin ?? shape.skins[cur] ?? 'wood';
   // 다크 모드인데 기본 나무 방이면 밤 방(네온)으로(시안 A 다크) — 고른 스킨은 그대로
   const skin = dark() && base === 'wood' ? 'neon' : base;
+  // 방 모양·뽑기 보기를 다 알 때까지 방은 빈 칸 — 기본 방·기본 스킨을 그렸다가 두 번 바뀌었다(2026-11-16)
+  const ready = officeKnown && (g.view !== null || g.err !== null);
   const sk = skinOf(skin);
   const show = useRef<Show | null>(null);
   const [playing, setPlaying] = useState<1 | 10 | null>(null);
@@ -175,7 +177,7 @@ export default function PhoneOffice({ sessions, orchs, hqDir, lives, onBack, cur
           <div className="m-dash-title">{tr('사무실', 'Office')}</div>
         </div>
       </header>
-      <div className={open ? 'm-office-stage m-open' : 'm-office-stage'} style={{ background: sk.bg }}>
+      <div className={open ? 'm-office-stage m-open' : 'm-office-stage'} style={{ background: ready ? sk.bg : 'var(--surface-2)' }}>
         <div className="m-office-chips" role="group" aria-label={tr('사무실 칸', 'Office panels')}>
           {SHEETS.filter(([k]) => k !== 'chars' || orchs.length > 0).map(([k, name, icon]) => (
             <button key={k} type="button" aria-expanded={open === k} className={`${icon ? 'm-ico-chip' : ''}${open === k ? ' m-on' : ''}`} onClick={() => setOpen(open === k ? null : k)} aria-label={name} title={name}>
@@ -189,8 +191,8 @@ export default function PhoneOffice({ sessions, orchs, hqDir, lives, onBack, cur
           {g.view && !locked && expandPrice(lv) !== null && <button type="button" className={`m-grow-chip${grow ? ' m-on' : ''}`} onClick={() => setGrow((v) => !v)}>{tr(`넓히기 ${expandPrice(lv)!.toLocaleString()}`, `Expand ${expandPrice(lv)!.toLocaleString()}`)}</button>}
         </div>
         <div className={equipAt ? 'm-office-room m-equip' : 'm-office-room'} style={{ aspectRatio: `${rs.W} / ${rs.H}` }} onPointerDown={down} onPointerUp={up}>
-          <OfficeView room={room} roomId={cur} overlay={grow ? growOverlay(lv) : undefined} skin={skin} deco={look.deco} fit="box" tags="few" picked={ringOf(picked, current, orchIds)} onOpen={tap} dot={viewFile ? charDot(current, orchs.map((o) => ({ id: o.id, name: splitOrchName(o.name).base })), (n) => !!chosen(n)) : null}
-            coins={g.view ? g.view.coins : undefined} onGacha={g.view ? () => setOpen('gacha') : undefined} />
+          {ready && <OfficeView room={room} roomId={cur} overlay={grow ? growOverlay(lv) : undefined} skin={skin} deco={look.deco} fit="box" tags="few" picked={ringOf(picked, current, orchIds)} onOpen={tap} dot={viewFile ? charDot(current, orchs.map((o) => ({ id: o.id, name: splitOrchName(o.name).base })), (n) => !!chosen(n)) : null}
+            coins={g.view ? g.view.coins : undefined} onGacha={g.view ? () => setOpen('gacha') : undefined} />}
           {open === 'skin' && g.view && (
             <>
               <button type="button" className="m-rt-btn m-ico m-room-arrow m-left" onClick={() => pick.step(-1)} aria-label={tr('앞 스킨 입혀 보기', 'Try previous skin')} title={tr('앞', 'Previous')}><IconChevron /></button>

@@ -95,6 +95,10 @@
 .su-tts-opt { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
 .su-tts-opt input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
 .su-tts select, .su-tts input[type='text'], .su-tts-row > input { height: 32px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--text); font-size: 13px; }
+.su-model { display: flex; gap: 8px; flex-wrap: wrap; }
+.su-model select { height: 32px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--text); font-size: 13px; }
+/* 꺽쇠가 오른쪽 끝에 붙던 것(11-17 사용자 "답답하게 붙어있노") — 기본 꺽쇠 대신 여백 둔 그림 꺽쇠, 도구 칸(.tl-form)과 같은 모양 */
+.su-model select, .su-tts select { -webkit-appearance: none; appearance: none; cursor: pointer; padding: 0 30px 0 10px; background: var(--surface) no-repeat right 11px center / 9px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238a8a92' stroke-width='1.4' stroke-linecap='round'/%3E%3C/svg%3E"); }
 .su-tts-row > input { flex: 1; min-width: 160px; }
 /* 말하기 키 — 고르기 + 앱 밖에서도 */
 .su-control:has(.su-check) { flex-wrap: wrap; gap: 8px 14px; align-items: center; }
@@ -268,3 +272,17 @@
 .su-more > summary::before { content: ''; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform .15s; }
 .su-more[open] > summary::before { transform: rotate(45deg); }
 .su-more[open] > summary { margin-bottom: 6px; }
+
+/* 설정 > 키즈 모드 아래 — 부모 잠금 숫자·하루 시간(ui/kids/KidsLockRow) */
+.cfg-kids-lock { display: flex; flex-direction: column; gap: 8px; padding: 4px 0 10px 12px; }
+.cfg-kids-row { display: flex; align-items: center; gap: 10px; min-height: 36px; font-size: 13px; }
+.cfg-kids-row b { width: 72px; font-weight: 600; }
+.cfg-kids-row input { width: 110px; height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--text); font: inherit; letter-spacing: 4px; }
+.cfg-kids-row select { height: 32px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--text); font: inherit; }
+.cfg-kids-row button { height: 32px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--surface-2); color: var(--text); font: inherit; cursor: pointer; }
+.cfg-kids-row button:disabled { opacity: .45; cursor: default; }
+.cfg-kids-ok { color: var(--text-3); font-size: 12px; }
+.cfg-kids-row input.cfg-kids-key { width: 220px; letter-spacing: 0; }
+.cfg-kids-row button.cfg-kids-icon { min-width: 44px; min-height: 44px; margin: -8px 0; display: grid; place-items: center; padding: 0; background: none; border: 0; box-shadow: none; color: var(--text-dim, #8a8a94); }
+.cfg-kids-row button.cfg-kids-icon:hover { color: var(--danger, #d0453b); }
+.cfg-kids-row button.cfg-kids-icon svg { width: 18px; height: 18px; }

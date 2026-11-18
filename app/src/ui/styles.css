@@ -973,8 +973,9 @@ button.ld-row:hover { background: var(--panel); }
 .od-box { width: min(380px, 90vw); display: flex; flex-direction: column; gap: 10px; padding: 18px; border-radius: 16px; background: var(--surface); color: var(--text); box-shadow: 0 24px 60px rgba(0, 0, 0, .3), 0 0 0 1px var(--line); font-size: 13px; animation: od-pop .18s cubic-bezier(.2, .9, .3, 1.1); }
 .od-box b { font-size: 15px; }
 .od-box p { margin: 0; color: var(--text-2); line-height: 1.55; white-space: pre-line; max-height: 40vh; overflow: auto; }
-.od-box input { height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--text); font: inherit; font-size: 14px; }
-.od-box input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
+/* 글 칸만 — 체크·스위치까지 먹으면 프로필 키즈 참모 스위치가 56×38 흰 칸이 됐다(11-17 사용자 "체크버튼 왜 이렇게 큼") */
+.od-box input:not([type="checkbox"]):not([type="radio"]) { height: 36px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--text); font: inherit; font-size: 14px; }
+.od-box input:not([type="checkbox"]):not([type="radio"]):focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
 .od-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 .od-foot button { all: unset; cursor: pointer; height: 34px; padding: 0 14px; border-radius: 10px; font-weight: 600; background: var(--surface-2); color: var(--text-2); }
 .od-foot button.pri { background: var(--accent); color: var(--accent-ink); }
@@ -1054,3 +1055,6 @@ html.cv-dragging, html.cv-dragging * { cursor: grabbing !important; user-select:
 /* 앱 카드가 새로 뜬 순간 한 줄(누르면 결정 대기함) — 토스트 칸은 클릭을 통과시키니 이 단추만 받는다. 손가락 44px */
 .toasts .toast-go { pointer-events: auto; min-height: 44px; padding: 0 14px; background: var(--surface, var(--bg)); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
 .toasts .toast-go:focus-visible { outline: 2px solid var(--accent, #2a78d6); outline-offset: 2px; }
+
+/* 맥 WebKit 비밀번호 칸의 Caps Lock 표시(⇪) — 한글 맥은 Caps Lock 이 한/영 전환이라 늘 떠서 낯선 아이콘으로 보인다(11-18 사용자 "이 이상한 아이콘은 뭐임?") */
+input::-webkit-caps-lock-indicator { display: none; }

@@ -75,25 +75,25 @@ export function MobileSection({ title, onAccount }: { title: string; onAccount?:
         )}
       </div>
       <p className="su-hint">
-        {tr('폰에서 참모와 채팅하고 세션·예약을 봐요. 폰마다 연결 QR을 한 번 찍으면 그 폰 전용 열쇠가 생겨요. QR은 10분 안에 한 번만 써요',
-          'Chat with your assistant and check sessions and routines from your phone. Scan a connect QR once per phone and it gets its own key. A QR works once, within 10 minutes.')}
+        {tr('폰·태블릿에서 참모와 채팅하고 세션·예약을 봐요. 기기마다 연결 QR을 한 번 찍으면 그 기기 전용 열쇠가 생겨요. QR은 10분 안에 한 번만 써요',
+          'Chat with your assistant and check sessions and routines from your phone or tablet. Scan a connect QR once per device and it gets its own key. A QR works once, within 10 minutes.')}
       </p>
       {reach && <span className="su-hint">{reach.text}</span>}
       {reach && reach.login && onAccount && <div className="su-inline"><button className="btn" onClick={onAccount}>{tr('Chammo 계정에 로그인', 'Sign in to Chammo account')}</button></div>}
-      {st && !on && <span className="su-hint">{hasAccount ? tr('꺼져 있어서 폰이 이 컴퓨터에 붙지 않아요.', "Off, so phones can't connect to this computer.") : tr('꺼져 있어요 — 오른쪽 위 단추로 켜요.', 'Off — turn it on with the button at the top right.')}</span>}
+      {st && !on && <span className="su-hint">{hasAccount ? tr('꺼져 있어서 폰·태블릿이 이 컴퓨터에 붙지 않아요.', "Off, so phones and tablets can't connect to this computer.") : tr('꺼져 있어요 — 오른쪽 위 단추로 켜요.', 'Off — turn it on with the button at the top right.')}</span>}
       {st?.relayReady && (
         <span className="su-hint">{st.relay.connected
-          ? tr(`중계 연결됨 — 지금 폰 ${st.relay.phones}대`, `Relay connected — ${st.relay.phones} phone(s) now`)
+          ? tr(`중계 연결됨 — 지금 폰·태블릿 ${st.relay.phones}대`, `Relay connected — ${st.relay.phones} phone/tablet(s) now`)
           : tr(`중계에 붙는 중… ${st.relay.error ?? ''}`, `Connecting to the relay… ${st.relay.error ?? ''}`)}</span>
       )}
       {on && st && (st.running || st.relayReady) && (
         <>
           {qr ? (
             <div className="su-mobile">
-              {qr.qrSvg && <img className="su-qr" alt={tr('폰 연결 QR', 'Connect QR')} src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(qr.qrSvg)}`} />}
+              {qr.qrSvg && <img className="su-qr" alt={tr('폰·태블릿 연결 QR', 'Connect QR')} src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(qr.qrSvg)}`} />}
               <div className="su-mobile-side">
-                <b>{tr(`${left(qr.expires - now)} 안에 폰 카메라로 찍어 주세요`, `Scan with the phone camera within ${left(qr.expires - now)}`)}</b>
-                <span className="su-hint">{tr("이 QR은 사파리에서만 열려요. 폰 앱은 위 내 기기의 '폰 추가'로 연결하세요", "This QR opens only in Safari. Connect the phone app with 'Add phone' in My devices above.")}</span>
+                <b>{tr(`${left(qr.expires - now)} 안에 폰·태블릿 카메라로 찍어 주세요`, `Scan with the phone or tablet camera within ${left(qr.expires - now)}`)}</b>
+                <span className="su-hint">{tr("이 QR은 사파리에서만 열려요. 폰·태블릿 앱은 위 내 기기의 '폰·태블릿 추가'로 연결하세요", "This QR opens only in Safari. Connect the phone or tablet app with 'Add phone or tablet' in My devices above.")}</span>
                 <span className="su-hint">{tr("한 번 쓰면 사라져요. 홈 화면 앱은 QR로 못 열어요. 아래 코드를 앱의 '붙여넣기로 연결'에 넣거나, 연결된 사파리의 '홈 화면 앱 연결'에서 코드를 받으세요", "It disappears after one use. A home-screen app can't open the QR. Paste the code below into its 'Connect by pasting', or get a code from a connected Safari with 'Connect home-screen app'.")}</span>
                 {code && <code className="su-pair-code">{groupCode(code)}</code>}
                 <div className="su-inline">
@@ -108,11 +108,11 @@ export function MobileSection({ title, onAccount }: { title: string; onAccount?:
               </div>
             </div>
           ) : (
-            <div className="su-inline"><button className="btn pri" onClick={newQr}>{tr('폰 연결 QR 만들기', 'Make connect QR')}</button></div>
+            <div className="su-inline"><button className="btn pri" onClick={newQr}>{tr('폰·태블릿 연결 QR 만들기', 'Make connect QR')}</button></div>
           )}
           {st.running && !st.https && !st.relayReady && (
             <>
-              <span className="su-hint">{tr(`http 주소라서 폰에서 홈 화면 앱 설치(안드로이드)·알림·마이크를 쓸 수 없어요. ${st.httpsNote ?? ''}`, `This is an http address, so the phone can't install the home-screen app (Android), get notifications or use the mic. ${st.httpsNote ?? ''}`)}</span>
+              <span className="su-hint">{tr(`http 주소라서 폰·태블릿에서 홈 화면 앱 설치(안드로이드)·알림·마이크를 쓸 수 없어요. ${st.httpsNote ?? ''}`, `This is an http address, so the phone or tablet can't install the home-screen app (Android), get notifications or use the mic. ${st.httpsNote ?? ''}`)}</span>
               {st.httpsFix && <div className="su-inline"><button className="btn" onClick={() => void openTarget('url', st.httpsFix!).catch(() => {})}>{tr('테일스케일 관리 화면 열기', 'Open Tailscale admin')}</button></div>}
             </>
           )}
@@ -134,13 +134,13 @@ export function MobileSection({ title, onAccount }: { title: string; onAccount?:
                 <button className="ib danger su-row-act" aria-label={tr(`${g.name} 끊기`, `Disconnect ${g.name}`)} title={tr('끊기', 'Disconnect')} disabled={busy} onClick={() => act(() => mobileApi.removeDevice(g.group))}><IconUnlink /></button>
               </div>
             ))}
-            {phones.length === 0 && <span className="su-hint">{tr('연결된 폰이 없어요', 'No phones connected')}</span>}
+            {phones.length === 0 && <span className="su-hint">{tr('연결된 폰·태블릿이 없어요', 'No phones or tablets connected')}</span>}
           </div>
           {entry && (
             <div className="su-mobile">
-              {entry.qrSvg && <img className="su-qr" alt={tr('폰 추가 QR', 'Add phone QR')} src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(entry.qrSvg)}`} />}
+              {entry.qrSvg && <img className="su-qr" alt={tr('폰·태블릿 추가 QR', 'Add phone or tablet QR')} src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(entry.qrSvg)}`} />}
               <div className="su-mobile-side">
-                <b>{tr('폰 카메라로 찍어 주세요', 'Scan with the phone camera')}</b>
+                <b>{tr('폰·태블릿 카메라로 찍어 주세요', 'Scan with the phone or tablet camera')}</b>
                 <span className="su-hint">{tr('홈 화면 앱에서 구글로 로그인하고 이 컴퓨터를 고르면 중계로 다시 연결돼요. 연결된 뒤 목록의 예전 항목은 끊어 주세요',
                   'Sign in with Google in the Home Screen app and pick this computer to reconnect through the relay. Then disconnect the old row')}</span>
                 <div className="su-inline"><IconButton size="l" tone="line" label={tr('닫기', 'Close')} onClick={() => setEntry(null)}><IconClose /></IconButton></div>

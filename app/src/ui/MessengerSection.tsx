@@ -56,8 +56,8 @@ export function MessengerSection({ title }: { title: string }) {
         )}
       </div>
       <p className="su-hint">
-        {tr('텔레그램에서 참모와 대화해요. 연결한 내 계정의 1:1 대화만 받아요. 결제·보내기·삭제·운영 카드는 알림만 가요. 승인은 앱이나 폰에서 해요',
-          'Talk to your assistant from Telegram. Only 1:1 chats from your linked account are accepted. Payment, send, delete and production cards arrive as notices only. Approve them in the app or on the phone.')}
+        {tr('텔레그램에서 참모와 대화해요. 연결한 내 계정의 1:1 대화만 받아요. 결제·보내기·삭제·운영 카드는 알림만 가요. 승인은 앱이나 폰·태블릿에서 해요',
+          'Talk to your assistant from Telegram. Only 1:1 chats from your linked account are accepted. Payment, send, delete and production cards arrive as notices only. Approve them in the app or on a phone or tablet.')}
       </p>
 
       {stage === 'token' && (
@@ -82,7 +82,7 @@ export function MessengerSection({ title }: { title: string }) {
           {link.qrSvg && <img className="su-qr" alt={tr('텔레그램 연결 QR', 'Telegram link QR')} src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(link.qrSvg)}`} />}
           <div className="su-mobile-side">
             <b>{tr(`${left(link.expires - now)} 안에 텔레그램에서 시작(Start)을 눌러 주세요`, `Press Start in Telegram within ${left(link.expires - now)}`)}</b>
-            <span className="su-hint">{tr(`폰이면 QR 을 찍고, 이 ${machine()} 텔레그램이면 방금 열린 창에서 눌러요. 한 번 쓰면 사라져요.`, `On the phone scan the QR; on this ${machine()} use the window that just opened. It works once.`)}</span>
+            <span className="su-hint">{tr(`폰·태블릿이면 QR 을 찍고, 이 ${machine()} 텔레그램이면 방금 열린 창에서 눌러요. 한 번 쓰면 사라져요.`, `On a phone or tablet scan the QR; on this ${machine()} use the window that just opened. It works once.`)}</span>
             <div className="su-inline">
               <button className="ib" aria-label={tr('텔레그램에서 열기', 'Open in Telegram')} title={tr('텔레그램에서 열기', 'Open in Telegram')} onClick={() => void openTarget('url', link.link).catch(() => {})}><IconOpen /></button>
               <button className="ib" aria-label={copied ? tr('복사했어요', 'Copied') : tr('링크 복사', 'Copy link')} title={copied ? tr('복사했어요', 'Copied') : tr('링크 복사', 'Copy link')} onClick={() => void writeClipboard(link.link).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1500); })}><IconCopy /></button>
@@ -122,8 +122,8 @@ export function MessengerSection({ title }: { title: string }) {
 
       {st?.hasToken && (
         <span className="su-hint">
-          {tr('봇 대화는 종단 암호화가 아니라 텔레그램 서버에 남아요. 비밀번호·키는 치지 마세요. 텔레그램 2단계 인증을 켜 두세요. 폰을 잃어버렸다면 텔레그램에서 /잠금을 보내세요',
-            'Bot chats are not end-to-end encrypted and stay on Telegram servers. Never type passwords or keys. Turn on Telegram two-step verification. Lost the phone? Send /lock.')}
+          {tr('봇 대화는 종단 암호화가 아니라 텔레그램 서버에 남아요. 비밀번호·키는 치지 마세요. 텔레그램 2단계 인증을 켜 두세요. 폰·태블릿을 잃어버렸다면 텔레그램에서 /잠금을 보내세요',
+            'Bot chats are not end-to-end encrypted and stay on Telegram servers. Never type passwords or keys. Turn on Telegram two-step verification. Lost the phone or tablet? Send /lock.')}
           {st.tokenFile && tr(' 이 PC 는 키체인이 없어 토큰을 데이터 폴더 파일(나만 읽기)에 둬요.', ' This PC keeps the token in a data-folder file readable only by you (no keychain).')}
         </span>
       )}

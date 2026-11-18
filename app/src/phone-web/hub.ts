@@ -36,7 +36,7 @@ export class TrustError extends TypeError {
   override name = 'TrustError';
   /** 까닭 — hold 거절 뒤 잠깐 안 묻는 동안 · nokeys 열쇠 없음 · relay401 중계가 서명 거절 · confirm 상대가 그 컴퓨터가 아님(lostMark 가 남긴다) */
   constructor(readonly why: LostWhy) {
-    super('이 폰 연결이 풀렸어요');
+    super('이 기기 연결이 풀렸어요');
   }
 }
 

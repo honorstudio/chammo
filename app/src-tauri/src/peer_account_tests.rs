@@ -6,7 +6,7 @@ fn me() -> Mine {
 }
 
 fn seen(at: u64, ids: &[&str]) -> Seen {
-    Seen { mine: me(), at_ms: at, computers: ids.iter().map(|i| (i.to_string(), String::new())).collect(), phones: vec![] }
+    Seen { mine: me(), at_ms: at, computers: ids.iter().map(|i| (i.to_string(), String::new())).collect(), phones: vec![], online: vec![] }
 }
 
 const NOW: u64 = 10_000_000;
@@ -187,7 +187,7 @@ fn 보유_증명은_그_열쇠_시각_길에_묶인다() {
 // ── 폰 줄(11-09 2차) — 컴퓨터 브라우저로 폰 화면을 열어 만든 줄이 계정 확인 없이 결제 카드에 답할 수 있었다
 
 fn seen_phones(at: u64, phones: &[&str]) -> Seen {
-    Seen { mine: me(), at_ms: at, computers: vec![], phones: phones.iter().map(|p| p.to_string()).collect() }
+    Seen { mine: me(), at_ms: at, computers: vec![], phones: phones.iter().map(|p| p.to_string()).collect(), online: vec![] }
 }
 
 #[test]
@@ -207,7 +207,7 @@ fn 폰_중계_줄은_내_계정_허용_폰일_때만() {
     assert_eq!(judge_phone(Some("ph-1"), Some(&me()), Some(&seen_phones(NOW - FRESH_MS - 1, &["ph-1"])), NOW), Verdict::Same { fresh: false }, "묵은 목록은 결제류 안 됨");
     assert_eq!(judge_phone(Some("ph-1"), Some(&me()), Some(&seen_phones(NOW - GRACE_MS - 1, &["ph-1"])), NOW), Verdict::Unknown);
     // 컴퓨터 목록에 있는 id 는 폰으로 안 친다
-    let c = Seen { mine: me(), at_ms: NOW, computers: vec![("ph-1".into(), String::new())], phones: vec![] };
+    let c = Seen { mine: me(), at_ms: NOW, computers: vec![("ph-1".into(), String::new())], phones: vec![], online: vec![] };
     assert_eq!(judge_phone(Some("ph-1"), Some(&me()), Some(&c), NOW), Verdict::Other);
 }
 
@@ -231,3 +231,13 @@ fn 예전_방식_짝은_계정이_바뀐_게_아니라_다시_연결이_필요�
     assert!(word("other").contains("계정이 바뀌어 연결이 멈췄어요"));
 }
 
+
+// 기기 관리 '붙음'(11-18) — 중계가 마지막 시각을 1시간에 한 번만 적어서 3분 창으로는 켜진 컴퓨터도 '꺼짐'이었다. 허브가 아는 지금 값을 쓴다
+#[test]
+fn 붙은_컴퓨터는_online_이_true_인_것만() {
+    let v = serde_json::json!({ "computers": [
+        { "id": "dev-imac", "online": true }, { "id": "dev-pc", "online": false }, { "id": "dev-wait", "online": null }, { "id": "bad id!", "online": true }
+    ] });
+    assert_eq!(online_of(&v), vec!["dev-imac".to_string()]);
+    assert!(online_of(&serde_json::json!({ "status": "pending" })).is_empty());
+}

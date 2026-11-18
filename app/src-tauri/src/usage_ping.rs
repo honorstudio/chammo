@@ -188,7 +188,7 @@ pub fn url_for(dir: &Path) -> Option<String> {
 }
 
 /// curl 한 번, 짧게(5초). 몸통은 stdin 으로, 응답 끝 줄이 코드
-fn post(url: &str, body: &str) -> Result<u16, String> {
+pub(crate) fn post(url: &str, body: &str) -> Result<u16, String> {
     use std::io::Write;
     let prog = if cfg!(target_os = "macos") { "/usr/bin/curl" } else { "curl" };
     let mut c = crate::platform::command(prog);

@@ -5,10 +5,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod access;
+mod win_frame;
 mod agents_cache;
 mod appctl;
 mod away;
 mod boot_watch;
+mod test_window;
 mod web_watch;
 mod folder_prompt;
 mod git_cache;
@@ -25,10 +27,22 @@ mod phone_black;
 mod offmain_scan;
 mod audio_out;
 mod avatar;
+// 키즈 모드 — 두 단계 스위치·아이 세션(막힘)·이름표·기록(docs/plans/kids-mode.md C)
+mod kids;
+mod kids_wire;
+mod kids_life;
+mod kids_pad;
+mod kids_voice;
+mod kids_make;
+mod kids_guard;
+mod kids_api;
+mod kids_passkey;
+mod kids_turn;
 mod claude;
 #[cfg(test)]
 mod fake_claude;
 mod send_land;
+mod cut_wait;
 mod deep_link;
 mod claude_src;
 mod accounts;
@@ -39,6 +53,7 @@ mod accounts_store;
 mod accounts_usage;
 mod accounts_warm;
 mod claude_defaults;
+mod default_model;
 mod daemon_env;
 mod computer_use;
 mod browser_attach;
@@ -47,6 +62,7 @@ mod config;
 mod craft_basics;
 mod craft_dock;
 mod tidy_git;
+mod chief_compact;
 mod dock_quit;
 mod craft_input;
 mod accessory;
@@ -59,6 +75,7 @@ mod browser_pane_win;
 mod win_jpeg;
 mod craft_mirror;
 mod craft_screen;
+mod crash_report;
 mod craft_window;
 mod harnitor;
 mod hq;
@@ -224,6 +241,7 @@ mod browser_setup;
 mod base_tools;
 mod routines;
 mod pty;
+mod shell_pty;
 mod quit;
 mod review;
 mod setup;
@@ -411,6 +429,7 @@ fn build_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<Men
     let session = SubmenuBuilder::new(app, tr("세션", "Session"))
         .item(&item("new_doc", tr("새 문서 (보고 있는 보관함 폴더)", "New Document (current locker folder)"), Some(&*platform::accel("CmdOrCtrl+T")))?)
         .item(&item("close_tab", tr("열린 탭 닫기", "Close Tab"), Some(&*platform::accel("CmdOrCtrl+W")))?)
+        .item(&item("new_shell", tr("새 터미널 (보고 있는 프로젝트 폴더)", "New Terminal (current project folder)"), Some(&*platform::accel("CmdOrCtrl+Alt+T")))?)
         .separator()
         .item(&item("home_toggle", tr("홈 대시보드 / 보던 화면", "Home Dashboard / Back"), Some(&*platform::accel("CmdOrCtrl+`")))?)
         .item(&item("go_home", tr("홈 탭으로", "Go to Home Tab"), Some(&*platform::accel("CmdOrCtrl+Shift+H")))?)
@@ -472,8 +491,10 @@ fn set_first_run_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>, on: bool) 
     let _ = w.set_maximizable(!on);
     let _ = w.set_min_size(if on { None } else { Some(tauri::LogicalSize::new(1024.0, 640.0)) });
     let _ = if on { w.set_size(tauri::LogicalSize::new(640.0, 440.0)) } else { w.set_size(tauri::LogicalSize::new(1440.0, 900.0)) };
-    // 시험 창은 가짜 화면에 둔 그대로 — 사용자 화면으로 끌어오지 않는다
-    if !(cfg!(debug_assertions) && std::env::var_os("CHAMMO_DEV_WINDOW").is_some()) {
+    // 시험 창은 가짜 화면·화면 밖에 둔 그대로 — 사용자 화면으로 끌어오지 않는다
+    if let Some((x, y)) = test_window::spot() {
+        let _ = w.set_position(tauri::LogicalPosition::new(x, y));
+    } else if !(cfg!(debug_assertions) && std::env::var_os("CHAMMO_DEV_WINDOW").is_some()) {
         let _ = w.center();
     }
 }
@@ -616,6 +637,7 @@ fn forbidden() -> tauri::http::Response<Vec<u8>> {
 }
 
 fn main() {
+    test_window::early(); // 시험판 — 프로세스가 뜨자마자 Dock 에서 빼기(tao 가 켤 때 정책을 걸기 전 한순간 Dock 에 보였다)
     // 윈도우 하드 오류 창(16비트 응용 프로그램 등)을 끈다 — 예약 tick·자식 claude 까지 물려받게 맨 먼저(platform::quiet_hard_errors)
     platform::quiet_hard_errors();
     // 파일 한도 256(launchd 기본)을 올린다 — 앱·예약 tick·띄우는 claude 가 다 물려받는다(10-04 Too many open files)
@@ -628,10 +650,12 @@ fn main() {
     if let Some(code) = pro::run_flag() {
         std::process::exit(code);
     }
-    // 익명 사용 통계 — 앱이 죽은(panic) 횟수만 센다. 문구·위치는 안 담고, 원래 처리(기록·종료)는 그대로
+    // 익명 사용 통계 — 앱이 죽은(panic) 횟수를 센다(문구는 안 담는다). 오류 보고는 위치·꼴 이름만. 원래 처리(기록·종료)는 그대로
     let before = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        crate::usage_counts::record_crash("panic");
+        crate::usage_counts::record_panic();
+        // 오류 보고(ADR 0033) — 위치·꼴 이름만 outbox 에, 잠금은 기다리지 않는다
+        crate::crash_report::on_panic(info);
         before(info);
     }));
     // 시작이 멈추면 어디서 멈췄나 남긴다 — 뒤의 어떤 단계가 멈춰도 돌게 맨 앞에(boot_watch.rs)
@@ -647,7 +671,9 @@ fn main() {
     // 띄운 쪽 Claude 세션 표시를 안 물려받게 — 사람이 연 Craft 의 주인이 그 세션으로 잡혔다(2026-10-20)
     craft_window::drop_session_env();
     boot_watch::mark("build");
-    let ctx = tauri::generate_context!();
+    let mut ctx = tauri::generate_context!();
+    win_frame::prepare(&mut ctx); // 메인 창을 지난번 크기·자리로 처음부터(켠 뒤 커지면 웹뷰가 몇 초 좁게 남았다, 11-18)
+    test_window::prepare(&mut ctx); // 시험판(시험 데이터 폴더 개발 빌드)은 창을 처음부터 화면 밖에
     // 자동 업데이트 — 공개판만(개인 앱은 엔드포인트를 비워 둠, updater.rs)
     let builder = web_watch::attach(tauri::Builder::default());
     // 윈도우: chammo:// 를 누르거나 앱을 또 켜면 새 프로세스가 뜬다 — 떠 있는 앱으로 넘기고 끈다(맨 먼저 등록, ADR 0015)
@@ -688,7 +714,7 @@ fn main() {
                 return;
             }
             // 기본 항목(가리기·종료 등)은 macOS 가 알아서 한다 — 우리 항목만 넘긴다(안 그러면 '가리기' 뒤에 창이 다시 뜬다)
-            const OURS: &[&str] = &["licenses", "goto_orch", "goto_all", "goto_review", "goto_office", "reader_toggle", "reader_full", "reader_next", "reader_prev", "reader_close", "sidebar", "tasks", "search", "font_up", "font_down", "font_reset", "new_session", "close_pane", "close_tab", "new_doc", "go_home", "go_locker", "pane_max", "home_toggle", "memo", "notes", "settings", "harnitor", "tour", "app_quit_all", "select_all"];
+            const OURS: &[&str] = &["licenses", "goto_orch", "goto_all", "goto_review", "goto_office", "reader_toggle", "reader_full", "reader_next", "reader_prev", "reader_close", "sidebar", "tasks", "search", "font_up", "font_down", "font_reset", "new_session", "close_pane", "close_tab", "new_doc", "new_shell", "go_home", "go_locker", "pane_max", "home_toggle", "memo", "notes", "settings", "harnitor", "tour", "app_quit_all", "select_all"];
             if !OURS.contains(&id.as_str()) {
                 return;
             }
@@ -703,6 +729,9 @@ fn main() {
         })
         .setup(|app| {
             boot_watch::mark("setup");
+            test_window::on_setup(app); // 시험판 — Dock·포커스 안 가져가기(맨 먼저: 켜질 때 앞으로 나오기 전에)
+            #[cfg(target_os = "macos")]
+            win_frame::instant_zoom(app.handle()); // 맥 최대화를 애니메이션 없이 — 애니메이션 동안 웹뷰가 옛 크기로 남아 흰 칸(11-18)
             no_nap::start();
             wizard_menu(app.handle());
             if !config::current().setup_done {
@@ -814,11 +843,17 @@ fn main() {
             craft_basics::start();
             // 익명 사용 신호 — 공개판·진짜 데이터 폴더·설정 켬일 때만 하루 한 번(usage_ping.rs)
             usage_ping::start(app.config().identifier.clone(), app.package_info().name.clone(), app.package_info().version.to_string());
+            // 오류 보고 — 같은 스위치·관문, 쌓인 오류를 10분마다(crash_report.rs, ADR 0033)
+            crash_report::init(app.config().identifier.clone(), app.package_info().name.clone(), app.package_info().version.to_string());
+            crash_report::start();
             // HQ 는 devRoot(데스크톱·문서일 수 있다)에 있다 — 맥 폴더 권한 창이 답을 기다리면 그 stat 이 멈추니 메인 스레드에서 하지 않는다
             std::thread::spawn(hq::refresh_app_hq);
             #[cfg(debug_assertions)]
             drop::fake_from_env(app.handle());
             debug::eval_from_env(app.handle());
+            debug::resize_from_env(app.handle());
+            debug::notify_click_from_env(app.handle());
+            debug::zoom_from_env(app.handle());
             web_watch::start(app.handle());
             theme::apply_saved(app.handle());
             #[cfg(target_os = "macos")]
@@ -866,6 +901,7 @@ fn main() {
             remote::remote_connect,
             peer_pair::peer_relay_connect,
             peer_pair::peer_relay_state,
+            peer_account::devices_online,
             peer_pair::peer_relay_clear,
             remote::remote_connect_cancel,
             remote::remote_connect_note,
@@ -895,6 +931,7 @@ fn main() {
             team_ui::team_ui_join,
             team_ui::team_ui_invite,
             deep_link::team_take_invite,
+            deep_link::notify_click_take,
             team_ui::team_clip_invite,
             team_ui::team_ui_rename,
             team_ui::team_ui_invites,
@@ -1027,6 +1064,8 @@ fn main() {
             pty::pty_resize,
             pty::pty_close,
             pty::pty_close_mine,
+            shell_pty::shell_open,
+            shell_pty::shell_busy,
             ptt::ptt_target,
             ptt::ptt_watch,
             ptt::ptt_live,
@@ -1221,6 +1260,9 @@ fn main() {
             reader::read_show_log,
             claude::project_scan,
             tidy_git::tidy_git,
+            chief_compact::chief_handoff,
+            chief_compact::project_handoff,
+            chief_compact::chief_compact_log,
             claude::notify,
             claude::main_watched,
             away::user_idle,
@@ -1244,7 +1286,23 @@ fn main() {
             lessons::read_lessons,
             lessons::write_lessons,
             lessons::unmirror_lesson,
+            lessons::undo_memory_rule,
             avatar::avatars_read,
+            kids::kids_read,
+            kids::kids_set,
+            kids::kids_start,
+            kids::kids_say,
+            kids::kids_make,
+            kids::kids_tuning_add,
+            kids::kids_log,
+            kids::kids_works,
+            kids::kids_lock_set,
+            kids::kids_api_key_set,
+            kids::kids_api_key_clear,
+            kids::kids_passkey_clear,
+            kids::kids_daily_set,
+            kids::kids_time_add,
+            kids::kids_work,
             avatar::avatar_save,
             avatar::avatar_delete,
             memo::read_memos,
@@ -1287,6 +1345,7 @@ fn main() {
             accounts_cmd::accounts_usage,
             claude::read_usage_at,
             claude_defaults::claude_defaults_snapshot,
+            default_model::default_model_view,
             claude_defaults::claude_defaults_restore,
             claude_defaults::bypass_consent,
             claude_defaults::bypass_consent_accept,
@@ -1295,6 +1354,8 @@ fn main() {
             claude::ime_debug_mode,
             claude::ime_log,
             claude::chat_send_log,
+            cut_wait::cut_mark,
+            cut_wait::cut_wait,
             tts::supertonic_status,
             tts::supertonic_install,
             tts::native_voices,
@@ -1380,6 +1441,7 @@ fn main() {
             tauri::WindowEvent::CloseRequested { .. } if notes_window::is_notes(window.label()) => notes_window::closed(window),
             // 미리보기 창이 붙은 창이 움직이면 따라간다(맥은 자식 창이 저절로 따라오지만 윈도우는 아니다)
             tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
+                win_frame::changed(window);
                 if team_window::is_team_window(window.label()) {
                     team_window::moved(window);
                 }
@@ -1428,8 +1490,11 @@ fn main() {
             if let tauri::RunEvent::Exit = event {
                 exit_cleanup();
             }
+            if let tauri::RunEvent::Ready = event {
+                test_window::show_after_launch(app);
+            }
             #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Reopen { .. } = event {
+            if let (tauri::RunEvent::Reopen { .. }, None) = (&event, test_window::spot()) {
                 // ⌘Q 로 독에서 뺐다가 다시 열면(스포트라이트·런치패드·Dock) 독 아이콘을 되살린다
                 #[cfg(target_os = "macos")]
                 let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>점프 게임 틀</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#fff;font-family:-apple-system,'Apple SD Gothic Neo',sans-serif}canvas{display:block;width:100vw;height:100vh;touch-action:none}</style>
+</head><body><canvas id="c"></canvas>
+<script>
+// 키즈 '말로 만들기' 점프 게임 틀 — 아래 CFG 한 줄만 바뀐다(모델은 CFG JSON 만 낸다). 인터넷·외부 파일 없음.
+const CFG = /*CFG*/{"title":"공룡 점프","hero":"dino","heroColor":"#4caf50","heroCount":1,"obstacle":"rock","obstacleColor":"#8d6e63","sky":"#bfe6ff","ground":"#c8e6a0","speed":3,"jump":12,"cheer":"우와!"}/*END*/;
+const c = document.getElementById('c'), x = c.getContext('2d');
+let W, H, G; const fit = () => { W = c.width = innerWidth * devicePixelRatio; H = c.height = innerHeight * devicePixelRatio; G = H * 0.78; }; fit(); addEventListener('resize', fit);
+const S = () => H / 600;
+const heroes = Array.from({ length: Math.max(1, Math.min(5, CFG.heroCount)) }, (_, i) => ({ x: 0.18 + i * 0.09, y: 0, v: 0, delay: i * 6 }));
+let obs = [], t = 0, score = 0, queued = [];
+function jump() { heroes.forEach((h) => queued.push({ h, at: t + h.delay })); }
+addEventListener('pointerdown', jump); addEventListener('keydown', (e) => { if (e.code === 'Space') jump(); });
+function drawHero(px, py, s) {
+  x.fillStyle = CFG.heroColor;
+  if (CFG.hero === 'dino') { x.beginPath(); x.ellipse(px, py - 40 * s, 38 * s, 28 * s, 0, 0, 7); x.fill(); x.beginPath(); x.ellipse(px + 34 * s, py - 72 * s, 20 * s, 16 * s, 0, 0, 7); x.fill(); x.fillRect(px - 20 * s, py - 18 * s, 12 * s, 18 * s); x.fillRect(px + 8 * s, py - 18 * s, 12 * s, 18 * s); x.beginPath(); x.moveTo(px - 36 * s, py - 44 * s); x.lineTo(px - 70 * s, py - 30 * s); x.lineTo(px - 34 * s, py - 30 * s); x.fill(); }
+  else if (CFG.hero === 'cat') { x.beginPath(); x.ellipse(px, py - 34 * s, 34 * s, 24 * s, 0, 0, 7); x.fill(); x.beginPath(); x.arc(px + 30 * s, py - 62 * s, 20 * s, 0, 7); x.fill(); x.beginPath(); x.moveTo(px + 16 * s, py - 76 * s); x.lineTo(px + 20 * s, py - 96 * s); x.lineTo(px + 30 * s, py - 80 * s); x.moveTo(px + 32 * s, py - 80 * s); x.lineTo(px + 42 * s, py - 96 * s); x.lineTo(px + 46 * s, py - 76 * s); x.fill(); }
+  else { x.beginPath(); x.ellipse(px, py - 36 * s, 34 * s, 30 * s, 0, 0, 7); x.fill(); x.beginPath(); x.ellipse(px - 10 * s, py - 84 * s, 8 * s, 26 * s, 0, 0, 7); x.ellipse(px + 10 * s, py - 84 * s, 8 * s, 26 * s, 0, 0, 7); x.fill(); }
+  x.fillStyle = '#fff'; x.beginPath(); x.arc(px + 40 * s, py - (CFG.hero === 'bunny' ? 44 : 74) * s, 6 * s, 0, 7); x.fill(); x.fillStyle = '#222'; x.beginPath(); x.arc(px + 42 * s, py - (CFG.hero === 'bunny' ? 44 : 74) * s, 3 * s, 0, 7); x.fill();
+}
+function drawObs(o, s) { x.fillStyle = CFG.obstacleColor; if (CFG.obstacle === 'cactus') { x.fillRect(o.x - 10 * s, G - 70 * s, 20 * s, 70 * s); x.fillRect(o.x - 30 * s, G - 50 * s, 20 * s, 10 * s); } else { x.beginPath(); x.ellipse(o.x, G - 20 * s, 34 * s, 22 * s, 0, Math.PI, 0); x.fill(); } }
+function tick() {
+  t++; const s = S();
+  queued = queued.filter((q) => { if (q.at <= t) { if (q.h.y === 0) q.h.v = CFG.jump * s; return false; } return true; });
+  if (t % Math.round(140 / CFG.speed) === 0) obs.push({ x: W + 40 * s });
+  obs.forEach((o) => (o.x -= CFG.speed * 3 * s)); obs = obs.filter((o) => { if (o.x < -60 * s) { score++; return false; } return true; });
+  heroes.forEach((h) => { h.y += h.v; h.v -= 0.6 * s; if (h.y < 0) { h.y = 0; h.v = 0; } });
+  x.fillStyle = CFG.sky; x.fillRect(0, 0, W, H); x.fillStyle = CFG.ground; x.fillRect(0, G, W, H - G);
+  obs.forEach((o) => drawObs(o, s)); heroes.forEach((h) => drawHero(h.x * W, G - h.y, s));
+  x.fillStyle = '#333'; x.font = `${36 * s}px sans-serif`; x.fillText(CFG.title, 24 * s, 56 * s);
+  if (score && score % 5 === 0) { x.font = `${48 * s}px sans-serif`; x.fillText(CFG.cheer, W / 2 - 60 * s, H * 0.3); }
+  requestAnimationFrame(tick);
+}
+tick();
+</script></body></html>

@@ -205,7 +205,9 @@ fn fire(a: &Alert, rec: &Record) {
         let _ = crate::platform::spawn_reaped(crate::platform::command("osascript").args(["-e", "on run argv", "-e", "display notification (item 2 of argv) with title (item 1 of argv)", "-e", "end run", &a.title, &a.body]));
     }
     if let Some(s) = &a.sound {
-        play(s);
+        if !crate::test_window::quiet() {
+            play(s); // 시험판은 소리도 안 낸다
+        }
     }
 }
 

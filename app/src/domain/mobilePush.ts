@@ -57,13 +57,13 @@ export const autoResubscribe = (o: { can: PushSupport; permission: string; hasSu
 
 /** 종을 눌렀는데 못 켤 때 까닭(폰 OrchDash) — 탭 이름은 데스크톱 설정 그대로('기기 관리', QA 2차) */
 export const PUSH_HINT: Record<string, string> = {
-  'need-home': tr('아이폰은 홈 화면에 추가한 앱에서만 알림을 받아요 — 사파리 공유 → 홈 화면에 추가한 뒤, 아래 \'홈 화면 앱 연결\' 코드를 그 앱에 붙여 넣어요', "iPhone only gets notifications in an app added to the Home Screen — in Safari tap Share, then Add to Home Screen, and paste the 'Connect Home Screen app' code below into that app"),
-  denied: tr('알림이 막혀 있어요 — 폰 설정 > 알림에서 참모를 허용해 주세요(브라우저 탭으로 열었으면 그 브라우저의 사이트 설정에서)', 'Notifications are blocked — allow Chammo in Phone settings > Notifications (or in the browser site settings if opened in a browser tab)'),
-  insecure: tr("폰이 옛 http 주소로 열려 알림·앱 설치·마이크가 안 돼요. 컴퓨터 Chammo 설정 > 기기 관리의 '폰 추가' QR 로 다시 열어 주세요", 'This phone opened an old http link, so alerts, app install and mic are off. Rescan the Add phone QR in Chammo settings > Devices on your computer.'),
+  'need-home': tr('아이폰·아이패드는 홈 화면에 추가한 앱에서만 알림을 받아요 — 사파리 공유 → 홈 화면에 추가한 뒤, 아래 \'홈 화면 앱 연결\' 코드를 그 앱에 붙여 넣어요', "iPhone and iPad only get notifications in an app added to the Home Screen — in Safari tap Share, then Add to Home Screen, and paste the 'Connect Home Screen app' code below into that app"),
+  denied: tr('알림이 막혀 있어요 — 기기 설정 > 알림에서 참모를 허용해 주세요(브라우저 탭으로 열었으면 그 브라우저의 사이트 설정에서)', 'Notifications are blocked — allow Chammo in the device settings > Notifications (or in the browser site settings if opened in a browser tab)'),
+  insecure: tr("이 기기가 옛 http 주소로 열려 알림·앱 설치·마이크가 안 돼요. 컴퓨터 Chammo 설정 > 기기 관리의 '폰·태블릿 추가' QR 로 다시 열어 주세요", 'This device opened an old http link, so alerts, app install and mic are off. Rescan the Add phone or tablet QR in Chammo settings > Devices on your computer.'),
 };
 
 /** 종 켜기 실패 글 — 브라우저 오류는 영어라(iOS 'User denied push permission') 우리말로. 우리가 만든 한글 오류는 그대로(QA 2차) */
 export function pushError(e: Error): string {
-  if (e.name === 'NotAllowedError') return tr('알림 허락이 막혔어요 — 폰 설정 > 알림에서 참모를 허용한 뒤(브라우저 탭으로 열었으면 그 브라우저의 사이트 설정에서) 다시 눌러 주세요', 'Notification permission was blocked — allow Chammo in Phone settings > Notifications (or in the browser site settings if opened in a browser tab), then tap again');
+  if (e.name === 'NotAllowedError') return tr('알림 허락이 막혔어요 — 기기 설정 > 알림에서 참모를 허용한 뒤(브라우저 탭으로 열었으면 그 브라우저의 사이트 설정에서) 다시 눌러 주세요', 'Notification permission was blocked — allow Chammo in the device settings > Notifications (or in the browser site settings if opened in a browser tab), then tap again');
   return /[가-힣]/.test(e.message) ? e.message : tr(`알림을 못 켰어요 — ${e.message}`, `Could not turn on notifications — ${e.message}`);
 }

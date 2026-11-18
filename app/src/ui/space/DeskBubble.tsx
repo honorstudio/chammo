@@ -5,8 +5,10 @@
 // 자리는 모니터별 화면 + 비율로 기억(domain/orchBubble screenSave·screenPlace), 대화창은 배지가 있는 모니터 안에서만(deskPop)
 import { invoke } from '@tauri-apps/api/core';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { listSessionsRaw, readCtx } from '../../data/tauri';
+import { chatSendLog, cutMark, cutWait, listSessionsRaw, readCtx } from '../../data/tauri';
+import { cutTurn, CUT_WAIT_MS } from '../../domain/cutSend';
 import { promptInput } from '../../domain/chat';
+import type { SendOutcome } from '../../domain/chatQueue';
 import { parseCtx, type Ctx } from '../../domain/ctx';
 import { keepSame } from '../../domain/keepSame';
 import { agentState } from '../../domain/session';
@@ -324,13 +326,13 @@ export function DeskBubble() {
   const keys = async (seq: string[]) => { if (chatId) await invoke('bubble_keys', { id: chatId, keys: seq }).catch((e: unknown) => setErr(String(e))); };
   const lastSent = useRef('');
   // 실패면 false — ChatView 가 친 글을 입력칸에 되살린다. 앞에 붙였던 끌어 놓은 경로도 되돌린다(2026-11-01 ux-daily M12)
-  // 'inflight' = 쳤고 입력칸에서 빠졌는데 기록엔 아직(훅이 도는 중) — 말풍선이 30초에 '전달 안 됨'을 안 띄운다(2026-11-13)
-  const send = (body: string): Promise<boolean | 'inflight'> => {
+  // 'inflight' = 쳤고 입력칸에서 빠졌는데 기록엔 아직(훅이 도는 중) — 말풍선이 30초에 '전달 안 됨'을 안 띄운다(2026-11-13). 'landed'·'stuck' 도 그대로(domain/chatQueue pendMark)
+  const send = (body: string): Promise<SendOutcome> => {
     if (!chatId) return Promise.resolve(false);
     const text = term.current + body;
     term.current = '';
     lastSent.current = text;
-    return invoke<string>('bubble_send', { id: chatId, text }).then((r) => { setErr(null); return r === 'inflight' ? 'inflight' as const : true; }, (e: unknown) => { term.current = text.slice(0, text.length - body.length) + term.current; setErr(tr(`못 보냈어요 — ${String(e)}`, `Not sent — ${String(e)}`)); return false; });
+    return invoke<string>('bubble_send', { id: chatId, text }).then((r) => { setErr(null); return r === 'inflight' || r === 'landed' || r === 'stuck' ? r : true; }, (e: unknown) => { term.current = text.slice(0, text.length - body.length) + term.current; setErr(tr(`못 보냈어요 — ${String(e)}`, `Not sent — ${String(e)}`)); return false; });
   };
   // 멈춤 — 막 보낸 말을 Esc 로 끊으면 Claude 가 그 말을 세션 입력칸에 되돌려 놓는다. 메인 칸은 화면을 읽어 다루지만
   // 대화창은 안 읽으니 다음 말 앞에 붙었다 — 한 번 읽어 보낸 말이 남았으면 세션 입력칸을 비우고(Ctrl+C) 대화창 입력칸으로 돌려 놓는다
@@ -474,7 +476,15 @@ export function DeskBubble() {
               <div className="pane headless" data-drop ref={paneRef}>
                 <ChatVoice.Provider value={voiceCtl}>
                 <ChatView key={who.id} sessionId={sid} state={state} send={send} cwd={cwd} ctx={sid ? ctxs[sid]?.used : undefined} modelInfo={sid ? ctxs[sid] : undefined} pickModel={pickModel}
-                  interrupt={() => void stop()} rawKeys={(seq) => keys(seq)} pasteImage={() => void keys([imagePasteKey(IS_WIN)])}
+                  interrupt={() => void stop()}
+                  cutTurn={() => cutTurn({
+                    mark: () => (chatId ? cutMark(chatId) : Promise.resolve(null)),
+                    esc: async () => { if (!chatId) return 'none'; await keys(['\x1b']); return 'sent'; }, // Rust interrupt_session 이 글 치기 잠금을 잡고 넣는다(블랙박스 esc)
+                    wait: (from) => cutWait(chatId!, from, CUT_WAIT_MS),
+                    sleep: wait,
+                    log: (s) => chatSendLog(`bubble:${chatId} ${s}`),
+                  })}
+                  rawKeys={(seq) => keys(seq)} pasteImage={() => void keys([imagePasteKey(IS_WIN)])}
                   onTerminal={() => void invoke('orch_bubble_main', { orch: who.id }).catch(() => {})}
                   screen={state === 'blocked' ? () => scr.current : undefined}
                   submitTerminal={submitTerminal} clearTerminal={() => { term.current = ''; }} sendQueuedNow={() => void stop()} typeOnly={(t) => { term.current += t; }}

@@ -4,6 +4,7 @@
 // 폰이 쓰는 건 그 참모 보관함 안에만(서버가 다시 거른다). 옮기기·이름 바꾸기·지우기는 데스크톱
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { tr } from '../../i18n';
+import { remember, remembered } from './memo';
 import { lockerAlias, lockerLinks, lockerUnalias } from '../../data/web';
 import { EMPTY_LINKS, mergeLinks, type LinksStore } from '../../domain/lockerLinks';
 import type { LockerView } from '../../domain/locker';
@@ -23,8 +24,10 @@ const loadViews = (): Record<string, string> => { try { return JSON.parse(localS
 const baseName = (p: string) => p.slice(p.lastIndexOf('/') + 1);
 const hm = (ts: string) => { const d = new Date(ts); return Number.isNaN(d.getTime()) ? '' : `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 
-export function PhoneLocker({ owner, view: lv, shown, projects, chips, whoOf, onOpen, onReload, onUpload }: {
+export function PhoneLocker({ owner, view: lv, loaded = true, shown, projects, chips, whoOf, onOpen, onReload, onUpload }: {
   owner: string;
+  /** 보관함·보여 준 기록을 받았나 — 모르면 '없어요' 대신 빈 칸(2026-11-16) */
+  loaded?: boolean;
   view: LockerView;
   /** 참모·맡긴 세션이 보여 준 파일(dashFiles) */
   shown: Shown[];
@@ -52,10 +55,11 @@ export function PhoneLocker({ owner, view: lv, shown, projects, chips, whoOf, on
   useEffect(() => () => window.clearTimeout(toastT.current), []);
   const say = (text: string, undo?: () => void) => { window.clearTimeout(toastT.current); setToast({ text, undo }); toastT.current = window.setTimeout(() => setToast(null), 5000); };
   // 링크 칸(시안 locker-links v1 B2) — 맥이 그 참모 대화 기록을 이어 읽은 목록 + 보여 준 주소. 보관함 탭을 보는 동안 10초마다
-  const [store, setStore] = useState<LinksStore>(EMPTY_LINKS);
-  const pull = () => void lockerLinks(owner).then(setStore, () => {});
+  // 지난번 목록(메모리 기억, 참모마다)으로 시작 — 화면이 올라올 때마다 '링크 0'·'없어요'부터 그렸다(2026-11-16). null = 아직 모름
+  const [store, setStore] = useState<LinksStore | null>(() => remembered<LinksStore>(`links:${owner}`) ?? null);
+  const pull = () => void lockerLinks(owner).then((v) => { remember(`links:${owner}`, v); setStore(v); }, () => setStore((s) => s ?? EMPTY_LINKS));
   useEffect(() => { pull(); const t = window.setInterval(pull, 10000); return () => window.clearInterval(t); }, [owner]); // eslint-disable-line react-hooks/exhaustive-deps
-  const links = mergeLinks(store, shown);
+  const links = mergeLinks(store ?? EMPTY_LINKS, shown);
 
   const vkey = place.kind === 'dir' ? `d:${place.rel}` : place.kind === 'root' && place.project ? `p:${place.project}` : 'root';
   const mode = defaultView(views[vkey] ?? null, place.kind === 'dir' ? 'dir' : 'log');
@@ -87,7 +91,7 @@ export function PhoneLocker({ owner, view: lv, shown, projects, chips, whoOf, on
   const sw = (on: 'files' | 'links') => (
     <span className="m-lkl-switch" role="tablist" aria-label={tr('파일·링크', 'Files and links')}>
       <button type="button" role="tab" aria-selected={on === 'files'} className={on === 'files' ? 'm-on' : ''} onClick={() => setPlace({ kind: 'root' })}>{tr('파일', 'Files')}</button>
-      <button type="button" role="tab" aria-selected={on === 'links'} className={on === 'links' ? 'm-on' : ''} onClick={() => setPlace({ kind: 'links' })}>{tr('링크', 'Links')} <span className="m-lkl-n">{links.length}</span></button>
+      <button type="button" role="tab" aria-selected={on === 'links'} className={on === 'links' ? 'm-on' : ''} onClick={() => setPlace({ kind: 'links' })}>{tr('링크', 'Links')} {store && <span className="m-lkl-n">{links.length}</span>}</button>
     </span>
   );
   // 연결 폴더(맥 폴더의 바로가기)는 폰에선 읽기만 — 새로 만들기·올리기 없음
@@ -98,7 +102,7 @@ export function PhoneLocker({ owner, view: lv, shown, projects, chips, whoOf, on
     const what = it.act === 'shown' && it.by !== 'me' ? shownBy(w) : w;
     return [what, hm(it.ts)].filter(Boolean).join(' · ');
   };
-  const logView = (items: LogItem[]) => (items.length === 0 ? <p className="m-muted m-sm">{tr('아직 주고받은 파일이 없어요', 'No files yet')}</p> : logDays(items).map((g) => (
+  const logView = (items: LogItem[]) => (items.length === 0 && !loaded ? <div className="m-lk-list" aria-busy="true" /> : items.length === 0 ? <p className="m-muted m-sm">{tr('아직 주고받은 파일이 없어요', 'No files yet')}</p> : logDays(items).map((g) => (
     <section key={g.label}>
       <div className="m-sect">{g.label}</div>
       <div className={mode === 'card' ? 'm-files' : 'm-lk-list'}>
@@ -116,7 +120,7 @@ export function PhoneLocker({ owner, view: lv, shown, projects, chips, whoOf, on
 
   let body: ReactNode;
   if (place.kind === 'links') {
-    body = <><div className="m-lk-tools">{sw('links')}</div><PhoneLinks owner={owner} links={links} whoOf={whoOf} onChanged={pull} onSay={say} /></>;
+    body = <><div className="m-lk-tools">{sw('links')}</div><PhoneLinks owner={owner} links={links} loaded={!!store} whoOf={whoOf} onChanged={pull} onSay={say} /></>;
   } else if (place.kind === 'dir') {
     const kids = kidsOf(tree.entries, place.rel);
     const up = place.rel.includes('/') ? place.rel.slice(0, place.rel.lastIndexOf('/')) : null;

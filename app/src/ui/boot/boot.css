@@ -1,0 +1,17 @@
+/* 켤 때 점호(시안 docs/design-drafts/boot-loading v3 확정) — 덮개 하나: 바탕 · 가운데 줄(64px) · 줄 아래 쉬는 묶음. 클래스는 bt- 접두 */
+.bt-ov { position: fixed; inset: 0; z-index: calc(var(--z-toast) + 5); pointer-events: auto; }
+.bt-bg { position: absolute; inset: 0; background: var(--panel); }
+.bt-row { position: absolute; left: 0; right: 0; top: 46%; display: flex; justify-content: center; gap: 30px; transform: translateY(-50%); }
+.bt-cell { position: relative; width: 64px; height: 64px; transform-origin: 50% 50%; will-change: transform; }
+.bt-cell > .oa { position: absolute; left: 0; top: 0; }
+/* 발밑 그림자 — 서 있는 자리 */
+.bt-floor { position: absolute; left: 6px; right: 6px; bottom: -9px; height: 8px; border-radius: 50%; background: color-mix(in srgb, var(--text) 10%, transparent); transition: opacity .2s; }
+/* 줄 아래 쉬는 묶음 — 띠 쉬는 칸(얼굴 16 겹침·숫자)을 두 배로 */
+/* 가운데 맞춤은 transform 없이(날기가 transform 을 쓴다 — 거기에 섞이면 줄어들 때 자리가 밀린다) */
+.bt-rest { position: absolute; left: 0; right: 0; margin-inline: auto; width: max-content; top: calc(46% + 84px); display: flex; flex-direction: column; align-items: center; gap: 6px; color: var(--text-3); transform-origin: 50% 50%; will-change: transform; }
+.bt-rest.solo { top: calc(46% - 26px); }
+.bt-faces { display: flex; }
+.bt-faces > span { display: inline-flex; width: 26px; justify-content: center; opacity: .55; filter: grayscale(.7); }
+.bt-rest b { font-size: 15px; font-weight: 600; line-height: 1; }
+/* 날아가는 동안 — 띠의 진짜 프사·점·쉬는 칸 얼굴은 숨긴다(덮개 얼굴이 그 자리에 내려앉은 뒤 한 번에 바꾼다) */
+html.boot-fly .lk-strip .lk-av-pic > .oa, html.boot-fly .lk-strip .lk-pip, html.boot-fly .lk-strip .rest-faces { visibility: hidden; }

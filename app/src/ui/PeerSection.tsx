@@ -138,7 +138,7 @@ export function PeerSection({ title }: { title: string }) {
                   <input autoFocus autoComplete="off" spellCheck={false} placeholder="0123 4567 89ab …" aria-label={tr(`${d.name} 연결 코드`, `${d.name} connect code`)}
                     value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && code.trim()) act(() => remotePair(d.id, code)); if (e.key === 'Escape') setPairing(null); }} />
                   <button className="btn pri" disabled={busy || !code.trim()} onClick={() => act(() => remotePair(d.id, code))}>{tr('연결하기', 'Pair')}</button>
-                  <span className="su-hint">{tr('그 기기 설정 > 기기 관리 > 폰의 연결 코드', 'The connect code from that device’s Settings > Devices > Phone')}</span>
+                  <span className="su-hint">{tr('그 기기 설정 > 기기 관리 > 폰·태블릿의 연결 코드', 'The connect code from that device’s Settings > Devices > Phone & tablet')}</span>
                 </div>
               )}
             </div>

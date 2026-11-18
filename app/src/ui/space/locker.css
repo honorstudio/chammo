@@ -150,6 +150,9 @@
 .lk-pip.p-new { background: var(--text); }
 .lk-pip.p-run { background: var(--working); }
 .lk-pip.p-rest { background: var(--pip-ring); box-shadow: 0 0 0 var(--ring-w) var(--pip-ring), inset 0 0 0 var(--ring-w) var(--text-3); }
+/* 깨울 차례(재부팅으로 꺼짐) 점선 고리 · 못 깸 붉은 점(켤 때 점호 v3) */
+.lk-pip.p-queue { box-sizing: border-box; background: var(--pip-ring); border: 1.5px dashed var(--text-3); }
+.lk-pip.p-fail { background: var(--danger-ink); }
 /* 상태 점 — 색만 말고 모양으로(홈·모드 v1 9): 일함 = 채운 점 + 숨쉬는 고리 · 기다림 = 노랑 채운 점 + 굵은 고리(멈춤) · 쉼 = 빈 고리 · 꺼짐 = 점선 */
 .lk-dot { position: relative; flex: none; box-sizing: border-box; width: 9px; height: 9px; border-radius: 50%; background: var(--line-strong); }
 .lk-dot.d-run { background: var(--working); }
@@ -433,3 +436,7 @@
 .lkl-row:hover .lkl-acts, .lkl-row:focus-within .lkl-acts { display: flex; }
 .lkl-row:hover .lkl-time, .lkl-row:focus-within .lkl-time { visibility: hidden; }
 .lkl-row.picked, .lkl-row.picked:hover { background: color-mix(in srgb, var(--accent) 9%, transparent); box-shadow: inset 0 0 0 var(--ring-w) color-mix(in srgb, var(--accent) 55%, transparent); border-radius: 6px; }
+/* 셸 탭(11-17) — 이름은 고정폭 글꼴로 터미널인 걸 가른다(아이콘을 또 붙이지 않는다). 칸은 세션 터미널(cv-term)과 같은 둥근 면 */
+.lk-tab.shell > span:first-child { font-family: ui-monospace, Menlo, "Cascadia Mono", Consolas, "Chammo Hangul", monospace; font-size: 11.5px; }
+.lk-shell { border-radius: var(--cv-r-lg); overflow: hidden; box-shadow: var(--cv-shadow); }
+.lk-shell .pane { flex: 1; border: 0; border-radius: 0; }

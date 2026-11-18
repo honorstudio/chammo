@@ -19,11 +19,11 @@ export type Computer = { id: string; name: string; kind: string; tunnelPub: stri
 export const LINK_ERRORS: Record<string, string> = {
   ...KNOCK_ERRORS,
   declined: '컴퓨터에서 거절했어요 — 숫자가 달랐다면 누군가 가운데 끼어든 거예요',
-  device: '이 폰이 그 컴퓨터 계정에 없어요 — 같은 Chammo 계정으로 로그인했는지 봐 주세요',
-  pair: '컴퓨터가 이 폰 줄을 못 만들었어요 — 다시 해 주세요',
+  device: '이 기기가 그 컴퓨터 계정에 없어요 — 같은 Chammo 계정으로 로그인했는지 봐 주세요',
+  pair: '컴퓨터가 이 기기 줄을 못 만들었어요 — 다시 해 주세요',
   timeout: '10분 안에 컴퓨터에서 허용하지 않았어요 — 다시 해 주세요',
   busy: '숫자 확인을 너무 자주 했어요 — 10분 뒤 다시 해 주세요',
-  mismatch: '숫자가 달랐다면 누군가 가운데 끼어든 거예요 — 이 폰엔 저장하지 않았어요. 컴퓨터 설정 > 기기 관리에서 이 폰을 빼 주세요',
+  mismatch: '숫자가 달랐다면 누군가 가운데 끼어든 거예요 — 이 기기엔 저장하지 않았어요. 컴퓨터 설정 > 기기 관리에서 이 기기를 빼 주세요',
   // 숫자 확인엔 QR 이 없다 — 옛 QR 문구(KNOCK_ERRORS.refused)를 덮는다(10-26 사용자 폰 '이 QR 을 못 열었어요')
   refused: '컴퓨터가 이 확인을 받지 않았어요 — 컴퓨터 Chammo 가 켜져 있고 같은 Chammo 계정으로 로그인돼 있는지 본 뒤 다시 눌러 주세요',
   cut: '허용을 받기 전에 확인이 끊겼어요 — 다시 눌러 새 숫자로 해 주세요. 컴퓨터에 남은 옛 숫자 카드는 닫아 주세요',
@@ -73,8 +73,9 @@ export async function knockLink(relay: string, device: string, mac: Computer, on
           sas = sasText(await run.link4(unb64(String(x.nM ?? ''))));
           onSas(sas);
         } else if (x.step === 'link5') {
-          // 숫자를 낸 뒤에만 — 숫자 없이 온 토큰은 가짜 컴퓨터일 수 있다
-          if (!run.canFinish()) return fail('key');
+          // 숫자를 낸 뒤에만 — 숫자 없이 온 토큰은 가짜 컴퓨터일 수 있다. 예외: 바로 연결(direct, 결정 A) — 컴퓨터가 같은 계정의 사람이 허용한 폰으로 보고 준 것.
+          // 믿음 경계는 계정(구글)·중계(컴퓨터 열쇠는 서버가 준 것)로 메일 코드와 같다
+          if (x.direct !== true && !run.canFinish()) return fail('key');
           end(() => { ok(x); ws.close(); });
         } else {
           fail('key');
@@ -84,7 +85,7 @@ export async function knockLink(relay: string, device: string, mac: Computer, on
   });
   if (v.step === 'mail') return { mail: true, sent: v.sent === true, wait: typeof v.wait === 'number' ? v.wait : 0, locked: typeof v.locked === 'number' ? v.locked : 0 };
   if (v.ok !== true || typeof v.token !== 'string' || typeof v.device !== 'string') throw new Error(LINK_ERRORS[String(v.error ?? '')] ?? `확인 실패 (${String(v.error ?? '?')})`);
-  if (!(await confirm(sas))) throw new Error(LINK_ERRORS.mismatch);
+  if (v.direct !== true && !(await confirm(sas))) throw new Error(LINK_ERRORS.mismatch);
   const name = (v.mac as { name?: string } | undefined)?.name ?? mac.name;
   return { token: v.token, link: { relay, mac: mac.id, macX: mac.tunnelPub, device: v.device, macName: name } };
 }

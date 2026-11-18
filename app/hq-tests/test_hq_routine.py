@@ -480,6 +480,25 @@ class SpawnStagger(unittest.TestCase):
         self.run_now('plain', calls)
         self.assertNotIn('--model', next(c for c in calls.calls if '--bg' in c))
 
+    def test_모델을_안_적으면_앱_새_세션_기본값을_쓴다(self):
+        # 설정 '새 세션 기본 모델'(2026-11-17) — 예약 세션도 앱이 띄우는 세션이다. 예약에 적은 값이 이긴다
+        cfg = self.data / 'config.json'
+        old = cfg.read_text() if cfg.exists() else None
+        base = json.loads(old) if old else {}
+        cfg.write_text(json.dumps({**base, 'defaultModel': 'haiku', 'defaultEffort': 'low'}))
+        try:
+            self.new('plain2')
+            calls = Calls()
+            self.run_now('plain2', calls)
+            argv = next(c for c in calls.calls if '--bg' in c)
+            self.assertEqual(argv[argv.index('--model') + 1], 'haiku')
+            self.assertEqual(argv[argv.index('--effort') + 1], 'low')
+            self.assertEqual(rt.launch_pick({'model': 'opus'}, str(self.data)), ['--model', 'opus', '--effort', 'low'])
+            cfg.write_text(json.dumps({**base, 'defaultModel': 'gpt; rm', 'defaultEffort': 'ultra'}))
+            self.assertEqual(rt.launch_pick({}, str(self.data)), [])
+        finally:
+            cfg.write_text(old) if old is not None else cfg.unlink()
+
     def test_같은_tick_두_예약은_차례로_사이를_띄운다(self):
         self.new('nightly-check')
         self.new('weekly-cleanup', sched='10/06 09:00, 10/13 09:00')

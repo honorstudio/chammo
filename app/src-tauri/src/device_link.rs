@@ -281,7 +281,8 @@ impl Initiator {
     /// ① 인사 — name = 이 컴퓨터 이름(받는 쪽은 카드에 서버 기기 목록 이름을 쓴다)
     pub fn link1(&mut self, name: &str) -> Value {
         self.sent1 = true;
-        serde_json::json!({ "step": "link1", "sign": tun::b64(&self.sign), "x": tun::b64(&self.pt), "ua": name, "commit": tun::b64(&commit_for(true, &self.pt, &self.np)), "dev": self.dev })
+        // direct = 바로 연결(같은 계정 허용 기기, 2026-11-18 결정 A)을 받을 줄 안다 — 옛 허브는 이 칸을 모르고 숫자로 간다
+        serde_json::json!({ "step": "link1", "sign": tun::b64(&self.sign), "x": tun::b64(&self.pt), "ua": name, "commit": tun::b64(&commit_for(true, &self.pt, &self.np)), "dev": self.dev, "direct": true })
     }
 
     /// ② cM → ③ nP

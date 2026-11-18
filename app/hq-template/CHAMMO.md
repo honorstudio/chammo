@@ -51,6 +51,9 @@ done by that project's session. Sessions work much better in their own folder wi
 - **Browser work** (open a site, click through a flow, stay logged in) → open the `hq-browser` skill first. Connect an existing project
   yourself — `scripts/app browser connect <project>`, then `claude respawn <id>` — never ask the project session to set up its own browser. Never run `npx playwright install` or `browser_install` yourself.
   Only the project's own browser — the Chrome extension (claude-in-chrome, `--extension`) or a Chrome a script starts itself doesn't show in the app. Projects without one: `scripts/app browser missing`.
+- **Tests never open a window on the user's screen** (app, site, harness tests) — it covers what they were using and steals focus. The test Chammo (a dev/test build started with `CHAMMO_HOME`) opens
+  off-screen on its own and takes neither the Dock nor focus — set `CHAMMO_TEST_SHOW=1` only when the user asks to watch. Harness Chrome is always headless; simulators and emulators run without a window (headless).
+  Don't bring a test app to the front, record the screen, or run real-keystroke tests on the user's screen unless the user asks. Don't create a new virtual display (the screen flickers or goes dark).
 - **Signing in to a site** — if a session says "I can't" or "I can't type passwords" and hands it to the person, don't pass that on — send it back: the account is in that project's `CLAUDE.local.md`
   (a heading with the site name, three lines `- ID:`, `- Password:` and `- Login URL:` — it types only on that site) and `chammo-browser login <profile> <login URL>` reads and types it (`hq-browser` skill, "Signing in to a site").
   The person is only needed when there is no such section (they write it into that file — never take a password over chat) and for 2FA codes, passkeys and captchas.
@@ -258,7 +261,7 @@ when they want a feature living natively in Chammo, don't keep making documents 
 ## When Claude sign-in expires
 
 A session stopped with "Login expired · Please run /login" or "Not logged in" → the `hq-login` skill. Tell the user once, in one line:
-"Claude sign-in expired — sign in from the card in the decision inbox (or on the phone)". Never run `/login` or `claude auth login` yourself,
+"Claude sign-in expired — sign in from the card in the decision inbox (or on a phone or tablet)". Never run `/login` or `claude auth login` yourself,
 and don't send "continue" to the stopped session (the app does it once sign-in is fixed).
 "API Error: 400 … Consumer Terms … accept them in claude.ai" means that account hasn't accepted the new terms — the app shows a card. Tell the user in one line:
 "Open claude.ai from the card, accept the terms as <email>, then press Retry". Never accept them on the user's behalf.

@@ -381,6 +381,36 @@ pub trait Backend: Send + Sync {
     fn resume(&self, cwd: &str, session_id: &str, id: &str) -> Result<String, String>;
     /// 새 참모를 띄운다 — 이름은 문지기가 지었고 첫 지시는 Backend 가 정한다(데스크톱 새 참모와 같은 자기소개)
     fn spawn(&self, cwd: &str, name: &str) -> Result<String, String>;
+    /// 키즈 참모로 만든 참모의 아이 세션 띄우기(뒤에서, 실패는 기록 줄로)
+    fn kid_start(&self, _key: &str) {}
+    /// 패드 키즈 화면 — 아이 말을 그 참모 아이 세션에(kids_pad)
+    fn kids_say(&self, _key: &str, _text: &str, _cid: &str) -> Result<(), String> {
+        Err("no kids".into())
+    }
+    /// 패드 키즈 화면 — 아이 세션 새 답을 옮긴 뒤 최근 기록
+    fn kids_log(&self, _key: &str) -> Vec<crate::kids_wire::Row> {
+        vec![]
+    }
+    /// 키즈 목소리(kids_voice) — 받아쓰기·목소리를 쓸 수 있나, 미리 띄우기
+    fn kids_voice(&self) -> bool {
+        false
+    }
+    /// 말 중간 쉼 — 받아쓴 글과 '더 말할 것 같나'
+    fn kids_peek(&self, _wav: &[u8], _cid: &str) -> Result<(String, bool), String> {
+        Err("no voice".into())
+    }
+    /// 말 끝 — 받아써서 아이 세션에, 답 소리는 뒤에서
+    fn kids_hear(&self, _key: &str, _wav: &[u8], _cid: &str) -> Result<String, String> {
+        Err("no voice".into())
+    }
+    /// 답 소리 조각 n — Some = wav, None = 아직, Err = 더 없음
+    fn kids_clip(&self, _key: &str, _cid: &str, _n: usize) -> Result<Option<Vec<u8>>, ()> {
+        Err(())
+    }
+    /// 미리 만든 말 i(1부터)
+    fn kids_pre(&self, _i: usize) -> Option<Vec<u8>> {
+        None
+    }
     /// 대화 기록 꼬리 — 꺼진 참모가 마지막에 하던 일(sessionId → 꼬리 글)
     fn tails(&self, ids: &[String]) -> serde_json::Value;
     /// 떠 있는 세션 브라우저들 — 보기에 필요한 것만(포트·devtools 경로는 빼고)
@@ -414,6 +444,13 @@ pub trait Backend: Send + Sync {
     /// 맥 앱 음성 모드(<데이터>/voice.json) — 폰 입력창 마이크. 켜기·끄기는 scripts/app voice 와 같은 통로(앱 __appctl)
     fn voice_on(&self) -> bool {
         false
+    }
+    /// 새 세션 기본 모델·노력값(default_model::view 모양) — 폰 더보기
+    fn default_model(&self) -> serde_json::Value {
+        serde_json::json!({})
+    }
+    fn set_default_model(&self, _model: &str, _effort: &str) -> Result<(), String> {
+        Err("unsupported".into())
     }
     fn set_voice(&self, _on: bool) -> Result<(), String> {
         Err("unsupported".into())
@@ -529,7 +566,7 @@ impl Req {
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str())
     }
-    fn param(&self, name: &str) -> Option<&str> {
+    pub(crate) fn param(&self, name: &str) -> Option<&str> {
         self.query.split('&').find_map(|kv| kv.split_once('=').filter(|(k, _)| *k == name).map(|(_, v)| v))
     }
 }
@@ -542,13 +579,13 @@ pub struct Resp {
 }
 
 impl Resp {
-    fn new(status: u16, ctype: &str, body: impl Into<Vec<u8>>) -> Resp {
+    pub(crate) fn new(status: u16, ctype: &str, body: impl Into<Vec<u8>>) -> Resp {
         Resp { status, headers: vec![("Content-Type", ctype.to_string())], body: body.into() }
     }
-    fn text(status: u16, body: &str) -> Resp {
+    pub(crate) fn text(status: u16, body: &str) -> Resp {
         Resp::new(status, "text/plain; charset=utf-8", body)
     }
-    fn json(v: &serde_json::Value) -> Resp {
+    pub(crate) fn json(v: &serde_json::Value) -> Resp {
         Resp::new(200, "application/json; charset=utf-8", serde_json::to_vec(v).unwrap_or_default())
     }
     fn raw_json(s: String) -> Resp {
@@ -1841,6 +1878,14 @@ struct AccountAutoBody {
     on: bool,
 }
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+/// 새 세션 기본값 — 빈 글 = Claude Code 기본 따름
+struct DefaultModelBody {
+    model: String,
+    effort: String,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LoginCodeBody {
@@ -1925,8 +1970,8 @@ struct ModeNameBody {
 }
 
 /// 폰 홈·보관함 v1 에 더한 쓰기 길 — 같은 출처 문지기·head_check 몸통 목록·405 가 이 목록 하나를 본다
-const PHONE_POSTS: &[&str] = &["/api/note-new", "/api/note-write", "/api/note-trash", "/api/note-meta", "/api/device-number", "/api/login-terms-retry", "/api/gacha", "/api/peer-human-say", "/api/team-say", "/api/team-read", "/api/team-invite", "/api/team-create", "/api/team-use", "/api/team-join", "/api/team-handoff", "/api/team-post", "/api/team-agent-confirm", "/api/team-agent-save", "/api/team-agent-remove", "/api/team-agent-try", "/api/team-home-save", "/api/team-home-content", "/api/team-memory-write", "/api/team-cal-put", "/api/team-locker-op", "/api/team-media", "/api/team-dl", "/api/locker-alias", "/api/locker-unalias", "/api/locker-new", "/api/locker-mkdir", "/api/locker-write", "/api/locker-link-add", "/api/locker-link-hide", "/api/mode-act", "/api/mode-open", "/api/mode-close", "/api/mode-remove", "/api/mode-restore"];
-const PHONE_GETS: &[&str] = &["/api/phone-account", "/api/notes", "/api/note", "/api/gacha", "/api/office", "/api/modes", "/api/mode-view", "/api/mode-card", "/api/peer-get", "/api/peer-devices", "/api/team", "/api/team-profiles", "/api/team-posts", "/api/team-home", "/api/team-memory", "/api/team-cal", "/api/team-cal-poll", "/api/team-agents", "/api/team-agent-usage", "/api/team-agent-refs", "/api/team-file-thumb", "/api/team-file-image", "/api/team-file-open", "/api/team-locker", "/api/team-locker-put", "/api/team-file-ref", "/api/locker-links"];
+const PHONE_POSTS: &[&str] = &["/api/note-new", "/api/note-write", "/api/note-trash", "/api/note-meta", "/api/device-number", "/api/login-terms-retry", "/api/gacha", "/api/peer-human-say", "/api/team-say", "/api/team-read", "/api/team-invite", "/api/team-create", "/api/team-use", "/api/team-join", "/api/team-handoff", "/api/team-post", "/api/team-agent-confirm", "/api/team-agent-save", "/api/team-agent-remove", "/api/team-agent-try", "/api/team-home-save", "/api/team-home-content", "/api/team-memory-write", "/api/team-cal-put", "/api/team-locker-op", "/api/team-media", "/api/team-dl", "/api/locker-alias", "/api/locker-unalias", "/api/locker-new", "/api/locker-mkdir", "/api/locker-write", "/api/locker-link-add", "/api/locker-link-hide", "/api/mode-act", "/api/mode-open", "/api/mode-close", "/api/mode-remove", "/api/mode-restore", "/api/default-model"];
+const PHONE_GETS: &[&str] = &["/api/phone-account", "/api/notes", "/api/note", "/api/gacha", "/api/office", "/api/modes", "/api/mode-view", "/api/mode-card", "/api/peer-get", "/api/peer-devices", "/api/team", "/api/team-profiles", "/api/team-posts", "/api/team-home", "/api/team-memory", "/api/team-cal", "/api/team-cal-poll", "/api/team-agents", "/api/team-agent-usage", "/api/team-agent-refs", "/api/team-file-thumb", "/api/team-file-image", "/api/team-file-open", "/api/team-locker", "/api/team-locker-put", "/api/team-file-ref", "/api/locker-links", "/api/default-model"];
 /// 폰 md 글 칸 저장만 몸통을 크게(글 512KB + JSON)
 const MAX_WRITE_BODY: usize = crate::locker_fs::MAX_PHONE_MD + 64 * 1024;
 
@@ -2060,7 +2105,7 @@ fn locker_op(req: &Req, be: &dyn Backend) -> Resp {
         },
         "/api/locker-new" => {
             if b.kind.as_deref().is_some_and(|k| k != "md") {
-                return bad("폰은 새 문서(md)만".into());
+                return bad("폰·태블릿은 새 문서(md)만".into());
             }
             match crate::locker_fs::new_doc(&owner, &b.folder, "md", &b.title) {
                 Ok(at) => Resp::json(&serde_json::json!({ "path": at.to_string_lossy() })),
@@ -2619,6 +2664,15 @@ struct SpawnBody {
     /// 맡은 일(비워도 됨) — 같은 번호를 다시 쓰면 옛 참모 것이 붙지 않게 늘 덮는다
     #[serde(default)]
     role: String,
+    /// 키즈 참모로 만들기(설정 키즈 모드가 켜졌을 때만) — 아이 이름
+    #[serde(default)]
+    kid: Option<SpawnKid>,
+}
+
+#[derive(serde::Deserialize)]
+struct SpawnKid {
+    #[serde(default)]
+    child: String,
 }
 
 /// 연타 막기 — 그 열쇠로 gap 안에 또 오면 false(오면 시각을 적는다). 멈춤과 같은 장부를 쓴다
@@ -2690,7 +2744,7 @@ fn session_cwd(sessions_json: &str, id: &str) -> Option<String> {
 
 /// 그 세션이 지금 턴을 도는 중인가 — 앱(domain/session parseAgents)과 같은 판단: state done 이면 끝남,
 /// status(busy/idle)가 있으면 그게 진짜 상태(state working + status idle = 입력 기다림), 없으면 state
-fn session_busy(sessions_json: &str, id: &str) -> bool {
+pub(crate) fn session_busy(sessions_json: &str, id: &str) -> bool {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(sessions_json) else { return false };
     let Some(a) = v.as_array().and_then(|l| l.iter().find(|a| a["id"] == id)) else { return false };
     let state = a["state"].as_str().unwrap_or("");
@@ -2769,7 +2823,7 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
         };
         // 참모가 만든 코드(scripts/app phone pair) — 사람이 데스크톱 카드에서 허용할 때까지 열쇠를 안 준다(보안 검토 10-23)
         if gate.devices.held(&b.code, std::time::SystemTime::now()) {
-            return Resp::text(403, "컴퓨터 Chammo 에 뜬 '이 폰을 연결할까요?' 카드에서 허용을 누른 뒤 이 화면을 새로 고쳐 주세요");
+            return Resp::text(403, "컴퓨터 Chammo 에 뜬 '이 폰·태블릿을 연결할까요?' 카드에서 허용을 누른 뒤 이 화면을 새로 고쳐 주세요");
         }
         // 다른 기기 참모는 같은 Chammo 계정 증명을 지나야(11-09) — 코드를 쓰기 전에 본다(틀려도 코드는 안 닳는다). ctx = 연결 코드
         let mut proof = None;
@@ -2838,6 +2892,31 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
                 if !be.peer_live(&bound, req.header(crate::peer_account::LIVE_HEADER).unwrap_or(""), &req.method, &req.path) {
                     return Resp::text(403, "account:live");
                 }
+            }
+        }
+    }
+    // 패드 키즈 화면(kids_pad) — 잠긴 기기 줄은 키즈 길만, 키즈 길은 잠긴 줄만(고르기 enter 는 안 잠긴 사람 줄)
+    if peer.is_none() {
+        if let Some(dev) = device_of(req, gate) {
+            let locked = crate::kids_pad::lock_of(&be.data_dir(), &dev);
+            // 설정 키즈 모드가 꺼졌으면 키즈 길은 없다 — 켰다 끈 사람의 잠긴 패드만 잠든 화면(me)·숫자로 나가기(leave)
+            if (req.path.starts_with("/api/kids/") || req.path.starts_with("/api/kids-")) && be.env()["kids"] != true && !matches!(req.path.as_str(), "/api/kids/me" | "/api/kids/leave") {
+                return Resp::text(404, "not found");
+            }
+            if req.path.starts_with("/api/kids/") {
+                return crate::kids_pad::route(req, be, &dev, locked, |r| body::<serde_json::Value>(r));
+            }
+            if locked.is_some() {
+                return Resp::text(403, "kids pad");
+            }
+            if req.path == "/api/kids-time" {
+                return crate::kids_pad::guardian_time(req, be, |r| body::<serde_json::Value>(r));
+            }
+            if req.path == "/api/kids-today" {
+                return crate::kids_pad::guardian_today(req, be);
+            }
+            if req.path == "/api/kids-work" {
+                return crate::kids_pad::guardian_work(req, be);
             }
         }
     }
@@ -3440,6 +3519,11 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
             // 맡은 일·태어난 때를 먼저 적는다 — 꺼진 참모를 지워 번호가 다시 쓰이면 옛 맡은 일·기록이 새 참모에 붙었다(2026-10-04 QA ⑥).
             // 못 적어도(손으로 깨뜨린 파일) 참모는 띄운다 — 맡은 일은 나중에 다시 적으면 된다
             let _ = crate::orch_roles::start_role(&be.data_dir(), &name, &b.role, crate::orch_roles::now_ms());
+            // 키즈 참모로 만들면 띄우기 전에 칸을 적는다 — 첫 인사가 키즈 판(mobile.rs spawn → kids_life::intro_for), 아이 세션은 앱이 띄운다
+            if let Some(k) = b.kid.as_ref().filter(|_| be.env()["kids"] == true) {
+                let _ = crate::kids::set_in(&be.data_dir(), crate::orch_roles::base_of(&name), Some(crate::kids::KidsOrch { child: crate::kids::clean_child(&k.child), age: 5, since: crate::orch_roles::now_ms() }));
+                be.kid_start(crate::orch_roles::base_of(&name));
+            }
             match be.spawn(&hq, &name) {
                 Ok(_) => Resp::json(&serde_json::json!({ "ok": true, "name": name })),
                 Err(e) => Resp::text(502, &e),
@@ -3520,6 +3604,18 @@ fn gated(req: &Req, gate: &Gate, be: &dyn Backend) -> Resp {
                     r
                 }
                 None => Resp::text(404, "not found"),
+            }
+        }
+        ("GET", "/api/default-model") => Resp::json(&be.default_model()),
+        ("POST", "/api/default-model") => {
+            let b: DefaultModelBody = match body(req) { Ok(b) => b, Err(r) => return r };
+            let (m, e) = crate::default_model::clean(&b.model, &b.effort);
+            if m != b.model.trim().to_lowercase() || e != b.effort.trim().to_lowercase() {
+                return Resp::text(400, "bad model or effort");
+            }
+            match be.set_default_model(&m, &e) {
+                Ok(()) => Resp::json(&be.default_model()),
+                Err(e) => Resp::text(502, &e),
             }
         }
         ("POST", "/api/voice-mode") => {
@@ -4026,7 +4122,7 @@ pub fn head_check(req: &Req, gate: &Gate) -> Option<Resp> {
     if req.method != "POST" && !has_body {
         return None;
     }
-    if !matches!(req.path.as_str(), "/api/send" | "/api/attach" | "/api/voice-mode" | "/api/voice-beat" | "/api/model" | "/api/routine" | "/api/interrupt" | "/api/respawn" | "/api/spawn" | "/api/stop" | "/api/html-ticket" | "/api/curation" | "/api/media-ticket" | "/api/dl-ticket" | "/api/open-mac" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/pair-code" | "/api/pair" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/role" | "/api/avatar" | "/api/account-switch" | "/api/account-auto" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry" | "/api/diag" | "/api/locker-add" | "/api/peer-say" | "/api/peer-human" | "/api/peer-direct-answer" | "/api/peer-logout-ask" | "/api/peer-key-back" | "/api/peer-unlink" | "/api/peer-card-answer" | "/api/link-request" | "/api/team-locker-put") && !PHONE_POSTS.contains(&req.path.as_str()) {
+    if !matches!(req.path.as_str(), "/api/send" | "/api/attach" | "/api/voice-mode" | "/api/voice-beat" | "/api/model" | "/api/routine" | "/api/interrupt" | "/api/respawn" | "/api/spawn" | "/api/stop" | "/api/html-ticket" | "/api/curation" | "/api/media-ticket" | "/api/dl-ticket" | "/api/open-mac" | "/api/push-subscribe" | "/api/push-unsubscribe" | "/api/pair-code" | "/api/pair" | "/api/direct-answer" | "/api/task-answer" | "/api/remove" | "/api/rename" | "/api/pin" | "/api/role" | "/api/avatar" | "/api/account-switch" | "/api/account-auto" | "/api/login-start" | "/api/login-code" | "/api/login-cancel" | "/api/browser-takeover" | "/api/browser-input" | "/api/browser-retry" | "/api/diag" | "/api/locker-add" | "/api/peer-say" | "/api/peer-human" | "/api/peer-direct-answer" | "/api/peer-logout-ask" | "/api/peer-key-back" | "/api/peer-unlink" | "/api/peer-card-answer" | "/api/link-request" | "/api/team-locker-put") && !PHONE_POSTS.contains(&req.path.as_str()) && !kids_post(&req.path) {
         return Some(Resp::text(404, "not found"));
     }
     // 짝짓기는 코드가 열쇠, 연결 요청은 되묻기와 사람 카드가 문 — 출처·JSON 만 본다
@@ -4036,8 +4132,26 @@ pub fn head_check(req: &Req, gate: &Gate) -> Option<Resp> {
     if !authed(req, gate) {
         return Some(Resp::text(401, "no key"));
     }
-    let origin_ok = if matches!(req.path.as_str(), "/api/attach" | "/api/team-locker-put") { same_origin_upload(req, gate) } else { same_origin_write(req, gate) };
+    let origin_ok = match req.path.as_str() {
+        "/api/attach" | "/api/team-locker-put" => same_origin_upload(req, gate),
+        p if KIDS_WAV.contains(&p) => same_origin_wav(req, gate),
+        _ => same_origin_write(req, gate),
+    };
     (!origin_ok).then(|| Resp::text(403, "bad origin"))
+}
+
+/// 키즈 패드 길(kids_pad) — 앞자리로 연다. 문지기 목록에 길을 하나씩 더하면 새 길이 또 빠진다(11-18 진짜 아이패드 '아이 화면으로' → 404 not found).
+/// 모르는 키즈 길은 kids_pad::route 가 열쇠를 본 뒤 404 를 낸다
+fn kids_post(path: &str) -> bool {
+    path.starts_with("/api/kids/") || path == "/api/kids-time"
+}
+
+/// 녹음을 보내는 키즈 길 — 몸이 audio/wav 라 JSON 문 대신 출처 + audio/wav 로 본다(남의 페이지 form 은 audio/wav 를 미리 묻기 없이 못 보낸다)
+const KIDS_WAV: &[&str] = &["/api/kids/peek", "/api/kids/hear"];
+
+fn same_origin_wav(req: &Req, gate: &Gate) -> bool {
+    let ct = req.header("content-type").map(|c| c.split(';').next().unwrap_or("").trim().to_ascii_lowercase()).unwrap_or_default();
+    req.header("origin").is_some_and(|o| gate.origins.iter().any(|a| a == o)) && ct == "audio/wav"
 }
 
 /// 몸통 한도 — 붙이기 20MB·팀 보관함 올리기 조각 4MB·md 저장·팀 홈 글, 나머지는 64KB
@@ -4046,6 +4160,8 @@ fn body_cap(path: &str) -> usize {
         "/api/attach" => mobile_files::MAX_ATTACH,
         "/api/team-locker-put" => crate::team_phone_up::PART,
         "/api/locker-write" | "/api/note-write" => MAX_WRITE_BODY,
+        // 키즈 녹음 — 16kHz 모노 16비트 30초 남짓(약 1MB)
+        "/api/kids/peek" | "/api/kids/hear" => 1_100_000,
         // 팀 홈 글 본문 2만 자(한글 3바이트)
         "/api/team-post" => 128 * 1024,
         // 팀 참모 지침 8천 자 + 시험 이전 문답

@@ -16,7 +16,7 @@ import { SaveButtons } from './ShareButton';
 import { BottomSheet } from './kit';
 
 type Cur = { title: string; total: number; done: number; text: string };
-const why = (): Record<string, string> => ({ 'secret inside': tr(`시안 속에 키가 보여서 폰엔 안 보여 줘요 — ${machine()}에서 열어 주세요`, `There is a key inside this draft, so it is hidden on the phone — open it on the ${machine()}`), 'not allowed': tr('폰에서 열 수 없는 시안이에요', "This draft can't be opened on the phone"), 'file too large': tr(`시안이 10MB 를 넘어 폰에선 못 열어요 — ${machine()}에서`, `This draft is over 10 MB, so it can't be opened on the phone — use the ${machine()}`) });
+const why = (): Record<string, string> => ({ 'secret inside': tr(`시안 속에 키가 보여서 이 기기엔 안 보여 줘요 — ${machine()}에서 열어 주세요`, `There is a key inside this draft, so it is hidden on this device — open it on the ${machine()}`), 'not allowed': tr('이 기기에서 열 수 없는 시안이에요', "This draft can't be opened on this device"), 'file too large': tr(`시안이 10MB 를 넘어 이 기기에선 못 열어요 — ${machine()}에서`, `This draft is over 10 MB, so it can't be opened on this device — use the ${machine()}`) });
 
 export default function HtmlSheet({ path, title, orch, onClose }: { path: string; title: string; orch?: string; onClose: () => void }) {
   const frame = useRef<HTMLIFrameElement>(null);

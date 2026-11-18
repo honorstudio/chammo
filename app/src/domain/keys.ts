@@ -25,7 +25,7 @@ export function winToMac(e: KeyLike): KeyLike | null {
   const letter = /^Key([A-Z])$/.exec(code)?.[1];
   const digit = /^Digit([0-9])$/.exec(code)?.[1];
   if (e.altKey) {
-    if (e.shiftKey) return null;
+    if (e.shiftKey) return letter === 'T' ? { ...mac('t', { alt: true }), code } : null; // Ctrl+Alt+Shift+T = ⌥⌘T 새 터미널(platform::win_accel 과 같게)
     if (digit) return { ...mac(digit, { alt: true }), code };
     if (letter && SHIFT_LETTERS.includes(letter)) return mac(letter, { shift: true });
     return null;

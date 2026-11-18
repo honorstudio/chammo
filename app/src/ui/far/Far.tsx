@@ -97,6 +97,7 @@ export function useFarMode(o: { remoteChat: RemoteChatTarget | null; setRemoteCh
   const repaired = () => { setStatus(undefined); data.again(); };
   return {
     far,
+    back,
     railTop: saved.length > 0 && !far ? button(false) : undefined,
     farView: far ? {
       color,

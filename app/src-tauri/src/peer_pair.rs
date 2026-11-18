@@ -72,8 +72,9 @@ pub fn run_knock(url: &str, me: &Me, mt: &[u8], mut on_sas: impl FnMut(&str), wa
                 on_sas(&crate::device_link::sas_text(run.link4(&nm)?));
             }
             Some("link5") => {
-                // 숫자를 낸 뒤에만 — 숫자 없이 온 열쇠는 가짜 컴퓨터일 수 있다
-                if !run.can_finish() {
+                // 숫자를 낸 뒤에만 — 숫자 없이 온 열쇠는 가짜 컴퓨터일 수 있다. 예외: 바로 연결(direct, 결정 A) — A 가 같은 계정의 사람이 허용한
+                // 컴퓨터로 보고 바로 준 것. 믿음 경계는 계정(구글)·중계(A 열쇠는 서버가 준 것)로, 메일 코드와 같다
+                if x["direct"] != true && !run.can_finish() {
                     return Err("key".into());
                 }
                 if x["ok"] != true {

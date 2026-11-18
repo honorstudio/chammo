@@ -17,6 +17,8 @@ export type BlockData = {
   members: { id: string; name: string }[];
   agents: AgentShown[];
   files: LockerItem[];
+  /** 아직 안 받은 것 — 비어 있어도 '없어요'를 안 띄운다 */
+  loading?: { agents?: boolean; files?: boolean };
   content: Record<string, Content>;
   /** 팀챗 입력칸에 한 줄(@이름) — 없으면 참모 블록은 누를 수 없다 */
   onTalk?: (text: string) => void;
@@ -52,6 +54,7 @@ function Members({ d }: { d: BlockData }) {
 
 function Agents({ d }: { d: BlockData }) {
   const list = d.agents.filter((a) => !a.clash);
+  if (!list.length && d.loading?.agents) return <div className="hb-agents" aria-busy="true" />;
   if (!list.length) return <div className="hb-none">{tr('아직 팀 참모가 없어요 — 팀 설정에서 만들어요', 'No team helpers yet — make one in team settings')}</div>;
   return (
     <div className="hb-agents">
@@ -68,6 +71,7 @@ function Agents({ d }: { d: BlockData }) {
 
 function Files({ d, n }: { d: BlockData; n: number }) {
   const list = recentFiles(d.files, n);
+  if (!list.length && d.loading?.files) return <div className="hb-rows" aria-busy="true" />;
   if (!list.length) return <div className="hb-none">{tr('팀 보관함에 아직 파일이 없어요', 'No files in the team locker yet')}</div>;
   return (
     <div className="hb-rows">

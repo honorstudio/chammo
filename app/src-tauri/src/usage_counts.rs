@@ -89,6 +89,16 @@ pub fn crashed(dir: &Path, kind: &str) {
         bump(dir, |c| add(&mut c.crash, kind, SMALL_MAX));
     }
 }
+/// panic 훅용 — 카운터 잠금을 기다리지 않는다(같은 스레드가 쥔 채 panic 했으면 멈추지 말고 그냥 놓친다). 셌으면 true
+pub fn crashed_nowait(dir: &Path, kind: &str) -> bool {
+    if !CRASH_KINDS.contains(&kind) {
+        return false;
+    }
+    let Ok(_g) = LOCK.try_lock() else { return false };
+    let mut c = load(dir);
+    add(&mut c.crash, kind, SMALL_MAX);
+    save(dir, &c).is_ok()
+}
 pub fn update_ok(dir: &Path) {
     bump(dir, |c| c.upd_ok = (c.upd_ok + 1).min(SMALL_MAX));
 }
@@ -220,6 +230,12 @@ pub fn record_crash(kind: &str) {
         crashed(d, kind);
     }
 }
+/// panic 훅에서 — 설정도 카운터도 잠금을 기다리지 않는다(ADR 0033)
+pub fn record_panic() {
+    if crate::config::try_current().is_some_and(|c| c.features.usage_ping) {
+        crashed_nowait(crate::config::data_dir(), "panic");
+    }
+}
 pub fn record_update(ok: Option<&str>) {
     if let Some(d) = here() {
         match ok {
@@ -278,6 +294,19 @@ mod tests {
     }
 
     #[test]
+    fn panic_훅의_셈은_잠금을_기다리지_않는다() {
+        let d = tmp("panic-nowait");
+        assert!(crashed_nowait(&d, "panic"));
+        assert_eq!(load(&d).crash.get("panic"), Some(&1));
+        let g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(!crashed_nowait(&d, "panic"), "잠겨 있으면 놓친다(멈추지 않는다)");
+        drop(g);
+        assert!(!crashed_nowait(&d, "거래처"), "목록 밖 이름은 버린다");
+        assert_eq!(load(&d).crash.get("panic"), Some(&1));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
     fn 정해_둔_이름만_세고_상한에서_멈춘다() {
         let d = tmp("names");
         used(&d, "office");
@@ -330,7 +359,7 @@ mod tests {
 
     #[test]
     fn 켜_둔_기능은_스위치_이름만_usage_ping_빼고() {
-        let f = crate::config::Features { office: true, voice: true, usage_ping: true, gacha: false, review: false, auto_revive: false, auto_tidy: false, agent_view: true, computer_use: false, craft_basics: true, bubble: true, bubble_desk: true, git: None, animation: "auto".into() };
+        let f = crate::config::Features { office: true, voice: true, usage_ping: true, gacha: false, review: false, auto_revive: false, auto_tidy: false, chief_compact: true, agent_view: true, computer_use: false, craft_basics: true, bubble: true, bubble_desk: true, git: None, animation: "auto".into(), kids: false };
         assert_eq!(on_list(&f), vec!["office", "voice", "agentView"]);
     }
 

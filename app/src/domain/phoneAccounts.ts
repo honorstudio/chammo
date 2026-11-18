@@ -86,7 +86,7 @@ export function phoneAccountError(msg: string): string {
   if (m === 'needsLogin') return tr(`그 계정은 로그인이 풀렸어요 — ${machine()}에서 위 계정 메뉴를 열고 그 계정을 눌러 다시 로그인해 주세요`, `That account is signed out — on the ${machine()}, open the account menu at the top and click it to sign in again`);
   if (m === 'too soon') return tr('방금 바꾸는 중이었어요 — 잠깐 뒤에 다시 눌러 주세요', 'A switch was just in progress — try again in a moment');
   if (m === 'locked' || m === 'denied') return machine() === 'PC' ? tr('자격 증명을 못 읽었어요 — PC 앞에서 한 번 바꿔 주세요', 'Could not read the credentials — switch once at the PC') : tr(`${machine()} 키체인이 잠겼거나 허용이 필요해요 — ${machine()} 앞에서 한 번 바꿔 주세요`, `The ${machine()} keychain is locked or needs permission — switch once at the ${machine()}`);
-  if (m === 'unsupported') return tr(`이 ${machine()} 앱은 폰 계정 바꾸기를 아직 몰라요 — ${machine()} 앱을 새로 깔아 주세요`, `This ${machine()} app does not support switching accounts from the phone yet — reinstall the ${machine()} app`);
+  if (m === 'unsupported') return tr(`이 ${machine()} 앱은 폰·태블릿 계정 바꾸기를 아직 몰라요 — ${machine()} 앱을 새로 깔아 주세요`, `This ${machine()} app does not support switching accounts from the phone or tablet yet — reinstall the ${machine()} app`);
   return accountError(m);
 }
 

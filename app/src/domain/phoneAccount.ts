@@ -30,5 +30,5 @@ export function accountRefusal(message: string): string | null {
   if (!m.startsWith('account:')) return null;
   return m === 'account:nologin'
     ? tr('컴퓨터가 Chammo 에 로그아웃해서 결제 확인은 컴퓨터에서 답해 주세요', 'The computer is signed out of Chammo — answer payment checks on the computer')
-    : tr('이 폰 연결은 계정 확인이 안 돼 결제 확인에 답할 수 없어요 — 중계로 다시 연결하거나 컴퓨터에서 답해 주세요', "This phone connection isn't account-verified, so it can't answer payment checks — reconnect through the relay or answer on the computer");
+    : tr('이 기기 연결은 계정 확인이 안 돼 결제 확인에 답할 수 없어요 — 중계로 다시 연결하거나 컴퓨터에서 답해 주세요', "This device connection isn't account-verified, so it can't answer payment checks — reconnect through the relay or answer on the computer");
 }

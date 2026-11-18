@@ -13,6 +13,10 @@ const SID: &str = "f00d0002-0000-4000-8000-004027383810";
 pub(crate) struct Fake {
     /// 공개 소스 빌드처럼 — 공식 설치 파일의 판이 없다(트레이트 기본 답과 같은 말)
     no_pro: bool,
+    /// 설정 키즈 모드가 켜졌다(env.kids)
+    kids: bool,
+    /// 키즈 말·기록을 진짜 아이 세션으로(끝에서 끝 시험 real_pad_e2e — CHAMMO_HOME 임시)
+    real_kids: bool,
     calls: Mutex<Vec<String>>,
     /// show.jsonl 꼬리로 돌려줄 글
     show: String,
@@ -62,6 +66,10 @@ pub(crate) struct Fake {
 }
 
 impl Fake {
+    /// 키즈 모드를 켠 가짜 맥(데이터 폴더 지정) — 중계 시험도 쓴다
+    pub(crate) fn kids_at(data: std::path::PathBuf) -> Fake {
+        Fake { data, kids: true, ..Default::default() }
+    }
     pub(crate) fn calls(&self) -> Vec<String> {
         self.calls.lock().unwrap().clone()
     }
@@ -347,7 +355,7 @@ impl Backend for Fake {
         Ok(serde_json::json!({ "id": "p1" }))
     }
     fn env(&self) -> serde_json::Value {
-        serde_json::json!({ "assistantName": "참모" })
+        serde_json::json!({ "assistantName": "참모", "kids": self.kids })
     }
     fn sessions(&self) -> Result<String, String> {
         if !self.slow.is_zero() {
@@ -537,6 +545,57 @@ impl Backend for Fake {
         self.log(format!("resume {cwd} {session_id} {id}"));
         Ok("respawned".into())
     }
+    fn kid_start(&self, key: &str) {
+        self.log(format!("kid-start {key}"));
+        if self.real_kids {
+            crate::kids::start_bg(key.to_string()); // 진짜 판(아침 점검) — 미리 켜기를 실제로
+        }
+    }
+    fn kids_say(&self, key: &str, text: &str, cid: &str) -> Result<(), String> {
+        self.log(format!("kids-say {key} {cid} {text}"));
+        if self.real_kids {
+            let (id, msg) = crate::kids_pad::say_prepare(key, text, cid)?;
+            return crate::claude::type_text_tagged(&id, &msg, "kids-e2e");
+        }
+        Ok(())
+    }
+    fn kids_voice(&self) -> bool {
+        true
+    }
+    fn kids_peek(&self, wav: &[u8], cid: &str) -> Result<(String, bool), String> {
+        self.log(format!("kids-peek {cid} {}", wav.len()));
+        Ok(("공룡이 점프하고".into(), true))
+    }
+    fn kids_hear(&self, key: &str, wav: &[u8], cid: &str) -> Result<String, String> {
+        self.log(format!("kids-hear {key} {cid} {}", wav.len()));
+        if self.real_kids {
+            return crate::kids_voice::hear(key, wav, cid, |id, msg| crate::claude::type_text_tagged(id, msg, "kids-e2e"));
+        }
+        Ok("공룡 그려 줘".into())
+    }
+    fn kids_clip(&self, key: &str, cid: &str, n: usize) -> Result<Option<Vec<u8>>, ()> {
+        if self.real_kids {
+            return crate::kids_voice::clip(key, cid, n);
+        }
+        match n {
+            0 => Ok(Some(b"RIFF0".to_vec())),
+            1 => Ok(None),
+            _ => Err(()),
+        }
+    }
+    fn kids_pre(&self, i: usize) -> Option<Vec<u8>> {
+        if self.real_kids {
+            return crate::kids_voice::pre_dir().ok().and_then(|d| std::fs::read(d.join(format!("{i:02}.wav"))).ok());
+        }
+        (1..=20).contains(&i).then(|| b"RIFFpre".to_vec())
+    }
+    fn kids_log(&self, key: &str) -> Vec<crate::kids_wire::Row> {
+        if self.real_kids {
+            return crate::kids_pad::log_blocking(key);
+        }
+        let r = |who: &str, text: &str| crate::kids_wire::Row { ts: 1, who: who.into(), text: text.into(), cid: None };
+        vec![r("app", "아이 세션 켬"), r("kid", "공룡"), r("assistant", "좋아!"), r("guardian", "튜닝")]
+    }
     fn spawn(&self, cwd: &str, name: &str) -> Result<String, String> {
         self.log(format!("spawn {cwd} {name}"));
         Ok("backgrounded · cccc0001".into())
@@ -601,6 +660,13 @@ impl Backend for Fake {
     }
     fn set_voice(&self, on: bool) -> Result<(), String> {
         self.log(format!("set_voice {on}"));
+        Ok(())
+    }
+    fn default_model(&self) -> serde_json::Value {
+        serde_json::json!({ "model": "sonnet", "effort": "" })
+    }
+    fn set_default_model(&self, model: &str, effort: &str) -> Result<(), String> {
+        self.log(format!("set_default_model {model}/{effort}"));
         Ok(())
     }
     fn gacha_op(&self, req: &serde_json::Value) -> Result<serde_json::Value, String> {
@@ -1611,6 +1677,23 @@ fn 새_참모는_서버가_이름을_짓는다() {
     let f = Fake::default();
     assert_eq!(handle(&post("/api/spawn", r#"{"nick":"하나"}"#), &g, &f).status, 200);
     assert_eq!(handle(&post("/api/spawn", r#"{"nick":"둘"}"#), &g, &f).status, 429, "연달아 만들기는 10초에 하나");
+}
+
+#[test]
+fn 새_참모를_키즈_참모로_만들면_띄우기_전에_칸을_적는다() {
+    let d = std::env::temp_dir().join(format!("chammo-mhttp-kids-{}-{}", std::process::id(), crate::mobile_pair::random_hex(4).unwrap()));
+    let body = r#"{"nick":"선생님","kid":{"child":" 서아 "}}"#;
+    // 설정 키즈 모드가 꺼져 있으면 키즈 칸 없이 그냥 참모
+    let f = Fake { data: d.join("off"), ..Default::default() };
+    assert_eq!(handle(&post("/api/spawn", body), &gate(), &f).status, 200);
+    assert!(crate::kids::read_in(&d.join("off")).orchs.is_empty());
+    assert!(!f.calls().iter().any(|c| c.starts_with("kid-start")));
+    // 켜져 있으면 칸을 먼저 적고(첫 인사가 키즈 판) 아이 세션을 띄운다
+    let f = Fake { data: d.join("on"), kids: true, ..Default::default() };
+    assert_eq!(handle(&post("/api/spawn", body), &gate(), &f).status, 200);
+    let r = crate::kids::read_in(&d.join("on"));
+    assert_eq!(r.orchs.get("참모-4").map(|o| o.child.as_str()), Some("서아"));
+    assert_eq!(f.calls(), vec!["kid-start 참모-4".to_string(), format!("spawn {HQ} 참모-4 · 선생님")]);
 }
 
 #[test]
@@ -2844,6 +2927,24 @@ fn 음성_모드는_읽기와_켜고_끄기만_불리언으로() {
     assert_eq!(handle(&post("/api/voice-mode", r#"{"on":false}"#), &g, &f).status, 200);
     assert_eq!(handle(&post("/api/voice-mode", r#"{"on":true}"#), &g, &f).status, 200);
     assert_eq!(f.calls(), vec!["set_voice false".to_string(), "set_voice true".to_string()]);
+}
+
+#[test]
+fn 새_세션_기본_모델은_정해진_값만_받는다() {
+    // 폰 더보기 '새 세션 모델'(2026-11-17) — 보기는 열쇠, 쓰기는 같은 출처 + 별칭·노력값 목록 안만
+    let g = gate();
+    let f = Fake::default();
+    assert!(head_check(&post("/api/default-model", r#"{"model":"opus","effort":"high"}"#), &g).is_none(), "진짜 서버 문지기");
+    let r = handle(&with_cookie(get("/api/default-model")), &g, &f);
+    assert_eq!(r.status, 200);
+    assert!(String::from_utf8_lossy(&r.body).contains("sonnet"));
+    assert_eq!(handle(&post("/api/default-model", r#"{"model":"gpt","effort":""}"#), &g, &f).status, 400);
+    assert_eq!(handle(&post("/api/default-model", r#"{"model":"opus","effort":"ultra"}"#), &g, &f).status, 400);
+    assert_eq!(handle(&post("/api/default-model", r#"{"model":"opus"}"#), &g, &f).status, 400);
+    assert_eq!(handle(&post("/api/default-model", r#"{"model":"opus","effort":"high"}"#), &g, &f).status, 200);
+    assert_eq!(handle(&post("/api/default-model", r#"{"model":"","effort":""}"#), &g, &f).status, 200);
+    assert_eq!(f.calls(), vec!["set_default_model opus/high".to_string(), "set_default_model /".to_string()]);
+    assert_eq!(run(set(post("/api/default-model", r#"{"model":"opus","effort":""}"#), "origin", Some("http://evil.example"))).0, 403);
 }
 
 #[test]
@@ -5534,7 +5635,7 @@ fn acct_world(computers: &'static [&'static str], stale: bool) -> Box<dyn Fn(Opt
         let mine = Mine { account: "acct-me".into(), device: "dev-me".into() };
         let now = 50_000_000;
         let at = if stale { now - FRESH_MS - 1 } else { now };
-        let seen = Seen { mine: mine.clone(), at_ms: at, computers: computers.iter().map(|c| (c.to_string(), String::new())).collect(), phones: vec![] };
+        let seen = Seen { mine: mine.clone(), at_ms: at, computers: computers.iter().map(|c| (c.to_string(), String::new())).collect(), phones: vec![], online: vec![] };
         judge(b, Some(&mine), Some(&seen), now)
     })
 }
@@ -5680,7 +5781,7 @@ fn phone_world() -> Box<dyn Fn(Option<&str>, bool) -> crate::peer_account::Verdi
     use crate::peer_account::{judge_phone, Mine, Seen};
     Box::new(|r, _| {
         let mine = Mine { account: "acct-me".into(), device: "dev-me".into() };
-        let seen = Seen { mine: mine.clone(), at_ms: 1_000, computers: vec![], phones: vec!["ph-1".into()] };
+        let seen = Seen { mine: mine.clone(), at_ms: 1_000, computers: vec![], phones: vec!["ph-1".into()], online: vec![] };
         judge_phone(r, Some(&mine), Some(&seen), 1_000)
     })
 }
@@ -5793,3 +5894,6 @@ fn 짝지은_열쇠로_물어_온_폰은_화면이_열린_것으로_적힌다() 
     // 열쇠 없는 요청은 안 적는다
     assert_eq!(device_of(&get("/api/env"), &g), None);
 }
+
+#[path = "mobile_http_kids_tests.rs"]
+mod kids_pad;

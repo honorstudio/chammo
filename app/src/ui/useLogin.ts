@@ -148,7 +148,7 @@ export function useLogin(acts: SessionActivity[], accounts: AccountsView | null,
       const t = needText(plan.need);
       const soon = plan.need.keep === 'late' && !plan.need.sessions.length;
       notifyOnce({ kind: 'login', session: 'login', orch: false, title: t.title, body: tr(`${t.where} — 결정 대기함에서 로그인`, `${t.where} — sign in from Decisions`) });
-      if (voiceRef.current) void speak(soon ? tr('Claude 로그인이 곧 끝나. 결정 대기함이나 폰에서 한 번 로그인해 줘', 'Claude sign-in ends soon. Sign in once from Decisions or your phone') : tr('Claude 로그인이 풀렸어. 결정 대기함이나 폰에서 로그인해 줘', 'Claude sign-in expired. Sign in from Decisions or your phone')).catch(() => {});
+      if (voiceRef.current) void speak(soon ? tr('Claude 로그인이 곧 끝나. 결정 대기함이나 폰·태블릿에서 한 번 로그인해 줘', 'Claude sign-in ends soon. Sign in once from Decisions or your phone or tablet') : tr('Claude 로그인이 풀렸어. 결정 대기함이나 폰·태블릿에서 로그인해 줘', 'Claude sign-in expired. Sign in from Decisions or your phone or tablet')).catch(() => {});
     }
     shownSince.current = plan.need && readyRef.current ? plan.need.since : null;
     // 폰 /api/login — 로그인 판단 + 약관 카드(있을 때만 terms)

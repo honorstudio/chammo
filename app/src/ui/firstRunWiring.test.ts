@@ -97,7 +97,9 @@ describe('위 띠(ux-start M6)', () => {
 describe('첫 설치 마지막 화면의 익명 사용 통계 안내', () => {
   it('통계가 켜져 있으면 시작하기 전에 안내 줄을 보여 준다', () => {
     expect(firstRun).toMatch(/draft\.features\.usagePing && <p className="fr-note">/);
-    expect(firstRun).toContain('하루 한 번 익명 사용 통계를 보내요');
+    expect(firstRun).toContain('하루 한 번 익명 사용 통계를');
+    // 오류 보고(ADR 0033)도 같은 스위치 — 시작 전 안내에 같이 적는다
+    expect(firstRun).toContain('오류가 나면 어디서 났는지를 보내요');
   });
 });
 

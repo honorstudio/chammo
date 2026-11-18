@@ -177,7 +177,8 @@ pub(crate) fn ensure_landed(landed: &dyn Fn() -> bool, k: Keys, held: Option<&dy
     }
     let held_now = || held.and_then(|h| h());
     if trusted && held.is_some() && held_now().is_none() {
-        // 입력칸에선 빠졌는데 기록엔 아직 — 조금 더 기다릴 뿐 누르지 않는다
+        // 입력칸에선 빠졌는데 기록엔 아직 — 조금 더 기다릴 뿐 누르지 않는다(남은 말이 아니다 — type_outcome inflight)
+        note.left = false;
         return Ok(poll_until(wait, landed));
     }
     note.enters += 1;
@@ -186,7 +187,13 @@ pub(crate) fn ensure_landed(landed: &dyn Fn() -> bool, k: Keys, held: Option<&dy
     if poll_until(wait, landed) {
         return Ok(true);
     }
-    let Some(n) = held_now().filter(|_| trusted) else { return Ok(landed()) };
+    let Some(n) = held_now().filter(|_| trusted) else {
+        // 믿을 화면에서 입력칸에 없다 — Enter 를 받았다(기록만 늦다). 남은 줄로 알리면 채팅이 바로 '못 갔다'로 띄워 두 번 보낸다
+        if trusted && held.is_some() {
+            note.left = false;
+        }
+        return Ok(landed());
+    };
     note.retyped = true;
     (k.clear)(n + n / 8 + 4)?;
     // 지운 게 화면에 안 보여도 다시 친다 — 화면 사본이 낡아(엉킴) 앞 말을 계속 보여 줄 수 있다. 백스페이스는 진짜 입력칸을 비웠다
@@ -195,7 +202,12 @@ pub(crate) fn ensure_landed(landed: &dyn Fn() -> bool, k: Keys, held: Option<&dy
     poll_until(RETYPE_SHOWN_MAX, || held_now().is_some());
     note.enters += 1;
     (k.enter)()?;
-    Ok(poll_until(wait, landed))
+    let ok = poll_until(wait, landed);
+    // 끝 상태로 남은 줄을 다시 잰다 — 다시 친 말이 빠졌으면(훅이 도는 중) 남은 게 아니다(type_outcome stuck 은 이걸 본다)
+    if !ok {
+        note.left = held_now().is_some();
+    }
+    Ok(ok)
 }
 
 #[cfg(test)]
@@ -375,6 +387,18 @@ mod tests {
         .unwrap();
         assert!(ok && note.retyped, "{note:?}");
         assert_eq!(*sent.borrow(), vec!["보낼 말".to_string()]);
+    }
+
+    #[test]
+    fn 다시_쳐도_안_들어가면_남은_줄로_알린다_빠졌으면_아니다() {
+        // Enter 를 계속 버리는 칸 — Enter·지우고 다시 치기 뒤에도 입력칸에 그대로: 채팅이 바로 '못 갔다'(type_outcome stuck)
+        let (ok, note, sent) = run(9, true, true);
+        assert!(!ok && note.retyped && note.left && sent.is_empty(), "{note:?}");
+        // 앞에서 남은 줄로 봤어도 입력칸에서 빠졌으면(훅이 도는 중) 남은 말이 아니다 — 두 번 보내지 않게
+        let mut note = SendNote { left: true, ..Default::default() };
+        let none = || None;
+        let ok = ensure_landed(&|| false, Keys { enter: &mut || Ok(()), clear: &mut |_| Ok(()), retype: &mut || Ok(()) }, Some(&none), true, Duration::from_millis(20), &mut note).unwrap();
+        assert!(!ok && !note.left, "{note:?}");
     }
 
     #[test]

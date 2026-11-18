@@ -8,7 +8,7 @@ describe('내 기기 컴퓨터 줄 잇기', () => {
     expect(dev).toContain("invoke('peer_relay_connect', { hub: id })");
   });
   it('숫자 안내는 폰에서 — 다른 컴퓨터에서 누르라고 하지 않는다', () => {
-    expect(dev).toContain('폰에서 확인하고 허용해 주세요');
+    expect(dev).toContain('폰·태블릿에서 확인하고 허용해 주세요');
     expect(dev).not.toContain('다른 컴퓨터에서');
   });
   it('이어진 컴퓨터 참모는 relay:<id> 로 채팅, 참모 목록은 5초 고리 밖에서', () => {

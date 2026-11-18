@@ -119,14 +119,16 @@ export const dueForCheck = (m: OutMsg, now: number) =>
  *  기록을 안 보고 바로 실패로 바꾸니 들어간 말이 '못 받았어요'로 남았다(2026-10-11 사용자 폰).
  *  쳤음(done)이어도 세션이 쉬는 채로(idleSince) 1분 넘게 기록에 없으면 입력칸에 남은 말이다 — Enter 가 안 먹으면 맥은 쳤다고 하루를 기억해
  *  폰이 20시간 '생각 중'으로 기다렸다(2026-11-04 사용자). 일하는 중이면 줄 서 있는 것일 수 있어 기다리되 LOST_AFTER 까지 —
- *  폰을 볼 때마다 세션이 일하는 중이면 7시간 넘게 붙어 있었다(2026-11-07 사용자, 맥은 쳤다는데 Claude 입력 기록에 없던 말). 맥이 치는 중(typing)이라고만 해도 같다 */
-export function applyStatus(list: OutMsg[], id: string, state: string, error: string | undefined, now: number, looked: boolean, idleSince?: number): OutMsg[] {
+ *  폰을 볼 때마다 세션이 일하는 중이면 7시간 넘게 붙어 있었다(2026-11-07 사용자, 맥은 쳤다는데 Claude 입력 기록에 없던 말). 맥이 치는 중(typing)이라고만 해도 같다.
+ *  queued = 그 말이 Claude 대기열에 줄 서 있다(폰이 읽은 기록의 queue-operation, domain/chatQueue inQueue) — 긴 일 뒤에 선 말은 10분이 지나도
+ *  전해지지 않음이 아니다(2026-11-17 '못 갔다' 기준 ③). 맥이 못 쳤다(failed)는 답은 그대로 실패 — 대기열의 같은 글은 앞서 간 말이다 */
+export function applyStatus(list: OutMsg[], id: string, state: string, error: string | undefined, now: number, looked: boolean, idleSince?: number, queued = false): OutMsg[] {
   const m = list.find((x) => x.id === id);
-  if (m && looked && (state === 'done' || state === 'typing')) {
+  if (m && looked && !queued && (state === 'done' || state === 'typing')) {
     const idleLong = state === 'done' && idleSince !== undefined && now - Math.max(idleSince, sentAt(m)) >= CHECK_AFTER;
     if (idleLong || now - sentAt(m) >= LOST_AFTER) return list.map((x) => (x.id === id ? { ...x, status: 'failed' as const, lost: true as const, error: notDelivered() } : x));
   }
-  if (state === 'failed' || (state === 'unknown' && looked && m && now - sentAt(m) >= CHECK_AFTER)) return markOut(list, id, 'failed', state === 'failed' ? error || tr('대화창에 들어가지 못했어요', "Didn't make it into the chat") : notDelivered());
+  if (state === 'failed' || (state === 'unknown' && looked && !queued && m && now - sentAt(m) >= CHECK_AFTER)) return markOut(list, id, 'failed', state === 'failed' ? error || tr('대화창에 들어가지 못했어요', "Didn't make it into the chat") : notDelivered());
   return list.map((m) => (m.id === id ? { ...m, checked: now } : m));
 }
 

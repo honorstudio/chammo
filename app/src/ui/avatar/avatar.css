@@ -156,6 +156,15 @@
 @keyframes oa-ph-ready { 0% { transform: scale(1); } 35% { transform: translateY(calc(var(--oa-s) * -0.05)) scale(.94, 1.08); } 70% { transform: scale(1.03, .97); } 100% { transform: scale(1); } }
 @keyframes oa-ph-ready-t { 0% { transform: scaleY(.38); } 55% { transform: scaleY(0); } 100% { transform: scaleY(var(--oa-lid, 0)); } }
 .oa.oa-ph-stopping { transform: scale(.8); transition: transform .9s cubic-bezier(.4, 0, .2, 1) .25s; }
+/* 깨울 차례(재부팅으로 꺼짐, 켤 때 점호 v3 2026-11-17) — 꺼짐처럼 감은 눈이지만 주저앉지 않고 바로 서서 느리게 숨쉰다(곧 깬다), 색은 조금만 뺀다 */
+.oa.oa-ph-queued .oa-tr { transform: none; }
+.oa.oa-ph-queued > .oa-tr { filter: saturate(.55); opacity: .85; }
+.oa-ph-queued .oa-all { animation: oa-breathe calc(6.2s * var(--oa-k)) ease-in-out infinite var(--oa-d); }
+/* 못 깸 — 기울어 주저앉고 색이 더 빠진다(사람이 다시 깨울 일) */
+.oa.oa-ph-failed .oa-tr { transform: rotate(-10deg) translateY(4%) scale(1.03, .94); }
+.oa.oa-ph-failed > .oa-tr { filter: saturate(.25); opacity: .7; }
+.oa-img.oa-ph-queued .oa-pic { filter: grayscale(.4); opacity: .85; }
+.oa-img.oa-ph-failed .oa-pic { filter: grayscale(.8); opacity: .7; }
 /* 올린 그림 — 눈이 없으니 켜는 중은 고리가 숨쉬고 색이 돌아오며, 끄는 중은 흑백으로 작아진다 */
 .oa-img.oa-ph-starting { animation: oa-ph-breathe 1.9s ease-in-out infinite; }
 .oa-img.oa-ph-starting .oa-pic { filter: grayscale(.3); opacity: .85; transition: filter .7s, opacity .7s; }
@@ -200,12 +209,15 @@ html.oa-calm .oa *, html.oa-calm .oa, html.oa-calm .oa::before, html.oa-still .o
 
 /* 프사 바꾸기 창 — 이름 바꾸기 창(od-box)을 넓혀 쓴다 */
 .od-box.oa-picker { width: min(440px, 92vw); max-height: 90vh; overflow-y: auto; }
+/* 창이 낮아 내용이 90vh 를 넘으면 세로 flex 가 칸을 눌러 이름 칸이 19px 알약이 됐다(11-17 사용자 "입력칸이 이상한데?") — 줄이지 않고 창 안에서 스크롤 */
+.od-box.oa-picker > * { flex-shrink: 0; }
 .oa-pk-prev { display: flex; align-items: center; justify-content: center; gap: 22px; padding: 8px 0 4px; }
 .oa-pk-sizes { display: flex; align-items: center; gap: 14px; }
 .oa-seg { display: flex; gap: 2px; padding: 3px; border-radius: 10px; background: var(--surface-2); }
 .oa-seg button { all: unset; flex: 1; text-align: center; min-height: 32px; line-height: 32px; border-radius: 8px; cursor: pointer; font-size: 12.5px; color: var(--text-2); }
 .oa-seg button.oa-on { background: var(--surface); color: var(--text); font-weight: 700; box-shadow: 0 1px 2px rgba(0, 0, 0, .08), 0 0 0 1px var(--line); }
 .oa-seg button:focus-visible, .oa-opt:focus-visible, .oa-sw:focus-visible, .oa-txt:focus-visible, .oa-crop:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.oa-kids { display: flex; align-items: center; gap: 8px; min-height: 32px; font-size: 13px; cursor: pointer; }
 .oa-lbl { font-size: 11px; font-weight: 600; color: var(--text-3); margin-top: 2px; }
 .oa-opts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .oa-opt { all: unset; box-sizing: border-box; width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; }

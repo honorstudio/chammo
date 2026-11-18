@@ -75,3 +75,50 @@ describe('프로필 저장소 — 폰에서 바꾼 프로필(2026-10-09)', () =>
     expect(m.avatarSnapshot().saved.has('참모-2')).toBe(false);
   });
 });
+
+describe('프로필 저장소 — 다시 떠도 지난 프로필로 바로(2026-11-16 사용자 "프로필 변경한 게 잠깐 초기화 상태")', () => {
+  const keepOf = (had: unknown) => ({ load: vi.fn(() => had), save: vi.fn() });
+  it('기억이 있으면 읽기 전부터 그 색 — known, 아직 fresh 는 아님', async () => {
+    vi.resetModules();
+    const m = await import('./store');
+    const keep = keepOf(BLUE);
+    m.setAvatarSource({ read: () => new Promise(() => {}), dataDir: () => Promise.resolve('phone'), keep });
+    expect(colorOf(m.avatarSnapshot())).toBe('#2f74e0');
+    expect(m.avatarSnapshot().known).toBe(true);
+    expect(m.avatarSnapshot().fresh).toBe(false);
+  });
+
+  it('기억이 없으면 모름(known=false) — 읽으면 알고, 읽은 값을 기억에 쓴다', async () => {
+    vi.resetModules();
+    const m = await import('./store');
+    const keep = keepOf(null);
+    m.setAvatarSource({ read: () => Promise.resolve(BLUE), dataDir: () => Promise.resolve('phone'), keep });
+    expect(m.avatarSnapshot().known).toBe(false);
+    await m.refreshAvatars();
+    expect(m.avatarSnapshot().known).toBe(true);
+    expect(m.avatarSnapshot().fresh).toBe(true);
+    expect(keep.save).toHaveBeenCalledWith([expect.objectContaining({ key: '참모-2' })]);
+  });
+
+  it('첫 읽기가 실패해도 빈 자리로 굳지 않는다 — 기본형으로 그리기로(known)', async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    const m = await import('./store');
+    m.setAvatarSource({ read: () => Promise.reject(new Error('HTTP 502')), dataDir: () => Promise.resolve('phone'), keep: keepOf(null) });
+    await m.refreshAvatars();
+    expect(m.avatarSnapshot().known).toBe(true);
+    expect(m.avatarSnapshot().fresh).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it('맥에서 바뀐 색이 오면 조용히 바꾸고 기억도 새 값으로', async () => {
+    vi.resetModules();
+    const m = await import('./store');
+    const keep = keepOf(BLUE);
+    const green = [{ ...BLUE[0], avatar: { ...BLUE[0]!.avatar, color: '#1f9a62' }, v: 2 }];
+    m.setAvatarSource({ read: () => Promise.resolve(green), dataDir: () => Promise.resolve('phone'), keep });
+    await m.refreshAvatars();
+    expect(colorOf(m.avatarSnapshot())).toBe('#1f9a62');
+    expect(keep.save).toHaveBeenLastCalledWith([expect.objectContaining({ v: 2 })]);
+  });
+});

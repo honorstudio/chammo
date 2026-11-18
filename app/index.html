@@ -4,8 +4,53 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Chammo</title>
+    <!-- 켤 때 첫 장면(점호, 2026-11-17 시안 v3) — 앱 묶음을 기다리지 않고 지난번 줄을 감은 눈으로 바로 그린다. 앱의 점호 덮개(ui/boot)가 같은 자리에서 이어받아 지운다 -->
+    <style>
+      #boot { position: fixed; inset: 0; z-index: 2147483000; background: #f6f6f8; --boot-ink: #8a8a92; --boot-floor: rgba(29, 29, 32, .1); }
+      @media (prefers-color-scheme: dark) { #boot { background: #151518; --boot-ink: #83838c; --boot-floor: rgba(231, 231, 234, .1); } }
+      #boot .bt-row { position: absolute; left: 0; right: 0; top: 46%; display: flex; justify-content: center; gap: 30px; transform: translateY(-50%); }
+      #boot .bt-cell { position: relative; width: 64px; height: 64px; }
+      #boot .bt-cell > .oa { position: absolute; left: 0; top: 0; }
+      #boot .bt-floor { position: absolute; left: 6px; right: 6px; bottom: -9px; height: 8px; border-radius: 50%; background: var(--boot-floor); }
+      #boot .bt-rest { position: absolute; left: 0; right: 0; margin-inline: auto; width: max-content; top: calc(46% + 84px); display: flex; flex-direction: column; align-items: center; gap: 6px; color: var(--boot-ink); font: 600 15px/1 -apple-system, BlinkMacSystemFont, sans-serif; }
+      #boot .bt-rest.solo { top: calc(46% - 26px); }
+      #boot .bt-faces { display: flex; }
+      #boot .bt-faces > span { display: inline-flex; width: 26px; justify-content: center; opacity: .55; filter: grayscale(.7); }
+      /* 프사 — ui/avatar/avatar.css 의 멈춘 꺼짐 얼굴만(감은 눈) */
+      #boot .oa { position: relative; display: inline-block; width: var(--oa-s); height: var(--oa-s); line-height: 0; --oa-c: var(--oa-body); }
+      #boot .oa-l { position: absolute; inset: 0; display: block; }
+      #boot .oa-l > svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; overflow: visible; }
+      #boot .oa svg * { transform-box: fill-box; transform-origin: 50% 50%; }
+      #boot .oa .oa-eye { transform-box: view-box; }
+      #boot .oa-body { fill: var(--oa-c); }
+      #boot .oa-body.oa-round { stroke: var(--oa-c); stroke-width: 5; stroke-linejoin: round; }
+      #boot .oa-body.oa-hexa { stroke: var(--oa-c); stroke-width: 3.4; stroke-linejoin: round; }
+      #boot .oa-stem { fill: none; stroke: var(--oa-c); stroke-width: 2; stroke-linecap: round; }
+      #boot .oa-w { fill: #fff; } #boot .oa-k { fill: #1d1d20; } #boot .oa-gl { fill: #fff; }
+      #boot .oa-lt, #boot .oa-lb { fill: var(--oa-c); transform: scaleY(1); }
+      #boot .oa .oa-lt { transform-origin: 50% 0; } #boot .oa .oa-lb { transform-origin: 50% 100%; }
+      #boot .oa-shut { fill: none; stroke: #fff; stroke-width: 1.9; stroke-linecap: round; }
+      #boot .oa-smile { display: none; }
+      #boot .oa-st-off .oa-tr { transform: scale(1.05, .92); }
+      #boot .oa-st-off > .oa-tr { filter: saturate(.12); opacity: .6; }
+      #boot .oa.oa-ph-queued .oa-tr { transform: none; }
+      #boot .oa.oa-ph-queued > .oa-tr { filter: saturate(.55); opacity: .85; }
+    </style>
   </head>
   <body>
+    <div id="boot" aria-hidden="true"></div>
+    <script>
+      // 지난번 점호 줄(앱이 남긴 것) — 없거나 못 읽으면 바탕만
+      (function () {
+        try {
+          var b = document.getElementById('boot');
+          var bg = localStorage.getItem('chammo.boot.bg.v1');
+          if (bg && /^rgba?\([\d.,\s%]+\)$|^#[0-9a-f]{3,8}$/i.test(bg)) b.style.background = bg;
+          var h = localStorage.getItem('chammo.boot.html.v1');
+          if (h) b.innerHTML = h;
+        } catch (e) { /* 바탕만 */ }
+      })();
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

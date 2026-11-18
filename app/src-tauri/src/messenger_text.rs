@@ -48,9 +48,9 @@ pub fn card_message(ask: &Value, who: &str) -> (String, Option<Value>) {
     let id = ask["id"].as_str().unwrap_or("");
     if !buttons_ok(kind) || !is_card_id(id) {
         lines.push(if kind == "pay" {
-            crate::i18n::tr("결제는 앱·폰 카드에서만 승인돼요", "Payments are approved only on the app or phone card").to_string()
+            crate::i18n::tr("결제는 앱·폰·태블릿 카드에서만 승인돼요", "Payments are approved only on the app or phone/tablet card").to_string()
         } else {
-            crate::i18n::tr("여기선 버튼이 없어요 — 앱·폰 카드에서 답해 주세요", "No buttons here — answer on the app or phone card").to_string()
+            crate::i18n::tr("여기선 버튼이 없어요 — 앱·폰·태블릿 카드에서 답해 주세요", "No buttons here — answer on the app or phone/tablet card").to_string()
         });
         return (lines.join("\n"), None);
     }

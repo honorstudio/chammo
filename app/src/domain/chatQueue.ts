@@ -71,8 +71,12 @@ export function applyQueueOps(q: QueueState, chunk: string): QueueState {
   return { waiting: waiting.slice(-50), popped: popped.slice(-50), deq: Math.min(Math.max(deq, 0), 20), absorbed: absorbed.slice(-50) };
 }
 
-/** inflight = 앱 치기(Rust pty_type)가 '친 글을 입력칸에서 봤고 Enter 뒤 빠졌는데 기록엔 아직'이라고 알렸다 — UserPromptSubmit 훅이 도는 중 */
-export type PendingMsg = { text: string; at: number; inflight?: boolean };
+/** inflight = 앱 치기(Rust pty_type)가 '친 글을 입력칸에서 봤고 Enter 뒤 빠졌는데 기록엔 아직'이라고 알렸다 — UserPromptSubmit 훅이 도는 중.
+ *  landed = 기록(사람 말·대기열)에 들어간 걸 Rust 가 봤다 — 채팅의 기록 읽기가 늦어도 '전달 안 됨'이 아니다(다시 보내면 두 번 간다).
+ *  stuck = Enter·지우고 다시 치기까지 해 봤는데 그 말이 입력칸에 그대로 — 끝내 안 들어감(2026-11-17 '못 갔다' 기준 ②) */
+export type PendingMsg = { text: string; at: number; inflight?: boolean; landed?: boolean; stuck?: boolean };
+/** 앱 치기 결과 — true = 쳤음(결과 모름), false = 못 쳤음(보기 없음·거절·시간 넘김), 나머지는 Rust pty_type 의 type_outcome */
+export type SendOutcome = boolean | 'inflight' | 'landed' | 'stuck';
 /** sending = 막 보냄 · queued = Claude 대기열에서 차례 기다림 · input = 터미널 입력칸에 걸림 · lost = 어디에도 없음
  *  · wait = 터미널 보기가 끊겨 다시 붙는 중 — 붙으면 앱이 친다(ui/SessionGrid typeAndSend, domain/paneLinks) */
 export type PendingState = 'sending' | 'queued' | 'input' | 'lost' | 'wait';
@@ -83,8 +87,10 @@ export const LOST_AFTER = 30_000;
 /** inflight 인 말은 이만큼 — 친 글이 입력칸에서 빠졌으니 Claude 는 받았고 훅이 끝나면 기록이 붙는다. 2주(10-30~11-12) 사람 말 5,386번 중
  *  훅 30초 넘김 280번·가장 긴 것 156초 — 30초에 '전달 안 됨 + 다시 보내기'가 떠 누르면 훅 뒤에 같은 말이 두 번 들어갔다(11-09 앱 보내기 62번, 11-13 시험 세션 재현) */
 export const INFLIGHT_LOST_AFTER = 180_000;
-/** at 에 보낸 말을 inflight 로 — 앱 치기 결과가 왔을 때 */
-export const markInflight = <P extends PendingMsg>(ps: P[], at: number): P[] => ps.map((p) => (p.at === at ? { ...p, inflight: true } : p));
+/** at 에 보낸 말에 앱 치기 결과를 단다 — inflight·landed·stuck 만, true/false 는 그대로 */
+export const markOutcome = <P extends PendingMsg>(ps: P[], at: number, r: SendOutcome | void): P[] =>
+  r === 'inflight' || r === 'landed' || r === 'stuck' ? ps.map((p) => (p.at === at ? { ...p, [r]: true } : p)) : ps;
+export const markInflight = <P extends PendingMsg>(ps: P[], at: number): P[] => markOutcome(ps, at, 'inflight');
 /** Enter 를 넣은 뒤 이만큼은 입력칸에 보여도 '치는 중'으로 본다 */
 const SETTLE = 1000;
 /** 같은 말에 Enter 를 다시 넣는 최대 횟수 */
@@ -92,8 +98,11 @@ export const AUTO_ENTER_MAX = 3;
 
 /** 줄이 접혀 온 입력칸과 맞대려고 공백을 다 뺀다(stuckInInput 와 같은 방식) */
 const sq = (t: string) => chatNorm(t).replace(/\s+/g, '');
+/** 대기열 글이 보낸 말인가 — 같거나 끝이 같다. 붙인 그림은 경로가 앞에 붙어 줄 선다(chat takeSent·absorbedAt 와 같은 규칙).
+ *  같은 글만 봐서 그림 붙인 말이 줄 서 있는데도 30초 뒤 '전달 안 됨 + 다시 보내기'가 떴다(2026-11-17 사용자 2.47.56 캡처, 05:46:58) */
+const queuedAs = (q: string, n: string) => { const t = chatNorm(q); return !!n && (t === n || t.endsWith(` ${n}`)); };
 /** 보낸 말과 같은 글이 보낸 뒤(10초 여유) 들어왔나 */
-const after = (items: QItem[], p: PendingMsg) => items.some((q) => q.ts >= p.at - 10_000 && !!q.text && chatNorm(q.text) === chatNorm(p.text));
+const after = (items: QItem[], p: PendingMsg) => items.some((q) => q.ts >= p.at - 10_000 && !!q.text && queuedAs(q.text, chatNorm(p.text)));
 /** 보낸 뒤(1초 여유) 이름 없는 대기 말(글 없는 enqueue)이 줄 섰나 — 글이 없어 짝은 못 맞추지만 앱이 친 Enter 뒤에 붙은 줄이다.
  *  못 알아보면 30초 뒤 '전달 안 됨 + 다시 보내기'로 떠 같은 말이 대기열에 또 들어갔다(2026-11-09 23:09~23:14, 세 번 감) */
 const anonAfter = (items: QItem[], p: PendingMsg) => items.some((q) => !q.text && q.ts >= p.at - 1000);
@@ -116,7 +125,10 @@ export const ABSORB_GRACE = 5000;
 /** 다시 보낸 말 — 보낸 시각은 새로, 맞출 기록은 처음 보낸 때(10초 여유) 뒤부터. 처음 말의 기록이 훅 때문에 늦게(옛 시각으로) 붙어도 지워진다.
  *  입력칸에 되돌아온 말(since)은 since 그대로 */
 /** 붙인 그림(imgs) 같은 딸린 칸은 그대로 — 다시 보낸 대기 말풍선에서 썸네일이 빠지지 않게 */
-export const resent = <P extends PendingMsg & { since?: number }>(p: P, now: number): P & { since: number } => ({ ...p, at: now, since: p.since ?? p.at - 10_000, inflight: false });
+export const resent = <P extends PendingMsg & { since?: number }>(p: P, now: number): P & { since: number } => {
+  const { landed: _l, stuck: _s, ...rest } = p; // 앞 치기의 결과는 새 치기에 안 넘긴다 — stuck 이 남으면 다시 보내자마자 또 실패로 떴다
+  return { ...(rest as P), at: now, since: p.since ?? p.at - 10_000, inflight: false };
+};
 
 /** 새로 보낸 말 — 맞출 기록은 보낸 때(10초 여유) 뒤, 그 사이 이미 들어온 같은 글 뒤부터. 방금 간 같은 말을 몇 초 뒤 또 보내면
  *  앞 말 기록에 짝지어져 이번 말이 안 가도 '보내는 중'도 '안 갔어요'도 없이 사라졌다(2026-10-11 bug-hunt 하네스).
@@ -143,11 +155,13 @@ export function pendingState(p: PendingMsg & { since?: number }, c: { queue: Que
   if (n && sq(c.termText).includes(n)) return c.pasting ? 'sending' : 'input';
   // 입력칸에 이 말의 토막만 보인다 — 긴 말을 치는 중이거나 입력칸 높이를 넘었다. 30초 넘게 그대로면 Enter 가 안 먹은 것: '안 갔어요 + 다시 보내기'면 입력칸에 두 벌로 붙는다
   if (typingOf(c.termText, [p.text])) return c.now < typed + LOST_AFTER ? 'sending' : 'input';
-  return c.now < typed + (p.inflight ? INFLIGHT_LOST_AFTER : LOST_AFTER) ? 'sending' : 'lost';
+  // 기록에 든 걸 Rust 가 봤는데(landed) 채팅엔 아직 — 기록 읽기가 늦을 뿐이라 훅 도는 중(inflight)과 같은 창. 그 뒤에도 어디에도 없으면 대기열에서 취소된 것
+  return c.now < typed + (p.inflight || p.landed ? INFLIGHT_LOST_AFTER : LOST_AFTER) ? 'sending' : 'lost';
 }
 
 /** Claude 대기열이 다 이 채팅이 보낸 말인가 — 줄 선 말 빼기(↑ 로 대기열 전부를 입력칸에 꺼냄)는 그때만. 남의 말까지 입력칸에 쏟는다.
  *  글 없는 대기 말(글 없는 enqueue)은 내가 보낸 뒤(1초 여유) 줄 섰으면 내 것 — 예전엔 하나만 섞여도 X 가 아예 안 떴다(2026-11-09) */
+// 같은 글만 본다(끝이 같다 아님) — 그림 붙인 말은 ↑ 로 꺼내면 경로째 입력칸에 와서 내 말로 못 맞춰 입력칸에 엉킨다. 그땐 ↑ 를 안 넘긴다
 export const queueAllMine = (queued: QItem[], waiting: PendingMsg[]): boolean =>
   queued.every((q) => (q.text ? waiting.some((w) => chatNorm(w.text) === chatNorm(q.text)) : waiting.some((w) => q.ts >= w.at - 1000)));
 
@@ -173,22 +187,34 @@ export function typingOf(termText: string, pending: string[]): string | null {
   return pending.find((p) => raw(p).includes(t)) ?? null;
 }
 
-/** 말풍선 모양 — 일하는 중엔 '보내는 중'도 대기 중으로 보인다. 치는 몇 초와 Enter 뒤 훅이 도는 몇 초(기록이 아직 없다)에
- *  흐린 '보내는 중'이 실패처럼 보였다(2026-10-26 사용자). 단추는 진짜 상태(pendAct)로 — 모양만 바꾼다 */
-export const pendLook = (st: PendingState, busy: boolean): PendingState => (st === 'sending' && busy ? 'queued' : st);
+/** 말풍선 표시 — 보낸 말은 CLI 처럼 보내자마자 보통 내 말풍선이다(2026-11-17 사용자: 점선 상자·'대기 중 · …' 글·보내기/빼기 단추가
+ *  아직 안 간 것처럼 보였다). none = 세션이 받음 · unread = 아직 안 읽음(작은 점 하나, 글 없음) · failed = 끝내 안 들어감(바깥 다시 보내기 아이콘).
+ *  '못 갔다'(2026-11-17 사용자 "그 시점을 언제로 정해야할지") —
+ *  ① 세션이 꺼짐(link gone)인데 대기열·기록에 없음 → 바로(pendingState 가 lost) ② 살아 있는데 Rust 가 Enter·다시 치기 뒤에도 입력칸에 그대로(stuck) → 바로
+ *  ③ 대기열에 줄 섰으면 몇 시간이 지나도 아님 ④ Claude 오류로 턴이 끝난 말은 기록 말풍선 몫(domain/chat errorTurns).
+ *  Rust 가 기록에 든 걸 봤으면(landed)·훅이 도는 중이면(inflight) 3분, 결과를 모르면(윈도우 화면 없음·기록 못 찾음) 예전대로 30초(pendingState) */
+export type PendMark = 'none' | 'unread' | 'failed';
+export function pendMark(st: PendingState, p: PendingMsg & { since?: number }, c: { queue: QueueState; now: number; enterWait: number }): PendMark {
+  if (absorbedAt(c.queue, p) !== null) return 'none';
+  if (st === 'queued' || st === 'wait') return 'unread';
+  if (p.stuck) return 'failed';
+  if (st === 'lost') return 'failed';
+  if (st === 'input') return c.now >= p.at + c.enterWait + LOST_AFTER ? 'failed' : 'unread';
+  return 'unread';
+}
+/** 보낸 말이 Claude 대기열에 줄 서 있나 — 줄 선 말은 시간이 지나도 실패도, 말풍선 치우기(PENDING_MS)도 아니다. 폰 보낼 함도 같이(mobileOutbox applyStatus) */
+export const inQueue = (q: QueueState, p: PendingMsg): boolean => after(q.waiting, p);
 
-/** 보낸 글 말풍선을 들고 있는 최대 시간 — 줄 선 말은 긴 일이 끝날 때까지 기다린다. 안 간 말은 사람이 빼거나 다시 보낼 때까지 남긴다 */
+/** 보낸 글 말풍선을 들고 있는 최대 시간 — 줄 선 말은 이걸 넘어도 긴 일이 끝날 때까지 남는다(inQueue). 안 간 말은 사람이 빼거나 다시 보낼 때까지 남긴다 */
 export const PENDING_MS = 3_600_000;
 /** 채팅에 남길 보낸 말 — 아직 기록에 안 들어온 것 중 한 시간 안, 흡수된 지 ABSORB_GRACE 안 지난 것. ChatView 와 보내기 흐름 시험(chatSendFlow.test)이 같이 쓴다 */
 export const waitingOf = <T extends PendingMsg & { since?: number }>(pending: T[], items: ChatItem[], now: number, queue: QueueState = emptyQueue): T[] =>
-  pendingLeft(pending, items, now).filter((p) => { const a = absorbedAt(queue, p); return now - p.at < PENDING_MS && (a === null || now - a < ABSORB_GRACE); });
+  pendingLeft(pending, items, now).filter((p) => { const a = absorbedAt(queue, p); return (now - p.at < PENDING_MS || inQueue(queue, p)) && (a === null || now - a < ABSORB_GRACE); });
 /** 흡수된 말이 기록 없이 사라질 때까지 남은 시간 — ChatView 가 그때 한 번 더 센다(기록이 안 바뀌면 다시 셀 일이 없다). 없으면 null */
 export const absorbedLeft = (pending: (PendingMsg & { since?: number })[], queue: QueueState, now: number): number | null => {
   const left = pending.map((p) => absorbedAt(queue, p)).filter((a): a is number => a !== null).map((a) => a + ABSORB_GRACE - now);
   return left.length ? Math.max(0, Math.min(...left)) : null;
 };
-/** 말풍선 단추 — 보내는 중엔 없음, 안 갔어요면 다시 보내기, 대기 중·입력칸이면 지금 보내기(빼기는 대기열·입력칸 모양을 더 봐서 따로) */
-export const pendAct = (st: PendingState, app = false): 'again' | 'now' | null => (app || st === 'sending' || st === 'wait' ? null : st === 'lost' ? 'again' : 'now');
 
 /** 앱이 참모 입력칸에 넣은 줄([앱] …, data/tauri sendToSession) — 사람 말이 아니라 옅은 한 줄로, 단추 없이(다시 치면 같은 줄이 두 번 간다).
  *  기록에 들어오면 앱 줄(relay '앱')로 바뀐다. 2026-11-10 참모-2: 한글이 깨져 들어가(256 바이트 자르기) 짝을 못 지은 줄이 '전달 안 됨 + 다시 보내기'로 남았다 */
@@ -209,8 +235,12 @@ export function autoEnterTarget(pending: PendingMsg[], c: { queue: QueueState; t
 
 /** 채팅이 세션에 넘기는 Esc 사이 최소 간격 — Claude 는 쉴 때 Esc 두 번을 '입력칸 지우기'·'되감기'로 받는다(0.6초는 두 번, 1초는 따로 — 2026-10-06 실측) */
 export const ESC_GAP = 1500;
-/** Esc 를 지금 넘길까. 바로 앞 Esc 와 가깝거나, 앱이 글을 치는 중(Enter 전)이면 버린다 — 미루면 쉬는 세션에선 방금 보낸 말을 끊어 입력칸으로 되돌린다 */
-export const escPlan = (now: number, lastEsc: number, typingUntil: number): boolean => now - lastEsc >= ESC_GAP && now >= typingUntil;
+/** Esc 를 지금 넘길까. 바로 앞 Esc 와 가까우면 gap, 앱이 글을 치는 중(Enter 전)이면 typing — 버린다. 미루면 쉬는 세션에선 방금 보낸 말을 끊어 입력칸으로 되돌린다 */
+export function escWhy(now: number, lastEsc: number, typingUntil: number): 'ok' | 'gap' | 'typing' {
+  if (now < typingUntil) return 'typing';
+  return now - lastEsc >= ESC_GAP ? 'ok' : 'gap';
+}
+export const escPlan = (now: number, lastEsc: number, typingUntil: number): boolean => escWhy(now, lastEsc, typingUntil) === 'ok';
 
 /** 입력칸이 내가 보낸 말들로만 채워져 있으면 그 말들(입력칸 순서), 모르는 글이 섞였으면 null.
  *  새 말을 치기 전에 이걸 비워 두 말이 한 말로 붙어 가지 않게 한다. 모르는 글(받아 적은 말·붙인 그림)은 원래대로 같이 간다 */

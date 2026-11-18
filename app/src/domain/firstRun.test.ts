@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { firstSpawnDue } from './firstRun';
-import { allDone, canSkip, doneCount, failKind, itemOk, itemsFor, lineLength, loginCommand, needsManualGet, nextItem, resumeScreen, retryItem, setItem } from './firstRun';
+import { afterClaude, allDone, canSkip, doneCount, failKind, itemOk, itemsFor, lineLength, loginCommand, needsManualGet, nextItem, resumeScreen, retryItem, setItem } from './firstRun';
 
 describe('첫 설치 항목', () => {
   it('맥은 넷, 윈도우는 git·파이썬이 앞에 — 맥 참모 도구 줄은 윈도우에 없다', () => {
@@ -70,7 +70,21 @@ describe('바닥 선', () => {
     expect(b).toBeLessThan(c);
     expect(c).toBeLessThan(d);
     expect(d).toBeLessThan(e);
+    // Chammo 계정 장 — Claude 로그인 뒤에 이어 자라고 끝(1)보다 짧다
+    const f = lineLength('account', all, false);
+    const g = lineLength('account', all, true);
+    expect(e).toBeLessThan(f);
+    expect(f).toBeLessThan(g);
+    expect(g).toBeLessThan(1);
     expect(lineLength('done', all, true)).toBe(1);
+  });
+});
+
+describe('Chammo 계정 장(2026-11-18 사용자 — 설치 끝에 로그인)', () => {
+  it('계정이 없거나 모르면 계정 장, 이미 로그인된 기기는 건너뛰고 끝', () => {
+    expect(afterClaude(false)).toBe('account');
+    expect(afterClaude(null)).toBe('account');
+    expect(afterClaude(true)).toBe('done');
   });
 });
 

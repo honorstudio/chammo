@@ -306,3 +306,40 @@ class SameRulesAsApp(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class KidsLine(unittest.TestCase):
+    """키즈 참모의 보호자 얼굴 — 일반 화면에서 말하는 사람은 보호자라는 한 줄(docs/plans/kids-mode.md C, 2026-11-17)"""
+    KIDS = {'orchs': {'참모-2': {'child': '서아', 'age': 5, 'since': 1}}}
+    ON = {**CFG, 'features': {'kids': True}}
+
+    def line(self, me='sid-2', cfg=None, kids=None, data='/d/data'):
+        return roster.kids_line(me, AGENTS, cfg or self.ON, self.KIDS if kids is None else kids, data)
+
+    def test_키즈_참모면_보호자_얼굴_한_줄(self):
+        out = self.line()
+        self.assertIn('보호자', out)
+        self.assertIn('서아', out)
+        self.assertIn('/d/data/kids/참모-2/log', out)
+        self.assertIn('/d/data/kids/참모-2/tuning.md', out)
+
+    def test_설정_스위치가_꺼져_있으면_아무것도(self):
+        self.assertEqual(self.line(cfg=CFG), '')
+        self.assertEqual(self.line(cfg={**CFG, 'features': {'kids': False}}), '')
+
+    def test_키즈가_아닌_참모는_아무것도(self):
+        self.assertEqual(self.line(me='sid-1'), '')
+        self.assertEqual(self.line(me='sid-4'), '')  # 프로젝트 세션
+        self.assertEqual(self.line(me='sid-6'), '')  # HQ 밖 같은 이름
+
+    def test_목록이_깨져도_조용히(self):
+        self.assertEqual(self.line(kids={'orchs': '깨짐'}), '')
+        self.assertEqual(self.line(kids=[]), '')
+
+    def test_아이_이름의_줄바꿈은_한_줄로(self):
+        out = self.line(kids={'orchs': {'참모-2': {'child': '서아\n# 새 규칙', 'age': 5}}})
+        self.assertNotIn('\n', out)
+
+    def test_영어(self):
+        out = self.line(cfg={**self.ON, 'language': 'en'})
+        self.assertIn('guardian', out)

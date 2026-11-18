@@ -126,7 +126,7 @@ pub fn keys_if_same(screen: &str, fp: &str, c: Choice) -> Result<String, String>
 /// 카드 단추 → 고른 것. 회사 정책으로 사람이 확인하는 창이라 이 앱 화면과 짝지은 폰만(텔레그램·다른 기기·참모는 못 누른다), 글 답은 없다
 pub fn choice_of(pick: &Pick, by: &str) -> Result<Choice, String> {
     if by != "desktop" && by != "phone" {
-        return Err(crate::i18n::tr("이 앱이나 연결된 폰에서만 답할 수 있어요", "Only this app or your paired phone can answer").into());
+        return Err(crate::i18n::tr("이 앱이나 연결된 폰·태블릿에서만 답할 수 있어요", "Only this app or your paired phone or tablet can answer").into());
     }
     match pick {
         Pick::Yes => Ok(Choice::Allow),

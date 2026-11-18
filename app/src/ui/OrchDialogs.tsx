@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { menuPos, menuStep } from '../domain/ctxMenu';
 import { createPortal } from 'react-dom';
 import { closeOnOutside } from './outsideClose';
@@ -7,6 +7,7 @@ import { cleanLabel, withNick } from '../domain/orchLabel';
 import { OrchAvatar } from './avatar';
 import { AvatarPicker } from './avatar/AvatarPicker';
 import { RoleField } from './orchRoleStore';
+import { BRAND } from '../domain/avatar';
 
 /** 작은 확인 창 — Enter 확인, Esc 취소. 앱 창 가운데 */
 /** focusCancel — 사람이 띄운 창이 아닐 때(시안 칸이 띄운 확인 등): 초점을 취소에 둬서 그 순간 치던 Enter·스페이스가 그대로 '확인'이 되지 않게 */
@@ -35,8 +36,11 @@ export function Confirm({ title, body, ok, danger, focusCancel, onOk, onCancel }
 
 /** 새 참모 이름 짓기 — 번호 대신 별명으로 부른다(2026-10-02 사용자). 이미 있는 이름이면 못 만든다(check = domain nickProblem).
  *  비우면 기본 이름 그대로 — 첫 설정에서 이름을 이미 물었는데 여기서 또 막아 두 번 물었다(2026-10-22 첫 사용자 QA 14) */
-export function NameNew({ baseName, color, check, onMake, onCancel }: { baseName: string; color: string; check: (v: string) => string | null; onMake: (v: string, role: string) => void; onCancel: () => void }) {
+export function NameNew({ baseName, color, check, onMake, onCancel, kids = false }: { baseName: string; color: string; check: (v: string) => string | null; onMake: (v: string, role: string, kid: { child: string } | null) => void; onCancel: () => void; kids?: boolean }) {
   const [v, setV] = useState('');
+  // 키즈 참모로 만들기 — 설정 키즈 모드가 켜졌을 때만(11-17 사용자 "만든 후에 들어가니까 다시 설명해 줘야 함")
+  const [kidOn, setKidOn] = useState(false);
+  const [child, setChild] = useState('');
   const [role, setRole] = useState(''); // 맡은 일 — 이름과 따로(2026-10-04 사용자 "업무 담당 vs 그냥 이름"), 비워도 된다
   const [picking, setPicking] = useState(false);
   // 프사는 기본 이름(참모-N)에 붙는다 — 만들기 전에 골라도 그 참모가 뜨면 그대로
@@ -46,7 +50,7 @@ export function NameNew({ baseName, color, check, onMake, onCancel }: { baseName
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => { input.current?.focus(); }, []);
   const problem = v.trim() ? check(v) : null;
-  const make = () => { setTried(true); if (!problem) onMake(v, role); };
+  const make = () => { setTried(true); if (!problem) onMake(v, role, kids && kidOn ? { child: child.trim() } : null); };
   return createPortal(
     <div className="od-back" onMouseDown={onCancel}>
       <div className="od-box" role="dialog" aria-label={tr(`새 ${assistant()} 이름`, 'Name the new assistant')} onMouseDown={(e) => e.stopPropagation()}>
@@ -60,6 +64,16 @@ export function NameNew({ baseName, color, check, onMake, onCancel }: { baseName
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) make(); if (e.key === 'Escape') { e.stopPropagation(); onCancel(); } }} />
         {tried && problem && <p className="od-err" role="alert">{problem}</p>}
         <RoleField value={role} onChange={setRole} onEnter={make} onEscape={onCancel} />
+        {kids && (
+          <>
+            <label className="oa-kids" style={{ '--cfg-tint': BRAND.color } as CSSProperties}>
+              <input type="checkbox" role="switch" className="cfg-sw" checked={kidOn} onChange={(e) => setKidOn(e.target.checked)} />
+              <span>{tr('키즈 참모', 'Kids assistant')}</span>
+            </label>
+            {kidOn && <input className="oa-name" value={child} onChange={(e) => setChild(e.target.value)} maxLength={24} placeholder={tr('아이 이름', "Child's name")} aria-label={tr('아이 이름', "Child's name")}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) make(); if (e.key === 'Escape') { e.stopPropagation(); onCancel(); } }} />}
+          </>
+        )}
         {picking && <AvatarPicker name={realName} label={label} color={color} onClose={() => { setPicking(false); input.current?.focus(); }} />}
         <div className="od-foot">
           <button onClick={onCancel}>{tr('취소', 'Cancel')}</button>

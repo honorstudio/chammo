@@ -192,7 +192,7 @@ final class Mirror: NSObject, SCStreamOutput, SCStreamDelegate {
     /// 받기 멈춤 = 창이 가려졌거나 웹이 칸을 숨겼을 때(스페이스 탭이 뒤로·모달이 덮음) — 안 보는 동안 부하 0
     func updatePause() {
         guard let s = stream, let w = window else { return }
-        let off = !w.occlusionState.contains(.visible) || hostHidden
+        let off = !w.occlusionState.contains(.visible) || (hostHidden && !covered)
         if off && !paused {
             paused = true
             s.stopCapture(completionHandler: nil)
@@ -204,7 +204,8 @@ final class Mirror: NSObject, SCStreamOutput, SCStreamDelegate {
 
     /// 스페이스 탭 칸에 얹기 — 웹이 알려 준 자리(웹뷰 왼쪽 위 기준 CSS 점)와 보이는지. 따로 창은 이걸 안 부르고 창을 꽉 채운다
     var hostHidden = false
-    func place(_ r: CGRect, vh: CGFloat, visible: Bool) {
+    var covered = false  // 웹 팝오버가 칸을 덮음 — 뷰는 숨기되 받기는 계속, 웹이 still 로 갈아 끼운다(11-18 사용자 '알림이 떠 있으면 멈춤')
+    func place(_ r: CGRect, vh: CGFloat, visible: Bool, covered: Bool = false) {
         guard let host = view.superview else { return }
         let web = Mirror.findWeb(host) ?? host
         let wf = web === host ? host.bounds : web.frame
@@ -215,6 +216,7 @@ final class Mirror: NSObject, SCStreamOutput, SCStreamDelegate {
         let f = NSRect(x: wf.minX + r.minX, y: y, width: max(0, r.width), height: max(0, r.height))
         if f != view.frame { view.frame = f }
         hostHidden = !visible || r.width < 40 || r.height < 40
+        self.covered = hostHidden && covered && r.width >= 40 && r.height >= 40
         if hostHidden { view.isHidden = true } else if view.layer?.contents != nil { view.isHidden = false }
         updatePause()
         attacher?.shown = !hostHidden
@@ -224,7 +226,7 @@ final class Mirror: NSObject, SCStreamOutput, SCStreamDelegate {
     func still(to path: String) -> Bool {
         guard let obj = view.layer?.contents, CFGetTypeID(obj as CFTypeRef) == IOSurfaceGetTypeID() else { return false }
         let ci = CIImage(ioSurface: unsafeBitCast(obj as AnyObject, to: IOSurfaceRef.self))
-        guard let cg = CIContext(options: [.useSoftwareRenderer: false]).createCGImage(ci, from: ci.extent),
+        guard let cg = BrowserMirror.ciContext.createCGImage(ci, from: ci.extent),
               let data = NSBitmapImageRep(cgImage: cg).representation(using: .jpeg, properties: [.compressionFactor: 0.82]) else { return false }
         return (try? data.write(to: URL(fileURLWithPath: path))) != nil
     }
@@ -880,7 +882,7 @@ public func craftMirrorStill(_ h: UnsafeMutableRawPointer?, _ path: UnsafePointe
 @_cdecl("craft_mirror_place")
 public func craftMirrorPlace(_ h: UnsafeMutableRawPointer?, _ x: Double, _ y: Double, _ w: Double, _ hh: Double, _ vh: Double, _ visible: Int32) {
     guard let h else { return }
-    Unmanaged<Mirror>.fromOpaque(h).takeUnretainedValue().place(CGRect(x: x, y: y, width: w, height: hh), vh: vh, visible: visible != 0)
+    Unmanaged<Mirror>.fromOpaque(h).takeUnretainedValue().place(CGRect(x: x, y: y, width: w, height: hh), vh: vh, visible: visible == 1, covered: visible == 2)
 }
 
 /// 개발판 시험 전용 — 그 창에 마우스·키 이벤트를 앱 안에서 흘린다(창 hitTest 를 그대로 타서 실제 클릭과 같은 길).

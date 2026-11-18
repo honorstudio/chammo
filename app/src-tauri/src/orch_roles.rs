@@ -87,6 +87,8 @@ pub fn start_role(dir: &Path, base: &str, raw: &str, now_ms: u64) -> Result<BTre
     m.insert(base.to_string(), Role { role: clean_role(raw), at: now_ms, born: Some(now_ms) });
     cap(&mut m, base);
     write_roles(dir, &m)?;
+    // 옛 번호의 키즈 칸·아이 집도 비킨다(새 참모에 옛 아이가 붙지 않게, 기록·작품은 _archive 에 — kids_life)
+    crate::kids_life::retire(dir, base, now_ms);
     Ok(m)
 }
 

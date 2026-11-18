@@ -128,7 +128,8 @@ export function transitionOf(from: AvatarState, to: AvatarState): Transition | n
 /** onColor = 참모 색 면 위(고른 탭 알약) — 몸을 흰색으로, 눈을 면 색으로 뒤집는다 */
 export type AvatarTone = 'onColor';
 /** phase = 켜는 중(잠에서 깨어남 → 기다리면 숨쉬기)·끄는 중(잠듦 → 작아지며 흐려짐) — 띠가 바뀌는 동안(2026-10-12 사용자) */
-export type AvatarPhase = 'starting' | 'stopping';
+/** queued = 재부팅으로 꺼져 깨울 차례(바로 선 채 감은 눈) · failed = 깨우다 실패(기울어 주저앉음) — 켤 때 점호 v3(2026-11-17) */
+export type AvatarPhase = 'starting' | 'stopping' | 'queued' | 'failed';
 export function avatarClasses(o: { image: boolean; state: AvatarState; transition: Transition | null; size: number; tone?: AvatarTone; phase?: AvatarPhase }): string {
   return ['oa', o.image ? 'oa-img' : '', `oa-st-${o.state}`, o.transition ? `oa-tr-${o.transition}` : '', o.size <= 18 ? 'oa-s16' : '', o.tone === 'onColor' ? 'oa-oncolor' : '', o.phase ? `oa-ph-${o.phase}` : ''].filter(Boolean).join(' ');
 }

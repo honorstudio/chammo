@@ -8,6 +8,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { swipeAxis, swipeReveal, swipeSettle, swipeX } from '../../domain/swipe';
 import { dragStale } from '../../domain/sheetGuard';
+import { HOLD_MS } from '../../domain/hold';
+import { pressFeel } from './hold';
 import { tr } from '../../i18n';
 
 /** icon 이 있으면 아이콘만(aria-label·title = label) */
@@ -15,7 +17,7 @@ export type SwipeAction = { label: string; icon?: ReactNode; danger?: boolean; t
 const BTN = 84;
 const ICON_BTN = 72;
 
-/** onMenu = 길게 누르기(0.5초, 거의 안 움직임)·오른쪽 클릭 — 이름 바꾸기 등 메뉴. menuLabel = 화면 읽기(VoiceOver)용 숨은 메뉴 버튼 이름 */
+/** onMenu = 길게 누르기(HOLD_MS 0.45초, 거의 안 움직임)·오른쪽 클릭 — 이름 바꾸기 등 메뉴. menuLabel = 화면 읽기(VoiceOver)용 숨은 메뉴 버튼 이름 */
 export function SwipeRow({ id, openId, setOpenId, actions, start = [], className, onMenu, menuLabel, children }: { id: string; openId: string | null; setOpenId: (id: string | null) => void; actions: SwipeAction[]; start?: SwipeAction[]; className?: string; onMenu?: () => void; menuLabel?: string; children: ReactNode }) {
   const width = actions.reduce((w, a) => w + (a.icon ? ICON_BTN : BTN), 0);
   const startW = start.reduce((w, a) => w + (a.icon ? ICON_BTN : BTN), 0);
@@ -52,6 +54,8 @@ export function SwipeRow({ id, openId, setOpenId, actions, start = [], className
     let cur = 0;
     let lastMove = 0;
     let hold: ReturnType<typeof setTimeout> | undefined;
+    let feel: (fired?: boolean) => void = () => {};
+    const unhold = (fired?: boolean) => { clearTimeout(hold); feel(fired); feel = () => {}; };
     /** 놓기 — 손을 떼거나, 손 떼는 사건을 잃었을 때(가려짐·멈춤) 가까운 자리로 */
     const settle = () => {
       if (st?.axis === 'x') {
@@ -63,19 +67,22 @@ export function SwipeRow({ id, openId, setOpenId, actions, start = [], className
       st = null;
     };
     const down = (e: TouchEvent) => {
-      if (e.touches.length !== 1) { st = null; clearTimeout(hold); return; }
+      if (e.touches.length !== 1) { st = null; unhold(); return; }
       st = { x0: e.touches[0]!.clientX, y0: e.touches[0]!.clientY, base: xRef.current, axis: null };
       cur = xRef.current;
       moved.current = false;
-      // 길게 누르기 — 0.5초 동안 거의 안 움직이면 메뉴(그 뒤 손을 떼도 줄 고르기로 안 넘어간다)
-      clearTimeout(hold);
-      if (live.current.onMenu) hold = setTimeout(() => { moved.current = true; st = null; live.current.setOpenId(null); live.current.onMenu?.(); }, 500);
+      // 길게 누르기 — HOLD_MS 동안 거의 안 움직이면 메뉴(사파리 글 고르기보다 먼저, 그 뒤 손을 떼도 줄 고르기로 안 넘어간다). 그 전에 줄이 살짝 눌린다
+      unhold();
+      if (live.current.onMenu) {
+        feel = pressFeel(row.current);
+        hold = setTimeout(() => { unhold(true); moved.current = true; st = null; live.current.setOpenId(null); live.current.onMenu?.(); }, HOLD_MS);
+      }
     };
     const move = (e: TouchEvent) => {
       if (!st) return;
       const dx = e.touches[0]!.clientX - st.x0, dy = e.touches[0]!.clientY - st.y0;
       if (!st.axis) st.axis = swipeAxis(dx, dy);
-      if (st.axis) clearTimeout(hold); // 움직이면 길게 누르기 아님
+      if (st.axis) unhold(); // 움직이면 길게 누르기 아님
       if (st.axis !== 'x') return;
       e.preventDefault(); // 방향 잠금 — 가로로 미는 동안 목록이 위아래로 안 움직인다
       e.stopPropagation();
@@ -85,7 +92,7 @@ export function SwipeRow({ id, openId, setOpenId, actions, start = [], className
       cur = swipeX(st.base, dx, live.current.width, live.current.startW);
       setX(cur);
     };
-    const up = () => { clearTimeout(hold); settle(); };
+    const up = () => { unhold(); settle(); };
     // 미는 중 1.5초 움직임이 없으면(손가락이 붙어 있다고 나와도 — 손 뗌을 잃으면 붙은 채로 남는다) 놓아 준다. 가려지면 바로
     const tick = window.setInterval(() => { if (dragStale({ dragging: st?.axis === 'x', touching: false, lastMoveAt: lastMove, now: Date.now() })) settle(); }, 500);
     const onHide = () => { if (document.hidden) settle(); };
@@ -95,7 +102,7 @@ export function SwipeRow({ id, openId, setOpenId, actions, start = [], className
     el.addEventListener('touchmove', move, { passive: false });
     el.addEventListener('touchend', up);
     el.addEventListener('touchcancel', up);
-    return () => { clearTimeout(hold); window.clearInterval(tick); document.removeEventListener('visibilitychange', onHide); window.removeEventListener('blur', settle); el.removeEventListener('touchstart', down); el.removeEventListener('touchmove', move); el.removeEventListener('touchend', up); el.removeEventListener('touchcancel', up); };
+    return () => { unhold(); window.clearInterval(tick); document.removeEventListener('visibilitychange', onHide); window.removeEventListener('blur', settle); el.removeEventListener('touchstart', down); el.removeEventListener('touchmove', move); el.removeEventListener('touchend', up); el.removeEventListener('touchcancel', up); };
   }, [id]);
   const btn = (a: SwipeAction, side: 'start' | 'end') => (
     <button key={a.label} type="button" tabIndex={open ? 0 : -1} aria-label={a.icon ? a.label : undefined} title={a.icon ? a.label : undefined}
@@ -108,7 +115,7 @@ export function SwipeRow({ id, openId, setOpenId, actions, start = [], className
       {onMenu && <button type="button" className="m-sr" onClick={onMenu}>{menuLabel ?? tr('메뉴', 'Menu')}</button>}
       {start.length > 0 && <div className="m-swipe-acts m-swipe-start" style={{ width: startW, clipPath: `inset(0 ${startW - rv.start}px 0 0)` }} aria-hidden={!open || x <= 0}>{start.map((a) => btn(a, 'start'))}</div>}
       <div className="m-swipe-acts" style={{ width, clipPath: `inset(0 0 0 ${width - rv.end}px)` }} aria-hidden={!open || x >= 0}>{actions.map((a) => btn(a, 'end'))}</div>
-      <div ref={front} className="m-swipe-front" style={{ transform: `translateX(${x}px)`, transition: drag ? 'none' : undefined }}
+      <div ref={front} className="m-swipe-front" data-hold={onMenu ? '' : undefined} style={{ transform: `translateX(${x}px)`, transition: drag ? 'none' : undefined }}
         onClickCapture={(e) => {
           // 민 뒤의 누름, 열린 줄을 누름 = 닫기만(줄 고르기로 안 넘어간다)
           if (moved.current || open) { e.preventDefault(); e.stopPropagation(); moved.current = false; if (open) setOpenId(null); }

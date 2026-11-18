@@ -33,10 +33,19 @@ SEND_HEAD = ('이 프로젝트 교훈 — 지시에 붙여: ', 'project lesson �
 
 class Env:
     """scripts/task 가 넘기는 것 — 경로와 기록 함수(주인 HQ 판·공개판 둘 다 같은 모양)"""
-    def __init__(self, lessons, dev, log, T, add_lesson, append, now, me=None, lesson_max=12, skills_home=None):
-        self.lessons, self.dev, self.log, self.T = lessons, dev, log, T
+    def __init__(self, lessons, dev, log, T, add_lesson, append, now, me=None, lesson_max=12, skills_home=None, hq=None):
+        self.lessons, self.dev, self.log, self.T, self.hq = lessons, dev, log, T, hq
         self.skills_home = skills_home or default_skills_home()   # 공통·앱 공통 스킬을 두는 사용자 전역 스킬 폴더
         self.add_lesson, self.append, self.now, self.me, self.lesson_max = add_lesson, append, now, me, lesson_max
+
+
+def local_md(dev, project, hq=None):
+    """프로젝트 교훈을 비춰 두는 CLAUDE.local.md — 보통 그 프로젝트 맨 위. HQ 가 곧 그 프로젝트면(앱 저장소에서 참모를 돌리는 맥)
+    맨 위 파일은 모든 참모 턴에 실리니 .claude/worktrees/ 아래에 둔다 — 그 아래 워크트리 세션은 부모 폴더 CLAUDE.local.md 로 읽는다(2026-11-18)"""
+    root = os.path.join(dev, project)
+    if hq and os.path.realpath(root) == os.path.realpath(hq):
+        return os.path.join(root, '.claude', 'worktrees', 'CLAUDE.local.md')
+    return os.path.join(root, 'CLAUDE.local.md')
 
 
 class Refuse(Exception):
@@ -320,7 +329,7 @@ def _events(env):
 
 
 def _unmirror(env, project, lessons):
-    path = os.path.join(env.dev, project, 'CLAUDE.local.md')
+    path = local_md(env.dev, project, env.hq)
     body = _read(path)
     if not body:
         return
@@ -370,7 +379,7 @@ def _sync_pointer(env, project):
         if nxt != body:
             _write(path, nxt)
         return
-    path = os.path.join(env.dev, project, 'CLAUDE.local.md')
+    path = local_md(env.dev, project, env.hq)
     body = _read(path)
     if not body:
         return

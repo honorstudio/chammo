@@ -371,7 +371,7 @@ impl<E: Env> Bridge<E> {
         let Some(uid) = self.uid() else { return };
         // 텔레그램으로 보낸 카드만 — id 만 맞춰 다른 카드에 답하지 못하게
         if !self.sh.state().cards.iter().any(|c| c == card) {
-            self.api.answer_button(cb, crate::i18n::tr("이 카드는 앱·폰에서 답해 주세요", "Answer this card in the app or on the phone"));
+            self.api.answer_button(cb, crate::i18n::tr("이 카드는 앱·폰·태블릿에서 답해 주세요", "Answer this card in the app or on a phone or tablet"));
             return;
         }
         let log_text = self.env.direct_log();
@@ -385,7 +385,7 @@ impl<E: Env> Bridge<E> {
         };
         // 버튼 글이 아니라 기록의 카드 종류로 다시 본다 — 결제·보내기·삭제·운영은 버튼으로 답하지 않는다
         if !m::buttons_ok(ask["kind"].as_str().unwrap_or("")) {
-            self.api.answer_button(cb, crate::i18n::tr("이 카드는 앱·폰에서만 답할 수 있어요", "Answer this card in the app or on the phone"));
+            self.api.answer_button(cb, crate::i18n::tr("이 카드는 앱·폰·태블릿에서만 답할 수 있어요", "Answer this card in the app or on a phone or tablet"));
             self.api.close_card(uid, msg, "");
             log("버튼 거절(카드 종류)");
             return;

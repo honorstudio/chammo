@@ -2,7 +2,7 @@
 // 맥 앱(WKWebView)에서 ProseMirror 는 조합 끝 0.5초 안 Enter 를 일본어 '변환 확정'으로 보고 버린다. 버려진 Enter 가
 // 정말 줄을 안 바꿨을 때만 편집기 Enter 를 한 번 대신 친다(블록 나누기·목록 이어 가기는 편집기 규칙 그대로)
 import type { BlockNoteEditor } from '@blocknote/core';
-import { hasHangul, isPlainEnter, pmSwallows, replayEnter } from '../../domain/imeEnter';
+import { hasHangul, isPlainEnter, pmSwallows, replayEnter, replayTab } from '../../domain/imeEnter';
 
 const WEBKIT = typeof navigator !== 'undefined' && /Apple Computer/.test(navigator.vendor); // prosemirror-view 의 safari 판정과 같게
 
@@ -20,8 +20,17 @@ export function installImeEnter(root: HTMLElement, ed: BlockNoteEditor): () => v
   const count = () => root.querySelectorAll('.bn-block-outer').length;
   const key = (e: KeyboardEvent) => {
     if (pending) { window.clearTimeout(pending.timer); const p = pending; pending = null; p.run(); }
-    if (!isPlainEnter(e)) return;
     const view = ed.prosemirrorView;
+    // 목록 Enter 뒤 바로 Tab — ProseMirror 가 같은 0.5초 규칙으로 버리면 웹뷰가 초점을 옮겨 커서가 사라졌다(11-17). 여기서 막고 편집기 Tab 으로 바로 친다
+    // (이 상자에서 멈춰 ProseMirror 는 이 키를 안 본다 — 두 번 들여쓰지 않는다)
+    if (replayTab({ key: e.key, altKey: e.altKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey, composing: view.composing || e.isComposing, hangul: hasHangul(composed), sinceEnd: Date.now() - endedAt })) {
+      e.preventDefault(); e.stopPropagation();
+      const tab = new KeyboardEvent('keydown', { key: 'Tab', code: 'Tab', shiftKey: e.shiftKey, bubbles: true, cancelable: true });
+      Object.defineProperty(tab, 'keyCode', { get: () => 9 });
+      view.someProp('handleKeyDown', (f) => f(view, tab));
+      return;
+    }
+    if (!isPlainEnter(e)) return;
     const swallowed = pmSwallows({ composing: view.composing || e.isComposing, webkit: true, sinceEnd: Date.now() - endedAt });
     if (!swallowed || !hasHangul(composed)) return;
     // 조합이 이미 끝났으면 웹뷰 기본 Enter(문단 나누기)도 막는다 — ProseMirror 가 버린 Enter 를 웹뷰가 혼자 처리하면 커서 뒤 글이

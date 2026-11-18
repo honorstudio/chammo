@@ -72,15 +72,15 @@ pub fn phone_link_row(id: &str, name: &str, sas: u32, until_ms: u64, pending_pla
     let name = clean(name, 64);
     let new = pending_place.map(|p| { let p = clean(p, 80); if p.is_empty() { crate::i18n::tr("어디서인지 모름", "Unknown place").to_string() } else { p } });
     let q: String = match &new {
-        Some(p) => crate::i18n::tr(&format!("새 기기(허용 대기) · {p} — {name} 이 이 계정에 들어와 이 컴퓨터 화면을 열려고 해요. 폰 숫자와 같을 때만 허용"), &format!("New device (waiting) · {p} — {name} wants to join this account and open this computer. Allow only if the phone shows the same number")).to_string(),
-        None => crate::i18n::tr(&format!("{name} 이 이 컴퓨터 화면을 열려고 해요 — 폰에 보이는 숫자와 같을 때만 허용"), &format!("{name} wants to open this computer — allow only if the phone shows the same number")).to_string(),
+        Some(p) => crate::i18n::tr(&format!("새 기기(허용 대기) · {p} — {name} 이 이 계정에 들어와 이 컴퓨터 화면을 열려고 해요. 폰·태블릿 숫자와 같을 때만 허용"), &format!("New device (waiting) · {p} — {name} wants to join this account and open this computer. Allow only if the phone shows the same number")).to_string(),
+        None => crate::i18n::tr(&format!("{name} 이 이 컴퓨터 화면을 열려고 해요 — 폰·태블릿에 보이는 숫자와 같을 때만 허용"), &format!("{name} wants to open this computer — allow only if the phone shows the same number")).to_string(),
     };
     json!({
         "ts": ts, "type": "ask", "id": id, "from": crate::direct::LINK_FROM, "cwd": "", "kind": crate::direct::LINK_KIND, "sub": PHONE_LINK_SUB,
         "q": q,
         "code": crate::device_link::sas_text(sas),
         "detail": crate::i18n::tr("숫자가 다르면 거절 — 누군가 가운데 끼어든 거예요", "Different number? Decline — someone is in the middle"),
-        "what": if new.is_some() { crate::i18n::tr("새 기기 허용 + 폰 화면 열기", "Allow new device + open this computer") } else { crate::i18n::tr("폰 화면 열기 허용", "Allow phone to open this computer") },
+        "what": if new.is_some() { crate::i18n::tr("새 기기 허용 + 폰·태블릿 화면 열기", "Allow new device + open this computer") } else { crate::i18n::tr("폰·태블릿 화면 열기 허용", "Allow phone or tablet to open this computer") },
         "yes": crate::i18n::tr("허용", "Allow"), "no": crate::i18n::tr("거절", "Decline"), "options": [],
         "until": crate::direct::iso_of_ms(until_ms),
     })

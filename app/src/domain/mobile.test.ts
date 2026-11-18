@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cardTag, ctxFromAgents, heldIds, orchAsk, orchTasks, releaseSnap, routineOrch, rubberTop, sheetTop, closeOnRelease, dropLabel, keyboardOpen, frameAt, driftBias, ghostKeyboard, readViewport, diagLine, isTyping, liveWork, phoneBubble, usageText, waitingList, withAttachments, phoneName, offOrchRows, wokeOrch, waitAnswer, waitKey, shownWaiting, pruneWaitSent, dupAnswer, answerFail, sessionBoard, nearBottom, nearAfterScroll, stickBottom, keepTop, farFromBottom, jumpDot, shrinkPlan, withEarlier, wantEarlier, nextAfterStop, lineSlot, orchMenu, pendingName, prunePendingNicks, subTag, subStatus } from './mobile';
+import { liveMeta, cardTag, ctxFromAgents, heldIds, orchAsk, orchTasks, releaseSnap, routineOrch, rubberTop, sheetTop, closeOnRelease, dropLabel, keyboardOpen, frameAt, driftBias, ghostKeyboard, readViewport, diagLine, isTyping, liveWork, phoneBubble, usageText, waitingList, withAttachments, phoneName, offOrchRows, wokeOrch, waitAnswer, waitKey, shownWaiting, pruneWaitSent, dupAnswer, answerFail, sessionBoard, nearBottom, nearAfterScroll, stickBottom, keepTop, farFromBottom, jumpDot, shrinkPlan, withEarlier, wantEarlier, nextAfterStop, lineSlot, orchMenu, pendingName, prunePendingNicks, subTag, subStatus } from './mobile';
 import type { Session } from './session';
 import { dashList } from './dashList';
 import { parseChat, type ChatItem } from './chat';
@@ -730,5 +730,24 @@ describe('subTag — 폰 세션판 칩', () => {
     expect(subStatus(s('a', 'idle', 'sid-a'), tails, now)).toBe('asks');
     expect(subStatus(s('b', 'idle', 'sid-b'), tails, now)).toBe('unknown');
     expect(subStatus(s('c', 'working'), tails, now)).toBe('working');
+  });
+});
+
+describe('liveMeta — 폰 일하는 중 줄 꼬리(2026-11-17 사용자 "59개라고 나오다가 스트리밍 끝날 때 사라짐")', () => {
+  it('도구 횟수는 안 보인다 — 할 일 개수로 읽히고 답이 흘러나오는 동안 멈춰 있다가 줄째 사라졌다', () => {
+    expect(liveMeta({ tools: 59, secs: 75 })).toBe('1분 15초');
+    expect(liveMeta({ tools: 59, secs: 75 })).not.toContain('59');
+  });
+  it('3초 전엔 아무것도, 1분 전엔 초만', () => {
+    expect(liveMeta({ tools: 2, secs: 2 })).toBe('');
+    expect(liveMeta({ tools: 0, secs: 12 })).toBe('12초');
+  });
+});
+
+describe('키즈 참모 메뉴 — 아이 화면으로', () => {
+  it('켜진 키즈 참모만 맨 위에', () => {
+    expect(orchMenu({ live: true, pinned: false, canPin: true, kids: true }).slice(0, 2).map((m) => m.key)).toEqual(['kids', 'kidsTime']);
+    expect(orchMenu({ live: true, pinned: false, canPin: true }).some((m) => m.key === 'kids')).toBe(false);
+    expect(orchMenu({ live: false, pinned: false, canPin: true, kids: true }).some((m) => m.key === 'kids')).toBe(false);
   });
 });

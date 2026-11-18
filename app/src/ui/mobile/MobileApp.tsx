@@ -1,6 +1,8 @@
 // 폰 화면 — 시안 A(겹친 시트): 바닥 = 지금 참모 대시보드, 위 = 채팅 시트(살짝·반·전체). 참모를 바꾸면 바닥과 시트가 같이 바뀐다
 // 상태는 이것만 위에 둔다(a-build-notes): orch(기억) · view(대시보드|예약) · snap. picker·taskFold 는 그 아래
 // 예약 판을 열면 시트는 예약 담당 참모로(domain/mobile routineOrch)
+import { usePhoneKids } from './usePhoneKids';
+import { avatarKey } from '../../domain/avatar';
 import { MemoTab } from './MemoTab';
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { getEnv, getPushLast, listBrowsers, listSessionsRaw, NoKeyError, phoneDiag, readPhoneAccount, readShowLog, readTasksSince, routinesList, teamViaMac, type MobileEnv } from '../../data/web';
@@ -18,7 +20,7 @@ import { parseTaskLog, type TaskEvent } from '../../domain/tasks';
 import { makeTaskTail } from '../../domain/taskTail';
 import { parseRoutines, routineState } from '../../domain/routine';
 import { groupByProject, parseAgents, type Session, seenName } from '../../domain/session';
-import { ChatSheet } from './ChatSheet';
+import { ChatColumn, ChatSheet } from './ChatSheet';
 import { SheetHostProvider } from './kit';
 import { Composer } from './Composer';
 import { askRef } from '../refBus';
@@ -52,7 +54,7 @@ import { useViewport, type Viewport } from './useViewport';
 import { BrandMark } from '../avatar';
 import { BOOT_LIMIT_MS, bootDiag, failWord, envFromCache, envIsWin, ENV_KEY, splashDeadline, splashDone, type BootBase } from '../../domain/boot';
 import { hideBootSplash } from './bootSplash';
-import { IconRefresh } from '../Icons';
+import { IconPanelRight, IconRefresh } from '../Icons';
 import { makePoller, RESUME_EVENT } from '../../domain/poller';
 import { FAIL_EVERY_MS, netText, OK_EVERY_MS, unreachStep, type Unreach } from '../../domain/unreach';
 import { installResume } from './resume';
@@ -64,6 +66,11 @@ import { lostStore, markLost, relinkLine, takeLost } from '../../phone-web/lostM
 import type { TrustError } from '../../phone-web/hub';
 import { preloadFirstScreen } from './bootPreload';
 import { PhoneFar, useFarDevices, type FarPick } from './PhoneFar';
+import { installHoldGuard } from './hold';
+import { PadRail, useSortedOrchs } from './PadRail';
+import { DASH_TAB, PadHead, usePadMode } from './padMode';
+import { padKey } from '../../domain/padKeys';
+import type { PadMode } from '../../domain/padLayout';
 
 const ORCH_KEY = 'm.orch';
 const TAB_KEY = 'm.tab';
@@ -82,20 +89,38 @@ const sameEnv = (a: MobileEnv | null, b: MobileEnv) => !!a && JSON.stringify(a) 
 type View = 'dash' | 'routines' | 'sessions' | 'office';
 /** 사무실(방 그림·도트 팩)은 열 때만 받는다 — 메인 묶음이 안 커지게 */
 const PhoneOffice = lazy(() => import('./PhoneOffice'));
-type SpaceProps = { far?: { devices: FarPick[]; onPick: (d: FarPick) => void }; orch: Session; orchs: Session[]; sessions: Session[]; events: TaskEvent[]; waiting: Waiting[]; waitSent: WaitSent; ask: { lead: string; q: string } | null; ctx: Record<string, Ctx>; env: MobileEnv; snap: Snap; setSnap: (s: Snap) => void; onPick: (id: string) => void; onTalk: (id: string) => void; onStopped: (id: string) => void; wake: Wake; lives: Live[]; push: Push; view: View; setView: (v: View) => void; vp: Viewport; stateAt: number; lines: Record<string, string>; jump: Jump | null; acct: PhoneAccount | null };
+type SpaceProps = { pad: PadMode; tasksKnown: boolean; far?: { devices: FarPick[]; loading?: boolean; onPick: (d: FarPick) => void }; orch: Session; orchs: Session[]; sessions: Session[]; events: TaskEvent[]; waiting: Waiting[]; waitSent: WaitSent; ask: { lead: string; q: string } | null; ctx: Record<string, Ctx>; env: MobileEnv; snap: Snap; setSnap: (s: Snap) => void; onPick: (id: string) => void; onTalk: (id: string) => void; onStopped: (id: string) => void; wake: Wake; lives: Live[]; push: Push; view: View; setView: (v: View) => void; vp: Viewport; stateAt: number; lines: Record<string, string>; jump: Jump | null; acct: PhoneAccount | null };
 /** 눌린 알림이 시킨 것 — n 이 바뀔 때마다 한 번(같은 참모면 OrchSpace 가 그대로라 시트를 여기서 닫는다) */
-type Jump = { n: number; card?: string; picker?: boolean };
+type Jump = { n: number; card?: string; picker?: boolean; /** 패드 띠 길게 누르기 — 그 참모 메뉴(참모 바꾸기 시트의 메뉴) */ menu?: string };
 
 /** 입력칸 최대 높이 — 7줄(16px 글자 기준 176px)과 보이는 화면 26%(반 시트의 40%) 중 작은 쪽 */
 const inputMax = (h: number) => Math.min(176, Math.round(h * 0.26));
 
-function OrchSpace({ far, orch, orchs, sessions, events, waiting, waitSent, ask, ctx, env, snap, setSnap, onPick, onTalk: talkTo, onStopped, wake, lives, push, view, setView, vp, stateAt, lines, jump, acct }: SpaceProps) {
+function OrchSpace({ pad, tasksKnown, far, orch, orchs, sessions, events, waiting, waitSent, ask, ctx, env, snap, setSnap, onPick, onTalk: talkTo, onStopped, wake, lives, push, view, setView, vp, stateAt, lines, jump, acct }: SpaceProps) {
   const [picker, setPicker] = useState(false);
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  // 패드 세로 — 스페이스 판(오른쪽에서 밀어 엶) · 위 막대 자리(대시보드 머리가 포털로)
+  const [panel, setPanel] = useState(false);
+  const [top, setTop] = useState<HTMLElement | null>(null);
+  // ⌘⇧H·⌘⇧L 로 대시보드 탭을 고르면 세로 판도 연다
+  useEffect(() => {
+    if (pad !== 'two') return;
+    const open = () => setPanel(true);
+    window.addEventListener(DASH_TAB, open);
+    return () => window.removeEventListener(DASH_TAB, open);
+  }, [pad]);
+  useEffect(() => {
+    if (!panel) return;
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setPanel(false); };
+    window.addEventListener('keydown', esc);
+    return () => window.removeEventListener('keydown', esc);
+  }, [panel]);
   // 알림이 짚은 카드 — 결정(w:)은 채팅 끝에 그 카드를 따로, 직접 카드(d:)는 이미 채팅 끝에 있어 펼친다. 보던 시트·파일은 닫는다(2026-10-23)
   const [jumped, setJumped] = useState<string | null>(null);
   useEffect(() => {
     if (!jump) return;
-    setPicker(!!jump.picker);
+    setPicker(!!jump.picker || !!jump.menu);
+    setMenuFor(jump.menu ?? null);
     setFileOpen(null);
     setJumped(jump.card ?? null);
   }, [jump?.n]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -105,7 +130,10 @@ function OrchSpace({ far, orch, orchs, sessions, events, waiting, waitSent, ask,
     return () => window.clearTimeout(t);
   }, [jumped]);
   const jumpedWait = jumped?.startsWith('w:') ? waiting.find((w) => w.kind === 'decide' && w.orch === orch.id && `w:${w.taskId}` === jumped) : undefined;
-  const chat = useMobileChat(orch, snap === 'peek' ? 10_000 : 2000, stateAt);
+  const chat = useMobileChat(orch, snap === 'peek' && pad === 'phone' ? 10_000 : 2000, stateAt);
+  // 키즈 참모 — 보호자 채팅에 아이 화면 대화·'오늘 만든 것' 줄(아홉째 조각)
+  const kidsKey = env.kids && (env.kidsOrchs ?? []).includes(avatarKey(orch.name)) ? avatarKey(orch.name) : undefined;
+  const kidsChat = usePhoneKids(kidsKey);
   const [routinesRaw] = useMemoPoll('routines', routinesList, 30_000, '[]');
   const running = parseRoutines(routinesRaw).filter((r) => routineState(r, sessions) === 'running').length;
   const color = useOrchColor(orch, orchs);
@@ -123,7 +151,7 @@ function OrchSpace({ far, orch, orchs, sessions, events, waiting, waitSent, ask,
   const askingN = asking.length + browserAsks.length;
   const prevAsk = useRef(0);
   useEffect(() => {
-    if (askingN > prevAsk.current && snap === 'peek') setSnap('half');
+    if (pad === 'phone' && askingN > prevAsk.current && snap === 'peek') setSnap('half');
     prevAsk.current = askingN;
   }, [askingN]); // eslint-disable-line react-hooks/exhaustive-deps
   // 채팅 안 파일 카드 — 이 참모가 보여 준 것만. /api/shows 는 서버가 폰에 내보낼 수 있는 줄만 남긴 기록(대시보드 '주고받은 파일'도 이걸 받는다)
@@ -137,21 +165,68 @@ function OrchSpace({ far, orch, orchs, sessions, events, waiting, waitSent, ask,
   /** 사무실 뽑기·스킨 시트가 열린 동안 — 아래 채팅창을 숨겨 시트가 커진다(PhoneOffice onWide) */
   const [wide, setWide] = useState(false);
   const askName = asking[0] ? seenName(sessions.find((s) => s.id === asking[0]!.from)?.name || asking[0].from) : browserAsks[0] ? browserAskName(browserAsks[0].live, sessions) : '';
-  return (
-    <div className="m-space" style={orchVars(color) as React.CSSProperties}>
-      {/* 시트 자리 — 이 아래 시트(BottomSheet)는 전부 틀 안 끝에 그려진다(키보드 위·참모 색) */}
-      <SheetHostProvider kb={vp.kb}>
-      {view === 'routines'
-        ? <RoutineBoard sessions={sessions} onBack={() => setView('dash')} />
-        : view === 'sessions'
-        ? <SessionsBoard sessions={sessions} hqDir={env.hqDir} ctx={ctx} lives={lives} onBack={() => setView('dash')} />
-        : view === 'office'
-        ? <Suspense fallback={<p className="m-center">{tr('사무실 여는 중…', 'Opening the office…')}</p>}>
+  const other = view === 'routines'
+    ? <RoutineBoard sessions={sessions} onBack={() => setView('dash')} />
+    : view === 'sessions'
+    ? <SessionsBoard sessions={sessions} hqDir={env.hqDir} ctx={ctx} lives={lives} onBack={() => setView('dash')} />
+    : view === 'office'
+    ? <Suspense fallback={<p className="m-center">{tr('사무실 여는 중…', 'Opening the office…')}</p>}>
             <PhoneOffice sessions={sessions} orchs={orchs} hqDir={env.hqDir} lives={lives} onBack={() => setView('dash')} current={orch.id}
               onTalk={(id) => { if (id !== orch.id) talkTo(id); }} onWide={setWide} />
           </Suspense>
-        : <OrchDash orch={orch} orchs={orchs} asking={waiting.some((w) => w.orch === orch.id)} sessions={sessions} ctx={ctx} items={chat.items} events={events} routinesRunning={running} onRoutines={() => setView('routines')} onSessions={() => setView('sessions')} onOffice={() => setView('office')} hqDir={env.hqDir} voiceBase={env.voiceBase ?? null} lives={lives} push={push} showLog={showLog} showLoaded={showLoaded}
-            waiting={waiting} direct={direct} waitSent={waitSent} onPicker={() => setPicker(true)} onChat={() => setSnap('half')} onAsk={(t) => { chat.send(t); setSnap('half'); }} />}
+    : null;
+  const dash = <OrchDash orch={orch} orchs={orchs} asking={waiting.some((w) => w.orch === orch.id)} sessions={sessions} ctx={ctx} items={chat.items} events={events} routinesRunning={running} onRoutines={() => setView('routines')} onSessions={() => setView('sessions')} onOffice={() => setView('office')} hqDir={env.hqDir} kidsKey={kidsKey} voiceBase={env.voiceBase ?? null} lives={lives} push={push} showLog={showLog} showLoaded={showLoaded} tasksKnown={tasksKnown}
+            waiting={waiting} direct={direct} waitSent={waitSent} onPicker={() => setPicker(true)} onChat={() => setSnap('half')} onAsk={(t) => { chat.send(t); setSnap('half'); }} />;
+  const composer = (
+    <Composer avatar={<MAvatar orch={orch} orchs={orchs} size={28} asking={waiting.some((w) => w.orch === orch.id)} />} orchName={nm} waiting={new Set(waiting.map((w) => w.orch)).size} placeholder={tr(`${nm}에게`, `Message ${nm}`)} maxInputH={inputMax(vp.h)} ctxPct={orch.sessionId ? ctx[orch.sessionId]?.used : undefined} busy={chat.live.busy} stopping={chat.stopping} onStop={() => void chat.stop()}
+      draftKey={orch.id} enterSends={pad !== 'phone' && !vp.kb} onChip={() => setPicker(true)} onFocus={() => snap === 'peek' && setSnap('half')} send={chat.send}
+      chip={<ModelChipRow orchId={orch.id} info={orch.sessionId ? ctx[orch.sessionId] : undefined} />} voice={<VoiceMode />}
+      speaker={spk ? { id: spk.id, avatar: <MAvatar orch={spk} orchs={orchs} size={28} />, name: nicks.nameOf(spk), style: orchVars(spkColor) as React.CSSProperties, onGo: speakerTap(orch.id, spk.id) === 'go' ? () => onPick(spk.id) : undefined } : undefined} />
+  );
+  const log = (
+    <>
+        {chat.error && <Notice text={chat.error} error onClose={() => chat.setError(null)} />}
+        <MessageList files={files} kids={kidsChat.extras} onOpenFile={setFileOpen} items={chat.items} earlier={chat.earlier} loading={chat.loading} stale={chat.stale} out={chat.out} onRetry={chat.retry} onDrop={chat.drop} onResend={(t) => chat.send(t)} live={chat.live} ask={ask} who={<MAvatar orch={orch} orchs={orchs} size={28} asking />}
+          onRef={(who, text) => askRef(orch.id, { kind: 'chat', who, text })} />
+        {/* 직접 답하기 카드 — 맡긴 세션이 본인 승인을 기다릴 때(채팅 끝, 입력칸 바로 위) */}
+        <PhoneAskCards asks={browserAsks} sessions={sessions} focus={jumped?.startsWith('b:') ? jumped : undefined} />
+        <PhoneAccountNote a={acct} />
+        {kidsChat.today}
+        <DirectCards mine={direct} sessions={sessions} focus={jumped?.startsWith('d:') ? jumped.slice(2) : undefined} />
+        {jumpedWait && <div className="m-direct"><WaitCard w={jumpedWait} orchs={orchs} sent={waitSent} card={jumped!} /></div>}
+        {orch.id === orchs[0]?.id && <PeerCards />}
+    </>
+  );
+  const sheets = (
+    <>
+      {fileOpen && <FileView path={fileOpen.path} title={titleOf(fileOpen.path)} at={fileOpen.at} orch={orch.id} onClose={() => setFileOpen(null)} />}
+      {picker && (
+        <OrchPicker far={far} title={env.assistantName} env={env} wake={wake} onStopped={onStopped} orchs={orchs} current={orch.id} ctx={ctx} waiting={waiting} sent={waitSent} lines={lines}
+          menuFor={menuFor ?? undefined} onClose={() => { setPicker(false); setMenuFor(null); }}
+          onPick={(id) => { setPicker(false); onPick(id); }} />
+      )}
+    </>
+  );
+  const style = orchVars(color) as React.CSSProperties;
+  // 패드(11-18 시안 v1 — 가로 A 맥 그대로 · 세로 B): 위 막대(대시보드 머리 포털) · 채팅 칸 · 스페이스(대시보드, 예약·세션·사무실은 그 위에). 세로면 스페이스는 오른쪽 판
+  if (pad !== 'phone') return (
+    <div className={`m-space m-tb-space${panel ? ' m-tb-open' : ''}`} style={style}>
+      <SheetHostProvider kb={vp.kb}>
+        <PadHead.Provider value={{ el: top, extra: pad === 'two' ? <button type="button" className={`m-rt-btn m-ico${panel ? ' m-on' : ''}`} onClick={() => setPanel((x) => !x)} aria-pressed={panel} aria-label={tr('스페이스', 'Space')} title={tr('스페이스', 'Space')}><IconPanelRight /></button> : null }}>
+          <div ref={setTop} className="m-tb-top" />
+          <ChatColumn composer={composer}>{log}</ChatColumn>
+          {pad === 'two' && <button type="button" className="m-tb-scrim" tabIndex={-1} aria-hidden="true" onClick={() => setPanel(false)} />}
+          <div className="m-tb-dash" aria-hidden={pad === 'two' && !panel ? true : undefined}>{dash}{other && <div className="m-tb-view">{other}</div>}</div>
+        </PadHead.Provider>
+        {sheets}
+      </SheetHostProvider>
+    </div>
+  );
+  return (
+    <div className="m-space" style={style}>
+      {/* 시트 자리 — 이 아래 시트(BottomSheet)는 전부 틀 안 끝에 그려진다(키보드 위·참모 색) */}
+      <SheetHostProvider kb={vp.kb}>
+      {other ?? dash}
       <ChatSheet
         hidden={view === 'office' && wide}
         snap={snap}
@@ -159,29 +234,11 @@ function OrchSpace({ far, orch, orchs, sessions, events, waiting, waitSent, ask,
         vh={vp.h}
         kb={vp.kb}
         peekLine={askingN ? tr(`${josa(askName, '이', '가')} 네 답을 기다려${askingN > 1 ? ` 외 ${askingN - 1}개` : ''}`, `${askName} is waiting for your answer${askingN > 1 ? ` +${askingN - 1} more` : ''}`) : chat.live.busy ? tr(`일하는 중 · ${chat.live.line || '생각 중…'}`, `Working · ${chat.live.line || 'Thinking…'}`) : lastLine(chat.items)}
-        composer={
-          <Composer avatar={<MAvatar orch={orch} orchs={orchs} size={28} asking={waiting.some((w) => w.orch === orch.id)} />} orchName={nm} waiting={new Set(waiting.map((w) => w.orch)).size} placeholder={tr(`${nm}에게`, `Message ${nm}`)} maxInputH={inputMax(vp.h)} ctxPct={orch.sessionId ? ctx[orch.sessionId]?.used : undefined} busy={chat.live.busy} stopping={chat.stopping} onStop={() => void chat.stop()}
-            draftKey={orch.id} onChip={() => setPicker(true)} onFocus={() => snap === 'peek' && setSnap('half')} send={chat.send}
-            chip={<ModelChipRow orchId={orch.id} info={orch.sessionId ? ctx[orch.sessionId] : undefined} />} voice={<VoiceMode />}
-            speaker={spk ? { id: spk.id, avatar: <MAvatar orch={spk} orchs={orchs} size={28} />, name: nicks.nameOf(spk), style: orchVars(spkColor) as React.CSSProperties, onGo: speakerTap(orch.id, spk.id) === 'go' ? () => onPick(spk.id) : undefined } : undefined} />
-        }
+        composer={composer}
       >
-        {chat.error && <Notice text={chat.error} error onClose={() => chat.setError(null)} />}
-        <MessageList files={files} onOpenFile={setFileOpen} items={chat.items} earlier={chat.earlier} loading={chat.loading} stale={chat.stale} out={chat.out} onRetry={chat.retry} onDrop={chat.drop} live={chat.live} ask={ask} who={<MAvatar orch={orch} orchs={orchs} size={28} asking />}
-          onRef={(who, text) => askRef(orch.id, { kind: 'chat', who, text })} />
-        {/* 직접 답하기 카드 — 맡긴 세션이 본인 승인을 기다릴 때(채팅 끝, 입력칸 바로 위) */}
-        <PhoneAskCards asks={browserAsks} sessions={sessions} focus={jumped?.startsWith('b:') ? jumped : undefined} />
-        <PhoneAccountNote a={acct} />
-        <DirectCards mine={direct} sessions={sessions} focus={jumped?.startsWith('d:') ? jumped.slice(2) : undefined} />
-        {jumpedWait && <div className="m-direct"><WaitCard w={jumpedWait} orchs={orchs} sent={waitSent} card={jumped!} /></div>}
-        {orch.id === orchs[0]?.id && <PeerCards />}
+        {log}
       </ChatSheet>
-      {fileOpen && <FileView path={fileOpen.path} title={titleOf(fileOpen.path)} at={fileOpen.at} orch={orch.id} onClose={() => setFileOpen(null)} />}
-      {picker && (
-        <OrchPicker far={far} title={env.assistantName} env={env} wake={wake} onStopped={onStopped} orchs={orchs} current={orch.id} ctx={ctx} waiting={waiting} sent={waitSent} lines={lines}
-          onClose={() => setPicker(false)}
-          onPick={(id) => { setPicker(false); onPick(id); }} />
-      )}
+      {sheets}
       </SheetHostProvider>
     </div>
   );
@@ -200,7 +257,7 @@ function WakeHome({ env, orchs, wake }: { env: MobileEnv; orchs: Session[]; wake
       <WakeNotice wake={wake} />
       <PhoneLoginCard />
       {naming
-        ? <NewOrchForm title={env.assistantName} taken={taken} wake={wake} onDone={() => setNaming(false)} />
+        ? <NewOrchForm title={env.assistantName} taken={taken} wake={wake} onDone={() => setNaming(false)} kids={!!env.kids} />
         : <button type="button" className="m-send" disabled={!!wake.making || !!wake.starting} onClick={() => setNaming(true)}>{wake.making ? tr(`${phoneName(wake.making, orchs)} 만드는 중…`, `Creating ${phoneName(wake.making, orchs)}…`) : tr(`새 ${env.assistantName} 만들기`, `Create new ${env.assistantName}`)}</button>}
       <OffOrchList rows={off} orchs={orchs} wake={wake} />
     </div>
@@ -208,6 +265,8 @@ function WakeHome({ env, orchs, wake }: { env: MobileEnv; orchs: Session[]; wake
 }
 
 export function MobileApp() {
+  // 길게 누르기 대상에서 사파리 글 고르기·기본 메뉴를 막고, 화면 단추·탭 글 고르기를 끈다(11-18 사용자 아이패드 — 길게 누르면 파란 블록이 먼저 떴다)
+  useEffect(() => installHoldGuard(), []);
   const [env, setEnv] = useState<MobileEnv | null>(null);
   const [orchsAll, setOrchs] = useState<Session[]>([]);
   // 재운 참모 — 목록에서 바로 뺀다(세션 목록은 3초마다라 늦다). 목록에서 실제로 빠지면 지운다
@@ -225,8 +284,9 @@ export function MobileApp() {
   const [denied, setDenied] = useState(false);
   // 다른 기기 보기(peer-panel) — 기억하지 않는다(새로 열면 늘 이 맥)
   const [far, setFar] = useState<FarPick | null>(null);
-  const farDevs = useFarDevices();
-  const taskLog = usePoll(readTaskLog, 5000, '');
+  const [farDevs, farKnown] = useFarDevices();
+  // tasksKnown = 한 번이라도 받았나 — 받기 전엔 홈에 '아직 시킨 일이 없어요'를 안 띄운다(2026-11-16)
+  const [taskLog, tasksKnown] = useMemoPoll(null, readTaskLog, 5000, '');
   const events = useMemo(() => parseTaskLog(taskLog), [taskLog]);
   const { asks, lines } = useOrchAsks(orchs);
   // 폰에서 답한 결정 카드는 맥 기록이 따라올 때까지 숨긴다 — 칩 숫자·시트가 같이(waitSent)
@@ -238,14 +298,35 @@ export function MobileApp() {
   const [error, setError] = useState<string | null>(null);
   const frame = useRef<HTMLDivElement>(null);
   const vp = useViewport(frame);
+  // 패드면(domain/padLayout — 폭 700 이상·높이 600 이상) 맥처럼 띠·채팅·스페이스, 폰은 그대로
+  const pad = usePadMode();
+  const sorted = useSortedOrchs(orchs);
   // 맨 아래 탭바 참모 | 팀(시안 v2 C) — 고른 탭은 기억, 키보드가 뜨면 탭바는 숨긴다
   const [tab, setTabState] = useState<PhoneTab>(() => { try { const t = localStorage.getItem(TAB_KEY); return t === 'team' || t === 'notes' ? t : 'orch'; } catch { return 'orch'; } });
   const setTab = (t: PhoneTab) => { setTabState(t); try { localStorage.setItem(TAB_KEY, t); } catch { /* 이번만 */ } };
   const team = usePhoneTeam(teamViaMac, tab === 'team');
   const tabBar = useRef<HTMLElement>(null);
   const [tabH, setTabH] = useState(0);
-  useLayoutEffect(() => { setTabH(vp.kb ? 0 : tabBar.current?.offsetHeight ?? 0); });
+  useLayoutEffect(() => { setTabH(vp.kb || pad !== 'phone' ? 0 : tabBar.current?.offsetHeight ?? 0); });
   const go = (id: string) => { remember(id); setPick(id); setView('dash'); setSnap('half'); };
+  // 패드 + 하드웨어 키보드 — 맥과 같은 ⌘ 키(domain/padKeys): ⌘1~9 띠 순서 참모 · ⌘⇧M 메모 · ⌘⇧H·⌘⇧L 홈·보관함
+  const keys = useRef({ pad, sorted, tab, go });
+  keys.current = { pad, sorted, tab, go };
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => {
+      const { pad: p, sorted: list, tab: t, go: goTo } = keys.current;
+      if (p === 'phone') return;
+      const a = padKey(e);
+      if (!a) return;
+      e.preventDefault();
+      if (a.type === 'orch') { const o = list[a.n - 1]; if (o) { setTab('orch'); goTo(o.id); } return; }
+      if (a.type === 'notes') { setTab(t === 'notes' ? 'orch' : 'notes'); return; }
+      setTab('orch');
+      window.setTimeout(() => window.dispatchEvent(new CustomEvent(DASH_TAB, { detail: a.tab })), t === 'orch' ? 0 : 150); // 다른 탭이었으면 대시보드가 붙은 뒤
+    };
+    window.addEventListener('keydown', on);
+    return () => window.removeEventListener('keydown', on);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // 사무실에서 참모 바꿔 말하기 — 화면·시트는 그대로, 폰 전체 지금 참모만(입력칸·채팅 시트·임시 글이 다 지금 참모에 묶여 있어 사무실을 나가도 방금 말한 참모)
   const talkTo = (id: string) => { remember(id); setPick(id); };
   // 참모 깨우기 — 켜거나 만든 참모가 목록에 뜨면 그리로(참모 바꾸기 시트·참모가 없을 때 화면이 같이 쓴다)
@@ -437,7 +518,7 @@ export function MobileApp() {
     return cover(
       <div className="m-center m-unreach">
         <BrandMark size={64} className="m-brand" />
-        <p>{tr('이 폰 연결이 풀렸어요', 'This phone got disconnected')}</p>
+        <p>{tr('이 기기 연결이 풀렸어요', 'This device got disconnected')}</p>
         <p className="m-unreach-why">{tr('다시 로그인하면 바로 연결돼요', 'Sign in again to reconnect')}</p>
         <button type="button" className="m-send" onClick={() => void unlinkPhone().finally(() => location.replace('/pair'))}>{tr('재연결', 'Reconnect')}</button>
         <button type="button" className={retrying ? 'm-icon m-retrying' : 'm-icon'} disabled={retrying} onClick={retry} aria-label={tr('다시 시도', 'Try again')} title={tr('다시 시도', 'Try again')}><IconRefresh /></button>
@@ -466,16 +547,27 @@ export function MobileApp() {
     );
   }
   const pageVp = { ...vp, h: vp.h - tabH };
+  const page = tab === 'notes' ? <MemoTab onShare={(text) => { askRef(orch.id, { kind: 'chat', who: tr('내 메모', 'My notes'), text }); }}
+          onPaste={(text) => { askRef(orch.id, { kind: 'chat', who: tr('내 메모', 'My notes'), text, plain: true }); setTab('orch'); }} /> : tab === 'team'
+          ? <PhoneTeam kb={vp.kb} api={teamViaMac} t={team} orch={{ id: orch.id, name: orch.name || env.assistantName }} open={teamRoom} />
+          : <OrchSpace key={orch.id} pad={pad} tasksKnown={tasksKnown} far={farDevs.length || !farKnown ? { devices: farDevs, loading: !farKnown, onPick: setFar } : undefined} orch={orch} orchs={orchs} sessions={sessions} events={events} waiting={waiting} waitSent={waitSent} ask={asks[orch.id] ?? null} ctx={ctx} env={env} snap={snap} setSnap={setSnap} vp={pageVp} stateAt={stateAt} lines={lines}
+            view={view} setView={setView} onPick={go} onTalk={talkTo} onStopped={stopped} wake={wake} lives={lives} push={push} jump={jump} acct={acct} />;
+  if (pad !== 'phone') return cover(
+    // 패드 — 띠(참모 얼굴·팀·메모, 폰 아래 탭바 자리) + 페이지. 팀·메모는 가운데 폭으로(전부 늘어나던 것, 11-18 전수조사)
+    <div ref={frame} className={`m-app m-tb m-tb-${pad}`} style={{ top: vp.top, height: vp.h }}>
+      {error && <div className="m-error m-top-err">{error}</div>}
+      <PadRail orchs={sorted} current={orch.id} waiting={waiting} ctx={ctx} tab={tab} teamUnread={team.unread}
+        onPick={(id) => { setTab('orch'); go(id); }} onMenu={(id) => { setTab('orch'); setJump({ n: Date.now(), menu: id }); }}
+        onPicker={() => { setTab('orch'); setJump({ n: Date.now(), picker: true }); }} onTab={(t) => setTab(tab === t ? 'orch' : t)} />
+      <div className="m-tabpage" style={{ height: vp.h }}>{tab === 'orch' ? page : <div className="m-tb-narrow">{page}</div>}</div>
+    </div>,
+  );
   return cover(
     // 키보드가 올라오면 보이는 영역에 화면 틀을 맞춘다 — 입력줄이 키보드 바로 위, 대화 목록은 그 위에 남는다
     <div ref={frame} className={`m-app ${vp.kb ? '' : 'm-tabbed'}`} style={{ top: vp.top, height: vp.h }}>
       {error && <div className="m-error m-top-err">{error}</div>}
       <div className="m-tabpage" style={{ height: pageVp.h }}>
-        {tab === 'notes' ? <MemoTab onShare={(text) => { askRef(orch.id, { kind: 'chat', who: tr('내 메모', 'My notes'), text }); }}
-          onPaste={(text) => { askRef(orch.id, { kind: 'chat', who: tr('내 메모', 'My notes'), text, plain: true }); setTab('orch'); }} /> : tab === 'team'
-          ? <PhoneTeam kb={vp.kb} api={teamViaMac} t={team} orch={{ id: orch.id, name: orch.name || env.assistantName }} open={teamRoom} />
-          : <OrchSpace key={orch.id} far={farDevs.length ? { devices: farDevs, onPick: setFar } : undefined} orch={orch} orchs={orchs} sessions={sessions} events={events} waiting={waiting} waitSent={waitSent} ask={asks[orch.id] ?? null} ctx={ctx} env={env} snap={snap} setSnap={setSnap} vp={pageVp} stateAt={stateAt} lines={lines}
-            view={view} setView={setView} onPick={go} onTalk={talkTo} onStopped={stopped} wake={wake} lives={lives} push={push} jump={jump} acct={acct} />}
+        {page}
       </div>
       {!vp.kb && (
         <nav ref={tabBar} className="m-tabbar" role="tablist" aria-label={tr('화면', 'Screens')}>

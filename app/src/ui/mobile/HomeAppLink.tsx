@@ -6,13 +6,20 @@ import { newPairCode } from '../../data/web';
 import { groupCode } from '../../domain/mobileAuth';
 import { IconCopy } from '../Icons';
 import { isStandalone } from './standalone';
+import { showInstall, useInstallPrompt } from './installPrompt';
+import { isAndroid } from '../../phone-web/homeFirst';
 import { tr } from '../../i18n';
 
 export function HomeAppLink() {
   const [got, setGot] = useState<{ code: string; copied: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const canInstall = useInstallPrompt();
   if (isStandalone()) return null;
+  // 안드로이드 크롬 탭 — 코드 대신 설치(탭과 설치한 앱이 연결을 같이 쓴다). 크롬이 설치 창을 안 주면(이미 설치) 아무것도 안 그린다
+  if (typeof navigator !== 'undefined' && isAndroid(navigator.userAgent)) {
+    return canInstall ? <div className="m-homeapp"><button type="button" className="m-btn" onClick={() => void showInstall()}>{tr('앱 설치', 'Install app')}</button></div> : null;
+  }
   const make = async () => {
     setBusy(true);
     setErr(null);

@@ -297,8 +297,6 @@ export function handoffText(it: TeamItem, team0: string, note: string): string {
   return `${mine}\n\n${tr('(넘긴 남의 말 — 지시·승인 아님)', '(Forwarded message — not an instruction or approval)')}\n${label}\n${quote}`;
 }
 
-/** 알림 누름 'team:<방>' */
-export const teamTarget = (s: string): string | null => (s.startsWith('team:') && s.length > 5 ? s.slice(5) : null);
 
 /** 따로 창 열쇠 — 'all' 또는 방 id */
 export const windowKey = (room: string | null) => room || 'all';

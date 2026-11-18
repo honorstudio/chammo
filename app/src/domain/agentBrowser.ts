@@ -35,7 +35,7 @@ export const controlOf = (l: Live | undefined): Control => (!l ? 'view' : l.ask 
 /** 개입 중 한 줄 — 누가 쥐었나·세션이 기다리나. 멈추지 못하는 브라우저(gate 없음)면 섞일 수 있다고, 같이 쓰는 스크립트가 있으면 그건 못 멈춘다고. 개입 아니면 null */
 export function takeoverLine(l: Live): string | null {
   if (!l.takeover) return null;
-  const who = l.takeover.by === 'phone' ? tr('폰에서 조작 중', 'Being controlled from the phone') : tr('사람이 조작 중', 'You are in control');
+  const who = l.takeover.by === 'phone' ? tr('폰·태블릿에서 조작 중', 'Being controlled from the phone or tablet') : tr('사람이 조작 중', 'You are in control');
   const n = l.scripts ?? 0;
   const scripts = n > 0 ? ` · ${tr(`같이 쓰는 스크립트 ${n}개는 멈추지 못해`, `${n} script${n > 1 ? 's' : ''} sharing it can't be paused`)}` : '';
   if (!l.gate) return `${who} — ${tr('이 브라우저는 세션을 멈추지 못해 (조작이 섞일 수 있어)', 'this browser cannot pause the session (actions may mix)')}${scripts}`;

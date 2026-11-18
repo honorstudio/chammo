@@ -79,10 +79,43 @@ pub fn toast_xml(title: &str, body: &str, go: &str) -> String {
     )
 }
 
-/// 알림 주소를 받았다 — 메인 창(트레이로 숨었어도)을 띄우고 그 자리로
-fn open_notify<R: tauri::Runtime>(app: &tauri::AppHandle<R>, go: &str) {
+/// 누른 알림을 화면이 가져갈 때까지 들고 있는 시간 — 앱을 막 켜는 중이면 웹뷰가 뜨기까지 몇 초 걸린다
+pub const CLICK_KEEP: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// 마지막으로 누른 알림 갈 곳 — 웹뷰가 덜 떴으면(앱이 꺼져 있다 켜짐·바꿔 끼우는 중) window.__notifyClick 이 없어 버려졌다.
+/// 화면이 켜질 때·누름을 받을 때 notify_click_take 로 한 번 가져간다
+#[derive(Default)]
+pub struct ClickBox(Option<(String, std::time::Instant)>);
+
+impl ClickBox {
+    pub fn put(&mut self, go: &str, now: std::time::Instant) {
+        self.0 = Some((go.to_owned(), now));
+    }
+    pub fn take(&mut self, now: std::time::Instant) -> Option<String> {
+        self.0.take().filter(|(_, at)| now.saturating_duration_since(*at) <= CLICK_KEEP).map(|(go, _)| go)
+    }
+}
+
+static CLICK: Mutex<ClickBox> = Mutex::new(ClickBox(None));
+
+/// 메인 창 화면이 가져간다(한 번만) — 켤 때 한 번, 그리고 누름을 받을 때(받았으니 비운다). 다른 창은 못 가져간다(초대 team_take_invite 와 같다)
+#[tauri::command]
+pub fn notify_click_take(window: tauri::WebviewWindow) -> Option<String> {
+    (window.label() == "main").then(|| CLICK.lock().ok().and_then(|mut b| b.take(std::time::Instant::now()))).flatten()
+}
+
+/// 알림을 눌렀다(맥 알림 센터·윈도우 토스트 같은 길) — 메인 창(트레이·⌘Q 로 숨었어도)을 띄우고 그 자리로
+pub fn open_notify<R: tauri::Runtime>(app: &tauri::AppHandle<R>, go: &str) {
     use tauri::Manager;
     crate::claude::log_out("notify-click", go);
+    if let Ok(mut b) = CLICK.lock() {
+        b.put(go, std::time::Instant::now());
+    }
+    // ⌘Q 는 창을 숨기고 Dock 에서 뺀다(main.rs to_background) — Reopen·초대 링크처럼 Dock 을 되살린다. 시험판은 그대로 숨김
+    #[cfg(target_os = "macos")]
+    if crate::test_window::spot().is_none() {
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+    }
     crate::tray::show_main(app);
     if let Some(w) = app.get_webview_window("main") {
         let arg = serde_json::to_string(go).unwrap_or_default();
@@ -109,7 +142,9 @@ pub fn handle<R: tauri::Runtime>(app: &tauri::AppHandle<R>, urls: impl IntoItera
     crate::claude::log_out("deep-link", "team invite");
     if let Some(w) = app.get_webview_window("main") {
         #[cfg(target_os = "macos")]
-        let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+        if crate::test_window::spot().is_none() {
+            let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+        }
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
@@ -140,6 +175,22 @@ mod tests {
         }
         // 윈도우 셸이 넣는 빗금 모양(교훈: chammo://join?x → chammo://join/?x)
         assert_eq!(notify_target("chammo://notify/?go=inbox").as_deref(), Some("inbox"));
+    }
+
+    // 2026-11-18 사용자 "알림에서 세션으로 바로 가는 게 어떨 땐 되고 안 되고" — 누름은 window.__notifyClick 한 번 쏘고 끝이라
+    // 웹뷰가 덜 뜬 때(앱이 막 켜짐·바꿔 끼우는 중) 누른 건 버려졌다. 들고 있다가 화면이 켜질 때 한 번 가져간다
+    #[test]
+    fn 누른_알림은_화면이_가져갈_때까지_들고_있다가_한_번만_준다() {
+        let t0 = std::time::Instant::now();
+        let mut b = ClickBox::default();
+        b.put("session:abc", t0);
+        assert_eq!(b.take(t0 + CLICK_KEEP / 2).as_deref(), Some("session:abc"));
+        assert_eq!(b.take(t0 + CLICK_KEEP / 2), None, "두 번 안 준다");
+        b.put("inbox", t0);
+        b.put("team:r1", t0);
+        assert_eq!(b.take(t0).as_deref(), Some("team:r1"), "마지막 누름만");
+        b.put("inbox", t0);
+        assert_eq!(b.take(t0 + CLICK_KEEP + std::time::Duration::from_millis(1)), None, "오래된 누름은 버린다 — 늦게 켠 화면이 엉뚱한 때 옮기지 않게");
     }
 
     #[test]

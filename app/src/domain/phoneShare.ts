@@ -30,7 +30,7 @@ export const dlPct = (done: number, total: number): number | null => (total > 0 
 export function dlErrorText(msg: string): string {
   if (/too large/.test(msg)) return tr('너무 커요 — 200MB 넘는 파일은 컴퓨터에서 받아 주세요', 'Too large — get files over 200MB on the computer');
   if (msg === 'not found' || msg === 'gone') return tr('파일이 없어요 — 지워졌거나 볼 수 없는 방이에요', "The file isn't there — deleted or in a chat you can't see");
-  if (msg === 'not allowed' || msg === 'secret inside') return tr('폰에 내보낼 수 없는 파일이에요', "This file can't be sent to the phone");
+  if (msg === 'not allowed' || msg === 'secret inside') return tr('폰·태블릿에 내보낼 수 없는 파일이에요', "This file can't be sent to a phone or tablet");
   if (msg === 'net') return tr('연결이 끊겨 못 받았어요 — 다시 눌러 주세요', 'Lost the connection — tap again');
   if (msg === 'disk') return tr('컴퓨터 저장 공간이 모자라요', 'The computer is out of space');
   if (msg === 'stopped') return tr('받기를 멈췄어요', 'Download stopped');

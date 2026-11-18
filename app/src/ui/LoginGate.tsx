@@ -169,7 +169,7 @@ export function LoginGate({ onGate }: { onGate?: (g: Gate | null) => void } = {}
           <>
             {clock ? <><h1>{clock.title}</h1><p>{clock.body}</p></> : <>
             <h1>{tr('Chammo 계정으로 시작해요', 'Start with your Chammo account')}</h1>
-            <p>{tr('폰·다른 컴퓨터·메신저가 이 계정으로 연결돼요. 한 번 로그인하면 앱을 다시 켜도 유지돼요', 'Your phone, other computers and messenger connect through this account. Sign in once and it stays signed in.')}</p></>}
+            <p>{tr('폰·태블릿·다른 컴퓨터·메신저가 이 계정으로 연결돼요. 한 번 로그인하면 앱을 다시 켜도 유지돼요', 'Your phones, tablets, other computers and messenger connect through this account. Sign in once and it stays signed in.')}</p></>}
             <button className="btn pri su-go lg-go" disabled={busy} onClick={login}>{busy ? tr('브라우저에서 로그인을 마쳐 주세요', 'Finish signing in in the browser') : tr('구글로 로그인', 'Sign in with Google')}</button>
             {busy && <LoginWait />}
             {!busy && <div className="lg-acts"><IconButton size="l" tone="line" label={tr('닫기', 'Close')} onClick={() => { setAsked(false); setErr(null); }}><IconClose /></IconButton></div>}

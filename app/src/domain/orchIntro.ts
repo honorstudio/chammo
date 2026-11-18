@@ -10,3 +10,15 @@ export const orchIntro = (): string =>
     '[앱] 안녕! 네 이름과 맡은 일로 2~3줄 자기소개해 줘 — 누구고, 뭘 맡았고, 이런 걸 시키면 된다는 예 하나. 영어 직함 없이 우리말로, 도구는 쓰지 말고, 질문으로 끝내지 마.',
     "[앱] Hi! Introduce yourself in 2-3 lines from your name and role — who you are, what you handle, and one example of what to ask you. Write in English, don't use tools, and don't end with a question.",
   );
+
+/** 키즈 참모로 만들 때 첫 인사 — 보호자 얼굴이라는 걸 처음부터(11-17 사용자 — 나중에 켠 참모가 어른용으로 자기소개했다).
+ *  폰에서 만들 때(src-tauri kids_life.rs intro)도 같은 글 — orchIntro.test 가 대조한다 */
+export const orchIntroKidsHead = (): string =>
+  tr(
+    '[앱] 안녕! 너는 키즈 참모야 — 너와 말하는 사람은 아이의 보호자(어른)고, 아이는 따로 잠긴 아이 화면 세션과 이야기해. 네 이름과 맡은 일로 2~3줄 자기소개해 줘 — 보호자에게 무엇을 도와주는지(아이 대화 보기·아이 화면 규칙 정하기)와 시킬 일 예 하나. 영어 직함 없이 우리말로, 도구는 쓰지 말고, 질문으로 끝내지 마.',
+    "[앱] Hi! You are a kids assistant — the person talking to you is the child's guardian (an adult); the child talks to a separate locked kids-screen session. Introduce yourself in 2-3 lines from your name and role — how you help the guardian (reading the child's chats, setting kids-screen rules) and one example of what to ask you. Write in English, don't use tools, and don't end with a question.",
+  );
+export const orchIntroKids = (child: string): string => {
+  const c = child.trim();
+  return c ? `${orchIntroKidsHead()} ${tr('아이 이름: ', "Child's name: ")}${c}` : orchIntroKidsHead();
+};

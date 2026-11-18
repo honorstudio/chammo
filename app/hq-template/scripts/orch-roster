@@ -339,6 +339,35 @@ def build(me_sid, agents, roles, events, cfg, now):
     return out
 
 
+def kids_line(me_sid, agents, cfg, kids, d):
+    """키즈 참모의 보호자 얼굴 한 줄 — 이 세션(참모)이 키즈 참모이고 설정 '키즈 모드'가 켜졌을 때만(docs/plans/kids-mode.md C, 2026-11-17).
+    보낸 글에 [보호자 말] 을 붙이면 말풍선에 그대로 보여서, 매 지시에 이 줄로 '지금 말하는 사람은 보호자'를 알린다.
+    아이 화면은 <데이터>/kids/<참모>/ 에서 따로 도는 아이 세션(막힌 권한)이 맡는다"""
+    feats = cfg.get('features') if isinstance(cfg.get('features'), dict) else {}
+    orchs = kids.get('orchs') if isinstance(kids, dict) else None
+    if not feats.get('kids') or not isinstance(orchs, dict) or not me_sid:
+        return ''
+    mine = next((a for a in hq_orchs(agents, cfg) if a.get('sessionId') == me_sid), None)
+    base = orch_base(mine.get('name'), bases_of(cfg)) if mine else None
+    k = orchs.get(base) if base else None
+    if not isinstance(k, dict):
+        return ''
+    child = ' '.join(str(k.get('child') or '').split())[:24]
+    home = os.path.join(d, 'kids', base)
+    log, tuning = os.path.join(home, 'log'), os.path.join(home, 'tuning.md')
+    if cfg.get('language') == 'en':
+        kid = f' ({child})' if child else ''
+        return (f'Kids assistant: you are the guardian face of this kids assistant — the person typing here is the guardian (an adult); answer as to an adult.'
+                f' The child{kid} uses a separate locked-down kids session (its own folder, not this one); do not message it.'
+                f' Child conversation log: {log}/ (one jsonl per day). When the guardian gives tuning ("focus on consonants", "likes dinosaurs", "no scary stories"),'
+                f' sum it up in one line, confirm, then append "- <line>" to {tuning} (the kids session cannot write that file).')
+    kid = f' {child}' if child else ''
+    return (f'키즈 참모: 너는 이 키즈 참모의 보호자 얼굴이다 — 이 화면에서 말하는 사람은 보호자(어른)다. 어른 말투로 답한다.'
+            f' 아이{kid}의 화면은 따로 도는 아이 세션(막힌 권한, 이 세션과 다른 폴더)이 맡는다 — 그 세션에 말을 걸지 않는다.'
+            f' 아이 대화 기록: {log}/(날짜별 jsonl). 보호자가 튜닝("요즘 자음 위주로"·"공룡 좋아해"·"무서운 얘기는 빼")을 말하면 한 줄로 정리해 확인받고'
+            f' {tuning} 끝에 "- 한 줄" 로 더한다(아이 세션은 이 파일을 못 쓴다).')
+
+
 def live_agents(d):
     """떠 있는 세션 — claude agents. 맥이 바쁘면 몇 초씩 걸려(실측 5.7초) 이름표가 통째로 빠졌다(2026-10-04 QA) —
     늦거나 실패하면 앱이 적어 둔 세션 목록(<데이터>/live.json, 앱이 목록이 바뀔 때마다 쓴다)으로"""
@@ -390,6 +419,11 @@ def main():
                     read_events(os.path.join(d, 'tasks.jsonl')), cfg, datetime.datetime.now(datetime.timezone.utc))
     except Exception:
         out = ''  # 이름표가 빠질 뿐 — 지시는 그대로 간다
+    try:
+        kl = kids_line(me, [a for a in agents if isinstance(a, dict)] if isinstance(agents, list) else [], cfg, read_json(os.path.join(d, 'kids', 'kids.json'), {}), d)
+    except Exception:
+        kl = ''
+    out = ' '.join(x for x in (out, kl) if x)
     if out:
         print(out)
 

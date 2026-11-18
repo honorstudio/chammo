@@ -73,3 +73,14 @@ export function ChatSheet({ snap, onSnap, peekLine, vh, kb, children, composer, 
     </section>
   );
 }
+
+/** 패드 채팅 칸(11-18 시안 v1) — 시트 대신 고정 칸. 안은 폰 채팅 그대로(대화·승인 카드·입력칸 — 붙이기·멈춤·목소리·모델 칩까지),
+ *  맥 ChatView 원격 모드는 붙이기·멈춤·카드가 꺼져 있어서 안 썼다. 폭·모양은 CSS(.m-tb-chat) */
+export function ChatColumn({ children, composer }: { children: ReactNode; composer: ReactNode }) {
+  return (
+    <section className="m-tb-chat" aria-label={tr('대화', 'Conversation')}>
+      {children}
+      <div className="m-comp-wrap">{composer}</div>
+    </section>
+  );
+}

@@ -10,8 +10,11 @@ import { findTarget } from '../../domain/inbox';
 import { isSheet, kindOf, spacePage, titleOf } from '../../domain/reader';
 import { seenName, type Session } from '../../domain/session';
 import { sameOrchSlot, stoppedOrchs } from '../../domain/stopped';
+import { lostAsStopped, splitOff } from '../../domain/bootFace';
+import type { SnapSession } from '../../domain/revive';
 import { foldAgents, pruneAgents, type SubAgent } from '../../domain/subAgents';
 import { addSpawned, dashToggle, leaveHomeFor, ownPick, screenBeforeHome, featureOf, featurePick, focusPick, focusTab, holderMap, legacyPick, newShows, sidePick, type FeatureKey, orphanSends, shownFiles, showOwner, transcriptTargets } from '../../domain/spaceNav';
+import { spaceMainCovered } from '../../domain/space';
 import { orchDocs, pinPaths, projectGroups, remapPins } from '../../domain/spaceTree';
 import { holdRelease, spaceSwapDelay } from '../../domain/switchHold';
 import { docKeepLimit } from '../../domain/docKeep';
@@ -90,14 +93,17 @@ import { OfficeSheet, SheetIcons } from '../office/OfficeSheet';
 import { HOME_PICK as HOME } from '../../domain/orchHome';
 import type { HomeGo } from './HomeDash';
 import { PaneClose } from './PaneClose';
-import { IconClose, IconDashboard, IconDownload, IconFolder, IconHome, IconOffice, IconApps } from '../Icons';
+import { IconClose, IconDashboard, IconDownload, IconFolder, IconHome, IconOffice, IconApps, IconTerminal } from '../Icons';
+import { closeAsk as shellCloseAsk, isShellKey, liveShellKeys, newShell, shellCwd, type ShellTab } from '../../domain/shellTab';
+import { useShellKeep } from './shellKeep';
+import { SHELL_OPEN, type ShellOpen } from './navSignal';
 import { isTeamCache } from '../../domain/teamLocker';
 import { attachWhenReady, publishRoster, useGivePath, type GiveReq } from '../team/teamGive';
 import { BubbleFloatCtx, publishFace, useOrchBubble, type BubbleOrch } from './OrchBubble';
 import { bubbleFace } from '../../domain/orchBubble';
 import { IconButton } from '../kit/IconButton';
 import { BrowserAttachButton } from '../BrowserAttach';
-import { every } from '../poll';
+import { every, useCoverEvery } from '../poll';
 import { editedAfterOpen } from '../../domain/locker';
 import { lkPick, isLockerOpen, parseLkPick, userFolders, type LkPlace } from '../../domain/lockerTree';
 import { lockerLog } from '../../domain/lockerLog';
@@ -183,8 +189,10 @@ const sessionFill = (sessionId: string) => readSessionTasks(sessionId).then((t) 
 /** 스페이스 팀 탭(팀 보관함) 자리 */
 
 const NONE: never[] = []; // 기본값은 모듈 상수로 — [] 는 그릴 때마다 새 배열이라 그걸 의존성에 둔 훅이 매번 다시 돈다(stableDeps.test.ts)
+const NONE_LOST: SnapSession[] = [];
+const NO_FAIL = new Set<string>();
 
-export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onReorderOrch, onMenuToggle, orchPins = [], orchOrder = [], office, officeReq = null, onOfficeReq, onOfficeShown, harnitorReq = null, onHarnitorReq, onHarnitorShown, onHarnitorClosed, toolsReq = null, onToolsReq, onToolsShown, onToolsClosed, reviewReq = null, onReviewReq, onReviewShown, replayReq = null, onReplayReq, onReplayShown, replayPage, computerUse, orchs, stoppingIds, startingOrchs, orch: chatOrch, projectSessions, sessions, events, claudeBin, fontSize, home, orchHome, send, sendTo, live = {}, menuOpen = true, idle = NONE, stopped = NONE, orchCwd = '', onResume, onWakeOrch, onRemoveStopped, onNewSession, onNewOrch, routines, routinePage, reviewPage, ctxOf, onAddProject, projectsUi, onChatTab, helpers = [], loose = [], tasks, onMessage, bubble }: {
+export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onReorderOrch, onMenuToggle, orchPins = [], orchOrder = [], office, officeReq = null, onOfficeReq, onOfficeShown, harnitorReq = null, onHarnitorReq, onHarnitorShown, onHarnitorClosed, toolsReq = null, onToolsReq, onToolsShown, onToolsClosed, reviewReq = null, onReviewReq, onReviewShown, replayReq = null, onReplayReq, onReplayShown, replayPage, computerUse, orchs, stoppingIds, startingOrchs, orch: chatOrch, projectSessions, sessions, events, claudeBin, fontSize, home, orchHome, send, sendTo, live = {}, menuOpen = true, idle = NONE, stopped = NONE, orchCwd = '', lostOrchs = NONE_LOST, daemonAt = null, wakeFailed = NO_FAIL, onResume, onWakeOrch, onRemoveStopped, onNewSession, onNewOrch, routines, routinePage, reviewPage, ctxOf, onAddProject, projectsUi, onChatTab, helpers = [], loose = [], tasks, onMessage, bubble }: {
   /** 내 메모 패널(App 이 연다) */
   notes?: { open: boolean; onClose: () => void; onToWindow: () => void };
   /** 고정한 참모(대화 id, 고정한 순서) — 사이드바 줄 순서·압정 표시 */
@@ -234,6 +242,10 @@ export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onRe
   stoppingIds?: string[];
   startingOrchs?: StoppedSession[];
   orchCwd?: string;
+  /** 재부팅(데몬 다시 뜸)으로 꺼진 참모(live.json lost) — 쉬는 칸이 아니라 위 띠 제자리에 깨울 차례로(켤 때 점호 v3) · daemonAt = 데몬 뜬 때 · wakeFailed = 깨우다 실패한 대화 id */
+  lostOrchs?: SnapSession[];
+  daemonAt?: number | null;
+  wakeFailed?: Set<string>;
   onResume?: (s: StoppedSession) => void;
   /** 띠의 쉬는 참모 깨우기 — 이어서 켜고 떠오르면 그 참모(채팅 탭까지)로(App resumeFromHome, 오케스트레이터 홈과 같은 길) */
   onWakeOrch?: (s: StoppedSession) => void;
@@ -854,6 +866,9 @@ export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onRe
     const s = sessions.find((x) => x.id === id);
     return s ? nameOf(s) : id;
   };
+  // 팀 화면·다른 기기 보기가 본문을 덮는 동안 화면에만 쓰는 폴링은 5배 느리게, 걷히면 밀린 한 번을 바로(11-17 perf S 보인 판 ipc).
+  // 띄운 걸 꺼내 보여 주는 craft_dock·show 기록은 여기 안 넣는다 — 팀 모드에서 띄운 게 늦게 뜬다(참모-2 11-17)
+  const everyMain = useCoverEvery(spaceMainCovered(team, far));
   // 대시보드 세션 칸 — 대화 기록 꼬리를 터미널처럼 몇 줄(보고 있는 대시보드의 세션만 3초마다)
   const [tails, setTails] = useState<Record<string, string[]>>({});
   const tailIds = (() => {
@@ -877,7 +892,7 @@ export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onRe
       });
     }).catch(() => {});
     tick();
-    const stop = every(tick, 3000);
+    const stop = everyMain(tick, 3000);
     return () => { alive = false; stop(); };
   }, [tailKey]); // eslint-disable-line react-hooks/exhaustive-deps
   // 참모 노트(홈 곁 줄) — 참모 할 일 목록(TaskCreate) + HQ starter 최근 결정. 홈을 보고 있을 때 5초마다(v11 X)
@@ -896,7 +911,7 @@ export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onRe
       if (alive) { const next: NoteBase = { tasks: tasks.map((t) => ({ id: t.id, text: t.subject, done: t.status === 'completed' })), decisions: starterLists(md).decisions }; setNote((o) => keepSame(o, next)); }
     };
     void tick();
-    const stop = every(() => void tick(), 5000);
+    const stop = everyMain(() => void tick(), 5000);
     return () => { alive = false; stop(); };
   }, [noteOrch?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -919,7 +934,7 @@ export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onRe
       if (alive) { const next: DashLists = { todo: [...tasks, ...fromStarter.todo.map((text) => ({ text }))], decisions: fromStarter.decisions, source: md ? src : undefined }; setPlists((o) => keepSame(o, next)); }
     };
     void tick();
-    const stop = every(() => void tick(), 5000);
+    const stop = everyMain(() => void tick(), 5000);
     return () => { alive = false; stop(); };
   }, [proot]); // eslint-disable-line react-hooks/exhaustive-deps
   // 도우미·프로젝트 밖 세션은 프로젝트 이름(=HQ 폴더 이름) 대신 세션 이름으로 — 'honor-orchestrator' 로만 떠서 누가 누군지 몰랐다(2026-10-02)
@@ -1051,6 +1066,47 @@ export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onRe
     if (h && h.tabs.includes(k)) { const r = closeTab(h, k, now.current.pick); setLkHold(r.hold); if (r.pick) setPick(r.pick, 'close'); return; }
     if (now.current.pick === k) setPick(h?.back ?? (orch ? lkPick(orch.id, { kind: 'home' }) : ''), 'close');
   };
+  // 그냥 셸 탭(11-17 사용자) — 지금 참모 탭 줄에 sh:<번호>. 셸은 탭이 있는 동안 살아 있다(참모·홈을 오가도 shellKeep 이 살려 둔다), 앱을 끄면 사라진다
+  const [shells, setShells] = useState<ShellTab[]>([]);
+  const shellNo = useRef(0);
+  const shellKeep = useShellKeep();
+  const [shellClosing, setShellClosing] = useState<{ key: string; title: string; body: string } | null>(null);
+  const openShellTab = async (cwd0?: string) => {
+    const v = now.current.view ?? orch?.id;
+    if (!v) return;
+    const here = now.current.pick;
+    // 셸 탭에서 또 열면 그 셸이 연 폴더에서(iTerm 새 탭처럼)
+    const cwd = cwd0 || shellsRef.current.find((x) => x.key === here)?.cwd || shellCwd(here, { sessionCwd: here.startsWith('s:') ? sessions.find((x) => x.id === here.slice(2))?.cwd : undefined, projects: projectRoots, devRoot: await getAppEnv().then((e) => e.devRoot, () => '') });
+    shellNo.current += 1;
+    const t = newShell(shellsRef.current, shellNo.current, cwd, home ?? '');
+    setShells((xs) => [...xs, t]);
+    setLkHold((h) => openTab(h, v, here, t.key));
+    setPick(t.key, 'shell');
+  };
+  const shellsRef = useRef(shells);
+  shellsRef.current = shells;
+  /** 셸 탭 빼기 — 탭 줄(지금 참모 + 적어 둔 다른 참모 몫)에서 빼면 아래 정리가 셸을 끈다 */
+  const dropShell = (key: string) => {
+    for (const [id, h] of holds.current) if (h.tabs.includes(key)) holds.current.set(id, closeTab(h, key, '').hold);
+    const h = lkRef.current.hold;
+    if (h && h.tabs.includes(key)) { const r = closeTab(h, key, now.current.pick); setLkHold(r.hold); if (r.pick) setPick(r.pick, 'close'); }
+    setShells((xs) => xs.filter((x) => x.key !== key));
+  };
+  /** 닫기(X·⌘W·메뉴) — 셸 위에서 무언가 돌고 있으면 한 번 묻는다 */
+  const closeShell = async (key: string) => {
+    const prog = (await shellKeep.api(key)?.busy?.()) ?? null;
+    const ask = shellCloseAsk(prog);
+    if (ask) setShellClosing({ key, ...ask }); else dropShell(key);
+  };
+  const shellOpenRef = useRef(openShellTab);
+  shellOpenRef.current = openShellTab;
+  useEffect(() => {
+    const on = (e: Event) => void shellOpenRef.current((e as CustomEvent<ShellOpen>).detail?.cwd);
+    window.addEventListener(SHELL_OPEN, on);
+    return () => window.removeEventListener(SHELL_OPEN, on);
+  }, []);
+  // 셸 탭을 고르면 키보드를 그 셸로
+  useEffect(() => { if (isShellKey(pick)) requestAnimationFrame(() => shellKeep.api(pick)?.focus()); }, [pick]); // eslint-disable-line react-hooks/exhaustive-deps
   // 다른 참모가 띄운 시안 — 그 참모 탭 줄에 검토 탭으로 넣어 두고(보던 참모는 그대로) 알림 한 줄. 지금 그 참모를 보고 있으면 미리보기가 알아서 검토 탭으로
   const queueReview = (owner: string, f: DashFile) => {
     if (owner === now.current.view) return;
@@ -1268,6 +1324,11 @@ export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onRe
   const lockerLinks = useLockerLinks(lockerOrch ? { id: lockerOrch.id, session: lockerOrch.sessionId } : null, lockerAtRoot);
   const lkRef = useRef({ tree: lockerTree, hold: lkHold });
   lkRef.current = { tree: lockerTree, hold: lkHold };
+  // 탭 줄에서 밀려난(8개 넘침) 셸은 끈다 — 탭 없이 살아 있으면 다시 닿을 길이 없다
+  useEffect(() => {
+    const live = liveShellKeys([...(lkHold ? [lkHold] : []), ...holds.current.values()]);
+    if (shells.some((x) => !live.has(x.key))) setShells((xs) => xs.filter((x) => live.has(x.key)));
+  }, [lkHold]); // eslint-disable-line react-hooks/exhaustive-deps
   // 꺼진 도우미·예약 세션 탭은 저절로 닫는다 — 참모가 끄고 다시 안 켜는 세션이라 남겨 두면 빈 탭만 쌓인다(2026-11-10). 프로젝트 세션 탭은 남겨 다시 켜기·닫기를 보인다
   useEffect(() => {
     const ids = new Set(sessions.map((s) => s.id));
@@ -1418,7 +1479,9 @@ export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onRe
   const teamOn = !!(team?.on && team.space);
   // 켜는 중·끄는 중도 띠 위 줄에 자리 그대로(2026-10-12 사용자 "뿅 나왔다 뿅 사라진다") — 끄는 중은 잠들며 제자리, 깨우는 쉬는 참모는 위 줄로 올라와 깨어남
   const railPrev = useRef<RailRow[]>([]);
-  const rows = railRows({ live: orchs, stopping: new Set(stoppingIds), starting: startingOrchs ?? [], prev: railPrev.current, order: orchOrder, pins: orchPins });
+  // 재부팅으로 꺼진 참모를 먼저 가른다 — 위 띠 깨울 차례(lostTop)와 쉬는 칸(resting). 같은 참모가 꺼진 목록에도 걸리면 lost 가 먼저(bootFace splitOff)
+  const split = splitOff({ stopped: stoppedOrchs(stopped, orchCwd, orchs), lost: lostOrchs, live: orchs, now: Date.now(), daemonAt });
+  const rows = railRows({ live: orchs, stopping: new Set(stoppingIds), starting: startingOrchs ?? [], lost: split.lostTop.map(lostAsStopped), failed: wakeFailed, prev: railPrev.current, order: orchOrder, pins: orchPins });
   // 새로 만든 참모는 '켜는 중' 칸(new:<이름>)과 다른 칸으로 뜬다 — 처음 그릴 때 깨어남 마무리를 한 번(woke)
   const creatingSeen = useRef(new Set<string>());
   for (const r of rows) if (r.phase === 'starting' && r.key.startsWith('new:')) creatingSeen.current.add(r.name);
@@ -1427,7 +1490,15 @@ export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onRe
     for (const r of rows) if (r.phase === 'live') creatingSeen.current.delete(r.name);
   });
   const railAvatar = (r: RailRow): RailAvatar => {
-    const text = phaseWord(r.phase, r.waking);
+    const text = phaseWord(r.phase, r.waking, r.failed);
+    if (r.phase === 'lost' && r.off) {
+      // 깨울 차례 — 바로 선 채 감은 눈(못 깸은 기울어 주저앉음), 누르면 차례를 앞당겨 바로 깨운다
+      const x = r.off;
+      const nm = orchDisplay(x) || x.name;
+      return { id: `lost:${r.key}`, label: nm, on: false, color: bodyColor(avatars, x.name, colorOf(x.name)), pinned: orchPins.includes(r.key), phase: 'lost', phaseText: text, flip: r.key, pip: r.failed ? 'fail' : 'queue',
+        onWake: () => (onWakeOrch ?? onResume)?.(x),
+        node: <OrchAvatar name={x.name} size={32} state="off" phase={r.failed ? 'failed' : 'queued'} color={colorOf(x.name)} label={nm} /> };
+    }
     if (r.phase === 'starting' || !r.live) {
       const x = r.off!;
       const nm = orchDisplay(x) || x.name;
@@ -1441,10 +1512,12 @@ export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onRe
       node: <OrchAvatar name={o.name || ''} size={32} state={stopping ? 'off' : avatarState(o, statusOf(o))} phase={stopping ? 'stopping' : undefined} woke={creatingSeen.current.has(o.name)} color={colorOf(o.name || '')} label={oname(o)} /> };
   };
   const railList = rows.map(railAvatar);
+  // 살아 있는 참모 점만(깨울 차례·못 깸 점은 띠 안에서만) — 고를 참모 목록·배지가 받는 모양
+  const livePip = (p: RailAvatar['pip']) => (p === 'queue' || p === 'fail' ? null : p ?? null);
   // 내 참모에게(팀 보관함·메신저 @ 메뉴·넘기기) — 고를 참모 목록을 메신저 따로 창에도(세션 이름 = 프사, 별명). 켜는 중·끄는 중은 뺀다
   useEffect(() => publishRoster(railList.flatMap((a) => {
     const o = !a.phase ? orchs.find((x) => x.id === a.id) : undefined;
-    return o ? [{ id: o.id, owner: ownerKey(o), name: o.name || a.label, label: a.label, color: a.color, busy: a.pip === 'run', pip: a.pip ?? null }] : [];
+    return o ? [{ id: o.id, owner: ownerKey(o), name: o.name || a.label, label: a.label, color: a.color, busy: a.pip === 'run', pip: livePip(a.pip) }] : [];
   })));
   // 받기 — 팀 모드를 끄고 그 참모 채팅으로 바꾼 뒤 입력칸에 #file 칩 + 커서(보내기는 사람이). 따로 창에서 준 것은 Rust 가 이 창을 앞으로 가져와 부른다
   const giveRef = useRef<(r: GiveReq) => void>(() => {});
@@ -1477,7 +1550,7 @@ export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onRe
     const o = !a.phase ? orchs.find((x) => x.id === a.id) : undefined;
     if (!o) return [];
     const av = (size: number) => <OrchAvatar name={o.name || ''} size={size} state={avatarState(o, statusOf(o))} color={colorOf(o.name || '')} label={a.label} />;
-    return [{ id: o.id, label: a.label, color: a.color, pip: a.pip, node: av(44), small: av(28) }];
+    return [{ id: o.id, label: a.label, color: a.color, pip: livePip(a.pip), node: av(44), small: av(28) }];
   });
   const bub = useOrchBubble({ orchs: bubOrchs, face: bubbleFace(bubOrchs, nav.chat ?? chatOrch?.id), covered: teamOn || atHomePick, onPick: (id) => {
       // 칸이 가려진 화면(팀 모드·홈)에선 채팅 탭만 — 보던 화면(홈)이 그 참모 화면으로 따라가지 않게 nav.chat 을 먼저 맞춘다(아래 'follow' 효과가 안 돈다)
@@ -1512,7 +1585,7 @@ export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onRe
         const hs = [...helpers, ...loose];
         return { count: hs.length, label: tr(`도우미 ${hs.length}`, `Helpers ${hs.length}`), onOpen: (e: React.MouseEvent) => act?.openMenu(e, hs.map((h) => ({ label: `${h.name || h.id} · ${stateWord(h)}`, run: () => { team?.onLeave(); setPick(`s:${h.id}`); } }))) };
       })()}
-      resting={stoppedOrchs(stopped, orchCwd, orchs).map((x) => {
+      resting={split.resting.map((x) => {
         // 쉬는 참모(P2) — 누르면 이어서 켜기, 오른쪽 = 켜기·목록에서 지우기(옛 메뉴 그대로)
         const nm = orchDisplay(x) || x.name;
         return { key: x.sessionId || x.id, label: nm, node: <OrchAvatar name={x.name} size={26} state="off" color={colorOf(x.name)} label={nm} />, onWake: () => (onWakeOrch ?? onResume)?.(x),
@@ -1629,6 +1702,7 @@ export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onRe
     if (c === 'dashToggle') { setPick(dashToggle(pick, orch ? ownPick(screens.current.get(orch.id)?.pick, orch.id, homeOf(orch), gone) : ''), 'home'); return; }
     const lo = orch;
     if (!lo) return;
+    if (c === 'closeTab' && isShellKey(pick)) { void closeShell(pick); return; }
     if (c === 'closeTab') { const r = closeCurrentTab(lkHold, lo.id, pick); if (!r) return; setLkHold(r.hold); if (r.pick) setPick(r.pick); return; }
     if (c === 'newDoc') { void lockerApi.newDoc(lockerOwner(lo), newDocFolder(pick), 'md').then((p) => lockerActs(lo).onOpen(p), lockerFail); return; }
     if (c === 'home') goHome(lo); else goFolder(lo);
@@ -1678,6 +1752,9 @@ export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onRe
         {/* 윈도우도(2026-10-21) — 0.3.4 땐 Rust 가 scripts/craft 를 바로 띄워 오류 원문만 떴다, 이제 python 으로 부른다(craft_window::craft_cmd) */}
         <button className={`lk-tab folder ${pick === APPS_KEY ? 'on' : ''}`} aria-pressed={pick === APPS_KEY} onClick={() => setPick(APPS_KEY)}
           aria-label={tr('Craft 앱', 'Craft apps')} title={tr('Craft 앱 — 사진·영상·문서·표 편집기', 'Craft apps — photo, video, document and spreadsheet editors')}><IconApps /></button>
+        {/* 새 터미널(그냥 셸) — 지금 보는 프로젝트 폴더에서, 없으면 devRoot(11-17 사용자 "iTerm 계속 열어서 쓰는 중") */}
+        <button className="lk-tab folder lk-shell-new" onClick={() => void openShellTab()}
+          aria-label={tr('새 터미널', 'New terminal')} title={`${tr('새 터미널', 'New terminal')} ${keyLabel('⌥⌘T', IS_WIN)}`}><IconTerminal /></button>
         {/* 홈·보관함·앱은 늘 왼쪽에 — 독·파일 탭만 스크롤(2026-10-22 사용자 "넘치면 고정 탭이 같이 밀려난다") */}
         <TabStrip on={pick}>
         {myDock(lo.id).map((it, _i, mine) => {
@@ -1734,6 +1811,18 @@ export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onRe
               </span>
             );
           }
+          if (isShellKey(p)) {
+            // 셸 탭 — 폴더 이름을 고정폭 글꼴로(터미널인 걸 글꼴로 가른다, 아이콘+글자 겹치지 않게), 오른쪽 클릭 = 닫기
+            const t = shells.find((x) => x.key === p);
+            return (
+              <span key={p} className={`lk-tab shell ${on ? 'on' : ''}`} role="tab" aria-selected={on} tabIndex={0} onClick={() => go(p)} title={t?.cwd ?? ''}
+                onKeyDown={(e) => { if (e.key === 'Enter') go(p); }}
+                onContextMenu={act ? (e) => act.openMenu(e, [{ label: tr('새 터미널', 'New terminal'), run: () => void openShellTab(t?.cwd) }, { label: tr('탭 닫기', 'Close tab'), sep: true, run: () => void closeShell(p) }]) : undefined}>
+                <span>{t?.title ?? tr('터미널', 'Terminal')}</span>
+                <IconButton size="s" label={tr('탭 닫기', 'Close tab')} onClick={(e) => { e.stopPropagation(); void closeShell(p); }}><IconClose /></IconButton>
+              </span>
+            );
+          }
           // Craft 칸(k:<앱>)은 글자 탭을 안 그린다 — 독 아이콘이 탭이다(2026-10-19 사용자 "앱 아이콘이 이미 탭 줄에 있고 앱 안 탭으로 문서가 나뉘니 겹친다")
           if (p.startsWith('k:')) return null;
           if (p.startsWith('s:')) {
@@ -1746,7 +1835,7 @@ export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onRe
             return (
               <span key={p} className={`lk-tab sess ${on ? 'on' : ''} ${ss ? '' : 'gone'}`} role="tab" aria-selected={on} tabIndex={0} onClick={() => go(p)} title={ss ? `${nm} — ${ss.cwd}` : tr(`${nm} — 꺼짐`, `${nm} — stopped`)}
                 onKeyDown={(e) => { if (e.key === 'Enter') go(p); }}
-                onContextMenu={act ? (e) => act.openMenu(e, [{ label: tr('탭 닫기', 'Close tab'), run: () => close(p) }, ...(ss ? [{ label: tr('세션 끄기', 'Stop session'), danger: true, sep: true, run: () => act.askStop(ss, nm, 'tab') }] : wake ? [{ label: tr('다시 켜기', 'Resume'), run: () => onResume?.(wake) }] : [])]) : undefined}>
+                onContextMenu={act ? (e) => act.openMenu(e, [{ label: tr('탭 닫기', 'Close tab'), run: () => close(p) }, ...(ss ? [{ label: tr('여기서 터미널', 'Open terminal here'), run: () => void openShellTab(ss.cwd) }] : []), ...(ss ? [{ label: tr('세션 끄기', 'Stop session'), danger: true, sep: true, run: () => act.askStop(ss, nm, 'tab') }] : wake ? [{ label: tr('다시 켜기', 'Resume'), run: () => onResume?.(wake) }] : [])]) : undefined}>
                 {ss && <span className={`lk-dot d-${dotKind(lineOf(ss, nm))}`} aria-hidden="true" />}<span>{nm}</span>
                 <IconButton size="s" label={tr('탭 닫기', 'Close tab')} onClick={(e) => { e.stopPropagation(); close(p); }}><IconClose /></IconButton>
               </span>
@@ -1933,6 +2022,8 @@ export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onRe
       ? <BrowserPane key={pick} live={b} name={paneName} onHide={hide} onClosed={closedBrowser} openMenu={act?.openMenu} />
       : <div className="cv-blank" />}</div>;
     main = lockerOrch ? lockerFrame(lockerOrch, <>{lockerTabs(lockerOrch, !!lockerSide?.rootNew)}{pane}</>) : pane;
+  } else if (isShellKey(pick) && lockerOrch && shells.some((x) => x.key === pick)) {
+    main = lockerFrame(lockerOrch, <>{lockerTabs(lockerOrch, !!lockerSide?.rootNew)}<div className="lk-doc-body lk-shell">{shellKeep.slot(pick)}</div></>);
   } else if (pick.startsWith('k:')) {
     // Craft 탭 — 칸은 비워 두고 네이티브 비추기가 그 위에(CraftPane 이 자리·보이는지를 알린다)
     const pane = <div className="lk-doc-body"><CraftPane key={pick} app={craftAppOf(pick)} place="space" whoOf={craftWho} /></div>;
@@ -1984,6 +2075,9 @@ export function SpaceView({ notes, homeDash, chat, railTop, far, team, fns, onRe
     <AskOrchContext.Provider value={askOrch}>
     <div className="space cv">
       {keep.host()}
+      {shellKeep.host(shells, { fontSize, home, onExit: dropShell })}
+      {shellClosing && <Confirm title={shellClosing.title} body={shellClosing.body} ok={tr('닫기', 'Close')} danger onCancel={() => setShellClosing(null)}
+        onOk={() => { const k = shellClosing.key; setShellClosing(null); dropShell(k); }} />}
       {/* 왼쪽은 띠만 — ⌘B 는 띠를 넓힐 뿐(패널 하나로 P1 A). 보관함 나무 칸은 없앴다(2026-10-12 사용자 '이제 필요 없겠다' — 홈·보관함 고정 탭 + 가운데 경로 줄) */}
       {rail}
       {/* 홈을 보는 동안·팀 모드에서 메신저를 접은 동안 채팅 칸은 숨기기만(터미널 붙임·입력 그대로) */}

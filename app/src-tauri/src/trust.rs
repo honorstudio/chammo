@@ -85,6 +85,17 @@ fn write(keys: &[String]) -> Result<bool, String> {
     crate::computer_use::edit(|t| grant(t, keys), |v| keys.iter().all(|k| v["projects"][k]["hasTrustDialogAccepted"] == json!(true)))
 }
 
+/// 앱이 직접 만든 폴더(키즈 아이 세션 집처럼 동의 폴더 밖)를 띄우기 전에 그 칸 하나만 믿음으로 적는다 — 부모 폴더는 안 건드린다
+pub(crate) fn trust_own(dir: &str) {
+    let dir = real(dir);
+    let keys: Vec<String> = vec![dir.clone()].into_iter().filter(|k| !crate::setup::trusted_exact(&claude_json(), k)).collect();
+    match write(&keys) {
+        Ok(true) => crate::claude::log_out("trust", &format!("trusted app folder: {dir}")),
+        Ok(false) => {}
+        Err(e) => crate::claude::log_out("trust", &format!("could not trust {dir}: {e}")),
+    }
+}
+
 /// 세션 띄우기 직전 — 동의한 폴더 아래면 믿음을 다시 적는다. 못 적어도 띄워는 본다(실패하면 claude 가 이유를 낸다)
 pub fn before_spawn(cwd: &str) {
     let dir = real(&crate::config::expand(&crate::config::home(), cwd));

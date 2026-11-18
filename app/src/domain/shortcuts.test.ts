@@ -67,7 +67,7 @@ describe('shortcutFor — 앱 단축키', () => {
   });
 
   it('⌘K 검색, ⌘W 스페이스에서 열린 탭 닫기', () => {
-    expect(shortcutFor(k('k', { meta: true }))).toEqual({ type: 'search' });
+    expect(shortcutFor(k('k', { meta: true }))).toEqual({ type: 'search', k: true }); // k = 셸 탭에선 화면 지우기(App clearShellAt)
     // ⌘F = 찾기(문서가 열려 있으면 문서 찾기 — README 에 적은 대로, 공개 2차 검증에서 안 붙어 있던 것), 한글 입력이면 ㄹ
     expect(shortcutFor(k('f', { meta: true }))).toEqual({ type: 'search' });
     expect(shortcutFor(k('ㄹ', { meta: true }))).toEqual({ type: 'search' });
@@ -111,7 +111,7 @@ describe('clampFont — 글자 크기 범위', () => {
     expect(shortcutFor(k('ㅈ', { meta: true }))).toEqual({ type: 'closeTab' });
     expect(shortcutFor(k('ㅆ', { meta: true, shift: true }))).toEqual({ type: 'newSession' });
     expect(shortcutFor(k('ㅉ', { meta: true, shift: true }))).toEqual({ type: 'closePane' });
-    expect(shortcutFor(k('ㅏ', { meta: true }))).toEqual({ type: 'search' });
+    expect(shortcutFor(k('ㅏ', { meta: true }))).toEqual({ type: 'search', k: true });
   });
 });
 
@@ -134,7 +134,8 @@ describe('menuAction — 메뉴바 항목 → 앱 동작 (단축키와 같은 �
     expect(menuAction('goto_office')).toEqual({ type: 'goto', to: 'office' });
     expect(menuAction('sidebar')).toEqual({ type: 'toggleSidebar' });
     expect(menuAction('tasks')).toEqual({ type: 'toggleTasks' });
-    expect(menuAction('search')).toEqual({ type: 'search' });
+    expect(menuAction('search')).toEqual({ type: 'search', k: true });
+    expect(menuAction('new_shell')).toEqual({ type: 'newShell' });
     expect(menuAction('font_up')).toEqual({ type: 'font', delta: 1 });
     expect(menuAction('font_down')).toEqual({ type: 'font', delta: -1 });
     expect(menuAction('font_reset')).toEqual({ type: 'fontReset' });
@@ -319,5 +320,19 @@ describe('⌘+ ⌘- ⌘0 은 어디를 보고 있나로', () => {
     expect(frameZoomCmd({ hodoc: 'zoom', c: 5 })).toBeNull();
     expect(frameZoomCmd({ hodoc: 'settings' })).toBeNull();
     expect(frameZoomCmd(null)).toBeNull();
+  });
+});
+
+// 11-17 셸 탭 — ⌘⇧T 는 새 세션이라 ⌥⌘T. ⌥ 를 누르면 글자가 † 로 오니 키 자리(KeyT)로
+describe('⌥⌘T 새 터미널', () => {
+  it('맥 — 키 자리로 읽는다(글자가 † 로 와도)', () => {
+    expect(shortcutFor({ ...k('†', { meta: true, alt: true }), code: 'KeyT' }, false)).toEqual({ type: 'newShell' });
+    expect(shortcutFor({ ...k('ㅅ', { meta: true, alt: true }), code: 'KeyT' }, false)).toEqual({ type: 'newShell' });
+    expect(shortcutFor({ ...k('T', { meta: true, alt: true, shift: true }), code: 'KeyT' }, false)).toBeNull();
+    expect(shortcutFor({ ...k('2', { meta: true, alt: true }), code: 'Digit2' }, false)).toEqual({ type: 'goto', to: 'all' }); // ⌥⌘숫자는 그대로
+  });
+  it('윈도우 — Ctrl+Alt+Shift+T(메뉴 단축키 platform::win_accel 과 같게)', () => {
+    expect(shortcutFor({ ...k('T', { ctrl: true, alt: true, shift: true }), code: 'KeyT' }, true)).toEqual({ type: 'newShell' });
+    expect(shortcutFor({ ...k('E', { ctrl: true, alt: true, shift: true }), code: 'KeyE' }, true)).toBeNull();
   });
 });

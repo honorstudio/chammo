@@ -6,6 +6,10 @@ import { sheetLines, type SheetPending } from './sheetPending';
 export type ChatView = 'stack' | 'tabs';
 export const chatViewOf = (stored: unknown): ChatView => (stored === 'stack' || stored === 'tabs' ? stored : 'tabs');
 
+/** 스페이스 본문이 덮였나 — 팀 화면(팀 모드 + 팀 스페이스)이나 다른 기기 보기가 위에 뜨면 밑 참모 스페이스는 안 보인다.
+ *  그동안 화면에만 쓰는 폴링(대시보드 세션 꼬리·홈 노트·세션 탭 목록)을 늦춘다(11-17 perf S 보인 판 ipc) */
+export const spaceMainCovered = (team: { on?: boolean; space?: unknown } | undefined, far: unknown): boolean => !!(team?.on && team.space) || !!far;
+
 export type MdDiff = { added: string[]; removed: string[] };
 
 const lines = (md: string) => md.split('\n').map((l) => l.trimEnd()).filter((l) => l.trim());

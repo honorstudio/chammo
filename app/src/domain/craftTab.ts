@@ -51,6 +51,21 @@ export const shown = (b: Box, covered: boolean) => b[2] > 0 && b[3] > 0 && !cove
  *  비추기 층은 웹 위에 얹혀 팝오버를 가려서 덮이면 숨기는데, 그 밑이 검은 칸이라 통째로 검게 보였다(2026-10-19 실사용) */
 export const wantStill = (b: Box, covered: boolean) => covered && b[2] >= 40 && b[3] >= 40;
 
+/** 칸 상태 — shown 보임 · covered 무언가 덮음(비추기는 숨기되 받기는 계속, 밑에 깐 그림을 갈아 끼운다) · off 안 보임(접힘·앱 창 숨음 — 받기 멈춤). */
+export type PaneMode = 'shown' | 'covered' | 'off';
+export const paneMode = (b: Box, covered: boolean, docHidden: boolean): PaneMode =>
+  docHidden ? 'off' : shown(b, covered) ? 'shown' : wantStill(b, covered) ? 'covered' : 'off';
+
+/** 웹이 직접 그리는 칸 그림(윈도우 Craft 칸 craft_pane_shot)을 받을까 — 그림은 웹 안이라 팝오버가 덮어도 가려지지 않는다,
+ *  덮였다고 멈추면 귀퉁이만 덮인 칸이 굳는다(11-18 사용자 '알림이 떠 있으면 멈춤'과 같은 꼴) */
+export const shotVisible = (b: Box) => shown(b, false);
+
+/** 덮인 동안 깐 그림을 갈아 끼우는 간격 */
+export const STILL_EVERY_MS = 200;
+/** 지금 깐 그림을 새로 받을까 — 덮였고, 받는 중이 아니고, 간격이 지났을 때(11-18 사용자 — 알림 팝오버가 떠 있는 동안 브라우저 그림이 굳었다) */
+export const stillDue = (mode: PaneMode, inFlight: boolean, lastAt: number, now: number): boolean =>
+  mode === 'covered' && !inFlight && now - lastAt >= STILL_EVERY_MS;
+
 /** Craft 칸(k:<앱>)에서 다른 데로 옮겼나 — 그 앱(숨기기 = 10분 뒤 저장·끄기 시작), 아니면 null. 앱 서랍(k:@apps)은 앱 칸이 아니다.
  *  2026-10-19 사용자: 스페이스의 Craft 글자 탭을 없앴다(독 아이콘이 탭) — 탭 X 대신 '옮기기'가 숨기기 */
 export function leftCraft(prev: string, next: string): string | null {

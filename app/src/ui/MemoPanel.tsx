@@ -2,7 +2,7 @@
 // Enter 저장 · ⌥/Shift+Enter 줄바꿈 · Esc 닫기. 항목마다 세션에 보내기(입력칸에 글자만, Enter 는 직접)·복사·삭제
 import { useEffect, useRef, useState } from 'react';
 import type { MemoItem } from '../domain/memo';
-import { COMMON, shouldGroup } from '../domain/lessons';
+import { canPromote, COMMON, isOrchScope, shouldGroup, shownLesson } from '../domain/lessons';
 import { IconCheck, IconClose, IconCopy, IconSend, IconTrash } from './Icons';
 import { assistant, josa, tr } from '../i18n';
 
@@ -14,8 +14,8 @@ type Props = {
   onCopy: (text: string) => void;
   onRemove: (item: MemoItem) => void;
   onClose: () => void;
-  /** '교훈' 탭 — 이 프로젝트 교훈과 모든 프로젝트 공통 교훈(참모 지시에 붙는다) */
-  lessons?: { mine: string[]; common: string[] };
+  /** '교훈' 탭 — 이 칸(프로젝트, 참모 창이면 orch:<기본 이름> 기억 칸)의 줄과 모든 프로젝트 공통 교훈 */
+  lessons?: { scope: string; mine: string[]; common: string[] };
   onRemoveLesson?: (name: string, lesson: string) => void;
   onPromoteLesson?: (lesson: string) => void;
   /** 교훈이 많을 때 [스킬로 묶기] — 참모에게 알아서 묶어 달라 부탁한다(결과는 한 줄, 버리기만 카드) */
@@ -85,7 +85,7 @@ export function MemoPanel({ project, items, onAdd, onSend, onCopy, onRemove, onC
         <button className="ib memo-close" title={tr('닫기 (Esc)', 'Close (Esc)')} aria-label={tr('닫기', 'Close')} onClick={onClose}><IconClose /></button>
       </div>
       {tab === 'lessons' && lessons ? (
-        <LessonList project={project} lessons={lessons} onRemove={onRemoveLesson} onPromote={onPromoteLesson} onGroup={onGroupLessons} />
+        <LessonList lessons={lessons} onRemove={onRemoveLesson} onPromote={onPromoteLesson} onGroup={onGroupLessons} />
       ) : (<>
       <div className="memo-list" ref={list}>
         {items.length === 0 && <div className="memo-empty">{tr('아직 없어 — 지금 뭐 하는지, 보낼 프롬프트, 왜 그렇게 정했는지 적어 둬', "Nothing yet — jot down what you're doing, prompts to send, and why you decided things")}</div>}
@@ -134,9 +134,8 @@ export function MemoPanel({ project, items, onAdd, onSend, onCopy, onRemove, onC
  * 교훈 목록 — 쌓이기만 하면 참모 지시가 무거워진다. 끝난 할 일·틀린 건 지우고(두 번 눌러), 여러 프로젝트에 통하는 건 공통으로.
  * 지우면 프로젝트 CLAUDE.local.md 에 복사된 같은 줄도 빠진다
  */
-function LessonList({ project, lessons, onRemove, onPromote, onGroup }: {
-  project: string;
-  lessons: { mine: string[]; common: string[] };
+function LessonList({ lessons, onRemove, onPromote, onGroup }: {
+  lessons: { scope: string; mine: string[]; common: string[] };
   onRemove?: (name: string, lesson: string) => void;
   onPromote?: (lesson: string) => void;
   onGroup?: () => void;
@@ -155,9 +154,9 @@ function LessonList({ project, lessons, onRemove, onPromote, onGroup }: {
     const k = `${name}\n${l}`;
     return (
       <div key={k} className="memo-item lesson-item">
-        <div className="memo-text">{l}</div>
+        <div className="memo-text">{shownLesson(l)}</div>
         <span className="memo-acts">
-          {promote && <button className="mini" title={tr('모든 프로젝트 지시에 붙게', 'Attach to every project')} onClick={() => onPromote?.(l)}>{tr('공통으로', 'Make common')}</button>}
+          {promote && canPromote(name, l) && <button className="mini" title={tr('모든 프로젝트 지시에 붙게', 'Attach to every project')} onClick={() => onPromote?.(l)}>{tr('공통으로', 'Make common')}</button>}
           <button className={`mini ${armed === k ? 'danger' : ''}`} onClick={() => del(name, l)}>
             {armed === k ? tr('한 번 더', 'Again') : tr('지우기', 'Delete')}
           </button>
@@ -165,17 +164,19 @@ function LessonList({ project, lessons, onRemove, onPromote, onGroup }: {
       </div>
     );
   };
+  const project = lessons.scope;
+  const orch = isOrchScope(project);
   return (
     <div className="memo-list">
-      <div className="lesson-note dim">{tr(`${josa(assistant(), '이', '가')} 이 프로젝트에 일을 시킬 때 지시 끝에 붙는 것. 끝난 할 일·중복은 지워 줘`, 'Attached to the end of every instruction sent to this project. Delete finished to-dos and duplicates')}</div>
-      {onGroup && shouldGroup(project, lessons.mine.length) && (
+      {!orch && <div className="lesson-note dim">{tr(`${josa(assistant(), '이', '가')} 이 프로젝트에 일을 시킬 때 지시 끝에 붙는 것. 끝난 할 일·중복은 지워 줘`, 'Attached to the end of every instruction sent to this project. Delete finished to-dos and duplicates')}</div>}
+      {onGroup && !orch && shouldGroup(project, lessons.mine.length) && (
         <div className="lesson-group">
           <button className="mini" title={tr(`주제별로 묶어 필요할 때만 여는 스킬로 만들어요. ${josa(assistant(), '이', '가')} 알아서 묶고 한 줄로 알려요`, `Group by topic into skills that open only when needed. ${assistant()} does it and tells you in one line`)} onClick={onGroup}>
             {tr('스킬로 묶기', 'Group into skills')}
           </button>
         </div>
       )}
-      {lessons.mine.length === 0 && <div className="memo-empty">{tr('이 프로젝트 교훈은 아직 없어', 'No lessons for this project yet')}</div>}
+      {lessons.mine.length === 0 && <div className="memo-empty">{orch ? tr('이 참모 기억은 아직 없어', 'Nothing remembered for this assistant yet') : tr('이 프로젝트 교훈은 아직 없어', 'No lessons for this project yet')}</div>}
       {lessons.mine.map((l) => row(project, l, true))}
       {lessons.common.length > 0 && <div className="lesson-sec dim">{tr(`공통 ${lessons.common.length} — 모든 프로젝트`, `Common ${lessons.common.length} — every project`)}</div>}
       {lessons.common.map((l) => row(COMMON, l, false))}

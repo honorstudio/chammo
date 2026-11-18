@@ -48,6 +48,11 @@ Promise.race([fonts, new Promise((r) => setTimeout(r, 1500))]).finally(async () 
   await import('./data/tauri').then((t) => t.closeMyPtys()).catch(() => {});
   // 입력칸 쓰던 글(<데이터>/drafts.json) — 칸이 그려지며 바로 읽게 먼저
   await import('./data/drafts').then((d) => d.loadDrafts()).catch(() => {});
+  // 프사 기억(데스크톱) — 다시 켤 때 첫 장면부터 저장한 모양·색으로(폰과 같은 keep, 2026-11-17 켤 때 점호)
+  await import('./ui/avatar/store').then((m) => m.setAvatarSource({ keep: {
+    load: () => JSON.parse(localStorage.getItem('chammo.avatars.v1') ?? 'null'),
+    save: (raw) => localStorage.setItem('chammo.avatars.v1', JSON.stringify(raw)),
+  } })).catch(() => {});
   const { default: App } = await import('./App');
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
@@ -56,4 +61,6 @@ Promise.race([fonts, new Promise((r) => setTimeout(r, 1500))]).finally(async () 
       </ErrorBoundary>
     </StrictMode>,
   );
+  // index.html 첫 장면(#boot)은 점호 덮개가 이어받아 지운다 — 앱이 못 그렸을 때(오류 화면)를 가리지 않게 상한 뒤엔 여기서도 지운다
+  window.setTimeout(() => document.getElementById('boot')?.remove(), 4000);
 });

@@ -119,9 +119,85 @@ async function call(path: string, init?: RequestInit, retried = false): Promise<
     if (now === token) setToken(null); // 끊긴 기기 — 새 QR 로 다시
     throw new NoKeyError();
   }
-  if (!r.ok) throw new Error((await r.text()) || `HTTP ${r.status}`);
+  if (!r.ok) {
+    const msg = (await r.text()) || `HTTP ${r.status}`;
+    // 이 기기가 키즈 패드로 잠겼다(맥 kids_pad) — 표시를 잃었어도 아이 화면으로 다시 연다
+    if (r.status === 403 && msg === 'kids pad' && !isKidsPad()) { setKidsPad(true); location.reload(); }
+    throw new Error(msg);
+  }
   return r;
 }
+
+// ───────── 패드 키즈 화면(/api/kids/*, 셋째 조각) ─────────
+const KIDS_PAD = 'chammo.kidsPad';
+/** 이 기기가 키즈 패드인가 — 맥이 잠금을 쥐고(다른 길 403), 이 표시는 첫 화면을 바로 아이 화면으로 고르는 데만 */
+export const isKidsPad = () => { try { return localStorage.getItem(KIDS_PAD) === '1'; } catch { return false; } };
+const setKidsPad = (on: boolean) => { try { if (on) localStorage.setItem(KIDS_PAD, '1'); else localStorage.removeItem(KIDS_PAD); } catch { /* 저장 못 함 — 맥 403 이 다시 알려 준다 */ } };
+/** 키즈 참모를 골라 이 기기를 아이 화면으로 — 맥이 이 기기 줄을 그 참모에 잠근다 */
+export async function enterKidsPad(key: string) {
+  await post('/api/kids/enter', { key });
+  setKidsPad(true);
+  location.reload();
+}
+/** 보호자 — 오늘 아이 시간 n분 더(맥 kids_guard) */
+export const addKidsTime = (key: string, addMin: number) => post<{ usedMs: number; limitMs: number; leftMs: number }>('/api/kids-time', { key, addMin });
+type KidsTry = { ok: true } | { ok: false; waitMs: number; wrong: boolean };
+/** 숫자·패스키 시도 — 틀림 403·쉬는 중 429 는 몸에 waitMs */
+const kidsTry = async (f: () => Promise<unknown>): Promise<KidsTry> => {
+  try {
+    await f();
+  } catch (e) {
+    const v = (() => { try { return JSON.parse((e as Error).message) as { waitMs?: number; wrong?: boolean; passkey?: boolean }; } catch { return null; } })();
+    if (v) return { ok: false, waitMs: v.waitMs ?? 0, wrong: !!v.wrong || v.passkey === false };
+    throw e;
+  }
+  return { ok: true };
+};
+/** 나가기 — 맞으면 보호자 화면으로 */
+const kidsLeave = async (body: object): Promise<KidsTry> => {
+  const r = await kidsTry(() => post('/api/kids/leave', body));
+  if (r.ok) { setKidsPad(false); location.reload(); }
+  return r;
+};
+/** 보호자 폰·패드 — 아이 대화(7일)·작품 목록·오늘 시간, 작품 하나(맥이 인터넷 막는 머리를 붙인 글, srcdoc 로만) — 아홉째 조각 */
+export const kidsToday = (key: string) => getJson<{ child: string; rows: import('../domain/kids').KidsRow[]; works: { name: string; title: string; mtime: number }[]; time?: { usedMs: number; limitMs: number; leftMs: number } }>(`/api/kids-today?key=${encodeURIComponent(key)}`);
+export const kidsWorkGuardian = (key: string, name: string) => getText(`/api/kids-work?key=${encodeURIComponent(key)}&name=${encodeURIComponent(name)}`);
+export const kidsPadApi = {
+  me: () => getJson<{ key: string; on: boolean; child?: string; avatar?: unknown; passkey?: boolean; turn?: { peekMs?: number; unsureMs?: number; moreMs?: number } }>('/api/kids/me'),
+  say: (text: string, cid: string) => post<{ ok: true }>('/api/kids/say', { text, cid }).then(() => undefined),
+  log: () => getJson<{ ts: number; who: string; text: string }[]>('/api/kids/log'),
+  /** 나가기 — 보호자 숫자를 맥이 확인(틀림 403·쉬는 중 429 는 몸에 waitMs), 맞으면 보호자 화면으로 */
+  leave: (pin?: string) => kidsLeave({ pin: pin ?? '' }),
+  /** 패스키(일곱째 조각) — 도전값·등록(숫자를 맞혀야)·서명으로 나가기 */
+  passkey: {
+    challenge: (purpose: 'register' | 'leave', rp: string) => post<{ challenge: string; ids: string[] }>('/api/kids/passkey/challenge', { purpose, rp }),
+    register: (pin: string, reg: object) => kidsTry(() => post('/api/kids/passkey/register', { pin, reg })),
+    leave: (a: object) => kidsLeave({ passkey: a }),
+  },
+  tick: () => post<{ usedMs: number; limitMs: number; leftMs: number }>('/api/kids/tick', {}),
+  /** 작품(다섯째 조각) — 목록과 한 작품(맥이 CSP 머리·그림을 넣은 글, srcdoc 로만) */
+  works: () => getJson<{ name: string; title: string; mtime: number }[]>('/api/kids/works'),
+  work: (name: string) => getText(`/api/kids/work?name=${encodeURIComponent(name)}`),
+  /** 목소리(넷째 조각) — 녹음은 16kHz wav 그대로, 답 조각은 200 소리 · 204 아직 · 410 끝 */
+  voice: {
+    peek: (wav: Uint8Array, cid: string) => postWav<{ text: string; more: boolean; judge?: 'end' | 'more' | 'unsure' }>(`/api/kids/peek?cid=${encodeURIComponent(cid)}`, wav),
+    // 판정 기록 칸(맥 turns.jsonl) — 판정·쉼·이었나·기다린 쉼, 숫자와 낱말만
+    hear: (wav: Uint8Array, cid: string, m?: { j: string; p: number; r: boolean; w: number; lv?: number; fl?: number }) => postWav<{ text: string }>(`/api/kids/hear?cid=${encodeURIComponent(cid)}${m ? `&j=${m.j}&p=${m.p}&r=${m.r ? 1 : 0}&w=${m.w}${m.lv !== undefined ? `&lv=${m.lv}&fl=${m.fl ?? 0}` : ''}` : ''}`, wav),
+    /** 말을 못 넘긴 때 기록(11-18) — 최대 소리·바닥·이유만 */
+    turnLog: (e: { cid: string; ev: string; lv: number; fl: number; follow: boolean }) => post('/api/kids/turnlog', e),
+    clip: async (cid: string, n: number): Promise<ArrayBuffer | null | 'end'> => {
+      try {
+        const r = await call(`/api/kids/voice?cid=${encodeURIComponent(cid)}&n=${n}`);
+        return r.status === 204 ? null : r.arrayBuffer();
+      } catch (e) {
+        if ((e as Error).message === 'no more') return 'end';
+        throw e;
+      }
+    },
+    pre: (i: number) => call(`/api/kids/pre?i=${i}`).then((r) => r.arrayBuffer()),
+  },
+};
+const postWav = <T>(path: string, wav: Uint8Array) => call(path, { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: wav as BodyInit }).then((r) => r.json() as Promise<T>);
 
 /** 글·JSON 받기 시간 제한 — 매달린 요청 하나가 받기 고리를 통째로 세웠다(2026-10-04, 백그라운드에서 돌아온 폰). signal = 부른 쪽이 끊을 때.
  *  중계 길은 터널이 받고 있는 동안 더 기다린다(domain/readLimit) */
@@ -474,7 +550,7 @@ export const saveOrchAvatar = (id: string, avatar: import('../domain/avatar').Av
 /** 꺼진 참모를 그 대화 그대로 다시 켠다(HQ 폴더 것만 — 서버가 다시 본다). already = 이미 켜져 있어서 아무것도 안 했다(낡은 목록에서 누름) */
 export const respawnOrch = (sessionId: string) => post<{ ok: true; already?: boolean }>('/api/respawn', { sessionId }).then((r) => ({ already: !!r.already }));
 /** 새 참모 — 별명만 보내고 진짜 이름(번호)은 서버가 지어 돌려준다 */
-export const spawnOrch = (nick: string, role = '') => post<{ ok: true; name: string }>('/api/spawn', { nick, role }).then((r) => r.name);
+export const spawnOrch = (nick: string, role = '', kid: { child: string } | null = null) => post<{ ok: true; name: string }>('/api/spawn', kid ? { nick, role, kid } : { nick, role }).then((r) => r.name);
 
 /** 사람 개입 켜기·돌려주기(세션이 부르는 중이면 돌려주기 = '다 했어') — 그 세션(sessionPid)의 브라우저일 때만 */
 /** 세션 브라우저 화면 다시 받기 — 맥 모달의 다시 시도(agent_retry)와 같다 */
@@ -503,6 +579,9 @@ export const stopOrch = (id: string) => post<{ ok: true }>('/api/stop', { id }).
 /** 맥 앱 음성 모드(폰 입력창 마이크) — 읽기·켜고 끄기(scripts/app voice 와 같은 통로) */
 export const readVoice = () => getText('/api/voice').then((t) => (JSON.parse(t) as { on?: boolean }).on === true);
 export const setVoiceMode = (on: boolean) => post<{ on: boolean }>('/api/voice-mode', { on }).then((r) => r.on);
+/** 새 세션 기본 모델·노력값(맥 설정 > 참모와 같은 칸, Rust default_model) — 옛 맥 앱엔 없다(실패면 줄을 안 그린다) */
+export const readDefaultModel = () => getText('/api/default-model').then((t) => JSON.parse(t) as import('../domain/defaultModel').DefaultModelView);
+export const setDefaultModel = (model: string, effort: string) => post<import('../domain/defaultModel').DefaultModelView>('/api/default-model', { model, effort });
 /** 폰 음성(맥이 만든 소리를 폰에서) — 하트비트(보고 있음·소리 소식) → 가져갈 소리·멈춤 번호 / 내놓은 소리 파일(wav). 시간 제한은 부르는 쪽(data/phoneVoice)이 신호로 */
 export const voiceBeat = (body: object, signal?: AbortSignal, keepalive = false) =>
   call('/api/voice-beat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal, keepalive }).then((r) => r.json() as Promise<import('../domain/phoneVoice').BeatReply>);

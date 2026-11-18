@@ -121,6 +121,53 @@ fn 숫자_확인_받을_기기_폰은_대기도_컴퓨터는_허용된_것만() 
     assert!(!link_dev_ok(&s, "ghost", true));
 }
 
+// 같은 계정이면 바로 연결(2026-11-18 사용자 결정 A) — 숫자·메일 없이. 경계: 허용 대기·자동 허용·다른 계정(목록에 없음)·뺀 기기(목록에 없음)·
+// 나 자신·종류가 다른 갈래·이 맥이 로그아웃했거나 허용 대기면 바로 연결 안 됨(숫자로 내려가거나 닫힌다)
+#[test]
+fn 바로_연결은_같은_계정의_사람이_허용한_기기만() {
+    let d = |id: &str, kind: &str, status: &str, by: &str, current: bool| crate::team_relay::DeviceName { id: id.into(), name: id.into(), kind: kind.into(), status: status.into(), approved_by: by.into(), current, ..Default::default() };
+    let mut s = st();
+    s.account = Some(crate::team_relay::Account { id: "acc".into(), email: "me@gmail.com".into(), name: String::new() });
+    s.my_devices = vec![
+        d("me", "mac", "approved", "", true),
+        d("ph", "phone", "approved", "human", false),
+        d("old", "phone", "approved", "", false),
+        d("wait", "phone", "pending", "", false),
+        d("auto", "phone", "approved", "auto", false),
+        d("imac", "mac", "approved", "human", false),
+        d("pc", "win", "pending", "", false),
+        d("autopc", "win", "approved", "auto", false),
+    ];
+    assert!(link_direct_ok(&s, "ph", false), "사람이 허용한 같은 계정 폰");
+    assert!(link_direct_ok(&s, "old", false), "허용 표시가 없던 옛 허용 기기");
+    assert!(!link_direct_ok(&s, "wait", false), "허용 대기 폰은 숫자(그 카드가 계정 허용도 한다)");
+    assert!(!link_direct_ok(&s, "auto", false), "24시간 자동 허용은 사람이 본 적이 없다 — 숫자로");
+    assert!(!link_direct_ok(&s, "ghost", false), "다른 계정·뺀 기기는 목록에 없다");
+    assert!(!link_direct_ok(&s, "ph", true), "폰을 컴퓨터 갈래로");
+    assert!(link_direct_ok(&s, "imac", true), "허용된 같은 계정 컴퓨터");
+    assert!(!link_direct_ok(&s, "imac", false), "컴퓨터를 폰 갈래로");
+    assert!(!link_direct_ok(&s, "pc", true), "대기 컴퓨터");
+    assert!(!link_direct_ok(&s, "autopc", true), "자동 허용 컴퓨터");
+    assert!(!link_direct_ok(&s, "me", true), "나 자신");
+    let mut out = s.clone();
+    out.account = None;
+    assert!(!link_direct_ok(&out, "ph", false), "이 맥이 로그아웃했으면 바로 연결 없음");
+    let mut waiting = s.clone();
+    waiting.pending = true;
+    assert!(!link_direct_ok(&waiting, "ph", false), "이 맥이 허용 대기면 바로 연결 없음");
+}
+
+#[test]
+fn 바로_연결은_기기마다_10분에_5번() {
+    let t0 = Instant::now();
+    let mut seen = vec![];
+    for _ in 0..DIRECT_MAX {
+        assert!(direct_budget(&mut seen, t0));
+    }
+    assert!(!direct_budget(&mut seen, t0 + Duration::from_secs(60)), "여섯째는 숫자로");
+    assert!(direct_budget(&mut seen, t0 + DIRECT_WINDOW + Duration::from_secs(1)), "10분 지나면 다시");
+}
+
 #[test]
 fn 메일_코드_연결_알림은_맥에만_그_폰엔_안_보낸다() {
     // 2026-11-13 12:37: '새 폰이 메일 코드로 연결됐어요'가 방금 코드를 넣은 그 폰에 푸시로 갔다(같은 폰의 옛 기기 구독으로).

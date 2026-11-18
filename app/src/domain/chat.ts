@@ -1,7 +1,7 @@
 // 스페이스 모드 채팅: 세션 대화 기록(~/.claude/projects/*/<sessionId>.jsonl)을 말풍선 항목으로.
 // 터미널(TUI)은 뒤에 그대로 살아 있고, 이건 그 기록을 읽기 좋게 다시 그리는 보기일 뿐이다(원칙 1 — 2026-09-30 사용자).
 
-import { toolTarget } from './activity';
+import { isAuthError, isTermsError, toolTarget } from './activity';
 import { ORIGIN_NOTE, quotePath } from './drop';
 import { dropSig } from './orchLabel';
 import type { ShowAt } from './showAt';
@@ -9,7 +9,8 @@ import type { ShowAt } from './showAt';
 export type ChatTool = { name: string; target: string };
 export type ChatItem =
   | { kind: 'user'; id: string; ts: string; text: string; /** 붙인 그림(data URL) — 말풍선 썸네일 */ images?: string[]; /** 그 말에 든 가장 큰 그림 번호([Image #n], staleRefs) */ chip?: number }
-  | { kind: 'assistant'; id: string; ts: string; text: string; /** 턴 끝 답(stop_reason end_turn) — 아니면 턴 중간 글(이어서 도구·생각) */ end?: true }
+  | { kind: 'assistant'; id: string; ts: string; text: string; /** 턴 끝 답(stop_reason end_turn) — 아니면 턴 중간 글(이어서 도구·생각) */ end?: true;
+      /** Claude 쪽 오류 줄(isApiErrorMessage) — retry = 과부하·한도·서버 오류(같은 말을 다시 보내면 된다), login = 로그인 풀림·약관(로그인 카드 흐름) */ err?: 'retry' | 'login' }
   | { kind: 'tools'; id: string; ts: string; tools: ChatTool[] }
   /** 슬래시 명령 — 말풍선 대신 작은 줄. out = 명령 결과(/context·/cost 등, 색 코드 뺀 글) */
   | { kind: 'note'; id: string; ts: string; text: string; out?: string }
@@ -17,7 +18,7 @@ export type ChatItem =
   | { kind: 'relay'; id: string; ts: string; from: string; text: string; /** from = 보낸 세션의 진짜 이름 — 화면엔 seenName 으로 */ session?: true };
 
 type Block = { type?: string; text?: string; name?: string; input?: Record<string, unknown>; source?: { type?: string; media_type?: string; data?: string } };
-type Rec = { type?: string; subtype?: string; content?: unknown; uuid?: string; parentUuid?: string | null; timestamp?: string; isMeta?: boolean; origin?: { kind?: string }; isSidechain?: boolean; isCompactSummary?: boolean; message?: { content?: unknown; stop_reason?: string | null };
+type Rec = { type?: string; subtype?: string; content?: unknown; isApiErrorMessage?: boolean; error?: string; uuid?: string; parentUuid?: string | null; timestamp?: string; isMeta?: boolean; origin?: { kind?: string }; isSidechain?: boolean; isCompactSummary?: boolean; message?: { content?: unknown; stop_reason?: string | null };
   /** 일하는 중에 끼어든 메시지는 user 줄이 아니라 queued_command 첨부로 남는다(2026-09-30 실측) */
   attachment?: { type?: string; prompt?: unknown; origin?: { kind?: string } } };
 
@@ -160,13 +161,36 @@ function itemsOf(r: Rec): (ChatItem | Out)[] {
   }
   if (r.type === 'assistant') {
     const out: ChatItem[] = [];
+    const err = r.isApiErrorMessage === true ? (isAuthError(r, textOfBlocks(r.message?.content)) || isTermsError(r, textOfBlocks(r.message?.content)) ? 'login' as const : 'retry' as const) : null;
     for (const b of blocks(r.message?.content)) {
-      if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) out.push({ kind: 'assistant', id, ts, text: b.text.trim(), ...(r.message?.stop_reason && r.message.stop_reason !== 'tool_use' ? { end: true as const } : {}) /* end_turn·stop_sequence·max_tokens — 실측 글 줄은 end_turn 1805·tool_use 203·stop_sequence 8 */ });
+      if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) out.push({ kind: 'assistant', id, ts, text: b.text.trim(), ...(r.message?.stop_reason && r.message.stop_reason !== 'tool_use' ? { end: true as const } : {}) /* end_turn·stop_sequence·max_tokens — 실측 글 줄은 end_turn 1805·tool_use 203·stop_sequence 8 */, ...(err ? { err } : {}) });
       else if (b.type === 'tool_use' && b.name) out.push({ kind: 'tools', id, ts, tools: [{ name: b.name, target: chatTarget(b.input) }] });
     }
     return out;
   }
   return [];
+}
+
+const textOfBlocks = (content: unknown) => blocks(content).map((b) => (b.type === 'text' && typeof b.text === 'string' ? b.text : '')).join('\n');
+
+/** 갔지만 답을 못 받은 내 말 — Claude 쪽 오류(과부하·한도·서버·로그인 풀림·약관)로 그 말 턴이 끝나고 답이 없다(2026-11-17 '못 갔다' 기준 ④).
+ *  대화 끝이 [내 말 → 오류 줄]일 때 그 말 하나만(사이엔 알림 줄·되풀이 오류 줄만) — 도구를 돌린 뒤 난 오류는 같은 말을 다시 보내면 한 일을 또 하니 빼고,
+ *  그 앞 말은 안 본다(앞 턴에 흡수된 말·멈춘 말까지 잡혔다 — 하네스). 뒤에 새 말·답이 붙으면(다시 보내 답을 받음·다른 말로 넘어감) 빠진다.
+ *  값은 그 말 id → retry(다시 보내기)·login(로그인 카드 흐름) */
+export function errorTurns(items: ChatItem[]): Map<string, 'retry' | 'login'> {
+  const out = new Map<string, 'retry' | 'login'>();
+  let i = items.length - 1;
+  while (i >= 0 && items[i]!.kind === 'note') i--;
+  const e = items[i];
+  if (e?.kind !== 'assistant' || !e.err) return out;
+  const kind = e.err;
+  for (i--; i >= 0; i--) {
+    const it = items[i]!;
+    if (it.kind === 'note' || (it.kind === 'assistant' && it.err)) continue; // 알림 줄·Claude 가 다시 해 보다 낸 오류 줄
+    if (it.kind === 'user') out.set(it.id, kind);
+    break;
+  }
+  return out;
 }
 
 /** 끝 항목과 이어지면 합친다 — 도구끼리는 한 묶음, 답 조각끼리는 한 말풍선, 명령 결과는 앞 명령 줄 밑에. list 를 제자리에서 바꾼다 */
@@ -180,7 +204,7 @@ function push(list: ChatItem[], it: ChatItem | Out) {
   }
   if (last?.kind === 'tools' && it.kind === 'tools') list[list.length - 1] = { ...last, tools: [...last.tools, ...it.tools] };
   // 턴 끝 답(end) 뒤는 새 턴 — 숨은 줄(끝 알림 등)로 깬 답까지 앞 답에 붙이면 앞 턴 물음이 마지막 말로 남는다
-  else if (last?.kind === 'assistant' && !last.end && it.kind === 'assistant') { const { end: _, ...head } = last; list[list.length - 1] = { ...head, text: `${last.text}\n\n${it.text}`, ...(it.end ? { end: true as const } : {}) }; } // 턴 끝은 뒤 조각이 정한다
+  else if (last?.kind === 'assistant' && !last.end && it.kind === 'assistant') { const { end: _, err: _e, ...head } = last; list[list.length - 1] = { ...head, text: `${last.text}\n\n${it.text}`, ...(it.end ? { end: true as const } : {}) }; } // 답 글에 붙은 오류는 '답 없음'이 아니다(err 안 넘김) // 턴 끝은 뒤 조각이 정한다
   else list.push(it);
 }
 
@@ -265,6 +289,29 @@ export function staleRefs(termText: string, items: ChatItem[]): boolean {
 }
 
 export const chatNorm = (t: string) => stripMarks(t).replace(IMAGE_TOKEN, '').replace(/\\/g, '').replace(/\s+/g, ' ').trim();
+
+/** 끊고 보내기(⌘Enter, domain/cutSend)가 다시 넣은 말 — 끊긴 턴에 묻힌 말이 기록에 한 번, 다시 넣은 게 한 번 더 남는다.
+ *  묻힌 말 → 멈췄어 → (RESCUE_MS 안, 사이엔 내 말·알림 줄만) 같은 말이면 앞의 묻힌 말을 뺀다 — 답은 뒤 말 밑에 붙는다 */
+const RESCUE_MS = 60_000;
+export function dropRescued(items: ChatItem[]): ChatItem[] {
+  const drop = new Set<number>();
+  items.forEach((it, j) => {
+    if (it.kind !== 'note' || it.text !== '멈췄어') return;
+    const stopAt = Date.parse(it.ts);
+    for (let k = j + 1; k < items.length; k++) {
+      const re = items[k]!;
+      if (re.kind === 'note') continue;
+      if (re.kind !== 'user' || Date.parse(re.ts) - stopAt > RESCUE_MS) break;
+      const n = chatNorm(re.text);
+      for (let i = j - 1; i >= 0; i--) {
+        const b = items[i]!;
+        if (b.kind === 'user' && !drop.has(i) && n && chatNorm(b.text) === n) { drop.add(i); break; }
+        if (b.kind === 'assistant' && b.end) break; // 앞 턴까지는 안 간다
+      }
+    }
+  });
+  return drop.size ? items.filter((_, i) => !drop.has(i)) : items;
+}
 
 /** 내가 보낸 말 — 사람 말 + 앱이 이 세션 입력칸에 친 줄([앱] …, 기록엔 relay 로 잡힌다). 앱 줄은 머리말을 붙여 친 글 그대로.
  *  사람 말만 보니 실제로 간 앱 줄이 '안 갔어요'로 남아 다시 보내기로 같은 줄이 다섯 번 갔다(2026-10-10 사용자) */

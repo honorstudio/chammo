@@ -1,5 +1,6 @@
 // 폰 허용 메일 코드(폰 쪽, 맥은 phone_mail_link.rs) — 코드 넣기는 두드리기 하나로 끝난다. 폰은 소켓을 쥐고 기다리지 않으니 메일 앱에 다녀와도 끊길 게 없고,
 // 진행(어느 컴퓨터에 코드를 받았나)은 저장소에 둬서 새로고침·앱 전환 뒤에도 코드 화면으로 돌아온다. 코드는 저장하지 않는다
+import { deviceUa } from './homeFirst';
 import { phoneKeys } from './keys';
 import { keyShape, LINK_ERRORS, type Computer } from './linkKnock';
 import type { Paired } from './knock';
@@ -68,7 +69,7 @@ export async function knockCode(relay: string, device: string, mac: Computer, co
     const fail = (e: MailCodeError) => end(() => { no(e); ws.close(); });
     let line: Promise<void> = Promise.resolve();
     const after = (f: () => void | Promise<void>) => { line = line.then(f, f); };
-    ws.onopen = () => void seal(mt, enc.encode(JSON.stringify({ step: 'mail-code', sign: k.signPub, x: k.xPub, ua: typeof navigator === 'undefined' ? '' : navigator.userAgent, dev: device, code })))
+    ws.onopen = () => void seal(mt, enc.encode(JSON.stringify({ step: 'mail-code', sign: k.signPub, x: k.xPub, ua: typeof navigator === 'undefined' ? '' : deviceUa(navigator.userAgent, navigator.maxTouchPoints ?? 0), dev: device, code })))
       .then((b) => ws.send(JSON.stringify({ t: 'knock', box: b64(b) })), () => fail(new MailCodeError('net')));
     ws.onerror = () => after(() => fail(new MailCodeError('net')));
     ws.onclose = () => after(() => fail(new MailCodeError('net')));

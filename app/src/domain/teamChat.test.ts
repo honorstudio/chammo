@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { toMineText, atQuery, pasteName, pasteTakes, convos, dayLabel, fileSize, mentionList, mentionParts, mentionsMe, reactionsOf, roomConvos, sayTarget, PEOPLE_COLORS, personColor, handoffText, lineOf, markRead, previewOf, roomItems, teamMark, teamTarget, teamUnread, unreadTotal, type TeamItem, type TeamMember, type TeamRoom } from './teamChat';
+import { toMineText, atQuery, pasteName, pasteTakes, convos, dayLabel, fileSize, mentionList, mentionParts, mentionsMe, reactionsOf, roomConvos, sayTarget, PEOPLE_COLORS, personColor, handoffText, lineOf, markRead, previewOf, roomItems, teamMark, teamUnread, unreadTotal, type TeamItem, type TeamMember, type TeamRoom } from './teamChat';
 
 const it0 = (o: Partial<TeamItem>): TeamItem => ({ room: 'r1', seq: 1, member: 'm2', device: 'd2', person: '하린', origin: 'human', body: '안녕', at: 1000, deviceName: '아이맥', kind: 'team', note: 'delivered', ...o });
 const members: TeamMember[] = [
@@ -114,11 +114,6 @@ describe('잡것', () => {
     expect(personColor('하린')).toBe(personColor(' 하린 '));
     expect(PEOPLE_COLORS).toContain(personColor('도윤'));
     expect(new Set(['하린', '도윤', '서진', '지우', '민서', '태오'].map(personColor)).size).toBeGreaterThan(3);
-  });
-  it('알림 누름 team:<방>', () => {
-    expect(teamTarget('team:r1')).toBe('r1');
-    expect(teamTarget('team:')).toBeNull();
-    expect(teamTarget('session:x')).toBeNull();
   });
   it('날짜 칸막이는 날이 바뀔 때만', () => {
     const now = new Date(2026, 9, 23, 15).getTime();

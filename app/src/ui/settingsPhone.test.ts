@@ -114,7 +114,7 @@ describe('폰 받지 않음(10-24) — 사람이 폰 연결을 끄면 기기 관
   it('기기 관리가 폰 상태의 off 를 보고 안내한다', () => {
     const src = tsx['/src/ui/DevicesSection.tsx'] ?? '';
     expect(src).toContain('setPhoneOff(!!m.off)');
-    expect(src).toContain('꺼져 있어서 폰이 이 컴퓨터에 붙지 않아요');
+    expect(src).toContain('꺼져 있어서 폰·태블릿이 이 컴퓨터에 붙지 않아요');
   });
 });
 
@@ -122,7 +122,7 @@ describe('테일스케일 없이(11-01 사용자) — 폰 연결 스위치는 �
   const dev = tsx['/src/ui/DevicesSection.tsx'] ?? '';
   const mob = tsx['/src/ui/MobileSection.tsx'] ?? '';
   it('내 기기 칸에 폰 연결 스위치(mobileApi.set) — 접힘(fallback)보다 위', () => {
-    const sw = dev.indexOf("tr('폰 연결', 'Phone link')");
+    const sw = dev.indexOf("tr('폰·태블릿 연결', 'Phone & tablet link')");
     expect(sw).toBeGreaterThan(-1);
     expect(dev).toMatch(/role="switch"[^>]*phoneOff|phoneOff[^>]*role="switch"/);
     expect(dev).toContain('mobileApi.set(');
@@ -155,7 +155,7 @@ describe('폰 추가(10-24 사용자 — QR 찍으면 사파리로 열려 홈 �
   });
   it('옛 짝짓기 QR(테일스케일 접힘)엔 사파리에서만 열린다는 경고 — 폰 앱은 위 폰 추가로', () => {
     expect(mob).toContain('사파리에서만 열려');
-    expect(mob).toContain("'폰 추가'");
+    expect(mob).toContain("'폰·태블릿 추가'");
   });
 });
 

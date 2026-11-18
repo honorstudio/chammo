@@ -79,13 +79,14 @@ pub fn point(h: &Handle, names_json: &str, label: &str, hold: u32) {
 }
 
 /// 스페이스 탭 칸에 얹기 — [x, y, w, h] 는 웹뷰 왼쪽 위 기준 CSS 점, vh = 웹 innerHeight(제목줄 밑 깔림 재기), 안 보이면 숨기고 받기를 멈춘다. 메인 스레드에서만
-pub fn place(h: &Handle, r: [f64; 4], vh: f64, visible: bool) {
+/// covered = 웹 팝오버가 덮음 — 뷰만 숨기고 받기는 계속(웹이 still 로 갈아 끼운다, 11-18)
+pub fn place(h: &Handle, r: [f64; 4], vh: f64, visible: bool, covered: bool) {
     #[cfg(craft_mirror)]
     unsafe {
-        craft_mirror_place(h.0 as *mut _, r[0], r[1], r[2], r[3], vh, visible as i32)
+        craft_mirror_place(h.0 as *mut _, r[0], r[1], r[2], r[3], vh, crate::browser_pane::pane_code(visible, covered))
     }
     #[cfg(not(craft_mirror))]
-    let _ = (h, r, vh, visible);
+    let _ = (h, r, vh, visible, covered);
 }
 
 /// 마지막 프레임을 JPEG 파일로 — 덮개가 칸을 덮을 때 웹이 그 자리에 깐다. 메인 스레드에서만

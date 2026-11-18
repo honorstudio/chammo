@@ -2,7 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { accountsApi, baseTools, browserSetupStart, browserSetupState, browserStatus, checkEnv, createHq, firstRunWindow, folderStatus, getAppEnv, makeDir, notifyRequest, openTarget, pickFolder, rebuildMenu, trustConsent, trustConsented, trustFolders, writeConfig, type Config } from '../data/tauri';
 import { hiddenRun, type Hidden } from '../data/hiddenRun';
 import { addState, type AccountsView } from '../domain/accounts';
-import { AUTO_NEXT_MS, LOGIN_LIMIT_MS, canSkip, doneCount, failKind, itemOk, itemsFor, lineLength, loginCommand, needsManualGet, nextItem, resumeScreen, retryItem, setItem, type FailKind, type FrScreen, type Item, type ItemKey , FIRST_SPAWN_KEY } from '../domain/firstRun';
+import { teamLogin, teamStatus } from '../data/teamApi';
+import { alreadyIn, gateErrText } from '../domain/loginGate';
+import { loginCancelled } from './LoginWait';
+import { invoke } from '@tauri-apps/api/core';
+import { ACCOUNT_NEXT_MS, AUTO_NEXT_MS, LOGIN_LIMIT_MS, afterClaude, canSkip, doneCount, failKind, itemOk, itemsFor, lineLength, loginCommand, needsManualGet, nextItem, resumeScreen, retryItem, setItem, type FailKind, type FrScreen, type Item, type ItemKey , FIRST_SPAWN_KEY } from '../domain/firstRun';
 import { IS_WIN } from '../domain/reader';
 import { GET_URL, firstRunName, setupCommand, shq, tildify, versionFit, winSetupNotes, type EnvCheck } from '../domain/setup';
 import { tr } from '../i18n';
@@ -12,7 +16,7 @@ import { IconButton } from './kit/IconButton';
 import { mirrorConfig, reloadApp } from './setupFinish';
 import './firstRun.css';
 
-// 첫 설치 — 640×440 고정 창 4장(시작 → 준비 → Claude 로그인 → 끝). 사람 몫은 시작·로그인·시작하기뿐, 나머지는 저절로(ADR 0027, 시안 onboarding v1 C)
+// 첫 설치 — 640×440 고정 창 5장(시작 → 준비 → Claude 로그인 → Chammo 계정 → 끝). Chammo 계정은 2026-11-18 사용자 '설정 말고 설치 끝에' — 이미 로그인된 기기는 건너뛴다. 사람 몫은 시작·로그인·시작하기뿐, 나머지는 저절로(ADR 0027, 시안 onboarding v1 C)
 
 const RETRY_MS = 20_000;
 
@@ -49,6 +53,10 @@ export function FirstRun({ config }: { config: Config }) {
   const [hold, setHold] = useState(false);
   const [accounts, setAccounts] = useState<AccountsView | null>(null);
   const [party, setParty] = useState(false);
+  /** Chammo 계정 — has: 처음부터 로그인돼 있었나(null = 못 읽음), acct: 이 장에서의 로그인 */
+  const [has, setHas] = useState<boolean | null>(null);
+  const [acct, setAcct] = useState<'idle' | 'wait' | 'ok'>('idle');
+  const [acctMail, setAcctMail] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const running = useRef<ItemKey | null>(null);
@@ -62,6 +70,7 @@ export function FirstRun({ config }: { config: Config }) {
     alive.current = true;
     void getAppEnv().then((e) => setHome(e.home)).catch(() => {});
     void trustConsented().then((c) => setScreen(resumeScreen(c)), () => setScreen('start'));
+    void teamStatus().then((v) => setHas(!!v.account), () => setHas(null));
     return () => { alive.current = false; hidden.current?.stop(); window.clearTimeout(limit.current); };
   }, []);
 
@@ -195,9 +204,29 @@ export function FirstRun({ config }: { config: Config }) {
   // 로그인이 끝나면 잠깐 뒤 저절로 — '계정 추가'를 눌렀으면 멈추고 '다음'
   useEffect(() => {
     if (screen !== 'login' || login !== 'ok' || hold) return;
-    const t = window.setTimeout(() => setScreen('done'), AUTO_NEXT_MS);
+    const t = window.setTimeout(() => setScreen(afterClaude(has)), AUTO_NEXT_MS);
     return () => window.clearTimeout(t);
-  }, [screen, login, hold]);
+  }, [screen, login, hold, has]);
+
+  /** Chammo 계정(구글) — 서버는 Rust 가 고른다(LoginGate 와 같은 길). 브라우저에서 마치면 promise 가 끝난다 */
+  const startAccount = () => {
+    setAcct('wait');
+    setError(null);
+    void teamLogin('').then(
+      (v) => { setAcctMail(v.account?.email ?? ''); setAcct('ok'); },
+      (e: unknown) => {
+        const m = String(e);
+        if (alreadyIn(m)) { setAcct('ok'); return; }
+        setAcct('idle');
+        if (!loginCancelled(m)) setError(gateErrText(m));
+      },
+    );
+  };
+  useEffect(() => {
+    if (screen !== 'account' || acct !== 'ok') return;
+    const t = window.setTimeout(() => setScreen('done'), ACCOUNT_NEXT_MS);
+    return () => window.clearTimeout(t);
+  }, [screen, acct]);
 
   /** 계정 추가 — 설정 > 계정과 같은 길: 지금 로그인을 보관 → 새 로그인 → 보관 */
   const addAccount = async () => {
@@ -324,10 +353,32 @@ export function FirstRun({ config }: { config: Config }) {
                 ) : (
                   <div className="fr-foot">
                     <button type="button" className="fr-lnk" onClick={() => void addAccount()}>{tr('계정 추가', 'Add account')}</button>
-                    {hold && <IconButton size="l" tone="pri" label={tr('다음', 'Next')} onClick={() => setScreen('done')}><IconNext /></IconButton>}
+                    {hold && <IconButton size="l" tone="pri" label={tr('다음', 'Next')} onClick={() => setScreen(afterClaude(has))}><IconNext /></IconButton>}
                   </div>
                 )}
               </>
+            )}
+          </section>
+        )}
+        {screen === 'account' && (
+          <section className="fr-scr">
+            <h1>{tr('Chammo 계정', 'Chammo account')}</h1>
+            <p>{tr('폰·태블릿과 다른 컴퓨터가 이 계정으로 이어져요', 'Your phones, tablets and other computers connect through this account')}</p>
+            {acct === 'idle' && (
+              <div className="fr-foot">
+                <button type="button" className="fr-lnk" onClick={() => setScreen('done')}>{tr('나중에', 'Later')}</button>
+                <button type="button" className="fr-btn" autoFocus onClick={startAccount}>{tr('구글로 로그인', 'Sign in with Google')}</button>
+              </div>
+            )}
+            {acct === 'wait' && (
+              <div className="fr-line" role="status">
+                <span className="fr-slide">{tr('브라우저에서 로그인을 마쳐 주세요', 'Finish signing in in your browser')}</span>
+                <button type="button" className="fr-lnk" onClick={() => void invoke('team_login_reopen').catch(() => {})}>{tr('다시 열기', 'Reopen')}</button>
+                <button type="button" className="fr-lnk" onClick={() => void invoke('team_login_cancel').catch(() => {})}>{tr('취소', 'Cancel')}</button>
+              </div>
+            )}
+            {acct === 'ok' && (
+              <div className="fr-line" role="status"><svg className="fr-tick" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8.5 6.5 12.5 13.5 4" /></svg>{acctMail || tr('로그인됐어요', 'Signed in')}</div>
             )}
           </section>
         )}
@@ -336,13 +387,13 @@ export function FirstRun({ config }: { config: Config }) {
             <svg className="fr-big" viewBox="0 0 100 100" aria-hidden="true"><path d="M18 52 40 74 84 26" /></svg>
             <h1 aria-label={title}>{[...title].map((ch, i) => <span key={i} className="fr-ch" aria-hidden="true" style={{ '--i': i } as React.CSSProperties}>{ch === ' ' ? ' ' : ch}</span>)}</h1>
             <p>{tr('참모에게 "할 일 목록 웹페이지 하나 만들어 줘"라고 해 보세요', 'Try: "Make me a to-do list web page"')}</p>
-            {draft.features.usagePing && <p className="fr-note">{tr('하루 한 번 익명 사용 통계를 보내요. 기능별 횟수와 설치 번호·앱 판·OS 같은 정해 둔 값만 보내고, 대화·파일은 안 보내요. 설정 > 기능에서 끌 수 있어요.', 'Once a day Chammo sends anonymous usage statistics: counts and a few fixed values (install ID, app version, OS), never chats or files. Turn it off in Settings > Features.')}</p>}
+            {draft.features.usagePing && <p className="fr-note">{tr('하루 한 번 익명 사용 통계를, 오류가 나면 어디서 났는지를 보내요. 기능별 횟수와 설치 번호·앱 판·OS 같은 정해 둔 값만 보내고, 대화·파일은 안 보내요. 설정 > 기능에서 끌 수 있어요.', 'Once a day Chammo sends anonymous usage statistics, and where an error happened when one does: counts and a few fixed values (install ID, app version, OS), never chats or files. Turn it off in Settings > Features.')}</p>}
             <div className="fr-row"><span /><button type="button" className="fr-btn" autoFocus disabled={busy} onClick={() => void finish()}>{tr('시작하기', 'Get started')}</button></div>
           </section>
         )}
         {error && <div className="fr-err" role="alert">{error}</div>}
       </div>
-      <div className="fr-hair" style={{ width: `${lineLength(screen, items, login === 'ok') * 100}%` }} aria-hidden="true" />
+      <div className="fr-hair" style={{ width: `${lineLength(screen, items, screen === 'account' ? acct === 'ok' : login === 'ok') * 100}%` }} aria-hidden="true" />
     </div>
   );
 }

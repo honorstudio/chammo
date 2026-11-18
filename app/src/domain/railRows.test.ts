@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Session } from './session';
 import type { StoppedSession } from './stopped';
 import { creatingRow } from './orchRows';
-import { phaseWord, railMoved, railRows, wakeNotice, type RailRow } from './railRows';
+import { phaseWord, railMoved, railRows, riseFrom, wakeNotice, type RailRow } from './railRows';
 
 const live = (id: string, name: string): Session => ({ id, name, cwd: '/hq', kind: 'background', state: 'idle', project: 'hq', workspace: null, startedAt: 0, sessionId: `s-${id}` });
 const off = (id: string, name: string): StoppedSession => ({ id, sessionId: `s-${id}`, name, cwd: '/hq', project: 'hq', workspace: null, reason: 'done', startedAt: 0 });
@@ -83,5 +83,36 @@ describe('wakeNotice — 채팅 입력칸 위 한 줄', () => {
   it('깨우는 중·새로 켜는 중', () => {
     expect(wakeNotice('참모-2', true)).toBe('참모-2 깨우는 중… 뜨면 이 채팅이 그리로 넘어가');
     expect(wakeNotice('참모-3 · 시험', false)).toBe('참모-3 · 시험 켜는 중… 뜨면 이 채팅이 그리로 넘어가');
+  });
+});
+
+// 2026-11-17 켤 때 점호 v3 — 재부팅으로 꺼진 참모(lost)는 쉬는 칸이 아니라 위 띠 제자리에 깨울 차례로 서 있다가 거기서 깬다
+describe('railRows — 재부팅으로 꺼진 참모(깨울 차례)', () => {
+  it('순서 자리에 깨울 차례로 선다(위 띠에 빈 게 하나씩 튀어나오지 않게 처음부터)', () => {
+    const r = railRows({ live: [live('a', '참모')], stopping: none, starting: [], lost: [off('b', '참모-2'), off('c', '참모-3')], prev: [], order: ['s-b', 's-a', 's-c'] });
+    expect(keys(r)).toEqual(['참모-2:lost', '참모:live', '참모-3:lost']);
+  });
+  it('깨우기 시작하면 같은 자리(같은 키)에서 켜는 중, 살아나면 그대로 살아 있는 참모', () => {
+    const q = railRows({ live: [], stopping: none, starting: [], lost: [off('b', '참모-2')], prev: [] });
+    const w = railRows({ live: [], stopping: none, starting: [off('b', '참모-2')], lost: [off('b', '참모-2')], prev: q });
+    expect(keys(w)).toEqual(['참모-2:starting']);
+    expect(w[0]!.key).toBe(q[0]!.key);
+    const up = railRows({ live: [live('b', '참모-2')], stopping: none, starting: [], lost: [off('b', '참모-2')], prev: w });
+    expect(keys(up)).toEqual(['참모-2:live']);
+  });
+  it('켜기에 실패한 참모는 그 자리에 못 깸으로 남는다', () => {
+    const r = railRows({ live: [], stopping: none, starting: [], lost: [off('b', '참모-2')], failed: new Set(['s-b']), prev: [] });
+    expect(r[0]!.phase).toBe('lost');
+    expect(r[0]!.failed).toBe(true);
+  });
+});
+
+describe('riseFrom — 쉬는 칸에서 고른 참모는 쉬는 칸 자리에서 위 띠 제자리로 올라간다', () => {
+  it('지난 줄 모양에 쉬는 칸(r:키)으로 있던 참모면 rest', () => {
+    expect(riseFrom(['s-a:live', 'r:s-b'], 's-b')).toBe('rest');
+  });
+  it('처음 보는 칸(새 참모)이나 지난 모양이 없으면 null — 작게서 커지며 나타난다', () => {
+    expect(riseFrom(['s-a:live'], 'new:참모-3')).toBeNull();
+    expect(riseFrom(null, 's-b')).toBeNull();
   });
 });

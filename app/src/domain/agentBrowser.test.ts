@@ -213,7 +213,7 @@ describe('사람 개입(2026-10-06 사용자) — 평소 보기만, 개입·부�
     const t = { ...base, gate: true, takeover: { by: 'desktop' as const, at: 1 } };
     expect(takeoverLine(t)).toMatch(/사람이 조작 중/);
     expect(takeoverLine({ ...t, held: 5 })).toMatch(/세션은 기다리는 중/);
-    expect(takeoverLine({ ...t, takeover: { by: 'phone', at: 1 } })).toMatch(/폰에서/);
+    expect(takeoverLine({ ...t, takeover: { by: 'phone', at: 1 } })).toMatch(/폰·태블릿에서/);
     expect(takeoverLine({ ...t, gate: false })).toMatch(/멈추지 못/);
   });
   it('takeoverLine — 같이 쓰는 스크립트(chammo-browser launch)는 래퍼를 안 거쳐 못 멈춘다고 알린다(roadmap 부채 browser-takeover ①)', () => {

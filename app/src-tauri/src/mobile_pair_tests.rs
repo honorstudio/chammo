@@ -79,7 +79,10 @@ fn s7_토큰은_해시만_600_파일에() {
 fn 기기_이름은_user_agent_에서_짧게() {
     assert_eq!(device_name("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)"), "iPhone");
     assert_eq!(device_name("Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X)"), "iPad");
-    assert_eq!(device_name("Mozilla/5.0 (Linux; Android 14)"), "Android");
+    assert_eq!(device_name("Mozilla/5.0 (Linux; Android 14; SM-A315N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Mobile Safari/537.36"), "Android");
+    // 11-18 — 안드로이드 태블릿(UA 에 Mobile 없음), 맥 UA 아이패드(폰 입구가 iPad 를 붙여 보낸다 — deviceUa)
+    assert_eq!(device_name("Mozilla/5.0 (Linux; Android 15; SM-X710) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0 Safari/537.36"), "Android Tablet");
+    assert_eq!(device_name("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.1 Safari/605.1.15 iPad"), "iPad");
     assert_eq!(device_name("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"), "Mac");
     assert_eq!(device_name(""), "기기");
 }

@@ -101,6 +101,8 @@ export function TeamHome({ teamId, team, members, icon, onTalk, api = desktopPos
 
   // 판 — 글판과 같은 판 번호(보관함 바뀜)로 다시 읽는다. 읽기 실패는 판 없이 글 목록 그대로(문구는 글판 몫)
   const [hb, setHb] = useState<Board | null>(null);
+  // 판을 아나(기억이 있거나 한 번 받았거나 실패) — 모르면 판 없는 모양(공지 칸 + 글 목록)을 먼저 그렸다가 블록 판으로 바뀌었다(2026-11-16)
+  const [hbKnown, setHbKnown] = useState(() => !!homeMemo.get(teamId));
   const hrev = useRef(0);
   const busyHome = useRef(false);
   const loadHome = useCallback((seen: number | null) => {
@@ -111,19 +113,21 @@ export function TeamHome({ teamId, team, members, icon, onTalk, api = desktopPos
       homeMemo.put(teamId, n);
       hrev.current = n.rev;
       setHb(n);
-    }, () => {}).finally(() => { busyHome.current = false; });
+    }, () => {}).finally(() => { busyHome.current = false; setHbKnown(true); });
   }, [teamId, homeApi]);
   useEffect(() => {
     const m = homeMemo.get(teamId);
     setHb(m?.v ?? null);
+    setHbKnown(!!m);
     hrev.current = m?.v.rev ?? 0;
     loadHome(m && !needFetch(m, 0) ? m.v.rev : null);
     const sub = { seen: () => (busyHome.current ? null : hrev.current), poke: () => { if (!busyHome.current) loadHome(hrev.current); } };
     return watchHome ? watchHome(teamId, sub) : every(sub.poke, 3_000);
   }, [teamId, loadHome, watchHome]);
   // 블록이 읽는 것 — 그 블록이 판에 있을 때만, 보관함 판이 오르면 다시
-  const [agents, setAgents] = useState<AgentShown[]>([]);
-  const [files, setFiles] = useState<LockerItem[]>([]);
+  // null = 아직 안 받음 — 블록은 '없어요' 대신 빈 칸(받기 전에 '아직 팀 참모가 없어요'가 먼저 떴다)
+  const [agents, setAgents] = useState<AgentShown[] | null>(null);
+  const [files, setFiles] = useState<LockerItem[] | null>(null);
   const kinds = new Set(hb?.home?.blocks.map((x) => x.k) ?? []);
   const wantAgents = kinds.has('agents');
   const wantFiles = kinds.has('files');
@@ -203,7 +207,7 @@ export function TeamHome({ teamId, team, members, icon, onTalk, api = desktopPos
       {postState && <div className="tmh-empty">{postState}</div>}
     </>
   );
-  const data = { members, agents, files, content: hb?.content ?? {}, onTalk, openUrl: sources.openUrl, nameOf,
+  const data = { members, agents: agents ?? [], files: files ?? [], loading: { agents: agents === null, files: files === null }, content: hb?.content ?? {}, onTalk, openUrl: sources.openUrl, nameOf,
     openFile: sources.openFile ? (i: LockerItem) => sources.openFile!(teamId, i) : undefined, canOpen: sources.canOpen, thumb: sources.thumb ? (i: LockerItem) => sources.thumb!(teamId, i) : undefined,
     saveContent: (block: string, c: Parameters<HomeApi['content']>[2]) => homeApi.content(teamId, block, c).then(() => loadHome(null)) };
   const block = (x: HomeBlock, editing: boolean): React.ReactNode => {
@@ -236,7 +240,7 @@ export function TeamHome({ teamId, team, members, icon, onTalk, api = desktopPos
           nameOf={nameOf} onWrite={() => setDraft({ title: '', body: '', pin: false })} onSaved={() => loadHome(null)} Dialog={Dialog}
           renderBlock={(x, editing) => block(x, editing)}
           below={places.listBelow && list ? <><div className="hb-bh">{tr('글', 'Posts')}</div>{list}</> : null}
-          fallback={<>{err && <div className="tmh-err" role="alert">{err}</div>}{postList}</>} />
+          fallback={hbKnown ? <>{err && <div className="tmh-err" role="alert">{err}</div>}{postList}</> : <div className="tmh-empty">{tr('글을 불러오는 중…', 'Loading posts…')}</div>} />
       )}
       {draft && (
         <Dialog label={draft.origin ? tr('글 고치기', 'Edit post') : tr('글쓰기', 'New post')} onClose={() => !busy && setDraft(null)}>

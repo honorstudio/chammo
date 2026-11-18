@@ -43,6 +43,8 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
   const touched = useRef(false);
   const toggleFold = () => { touched.current = true; setFold((f) => !f); };
   const [phoneOff, setPhoneOff] = useState(false);
+  // 지금 중계 허브에 붙은 컴퓨터(1분 캐시) — 마지막 시각은 한 시간에 한 번만 적혀서 그걸로는 켜진 컴퓨터도 '꺼짐'이었다(11-18)
+  const [live, setLive] = useState<string[] | null>(null);
   // 폰 추가 QR — 입구 주소만. 카메라는 늘 사파리로 열어서, 짝 코드를 실으면 사파리가 써 버려 홈 화면 앱엔 안 남는다(10-24 사용자)
   const [entry, setEntry] = useState<EntryQr | null>(null);
   // 이 컴퓨터의 다른 Chammo(시험판 데이터 폴더)가 어느 계정에 붙어 있나 — 홈 폴더를 읽어서 열 때·다시 받기 때만
@@ -64,6 +66,7 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
     void invoke<string>('direct_log').then(setLog, () => {});
     void mobileApi.status().then((m) => { setPhoneOff(!!m.off); if (tailscaleNeedsLook([], phoneGroups(m.devices ?? []))) openFold(); }, () => {});
     void invoke<string>('e2e_self_step').then(setStep, () => {});
+    void invoke<string[] | null>('devices_online').then(setLive, () => {});
     loadPeer();
   };
   const openFold = () => { if (!touched.current) setFold(true); };
@@ -108,7 +111,7 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
   const cards = useMemo(() => directCards(log, { alive: () => true, prompt: () => undefined, reply: () => undefined }), [log]);
   const acc = v?.account ?? null;
   const list = v?.devices ?? [];
-  const rows = deviceRows(list, Date.now());
+  const rows = deviceRows(list, Date.now(), live);
   const n = deviceCounts(list);
   const others = hereOthers(here, acc?.email ?? '');
   // 사람 클릭만 — 스크립트가 만든 클릭은 무시(카드와 같은 문)
@@ -126,7 +129,7 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
         </div>
         {v && !acc && (
           <>
-            <p className="su-hint">{tr('Chammo 계정으로 로그인하면 컴퓨터와 폰이 한 목록에 모여요. 다른 기기도 같은 계정으로 로그인하세요', 'Sign in to your Chammo account and your computers and phones show up here. Sign in with the same account on each device.')}</p>
+            <p className="su-hint">{tr('Chammo 계정으로 로그인하면 컴퓨터와 폰·태블릿이 한 목록에 모여요. 다른 기기도 같은 계정으로 로그인하세요', 'Sign in to your Chammo account and your computers, phones and tablets show up here. Sign in with the same account on each device.')}</p>
             <div className="su-inline"><button className="btn pri" onClick={onAccount}>{tr('Chammo 계정에 로그인', 'Sign in to Chammo account')}</button></div>
           </>
         )}
@@ -150,25 +153,25 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
         {acc && !v?.pending && (
           <div className="su-row dev-row dm-phone">
             <div className="su-row-text">
-              <b>{tr('폰 연결', 'Phone link')}</b>
-              <span>{phoneOff ? tr('꺼져 있어서 폰이 이 컴퓨터에 붙지 않아요.', "Off, so phones can't connect to this computer.") : phoneReachHint(true).text}</span>
+              <b>{tr('폰·태블릿 연결', 'Phone & tablet link')}</b>
+              <span>{phoneOff ? tr('꺼져 있어서 폰·태블릿이 이 컴퓨터에 붙지 않아요.', "Off, so phones and tablets can't connect to this computer.") : phoneReachHint(true).text}</span>
             </div>
-            <input type="checkbox" role="switch" className="cfg-sw" aria-label={tr('폰 연결', 'Phone link')} checked={!phoneOff} disabled={busy}
+            <input type="checkbox" role="switch" className="cfg-sw" aria-label={tr('폰·태블릿 연결', 'Phone & tablet link')} checked={!phoneOff} disabled={busy}
               onChange={(e) => { const on = e.target.checked; act(() => mobileApi.set(on).then((m) => setPhoneOff(!!m.off))); }} />
           </div>
         )}
         {acc && !v?.pending && !phoneOff && (entry ? (
           <div className="su-mobile">
-            {entry.qrSvg && <img className="su-qr" alt={tr('폰 추가 QR', 'Add phone QR')} src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(entry.qrSvg)}`} />}
+            {entry.qrSvg && <img className="su-qr" alt={tr('폰·태블릿 추가 QR', 'Add phone or tablet QR')} src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(entry.qrSvg)}`} />}
             <div className="su-mobile-side">
-              <b>{tr('폰 카메라로 찍어 주세요', 'Scan with the phone camera')}</b>
+              <b>{tr('폰·태블릿 카메라로 찍어 주세요', 'Scan with the phone or tablet camera')}</b>
               <span className="su-hint">{tr('홈 화면에 추가(사파리, 안드로이드는 크롬)한 뒤 앱을 열어 구글로 로그인하고, 이 컴퓨터를 고르세요. 양쪽에 뜬 숫자가 같은지 확인해요',
                 'Add to Home Screen (Safari, or Chrome on Android), open the app and sign in with Google, then pick this computer. Check the number matches on both')}</span>
               <div className="su-inline"><IconButton size="l" tone="line" label={tr('닫기', 'Close')} onClick={() => setEntry(null)}><IconClose /></IconButton></div>
             </div>
           </div>
         ) : (
-          <div className="su-inline"><button className="btn" onClick={() => void mobileApi.entryQr().then(setEntry, (e: unknown) => setErr(String(e)))}>{tr('폰 추가', 'Add phone')}</button></div>
+          <div className="su-inline"><button className="btn" onClick={() => void mobileApi.entryQr().then(setEntry, (e: unknown) => setErr(String(e)))}>{tr('폰·태블릿 추가', 'Add phone or tablet')}</button></div>
         ))}
         {acc && (
           <>
@@ -182,7 +185,7 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
             ) : (
               <div className="su-inline"><button className="peer-alt" onClick={() => setRemoving('self')}>{tr('이 기기 로그아웃', 'Sign out of this device')}</button></div>
             ))}
-            <div className="dm-acct"><span>{tr(`${acc.email || acc.name} 계정`, `${acc.email || acc.name} account`)}</span><span>{tr(`폰 ${n.phones} · 컴퓨터 ${n.computers}`, `${n.phones} phone(s) · ${n.computers} computer(s)`)}</span></div>
+            <div className="dm-acct"><span>{tr(`${acc.email || acc.name} 계정`, `${acc.email || acc.name} account`)}</span><span>{tr(`폰·태블릿 ${n.phones} · 컴퓨터 ${n.computers}`, `${n.phones} phone/tablet(s) · ${n.computers} computer(s)`)}</span></div>
             <div className="su-rows">
               {rows.map((r) => {
                 const card = r.pending ? pendingCardFor(cards, r.id) : undefined;
@@ -231,8 +234,8 @@ export function DevicesSection({ title, onAccount, fallback }: { title: string; 
                     {pl.mode === 'pending' && (
                       <div className="dm-peer-pend">
                         {pl.sas && <div className="dm-peer-code" aria-label={tr(`확인 숫자 ${pl.sas}`, `Check number ${pl.sas}`)}>{pl.sas}</div>}
-                        <span>{tr(`이 숫자가 ${r.name} 카드 숫자와 같은지 폰에서 확인하고 허용해 주세요`, `Check on your phone that this matches the number on ${r.name}'s card, then allow it.`)}</span>
-                        <span className="su-hint">{tr(`폰이 없으면 ${r.name} 앞에서 카드를 눌러 주세요`, `No phone? Press the card at ${r.name} in person.`)}</span>
+                        <span>{tr(`이 숫자가 ${r.name} 카드 숫자와 같은지 폰·태블릿에서 확인하고 허용해 주세요`, `Check on your phone or tablet that this matches the number on ${r.name}'s card, then allow it.`)}</span>
+                        <span className="su-hint">{tr(`폰·태블릿이 없으면 ${r.name} 앞에서 카드를 눌러 주세요`, `No phone or tablet? Press the card at ${r.name} in person.`)}</span>
                       </div>
                     )}
                     {pl.error && <div className="su-error dm-peer-err">{peerLinkError(pl.error, r.name)}</div>}

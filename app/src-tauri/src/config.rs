@@ -155,6 +155,8 @@ pub struct Features {
     pub auto_revive: bool,
     /// 세션 자동 정리 — 끝난 팀 세션을 맡긴 참모에게 알려 갱신·끄기·워크트리 정리를 시킨다(domain/autoTidy). 기본 켬 — 앱(TS)만 읽지만 여기 없으면 저장 때 버려진다
     pub auto_tidy: bool,
+    /// 참모 대화 자동 정리 — 40% 넘고 10분 조용하면 인계(handoff.md) 뒤 /compact(domain/chiefCompact, 2026-11-17 사용자). 기본 켬 — 앱(TS)만 읽지만 여기 없으면 저장 때 버려진다
+    pub chief_compact: bool,
     /// 세션 브라우저 앱에서 보기 — 참모 브라우저 래퍼가 이 값을 읽어 크롬 CDP 포트를 연다(tools/chammo-browser/src/live.js). 기본 켬
     pub agent_view: bool,
     /// 화면 조종(Claude Code 내장 MCP computer-use)을 앱이 아는 모든 프로젝트에서 켜기 — 켜면 빠진 프로젝트에 넣어 준다(computer_use.rs).
@@ -176,11 +178,14 @@ pub struct Features {
     /// 애니메이션 "auto"(OS 동작 줄이기·맥 부하가 높으면 저절로 줄이기) | "reduce" | "off" — 앱(TS)만 읽는다(domain/animCalm).
     /// 여기 없으면 저장 때 사라진다(2026-10-12 사용자 "부하 심하면 애니메이션 때문에 끊긴다")
     pub animation: String,
+    /// 키즈 모드 쓰기(kids.rs) — 켜야 참모 프로필에 '키즈 참모' 칸이 보인다. 기본 끔: 모든 사람에게 보이면 안 된다(2026-11-17 사용자).
+    /// 끄면 저장된 키즈 참모 표시가 있어도 아무 참모도 키즈가 아니다
+    pub kids: bool,
 }
 
 impl Default for Features {
     fn default() -> Self {
-        Features { office: true, gacha: true, review: true, voice: true, auto_revive: false, auto_tidy: true, agent_view: true, computer_use: false, usage_ping: true, craft_basics: false, bubble: true, bubble_desk: true, git: None, animation: "auto".into() }
+        Features { office: true, gacha: true, review: true, voice: true, auto_revive: false, auto_tidy: true, chief_compact: true, agent_view: true, computer_use: false, usage_ping: true, craft_basics: false, bubble: true, bubble_desk: true, git: None, animation: "auto".into(), kids: false }
     }
 }
 
@@ -220,6 +225,11 @@ pub struct Config {
     pub ping_channel: String,
     /// 브라우저 칸 주소창 기본 검색 — "" 구글 · "naver" 네이버(2026-10-28)
     pub search_engine: String,
+    /// 새 세션 기본 모델 — Claude Code 별칭(opus·sonnet·haiku·fable), "" = Claude Code 기본(~/.claude/settings.json)을 따름.
+    /// 앱이 띄우는 세션에만 --model 로 붙인다(default_model.rs) — 사용자 전역 설정은 안 바꾼다(2026-11-17 사용자)
+    pub default_model: String,
+    /// 새 세션 기본 노력값 — low·medium·high·xhigh·max, "" = 따름
+    pub default_effort: String,
 }
 
 /// 시스템 언어(맥 ko_KR·윈도우 ko-KR 등) → 언어
@@ -254,6 +264,8 @@ pub fn default_config(home: &str, data: &Path, lang: &str, exists: impl Fn(&str)
         talk_anywhere: false,
         ping_channel: String::new(),
         search_engine: String::new(),
+        default_model: String::new(),
+        default_effort: String::new(),
     }
 }
 
@@ -276,6 +288,8 @@ pub fn owner_config() -> Config {
         talk_anywhere: true,
         ping_channel: String::new(),
         search_engine: String::new(),
+        default_model: String::new(),
+        default_effort: String::new(),
     }
 }
 
@@ -361,6 +375,11 @@ pub fn current() -> Config {
     c
 }
 
+/// 기억해 둔 설정을 잠금 없이 기다리지 않고 — panic 훅용(같은 스레드가 쓰기 잠금을 쥔 채 panic 했으면 None). 아직 안 읽었으면 None
+pub fn try_current() -> Option<Config> {
+    CURRENT.try_read().ok().and_then(|g| g.clone())
+}
+
 /// 음성 명령 + 읽을 글자 → 실행할 인자들. 명령 전체가 있는 파일이면 그대로(경로에 빈칸이 있어도),
 /// 아니면 빈칸으로 나눠 앞이 프로그램(`say -v Yuna` 처럼). 비어 있으면 macOS say
 pub fn tts_argv(home: &str, cmd: &str, text: &str, exists: impl Fn(&str) -> bool) -> Vec<String> {
@@ -438,6 +457,17 @@ pub fn reload_config() -> Config {
 pub fn set_bubble(on: bool) -> Result<(), String> {
     let mut c = current();
     c.features.bubble = on;
+    write_file(&c)?;
+    if let Ok(mut g) = CURRENT.write() {
+        *g = Some(c);
+    }
+    Ok(())
+}
+
+/// 새 세션 기본 모델·노력값만 바꿔 저장 — 폰 더보기가 부른다. 모르는 값은 빈 값(따름)으로
+pub fn set_default_model(model: &str, effort: &str) -> Result<(), String> {
+    let mut c = current();
+    (c.default_model, c.default_effort) = crate::default_model::clean(model, effort);
     write_file(&c)?;
     if let Ok(mut g) = CURRENT.write() {
         *g = Some(c);

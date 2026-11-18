@@ -184,7 +184,8 @@ fn mirror_of(app: &str) -> Option<(usize, &'static str)> {
 /// 스페이스 탭 칸 자리(웹뷰 왼쪽 위 기준 CSS 점)와 보이는지 — 웹이 탭을 띄울 때·크기·스크롤·모달마다 알려 준다.
 /// 따로 창에 떠 있으면 여기엔 안 얹고 "window" 를 돌려준다(탭은 '따로 창에 있어' 안내)
 #[tauri::command]
-pub fn craft_space_place<R: Runtime>(handle: tauri::AppHandle<R>, app: String, rect: [f64; 4], vh: f64, visible: bool) -> Result<String, String> {
+pub fn craft_space_place<R: Runtime>(handle: tauri::AppHandle<R>, app: String, rect: [f64; 4], vh: f64, visible: bool, covered: Option<bool>) -> Result<String, String> {
+    let covered = covered.unwrap_or(false);
     display_name(&app).ok_or("unknown app")?;
     if handle.get_webview_window(&label(&app)).is_some() {
         return Ok("window".into());
@@ -192,7 +193,7 @@ pub fn craft_space_place<R: Runtime>(handle: tauri::AppHandle<R>, app: String, r
     let pid = read_info(crate::config::data_dir(), &app).pid.ok_or("not open")?;
     let main = handle.get_webview_window("main").ok_or("no main window")?;
     #[cfg(not(target_os = "macos"))]
-    let _ = (main, pid, vh, visible);
+    let _ = (main, pid, vh, visible, covered);
     // 윈도우 개입이 진짜 창을 놓을 자리(웹뷰 안 CSS 점) — 보이든 말든 늘. 개입 단추는 칸 머리줄에 있어 누를 땐 보인다,
     // '보일 때만' 적었더니 안내 카드가 칸 위에 떠 있던 동안 한 번도 안 적혀 개입이 'no pane yet'(2026-10-21 윈도우 시험 PC)
     #[cfg(not(target_os = "macos"))]
@@ -217,7 +218,7 @@ pub fn craft_space_place<R: Runtime>(handle: tauri::AppHandle<R>, app: String, r
                 h.0
             }
         };
-        crate::craft_mirror::place(&crate::craft_mirror::Handle(h), rect, vh, visible);
+        crate::craft_mirror::place(&crate::craft_mirror::Handle(h), rect, vh, visible, covered);
     });
     Ok("space".into())
 }

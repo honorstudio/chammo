@@ -175,7 +175,7 @@ fn 인사가_틀리면_받지_않는다() {
 }
 
 #[test]
-fn 사람_카드를_건너뛰는_건_메일_길뿐이고_끈_맥은_그대로() {
+fn 사람_카드를_건너뛰는_건_메일_길과_같은_계정_바로_연결뿐이고_끈_맥은_그대로() {
     let src = include_str!("phone_relay.rs");
     let step = &src[src.find("fn link_step").unwrap()..src.find("pub fn link_answer").unwrap()];
     assert!(step.contains("crate::phone_mail_link::enabled(dir)"), "설정을 그때그때 본다");
@@ -183,5 +183,11 @@ fn 사람_카드를_건너뛰는_건_메일_길뿐이고_끈_맥은_그대로() 
     assert!(!step.contains("grant_phone("), "단계 안에서 바로 허용하지 않는다");
     let sub = &src[src.find("fn mail_submit").unwrap()..src.find("struct LinkOut").unwrap()];
     assert!(sub.find("phone_mail_link::submit").unwrap() < sub.find("grant_phone(").unwrap(), "코드 확인 뒤에만");
-    assert_eq!(src.matches("grant_phone(").count(), 3, "정의·숫자 카드 답·메일 코드 — 허용 끝단은 이 둘뿐");
+    // 11-18 결정 A — 같은 계정의 사람이 허용한 기기는 바로(direct_grant). 단계 안에선 서버 목록을 새로 받아 다시 본 뒤에만, 횟수 제한 안에서
+    let d = step.find("direct_grant(").expect("바로 연결 갈래");
+    assert!(step.find("link_direct_ok(&fresh").unwrap() < d, "새로 받은 목록으로 한 번 더 본 뒤");
+    assert!(step.find("direct_budget(").unwrap() < d, "기기마다 횟수 제한");
+    let dg = &src[src.find("fn direct_grant").unwrap()..src.find("fn link_step").unwrap()];
+    assert!(dg.contains("grant_phone(") && dg.contains("peer_link_answer("));
+    assert_eq!(src.matches("grant_phone(").count(), 4, "정의·숫자 카드 답·메일 코드·바로 연결 — 허용 끝단은 이 셋뿐");
 }

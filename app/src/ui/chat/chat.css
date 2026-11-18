@@ -18,13 +18,12 @@
 .bubble.live > .chat-meta { position: absolute; left: calc(100% + 6px); bottom: 0; margin: 0; white-space: nowrap; }
 .bubble.live > div > :first-child { margin-top: 0; }
 .bubble.live > div > :last-child { margin-bottom: 0; }
-.bubble.pending { opacity: .6; }
-/* 보낸 말이 멈춰 있으면(대기·걸림·안 감) 흐리게 두지 않는다 — 버튼을 눌러야 한다(2026-10-06) */
-.bubble.pending:not(.st-sending):not(.st-wait) { opacity: 1; }
-.bubble.pending.st-input .chat-meta, .bubble.pending.st-lost .chat-meta { color: var(--warn-ink); }
-/* 대기 중 — 실패가 아니라 차례를 기다린다. 흐리게(opacity) 두면 실패처럼 보여서 회색 판 + 점선 테두리(자리 안 바뀌게 outline)로(2026-10-26 사용자) */
-.bubble.pending.st-queued { background: var(--surface-2); outline: 1px dashed var(--line); outline-offset: -1px; }
-.chat-pend-acts { display: flex; gap: 6px; justify-content: flex-end; margin-top: 6px; }
+/* 보낸 말은 보내자마자 보통 내 말풍선(2026-11-17 사용자 — 점선 상자·흐림·'대기 중' 글이 안 간 것처럼 보였다). 아직 안 읽었으면 옆에 작은 점 하나,
+   끝내 안 들어갔거나(domain/chatQueue pendMark) Claude 오류로 답을 못 받았으면(domain/chat errorTurns) 같은 바깥 자리에 다시 보내기 아이콘 하나 +
+   말풍선을 살짝 흐리게 — 아이폰 메시지의 빨간 ! 자리. 글자 안내·빼기 단추는 없다(빼기는 오른쪽 클릭 메뉴) */
+.chat-unread { flex: none; width: 6px; height: 6px; margin-bottom: 8px; border-radius: 50%; background: var(--text-3); opacity: .55; }
+.chat-row.me > .chat-again { flex: none; align-self: flex-end; margin: 0 2px 4px 0; color: var(--danger-ink); }
+.bubble.me.mk-failed, .bubble.me.unanswered { opacity: .7; }
 .chat-meta { display: block; margin-top: 2px; font-size: 11px; color: var(--text-3); }
 .bubble.md > :first-child { margin-top: 0; }
 .bubble.md > :last-child { margin-bottom: 0; }
@@ -184,6 +183,8 @@
 .chat-relay .body { white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
 .chat-relay.open .body { display: block; }
 /* 앱이 넘긴 줄 — 작은 회색 한 줄(앞 이름표 없이), 누르면 전문 */
+/* 키즈 참모 — 아이 화면 대화(ui/kids/useKidsChat). 테두리는 실선 옅은 면(왼쪽 색 띠 없음) */
+.chat-relay.kids { border-style: solid; border-color: var(--line); background: var(--surface-2); cursor: default; }
 .chat-relay.app { display: flex; gap: 6px; align-items: baseline; padding: 2px 10px; border: 0; background: none; color: var(--text-3); font-size: 11.5px; }
 .chat-relay.app .who { flex: none; margin: 0; font-weight: 600; }
 .chat-relay.app .body { -webkit-line-clamp: 1; }
@@ -281,3 +282,15 @@
 /* 참모를 깨우는·켜는 동안 입력칸 바로 위 조용한 한 줄(2026-10-12 rail-wake) — 채팅은 뜰 때까지 앞 참모에 남는다. 깨어나는 프사 + 글 */
 .chat-wake { flex: none; display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 12px; border-top: 1px solid var(--line); background: var(--surface-2, var(--hover)); color: var(--text-2); font-size: 12px; }
 .chat-wake > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 보호자 '오늘 만든 것'(ui/kids/KidsTodayCard) — 입력칸 위 한 줄, 누르면 작품마다 고친 과정 */
+.chat-wake .kt { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.kt-line { min-width: 0; min-height: 28px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.kt-works { margin: 0; padding: 0 0 4px; list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.kt-works li { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.kt-title { flex: none; min-height: 28px; padding: 0; border: 0; background: none; color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
+.kt-title:hover { text-decoration: underline; }
+.kt-steps { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); }
+.kt-back { position: fixed; inset: 0; z-index: var(--z-modal); display: grid; place-items: center; background: rgba(0, 0, 0, .45); }
+.kt-frame { position: relative; width: min(900px, 90vw); aspect-ratio: 1180 / 820; border-radius: 12px; overflow: hidden; background: #fff; box-shadow: 0 16px 40px rgba(0, 0, 0, .35); }
+.kt-frame iframe { width: 100%; height: 100%; border: 0; }
+.kt-close { position: absolute; top: 6px; right: 6px; width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 50%; background: rgba(255, 255, 255, .85); color: #2b2b33; cursor: pointer; }

@@ -2,7 +2,7 @@
 // 옛 QR 짝짓기(두드리기 — 아이폰 사파리에선 안 함: 홈 화면 앱엔 안 남는다)
 // 컴퓨터 화면(참모 채팅·카드·대기함·세션)은 여기 없다 — 터널로 그 컴퓨터에서 받아 서비스 워커가 / 에 내준다
 import { OfflineError, TrustError, tunnelFor } from './hub';
-import { isIos, loginPlace } from './homeFirst';
+import { isAndroid, isIos, loginPlace, phoneName } from './homeFirst';
 import { forgetKeys, phoneKeys } from './keys';
 import { knockPair } from './knock';
 import { keyShape, knockLink, type Computer } from './linkKnock';
@@ -26,7 +26,10 @@ const store = {
 };
 const account = (): Account | null => { try { return JSON.parse(store.get(ACCOUNT_KEY) ?? 'null') as Account | null; } catch { return null; } };
 const standalone = () => matchMedia('(display-mode: standalone)').matches || (navigator as { standalone?: boolean }).standalone === true;
-const homeFirst = () => loginPlace({ ios: isIos(navigator.userAgent, navigator.maxTouchPoints ?? 0), standalone: standalone() }) === 'home-first';
+const place = () => loginPlace({ ios: isIos(navigator.userAgent, navigator.maxTouchPoints ?? 0), android: isAndroid(navigator.userAgent), standalone: standalone() });
+const homeFirst = () => place() === 'home-first';
+/** 안드로이드 크롬 탭 — 탭에서 로그인하면 그대로 웹으로 쓰게 된다. 설치(PWA)부터(2026-11-18 사용자) */
+const installFirst = () => place() === 'install-first';
 
 const app = document.getElementById('app')!;
 
@@ -74,21 +77,36 @@ const ADD_HOME_SVG = `<svg viewBox="0 0 320 100" width="100%" role="img" aria-la
 function addHomeFirst() {
   const fig = document.createElement('div');
   fig.innerHTML = ADD_HOME_SVG;
-  screen('홈 화면에 추가해 주세요', '아이폰은 사파리와 홈 화면 앱이 로그인을 따로 해요. 홈 화면에 추가한 참모 앱을 열어 거기서 로그인해요.', [], false, fig);
+  screen('홈 화면에 추가해 주세요', '아이폰·아이패드는 사파리와 홈 화면 앱이 로그인을 따로 해요. 홈 화면에 추가한 참모 앱을 열어 거기서 로그인해요.', [], false, fig);
 }
 
-// 안드로이드 크롬 — 설치할 수 있으면 첫 화면에 설치 단추(이미 설치돼 있으면 이 이벤트가 안 온다)
+// 크롬 ⋮ → 홈 화면에 추가 → 설치 — 설치 창(beforeinstallprompt)이 안 올 때(이미 한 번 닫음·크롬 판) 손으로 하는 길. 고정 그림이라 innerHTML
+const INSTALL_SVG = `<svg viewBox="0 0 320 100" width="100%" role="img" aria-label="크롬 메뉴, 홈 화면에 추가, 설치 순서" style="max-width:360px;margin:8px 0 16px">
+  <g style="fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round">
+    <circle cx="40" cy="36" r="24" style="stroke:var(--line)"/>
+    <rect x="124" y="20" width="72" height="32" rx="8" style="stroke:var(--line)"/>
+    <rect x="248" y="20" width="64" height="32" rx="16" style="stroke:var(--pri)"/>
+    <path d="M78 36h30M100 29l8 7-8 7M206 36h30M228 29l8 7-8 7" style="stroke:var(--sub)"/>
+  </g>
+  <g style="fill:var(--fg)"><circle cx="40" cy="26" r="2.5"/><circle cx="40" cy="36" r="2.5"/><circle cx="40" cy="46" r="2.5"/></g>
+  <g style="fill:var(--sub);font-size:13px" text-anchor="middle"><text x="40" y="84">메뉴</text><text x="160" y="84">홈 화면에 추가</text><text x="280" y="84" style="fill:var(--pri);font-weight:600">설치</text></g>
+</svg>`;
+
+// 안드로이드 크롬 — 설치 창(이미 설치돼 있으면 이 이벤트가 안 온다). 설치 화면·첫 화면이 떠 있으면 다시 그린다
 type InstallPrompt = Event & { prompt: () => Promise<void> };
 let installPrompt: InstallPrompt | null = null;
+let installed = false;
 let onStart: (() => void) | null = null;
+const redraw = () => { if (app.dataset.view === 'start' || app.dataset.view === 'install') onStart?.(); };
 window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   installPrompt = e as InstallPrompt;
-  if (app.dataset.view === 'start') onStart?.();
+  redraw();
 });
 window.addEventListener('appinstalled', () => {
   installPrompt = null;
-  if (app.dataset.view === 'start') onStart?.();
+  installed = true;
+  redraw();
 });
 
 /** 설치 창은 한 번만 띄울 수 있다 — 띄우고 나면 단추를 뺀다 */
@@ -96,7 +114,22 @@ async function install() {
   const p = installPrompt;
   installPrompt = null;
   await p?.prompt().catch(() => {});
-  if (app.dataset.view === 'start') onStart?.();
+  redraw();
+}
+
+/** 안드로이드 크롬 탭 — 설치한 참모 앱에서 로그인하고 쓰게. 설치 창이 오면 단추 하나, 안 오면 크롬 메뉴 그림 */
+function installScreen() {
+  onStart = installScreen;
+  if (installed) {
+    screen('설치했어요', '홈 화면의 참모를 열어 주세요.');
+  } else if (installPrompt) {
+    screen('참모 앱을 설치해 주세요', '설치한 앱에서 로그인해요.', [{ label: '설치', primary: true, run: () => void install() }]);
+  } else {
+    const fig = document.createElement('div');
+    fig.innerHTML = INSTALL_SVG;
+    screen('참모 앱을 설치해 주세요', '설치한 앱에서 로그인해요. 이미 설치했다면 홈 화면의 참모를 열어 주세요.', [], false, fig);
+  }
+  app.dataset.view = 'install';
 }
 
 async function config(): Promise<{ relay?: string }> {
@@ -119,7 +152,7 @@ async function open(link: RelayLink) {
   } catch (e) {
     if (e instanceof TrustError) {
       markLost(lostStore, e.why, Date.now()); // 다시 이은 뒤 맥 기록에 까닭 한 줄(lostMark)
-      return screen('이 폰 연결이 풀렸어요', '다시 로그인하면 바로 연결돼요.', [
+      return screen('이 기기 연결이 풀렸어요', '다시 로그인하면 바로 연결돼요.', [
         { label: '재연결', primary: true, run: () => void unlinkPhone().finally(() => location.replace('/pair')) },
         { label: '다시 해 보기', run: () => void open(link) },
       ]);
@@ -132,7 +165,7 @@ async function open(link: RelayLink) {
 }
 
 const BAD: Record<string, string> = {
-  shape: '이 QR 은 쓸 수 없어요 — 이 폰에서 Chammo 계정으로 로그인해 내 컴퓨터를 골라 주세요.',
+  shape: '이 QR 은 쓸 수 없어요 — 이 기기에서 Chammo 계정으로 로그인해 내 컴퓨터를 골라 주세요.',
   relay: '이 QR 은 이 입구의 중계 서버를 쓰지 않아요 — 내 컴퓨터 Chammo 에서 만든 QR 인지 봐 주세요.',
   config: '입구 설정(중계 주소)이 없어요 — 관리자에게 알려 주세요.',
 };
@@ -142,12 +175,12 @@ async function pairNow(hash: string, relay: string | undefined, confirmed = fals
   const plan = planPair(hash, relay, readLink(), confirmed);
   if (plan.kind === 'bad') return screen('이 QR 로는 연결할 수 없어요', BAD[plan.why]!);
   if (plan.kind === 'confirm') {
-    return screen('다른 컴퓨터로 바꿀까요?', `지금은 ${plan.from} 와 연결되어 있어요. 바꾸면 이 폰에 받아 둔 화면과 열쇠가 지워지고 새 QR 의 컴퓨터와 다시 연결해요.`, [
+    return screen('다른 컴퓨터로 바꿀까요?', `지금은 ${plan.from} 와 연결되어 있어요. 바꾸면 이 기기에 받아 둔 화면과 열쇠가 지워지고 새 QR 의 컴퓨터와 다시 연결해요.`, [
       { label: '바꾸기', primary: true, run: () => void pairNow(hash, relay, true) },
       { label: '그대로 두기', run: () => location.replace('/pair') },
     ]);
   }
-  screen('연결 중', '컴퓨터 Chammo 가 이 폰을 확인하고 있어요.', [], true);
+  screen('연결 중', '컴퓨터 Chammo 가 이 기기를 확인하고 있어요.', [], true);
   try {
     const prev = plan.sendPrev ? store.get(TOKEN_KEY) : null;
     if (plan.wipeAll) await wipeAll();
@@ -170,7 +203,7 @@ async function mine(relay: string, acc: Account) {
     const r = await call(relay, k, acc.device, 'GET', '/v0/me/self');
     if (r.status === 401 || r.status === 404) {
       store.set(ACCOUNT_KEY, null);
-      return screen('이 폰이 계정에서 빠졌어요', '다른 기기에서 거절했거나 뺐어요. 다시 쓰려면 다시 로그인해요.', [{ label: 'Chammo 계정으로 로그인', primary: true, run: () => void login(relay) }]);
+      return screen('이 기기가 계정에서 빠졌어요', '다른 기기에서 거절했거나 뺐어요. 다시 쓰려면 다시 로그인해요.', [{ label: 'Chammo 계정으로 로그인', primary: true, run: () => void login(relay) }]);
     }
     if (r.status !== 200 || !r.json) throw new Error(`내 컴퓨터를 못 받았어요 (${r.status})`);
     const pending = r.json.status === 'pending';
@@ -180,10 +213,11 @@ async function mine(relay: string, acc: Account) {
     const auto = at ? ` ${at.getMonth() + 1}/${at.getDate()} ${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}까지 거절이 없으면 자동으로 허용돼요.` : '';
     const title = pending ? '다른 기기에서 허용을 기다려요' : pcs.length ? '어느 컴퓨터를 열까요?' : '열 컴퓨터가 없어요';
     // 같은 폰의 다른 브라우저(아이폰 사파리 ↔ 홈 화면 앱) 로그인이 계정에 따로 있다 — 중계가 대기 폰에만 알려 준다
-    const twin = pending && r.json.samePhone === true ? ' 하루 사이에 같은 종류 폰이 계정에 또 들어왔어요 — 이 폰 사파리 로그인이었다면 컴퓨터 기기 관리에서 빼 주세요.' : '';
+    const twin = pending && r.json.samePhone === true ? ' 하루 사이에 같은 종류 기기가 계정에 또 들어왔어요 — 이 기기 사파리 로그인이었다면 컴퓨터 기기 관리에서 빼 주세요.' : '';
     const text = pending
       ? `내 컴퓨터를 고르면 확인을 시작해요. 다른 기기 카드에서 허용하면 계정에만 들어오고, 컴퓨터를 열려면 이 확인이 한 번 더 필요해요.${auto}${twin}`
-      : pcs.length ? '고르면 확인을 시작해요.' : '컴퓨터 Chammo 에서 같은 Chammo 계정으로 로그인하면 여기 나와요.';
+      // 허용된 폰은 고르면 바로 열린다(같은 계정 바로 연결, 결정 A) — 설명 줄 없이 제목만
+      : pcs.length ? '' : '컴퓨터 Chammo 에서 같은 Chammo 계정으로 로그인하면 여기 나와요.';
     // online 은 허용된 폰에만 온다(대기 중이면 null — 모름)
     const first = pcs.find((c) => c.online !== false);
     screen(title, text, [
@@ -266,6 +300,7 @@ async function checkCode(relay: string, acc: Account, c: Computer, code: string)
 /** Chammo 계정(구글) — 결과는 이 입구 주소로 돌아온다(서버 WEB_ORIGINS). 시작과 마침은 같은 폰 열쇠로 */
 async function login(relay: string) {
   if (homeFirst()) return addHomeFirst();
+  if (installFirst()) return installScreen();
   try {
     const k = await phoneKeys();
     const dev = readLink()?.device ?? account()?.device ?? null;
@@ -279,16 +314,16 @@ async function login(relay: string) {
 }
 
 async function finishLogin(relay: string, loginId: string, code: string) {
-  screen('로그인 마치는 중', 'Chammo 계정에 이 폰을 붙이고 있어요.', [], true);
+  screen('로그인 마치는 중', 'Chammo 계정에 이 기기를 붙이고 있어요.', [], true);
   try {
-    if (sessionStorage.getItem(LOGIN_KEY) !== loginId) throw new Error('이 폰에서 시작한 로그인이 아니에요');
+    if (sessionStorage.getItem(LOGIN_KEY) !== loginId) throw new Error('이 기기에서 시작한 로그인이 아니에요');
     sessionStorage.removeItem(LOGIN_KEY);
     const k = await phoneKeys();
     const dev = readLink()?.device ?? account()?.device ?? null;
-    const r = await call(relay, k, dev, 'POST', '/v0/auth/google/finish', { loginId, code, deviceName: /iPhone|iPad/.test(navigator.userAgent) ? 'iPhone' : 'Android', kind: 'phone' });
+    const r = await call(relay, k, dev, 'POST', '/v0/auth/google/finish', { loginId, code, deviceName: phoneName(navigator.userAgent, navigator.maxTouchPoints ?? 0), kind: 'phone' });
     if ((r.status !== 200 && r.status !== 201) || typeof r.json?.deviceId !== 'string') {
-      throw new Error(r.status === 409 ? '이 폰은 다른 Chammo 계정에 붙어 있어요'
-        : r.status === 403 && r.json?.error === 'key_rejected' ? '이 폰은 다른 기기에서 거절됐어요 — 24시간 뒤 다시 로그인할 수 있어요'
+      throw new Error(r.status === 409 ? '이 기기는 다른 Chammo 계정에 붙어 있어요'
+        : r.status === 403 && r.json?.error === 'key_rejected' ? '이 기기는 다른 기기에서 거절됐어요 — 24시간 뒤 다시 로그인할 수 있어요'
         : r.status === 429 ? '계정에 허용을 기다리는 기기가 5개를 넘었어요 — 다른 기기에서 먼저 정리해 주세요'
         : `로그인 못 했어요 (${r.status})`);
     }
@@ -314,6 +349,8 @@ async function main() {
   // 짝지은 폰이 / 로 오면(받아 둔 화면이 아직 없을 때) 바로 받아서 연다
   if (link && store.get(TOKEN_KEY) && location.pathname !== '/pair') return open(link);
   const acc = account();
+  // 안드로이드 크롬 탭이면 — 탭에서 로그인만 해 둔 사람도 설치부터(탭과 설치한 앱이 저장을 같이 써서 로그인이 그대로 넘어간다)
+  if (!link && installFirst()) return installScreen();
   // 로그인한 폰은 QR 없이 — 내 계정 컴퓨터를 골라 숫자 확인(ADR 0014)
   if (relay && acc?.device && !(link && store.get(TOKEN_KEY)) && location.pathname !== '/pair-qr') {
     // 메일 코드를 기다리던 중이면(메일 앱에 다녀옴·새로고침) 코드 화면으로

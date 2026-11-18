@@ -35,7 +35,7 @@ describe('결제 관문 물음 — 직통 폰 줄에선 결제 카드와 같은 
     expect(hidePayGates(list, null)).toBe(list);
   });
   it('답이 계정으로 막히면 이유 한 줄 — 다시 눌러 보라고 하지 않는다', () => {
-    expect(accountRefusal('account:unbound')).toBe('이 폰 연결은 계정 확인이 안 돼 결제 확인에 답할 수 없어요 — 중계로 다시 연결하거나 컴퓨터에서 답해 주세요');
+    expect(accountRefusal('account:unbound')).toBe('이 기기 연결은 계정 확인이 안 돼 결제 확인에 답할 수 없어요 — 중계로 다시 연결하거나 컴퓨터에서 답해 주세요');
     expect(accountRefusal('account:other')).toContain('계정 확인이 안 돼');
     expect(accountRefusal('account:nologin')).toBe('컴퓨터가 Chammo 에 로그아웃해서 결제 확인은 컴퓨터에서 답해 주세요');
     expect(accountRefusal('HTTP 502')).toBeNull();

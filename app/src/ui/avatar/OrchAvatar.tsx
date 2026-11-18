@@ -14,7 +14,7 @@ const STATE_WORD: Record<AvatarState, () => string> = {
   work: () => tr('일하는 중', 'Working'), rest: () => tr('쉼', 'Idle'), ask: () => tr('물어봄', 'Asking'), off: () => tr('꺼짐', 'Stopped'),
 };
 
-const PHASE_WORD: Record<AvatarPhase, () => string> = { starting: () => tr('켜는 중', 'Starting'), stopping: () => tr('끄는 중', 'Stopping') };
+const PHASE_WORD: Record<AvatarPhase, () => string> = { starting: () => tr('켜는 중', 'Starting'), stopping: () => tr('끄는 중', 'Stopping'), queued: () => tr('깨울 차례', 'Waiting to wake'), failed: () => tr('못 깸', 'Failed to wake') };
 
 // 화면 밖이면 멈춘다 — 관찰자 하나를 모두가 나눠 쓴다(사이드바에 여럿 떠도 타이머 0)
 let io: IntersectionObserver | null = null;

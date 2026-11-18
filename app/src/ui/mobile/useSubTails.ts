@@ -3,15 +3,17 @@ import { useEffect, useRef, useState } from 'react';
 import { readTails } from '../../data/web';
 import { makePoller } from '../../domain/poller';
 import type { Session } from '../../domain/session';
+import { remember, remembered } from './memo';
 
 export function useSubTails(sessions: Session[]): Record<string, string> {
-  const [tails, setTails] = useState<Record<string, string>>({});
+  // 지난번 꼬리(메모리 기억)로 시작 — 시트·화면을 열 때마다 빈 값으로 세션 목록만 보고 짐작한 점을 그렸다가 바꿨다(2026-11-16)
+  const [tails, setTails] = useState<Record<string, string>>(() => remembered<Record<string, string>>(TAILS_KEY) ?? {});
   const live = useRef(sessions);
   live.current = sessions;
   useEffect(() => {
     const p = makePoller({
       read: () => readTails(live.current.map((s) => s.sessionId).filter((x): x is string => !!x)),
-      apply: setTails,
+      apply: (t) => { remember(TAILS_KEY, t); setTails(t); },
       everyMs: () => 15_000,
     });
     p.start();
@@ -19,3 +21,5 @@ export function useSubTails(sessions: Session[]): Record<string, string> {
   }, []);
   return tails;
 }
+
+const TAILS_KEY = 'subTails';

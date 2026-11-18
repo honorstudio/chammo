@@ -4,15 +4,19 @@ import { useEffect, useRef, useState } from 'react';
 import { readTranscript, type TranscriptChunk } from '../../data/tauri';
 import { makePoller, RESUME_EVENT, type Poller } from '../../domain/poller';
 import { appendChat, parseChat, type ChatItem } from '../../domain/chat';
+import { applyQueueOps, emptyQueue, type QueueState } from '../../domain/chatQueue';
 import { shared } from '../../domain/inflight';
 
 const cache = new Map<string, { items: ChatItem[]; next?: number; start?: number }>();
+/** 세션별 Claude 대기열(기록의 queue-operation) — 폰 보낼 함이 '줄 서 있는 말'을 10분 뒤 전해지지 않음으로 안 바꾸게(ui/mobile/outbox, domain/chatQueue inQueue) */
+const queues = new Map<string, QueueState>();
+export const chatQueue = (sessionId: string): QueueState => queues.get(sessionId) ?? emptyQueue;
 
 /** 미리 받기 — 폰 첫 화면 스플래시 동안 첫 묶음을 기억에 넣어 둔다(화면이 뜨는 순간 대화가 차 있게). 이미 있으면 그대로 */
 export async function warmChat(sessionId: string, read: Read = readTranscript): Promise<void> {
   if (cache.has(sessionId)) return;
   const c = await shared(`chat:${sessionId}`, () => read(sessionId, undefined));
-  if (!cache.has(sessionId)) cache.set(sessionId, { items: parseChat(c.text), next: c.next || undefined, start: c.start });
+  if (!cache.has(sessionId)) { cache.set(sessionId, { items: parseChat(c.text), next: c.next || undefined, start: c.start }); queues.set(sessionId, applyQueueOps(emptyQueue, c.text)); }
 }
 
 /** 처음 읽은 묶음의 첫 줄 자리 — 폰이 위로 올리면 그 앞을 거슬러 읽는다(ui/mobile/useEarlier) */
@@ -57,6 +61,7 @@ export function useChatItems(sessionId?: string, everyMs = 2000, read: Read = re
         next = c.next || undefined; // 0 이면 다음에도 '처음'으로 — from 0 은 상한 없이 기록 전체를 읽는다(2026-10-21 코드 리뷰)
         const prev = cache.get(sessionId)?.items ?? [];
         const now = c.reset ? parseChat(c.text) : c.text ? appendChat(prev, c.text) : prev;
+        if (c.reset || c.text) queues.set(sessionId, applyQueueOps(c.reset ? emptyQueue : chatQueue(sessionId), c.text));
         cache.set(sessionId, { items: now, next, start: c.reset ? c.start : cache.get(sessionId)?.start });
         if (now !== prev) setItems(now);
       },

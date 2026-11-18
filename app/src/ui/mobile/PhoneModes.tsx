@@ -191,13 +191,15 @@ function PhonePick({ rows, keys, dash, onDone, onAsk, onChange }: { rows: PhoneM
 
 /** keys = 이 참모를 가리키는 말(이름·id·sessionId — 데스크톱 ModeHome 과 같다), dash = 맛보기를 켤 자리(참모 이름) */
 export function PhoneModes({ keys, dash, onAsk }: { keys: string[]; dash: string; onAsk: (text: string) => void }) {
-  const [rows, , reload] = useMemoPoll<PhoneModeRow[]>('modes', () => readModes().catch(() => []), 30_000, []);
+  const [rows, modesKnown, reload] = useMemoPoll<PhoneModeRow[]>('modes', () => readModes().catch(() => []), 30_000, []);
   const shown = dashModes(rows, keys);
   const [pick, setPick] = useState<string | null>(null);
   const [full, setFull] = useState(false);
   const [sheet, setSheet] = useState(false);
   const [offErr, setOffErr] = useState<string | null>(null);
   const cur = shown.find((m) => m.name === pick) ?? shown[0];
+  // 받기 전엔 아무것도 — 켜 둔 모드가 있어도 '내 화면 자리' 고르기를 먼저 그렸다가 모드 카드로 바뀌었다(2026-11-16)
+  if (!modesKnown) return null;
   if (!cur) {
     return (
       <section className="m-mode-try" aria-label={tr('모드 고르기', 'Pick modes')}>

@@ -13,7 +13,7 @@ import { termFont } from '../domain/termFont';
 import { modKey } from '../domain/keys';
 import { resizeAfterOpen } from '../domain/ptySize';
 import { followLink } from './followLink';
-import { appStoppedRecently, closePty, listSessionsRaw, openPty, openTarget, pttTarget, pttWatch, resizePty, typePty, writeClipboard, writePty } from '../data/tauri';
+import { appStoppedRecently, closePty, listSessionsRaw, openPty, openShell, openTarget, pttTarget, pttWatch, resizePty, shellBusy, typePty, writeClipboard, writePty } from '../data/tauri';
 import { attachedId, attachPhaseWatcher, exitWatcher, kickedBeforeEnd, kickWatcher, linkStep, listedAlive, REATTACH_POLL, type AttachPhase, type LinkState } from '../domain/attachExit';
 import { reattachEvery } from '../domain/busyGate';
 import { busyNow, turns } from './busyNow';
@@ -37,6 +37,15 @@ function onPttStop(cb: (ptyId: number) => void) {
 
 /** 화면에 붙은 터미널 — ⌘A 가 보고 있는 터미널 하나만 전체 선택하게(사용자 2026-09-29) */
 const TERMS = new WeakMap<Element, Terminal>();
+/** ⌘K — from 이 셸 탭 터미널 안이면 화면·스크롤을 지운다(iTerm 처럼, 지금 줄은 남는다). 셸 탭이 아니면 false(⌘K = 검색 그대로) */
+export function clearShellAt(from: Element | null): boolean {
+  if (!from?.closest('.pane.shell')) return false;
+  for (let el: Element | null = from; el; el = el.parentElement) {
+    const t = TERMS.get(el);
+    if (t) { t.clear(); return true; }
+  }
+  return false;
+}
 /** from 이 들어 있는 터미널을 전체 선택. 터미널 안이 아니면 false */
 export function selectAllTerminalAt(from: Element | null): boolean {
   for (let el = from; el; el = el.parentElement) {
@@ -46,6 +55,9 @@ export function selectAllTerminalAt(from: Element | null): boolean {
   return false;
 }
 
+/** localStorage term-dom=1 — 터미널을 xterm 기본(DOM) 렌더러로. 시험 하네스가 화면을 DOM 으로 떠 그리려고 켠다 */
+const domRenderer = () => { try { return localStorage.getItem('term-dom') === '1'; } catch { return false; } };
+
 // 글꼴 줄은 domain/termFont(윈도우는 한글을 칸에 맞춘 글꼴). 폰트는 main.tsx 에서 그리기 전에 미리 불러온다 — 늦게 오면 xterm 이 칸 폭을 잘못 잰다
 export const TERM_FONT = termFont(IS_WIN);
 
@@ -53,7 +65,7 @@ export const TERM_FONT = termFont(IS_WIN);
  *  claimPtt = 지구본 키 말하기를 이 창으로(채팅 입력칸에 포커스가 가면 터미널이 포커스를 안 받아서),
  *  screen = 지금 보이는 줄들 + 커서(칸, 줄) — 채팅 판이 입력칸 글을 읽는다 */
 /** type = 앱이 치는 글(채팅 보내기·Esc·지우기) — 다른 치기 길과 같은 자물쇠로(Rust pty_type). raw 는 사람이 친 키처럼 바로 */
-export type PaneApi = { /** 마지막 터미널 출력 뒤 ms(-1 = 아직 없음) — 칸이 멈췄나 가리는 진단 */ quiet?: () => number; write: (data: string) => void; raw: (data: string) => void; type: (keys: string[], enterMs?: number, again?: boolean) => Promise<string | void>; /** 칸을 새로 붙인다 — 죽은 보기(attach 가 출력 없이 굳음, EOF 도 안 옴) */ reattach?: () => void; focus: () => void; claimPtt: () => void; screen: (back?: number) => { lines: string[]; cursor: [number, number] } };
+export type PaneApi = { /** 마지막 터미널 출력 뒤 ms(-1 = 아직 없음) — 칸이 멈췄나 가리는 진단 */ quiet?: () => number; /** 셸 탭 — 셸 위에서 돌고 있는 프로그램 이름(쉬면 null) */ busy?: () => Promise<string | null>; write: (data: string) => void; raw: (data: string) => void; type: (keys: string[], enterMs?: number, again?: boolean) => Promise<string | void>; /** 칸을 새로 붙인다 — 죽은 보기(attach 가 출력 없이 굳음, EOF 도 안 옴) */ reattach?: () => void; focus: () => void; claimPtt: () => void; screen: (back?: number) => { lines: string[]; cursor: [number, number] } };
 
 type Props = {
   /** pty 에서 돌릴 셸 명령. `exec '<claude>' attach <id>` 처럼 절대 경로로 */
@@ -95,9 +107,11 @@ type Props = {
   onExit?: (screen: string) => void;
   /** 열자마자 키보드를 이 터미널로 + 화면 안으로 — 첫 설정의 믿기·설치 터미널(누른 버튼은 꺼지며 포커스를 잃어 ↓·Enter 가 어디에도 안 갔다) */
   autoFocus?: boolean;
+  /** 그냥 셸 탭 — command 대신 로그인 셸을 cwd 에서 연다(Rust shell_open). 키·한글·복사·링크·글꼴은 세션 터미널과 같은 이 부품 그대로 */
+  shell?: boolean;
 };
 
-export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls, fontSize, readOnly, onHeadClick, headDrag, linkBase, home, onFocus, note, onNoteClick, overlay, inject, onVoiceStop, headless, onLink, autoFocus, onExit }: Props) {
+export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls, fontSize, readOnly, onHeadClick, headDrag, linkBase, home, onFocus, note, onNoteClick, overlay, inject, onVoiceStop, headless, onLink, autoFocus, onExit, shell }: Props) {
   const linkRef = useRef(onLink);
   linkRef.current = onLink;
   const voiceRef = useRef(onVoiceStop);
@@ -212,7 +226,8 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
     const typingElsewhere = () => { const a = document.activeElement as HTMLElement | null; return !!a && !a.closest('.xterm') && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable); };
     if (autoFocus && !readOnly && !typingElsewhere()) { term.focus(); root.current?.scrollIntoView({ block: 'nearest' }); }
     try {
-      term.loadAddon(new WebglAddon());
+      // 시험 하네스(e2e/shell-pane)는 글자가 DOM 에 남게 기본 렌더러로 — WebGL 캔버스는 DOM 을 떠도 글자가 안 보인다
+      if (!domRenderer()) term.loadAddon(new WebglAddon());
     } catch {
       // WebGL 이 없으면 xterm 기본 렌더러
     }
@@ -227,7 +242,7 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
     let screenUp = false;
     term.onData((d) => { if (!screenUp && (d === '\x1b[I' || d === '\x1b[O')) return; imeTrace?.('xterm', { d: seqShape(d) }); write(d); });
     let lastOut = 0;
-    injectRef.current?.({ quiet: () => (lastOut ? Date.now() - lastOut : -1), write: (d) => { write(d); term.focus(); }, raw: write,
+    injectRef.current?.({ quiet: () => (lastOut ? Date.now() - lastOut : -1), busy: shell ? () => (id != null ? shellBusy(id).catch(() => null) : Promise.resolve(null)) : undefined, write: (d) => { write(d); term.focus(); }, raw: write,
       // 번호를 받기 전(창이 막 열림)엔 자물쇠 길이 없다 — 모아 둔 쓰기로 넣고 Enter 시간만큼 기다린다
       type: (keys, enterMs, again) => (id != null ? typePty(id, keys, enterMs, again) : new Promise<void>((done) => {
         keys.forEach(write);
@@ -380,7 +395,7 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
       clearTimeout(queuedNote);
       if (disposed) { r?.(); return; }
       release = r;
-      return openPty(command, cwd, cols, rows, (bytes) => {
+      const onBytes = (bytes: Uint8Array) => {
         // 빈 조각 = attach 가 끝남(Rust spawn_pty) — 끝 글을 못 알아봐도 이걸로 안다. 끝 글(exitWatcher)이 먼저 오면 그쪽으로
         if (!bytes.length) letGo(); // 끝났으면 다음 칸 차례로
         if (!bytes.length) { if (!disposed) { onEnded(); if (!sid) exitRef.current?.(tailText()); } return; }
@@ -394,7 +409,8 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
         }
         if (kick?.(text)) kickedAt = Date.now();
         if (ended?.(text)) onEnded();
-      }).then((n) => {
+      };
+      return (shell ? openShell(cwd, cols, rows, onBytes) : openPty(command, cwd, cols, rows, onBytes)).then((n) => {
         if (disposed) { void closePty(n); return; }
         id = n;
         setPtyId(n);
@@ -458,7 +474,7 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
       TERMS.delete(el);
       term.dispose();
     };
-  }, [command, cwd, readOnly, linkBase, home, epoch]);
+  }, [command, cwd, readOnly, linkBase, home, epoch, shell]);
 
   // 글자 크기: 창(윈도우) 크기는 그대로 두고 칸 수만 다시 계산해 pty 에 알린다 — iTerm 처럼 창이 늘었다 줄었다 하지 않는다
   useEffect(() => {
@@ -469,7 +485,7 @@ export function TerminalPane({ command, cwd, title, subtitle, subPlain, controls
   }, [fontSize]);
 
   return (
-    <div ref={root} className={`pane ${readOnly ? 'readonly' : ''}${talking ? ' pt-live' : ''}${headless ? ' headless' : ''}`} data-drop={readOnly ? undefined : ''}>
+    <div ref={root} className={`pane ${readOnly ? 'readonly' : ''}${talking ? ' pt-live' : ''}${headless ? ' headless' : ''}${shell ? ' shell' : ''}`} data-drop={readOnly ? undefined : ''}>
       {!headless && (
         <div className="pane-head" onClick={onHeadClick} title={onHeadClick ? tr('눌러서 이 세션으로', 'Click to go to this session') : headDrag ? tr('끌어서 자리 바꾸기', 'Drag to reorder') : undefined} {...headDrag}>
           <b>{title}</b>

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>움직이는 그림 틀</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#fff;font-family:-apple-system,'Apple SD Gothic Neo',sans-serif}canvas{display:block;width:100vw;height:100vh}</style>
+</head><body><canvas id="c"></canvas>
+<script>
+// 키즈 '말로 만들기' 움직이는 그림 틀(영상 대신 HTML 애니메이션, 사용자 11-17) — CFG 를 고치거나 그리기 함수를 더해 키운다. 인터넷·외부 파일 없음.
+const CFG = /*CFG*/{"title":"움직이는 그림","hero":"dino","heroColor":"#4caf50","heroCount":1,"motion":"walk","sky":"#bfe6ff","ground":"#c8e6a0","sun":true,"clouds":3}/*END*/;
+const c = document.getElementById('c'), x = c.getContext('2d');
+let W, H, G; const fit = () => { W = c.width = innerWidth * devicePixelRatio; H = c.height = innerHeight * devicePixelRatio; G = H * 0.8; }; fit(); addEventListener('resize', fit);
+const S = () => H / 600;
+let t = 0;
+function hero(px, py, s, k) {
+  x.fillStyle = CFG.heroColor; x.beginPath(); x.ellipse(px, py - 40 * s, 38 * s, 30 * s, 0, 0, 7); x.fill();
+  x.beginPath(); x.ellipse(px + 30 * s, py - 74 * s, 20 * s, 17 * s, 0, 0, 7); x.fill();
+  const step = Math.sin(t / 6 + k) * 6 * s; x.fillRect(px - 20 * s, py - 16 * s, 12 * s, 16 * s + step); x.fillRect(px + 8 * s, py - 16 * s, 12 * s, 16 * s - step);
+  x.fillStyle = '#fff'; x.beginPath(); x.arc(px + 36 * s, py - 78 * s, 6 * s, 0, 7); x.fill(); x.fillStyle = '#222'; x.beginPath(); x.arc(px + 38 * s, py - 78 * s, 3 * s, 0, 7); x.fill();
+}
+function tick() {
+  t++; const s = S();
+  x.fillStyle = CFG.sky; x.fillRect(0, 0, W, H); x.fillStyle = CFG.ground; x.fillRect(0, G, W, H - G);
+  if (CFG.sun) { x.fillStyle = '#ffd54f'; x.beginPath(); x.arc(W * 0.85, H * 0.18, 46 * s, 0, 7); x.fill(); }
+  x.fillStyle = '#fff';
+  for (let i = 0; i < CFG.clouds; i++) { const cx = ((i * 0.37 + t * 0.0008) % 1.2) * W - 0.1 * W, cy = H * (0.12 + i * 0.08); x.beginPath(); x.arc(cx, cy, 30 * s, 0, 7); x.arc(cx + 36 * s, cy + 6 * s, 24 * s, 0, 7); x.arc(cx - 34 * s, cy + 8 * s, 22 * s, 0, 7); x.fill(); }
+  const n = Math.max(1, Math.min(5, CFG.heroCount));
+  for (let k = 0; k < n; k++) {
+    const p = ((t * 0.004 + k / n) % 1.2) - 0.1;
+    const lift = CFG.motion === 'float' ? Math.sin(t / 20 + k) * 40 * s + 80 * s : CFG.motion === 'bounce' ? Math.abs(Math.sin(t / 12 + k)) * 90 * s : 0;
+    hero(p * W, G - lift, s, k);
+  }
+  x.fillStyle = '#333'; x.font = `${36 * s}px sans-serif`; x.fillText(CFG.title, 24 * s, 56 * s);
+  requestAnimationFrame(tick);
+}
+tick();
+</script></body></html>

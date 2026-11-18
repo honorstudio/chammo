@@ -47,3 +47,18 @@ export function SheetHead({ title, titleClass, onClose, closeDisabled, children 
 
 // 시트 몸통(뒷막·손잡이·끌기·safe-area·키보드 위·닫기)은 BottomSheet 하나로
 export { BottomSheet, SheetHostProvider, SheetPortal, useSheet } from './BottomSheet';
+
+/** 받기 전 뼈대 줄 n 개 — 고정·순서·프사·목록을 아직 모를 때 기본값·'없어요' 글 대신(2026-11-16 사용자 "잠깐 초기화 상태에서 맞춰져").
+ *  높이는 참모 줄(.m-orch, 프사 44)과 같게 — 받으면 같은 자리에 진짜 줄이 들어온다 */
+export function SkelRows({ n, size = 44 }: { n: number; size?: number }) {
+  return (
+    <>
+      {Array.from({ length: n }, (_, i) => (
+        <div key={i} className="m-orch m-orch-skel" aria-hidden="true">
+          <span className="m-av-skel" style={{ width: size, height: size }} />
+          <span className="m-orch-text"><span className="m-orch-top"><span className="m-skel-line m-skel-name" /></span><span className="m-orch-sub"><span className="m-orch-line m-skel-line" /></span></span>
+        </div>
+      ))}
+    </>
+  );
+}

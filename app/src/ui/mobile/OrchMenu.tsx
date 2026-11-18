@@ -8,8 +8,8 @@ import { orchMenu, type OrchMenuKey } from '../../domain/mobile';
 import { BottomSheet } from './kit';
 import { tr } from '../../i18n';
 
-export function OrchMenu({ title, live, pinned, canPin, nick, role, onPick, onRename, onRole, onClose }: {
-  title: string; live: boolean; pinned: boolean; canPin: boolean; nick: string; role: string;
+export function OrchMenu({ title, live, pinned, canPin, nick, role, onPick, onRename, onRole, onClose, kids = false }: {
+  title: string; live: boolean; pinned: boolean; canPin: boolean; nick: string; role: string; kids?: boolean;
   onPick: (k: Exclude<OrchMenuKey, 'rename' | 'role'>) => void; onRename: (nick: string) => Promise<void>; onRole: (role: string) => Promise<void>; onClose: () => void;
 }) {
   const [naming, setNaming] = useState(false);
@@ -50,7 +50,7 @@ export function OrchMenu({ title, live, pinned, canPin, nick, role, onPick, onRe
           </div>
         </form>
       ) : (
-        orchMenu({ live, pinned, canPin }).map((m) => (
+        orchMenu({ live, pinned, canPin, kids }).map((m) => (
           <button key={m.key} type="button" className={m.danger ? 'm-menu-item m-danger-ink' : 'm-menu-item'}
             onClick={() => { if (!armed) return; if (m.key === 'rename') setNaming(true); else if (m.key === 'role') setRoling(true); else { onClose(); onPick(m.key); } }}>{m.label}</button>
         ))

@@ -224,8 +224,9 @@ pub fn spawn_blocking(cwd: &str, name: &str, prompt: &str) -> Result<String, Str
 }
 
 /// 띄우기 인자 — 첫 지시는 `--` 뒤에: '-' 로 시작하는 지시("--help", "- 로그인 고쳐")를 claude 가 옵션으로 읽었다(①-13, 2.1.306 은 `--` 뒤를 지시로 받음 실측)
+/// 새 세션 기본 모델·노력값(설정)은 --bg 뒤에 붙는다(default_model.rs)
 fn spawn_args(name: &str, prompt: &str) -> Vec<String> {
-    ["--bg", "--dangerously-skip-permissions", "-n", name, "--", prompt].iter().map(|a| a.to_string()).collect()
+    crate::default_model::apply(["--bg", "--dangerously-skip-permissions", "-n", name, "--", prompt].iter().map(|a| a.to_string()).collect())
 }
 
 fn alive(pid: i32) -> bool {
@@ -283,7 +284,7 @@ pub async fn adopt_session(pid: i32, session_id: String, cwd: String, name: Stri
             return Err(crate::i18n::tr("세션이 아직 목록에 남아 있어 — 잠깐 뒤에 다시 눌러줘", "The session is still listed — please try again in a moment").into());
         }
         crate::trust::before_spawn(&cwd);
-        let out = claude_out(crate::platform::command(claude_bin()).current_dir(&cwd).args(["--bg", "--dangerously-skip-permissions", "-n", &name, "--resume", &session_id]), CLAUDE_LIMIT)?;
+        let out = claude_out(crate::platform::command(claude_bin()).current_dir(&cwd).args(crate::default_model::apply(["--bg", "--dangerously-skip-permissions", "-n", &name, "--resume", &session_id].iter().map(|a| a.to_string()).collect())), CLAUDE_LIMIT)?;
         forget_agents(); // 넘겨받은 세션이 다음 목록에 바로 보이게
         let text = format!("{}{}", crate::platform::out_text(&out.stdout), crate::platform::out_text(&out.stderr));
         if !out.status.success() {
@@ -295,8 +296,7 @@ pub async fn adopt_session(pid: i32, session_id: String, cwd: String, name: Stri
     .map_err(|e| e.to_string())?
 }
 
-/// 인자를 그대로 띄우기 — 바이패스·프로젝트 설정 없이 격리해서 띄울 때
-#[cfg_attr(not(pro), allow(dead_code))]
+/// 인자를 그대로 띄우기 — 바이패스·프로젝트 설정 없이 격리해서 띄울 때(키즈 아이 세션도 이 길)
 pub(crate) fn spawn_plain(cwd: &str, args: &[String]) -> Result<String, String> {
     let out = claude_out(crate::platform::command(claude_bin()).current_dir(cwd).args(args), CLAUDE_LIMIT)?;
     forget_agents();
@@ -314,6 +314,7 @@ pub async fn new_session(cwd: String, name: String, worktree: Option<String>) ->
             args.push("-w".into());
             args.push(w.trim().to_string());
         }
+        let args = crate::default_model::apply(args);
         crate::trust::before_spawn(&cwd);
         crate::computer_use::sweep_logged();
         let out = claude_out(crate::platform::command(claude_bin()).current_dir(&cwd).args(&args), CLAUDE_LIMIT)?;
@@ -465,6 +466,7 @@ pub fn stop_blocking(id: &str, why: &str) -> Result<String, String> {
 pub fn remove_blocking(id: &str, why: &str) -> Result<String, String> {
     log_action("rm", id, why);
     note_app_stop(id);
+    crate::kids_life::on_remove(id); // 키즈 참모면 키즈 칸·아이 집도 비킨다(11-17 사용자 — 지운 참모-5 칸이 남았다)
     let _ = run(&["stop", id]);
     let r = run(&["rm", id]).map(|s| s.trim().to_string());
     forget_agents();
@@ -1433,7 +1435,7 @@ pub(crate) fn log_out(kind: &str, text: &str) {
     append_line(&path, &format!("{ts}\t{kind}\t{text}"));
 }
 
-/// 기록에 남길 본문 — 글자 수만. notify.log 는 진단에 붙어 나가는데 보낸 말 앞부분·알림 본문·읽어 준 음성 전문이 남았다(비밀번호를 말로 친 줄까지, 보안 점검 M-1).
+/// 기록에 남길 본문 — 글자 수만. notify.log 는 사람이 문제를 알릴 때 통째로 붙여 보내기도 하는데(자동으로 나가지는 않는다, 오류 보고는 정해 둔 칸만 — ADR 0033) 보낸 말 앞부분·알림 본문·읽어 준 음성 전문이 남았다(비밀번호를 말로 친 줄까지, 보안 점검 M-1).
 /// '보냈나·몇 번 나왔나·잘렸나'는 시각·꼬리표·글자 수로 가린다
 pub(crate) fn body_note(text: &str) -> String {
     format!("chars={}", text.chars().count())
@@ -1476,6 +1478,10 @@ pub fn notify_local(title: String, body: String) {
 pub(crate) fn notify_to(title: String, body: String, target: Option<String>, phones: bool) {
     log_out("notify", &format!("{title} — {}{}", body_note(&body), if phones { "" } else { " · 맥만" }));
     if os_notify_off(std::env::var("CHAMMO_NO_OS_NOTIFY").ok().as_deref()) {
+        return;
+    }
+    if crate::test_window::quiet() {
+        log_out("notify-quiet", &title); // 시험판(디버그 + 시험 데이터 폴더)은 저절로 안 낸다 — 하네스(e2e/hidden-window)가 이 줄을 본다
         return;
     }
     // 폰 푸시도 같이 — 이 알림은 이미 domain/notify 정책·'참모 창 보고 있으면 안 보냄'을 거쳤다(ui/notifier)
@@ -2116,7 +2122,7 @@ fn resume_steps(session_id: &str, id: Option<&str>, copy: bool, run: &mut dyn Fn
     }
     // 이어서 켤 때도 권한 확인 없이 — 안 붙이면 daemon 재시작 뒤 되살린 세션이 auto 모드로 떠서
     // Bash 마다 사용자 승인을 기다렸다(2026-09-28, 사용자 요청 "항상 바이패스로 켜지게"). CLAUDE.md 원칙 3
-    let args: Vec<String> = ["--bg", "--dangerously-skip-permissions", "--resume", session_id].iter().map(|a| a.to_string()).collect();
+    let args = crate::default_model::apply(["--bg", "--dangerously-skip-permissions", "--resume", session_id].iter().map(|a| a.to_string()).collect());
     let (ok, text) = run(&args)?;
     if !ok {
         return Err(text.trim().to_string());
@@ -2769,7 +2775,10 @@ pub(crate) fn type_into(id: &str, w: &mut dyn std::io::Write, screen: Option<&vt
 /// 하던 일 멈추기(폰 /api/interrupt) — Esc 한 번. 글 치기와 같은 잠금을 잡는다: 폰이 글을 치는 도중에 Esc 가 끼면 치던 글 사이에 들어간다
 pub fn interrupt_session(id: &str) -> Result<(), String> {
     let _turn = typing_turn();
-    with_attach(id, Some(b"\x1b")).map(|_| ())
+    let r = with_attach(id, Some(b"\x1b")).map(|_| ());
+    // 블랙박스 — Esc 를 넣었나(폰 멈춤·바탕 대화창). 끊고 보내기가 글보다 Esc 를 먼저 넣었나 가리려고(2026-11-17)
+    log_out("esc", &format!("{id} via=attach {}", if r.is_ok() { "ok" } else { "fail" }));
+    r
 }
 
 /// 붙은 화면을 그때그때 다시 보는 손잡이 — 새로 붙었을 때만(열린 보기는 None)

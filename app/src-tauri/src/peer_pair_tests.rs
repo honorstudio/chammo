@@ -22,7 +22,7 @@ fn hub(how: &'static str, yes: bool) -> (String, std::thread::JoinHandle<()>) {
     let h = std::thread::spawn(move || {
         let (tcp, _) = l.accept().unwrap();
         let mut ws = tungstenite::accept(tcp).unwrap();
-        if how != "ok" {
+        if !matches!(how, "ok" | "direct" | "bare") {
             ws.send(Message::text(json!({ "t": how }).to_string())).unwrap();
             return;
         }
@@ -37,6 +37,16 @@ fn hub(how: &'static str, yes: bool) -> (String, std::thread::JoinHandle<()>) {
             let pt = tun::open(&mt, |e| tun::agree(&a, e).ok(), &tun::unb64(v["box"].as_str().unwrap()).unwrap()).unwrap();
             let body: Value = serde_json::from_slice(&pt).unwrap();
             let reply = match body["step"].as_str() {
+                Some("link1") if how != "ok" => {
+                    // direct = 같은 계정 허용 컴퓨터라 숫자 없이 바로(결정 A) · bare = direct 표시 없이 숫자 전에 온 link5(가짜 허브 흉내)
+                    bx = tun::pubkey(body["x"].as_str().unwrap()).unwrap();
+                    assert_eq!(body["direct"], true, "새 판 link1 은 바로 연결을 받을 줄 안다고 알린다");
+                    let mut r = json!({ "step": "link5", "ok": true, "token": "cd".repeat(32), "device": DEV, "mac": { "id": "dev-a", "name": "사무실 아이맥" } });
+                    if how == "direct" {
+                        r["direct"] = json!(true);
+                    }
+                    r
+                }
                 Some("link1") => {
                     bx = tun::pubkey(body["x"].as_str().unwrap()).unwrap();
                     let cm = links.first_kind("k1", &body, SIGN, DEV, &mt, true, t0).unwrap();
@@ -91,4 +101,19 @@ fn 그_컴퓨터_열쇠가_다르면_상자를_못_열어_멈춘다() {
     // B 가 아는 A 열쇠가 sk(8) — 중계가 바꿔 끼운 것과 같음: A 는 B 의 link1 상자를 못 연다(가짜 허브 스레드가 끝남) → 시간 안에 끝
     let r = run_knock(&url, &me(), &tun::public_of(&sk(8)), |_| {}, Duration::from_secs(2));
     assert!(r.is_err());
+}
+
+#[test]
+fn 같은_계정_바로_연결은_숫자_없이_열쇠를_받는다() {
+    let (url, _h) = hub("direct", true);
+    let mut shown = vec![];
+    let out = run_knock(&url, &me(), &tun::public_of(&sk(7)), |s| shown.push(s.to_string()), Duration::from_secs(5)).unwrap();
+    assert_eq!(out.token, "cd".repeat(32));
+    assert!(shown.is_empty(), "숫자를 안 띄운다");
+}
+
+#[test]
+fn 바로_연결_표시_없이_숫자_전에_온_열쇠는_받지_않는다() {
+    let (url, _h) = hub("bare", true);
+    assert_eq!(run_knock(&url, &me(), &tun::public_of(&sk(7)), |_| {}, Duration::from_secs(5)).err().as_deref(), Some("key"));
 }

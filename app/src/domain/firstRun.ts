@@ -1,8 +1,15 @@
-// 첫 설치 — 시작 → 준비(저절로) → Claude 로그인 → 끝. 판단만 여기, 부르기는 ui/FirstRun(ADR 0027, 시안 docs/design-drafts/onboarding C)
+// 첫 설치 — 시작 → 준비(저절로) → Claude 로그인 → Chammo 계정(이미 로그인된 기기면 건너뜀) → 끝. 판단만 여기, 부르기는 ui/FirstRun(ADR 0027, 시안 docs/design-drafts/onboarding C)
 import { setupFailed, type EnvCheck } from './setup';
 
-export type FrScreen = 'start' | 'prep' | 'login' | 'done';
-export const FR_SCREENS: FrScreen[] = ['start', 'prep', 'login', 'done'];
+export type FrScreen = 'start' | 'prep' | 'login' | 'account' | 'done';
+export const FR_SCREENS: FrScreen[] = ['start', 'prep', 'login', 'account', 'done'];
+
+/** Claude 로그인 다음 장 — Chammo 계정이 이미 있는 기기(다시 깔기·데이터 폴더를 옮긴 맥)는 계정 장을 건너뛴다.
+ *  모르면(상태를 못 읽음) 계정 장을 보인다 — 로그인 단추가 이미 있으면 Rust 가 '이미 로그인'으로 알려 준다(2026-11-18 사용자: 설치 끝에 로그인) */
+export const afterClaude = (hasAccount: boolean | null): FrScreen => (hasAccount ? 'done' : 'account');
+
+/** 계정 장에서 로그인이 끝난 뒤 저절로 끝 장으로 가기까지 — 메일 한 줄을 볼 틈 */
+export const ACCOUNT_NEXT_MS = 1_500;
 
 /** tools = 맥 참모 도구(앱이 받는 파이썬). 윈도우는 git·파이썬을 winget 으로 */
 export type ItemKey = 'tools' | 'git' | 'python' | 'claude' | 'browser' | 'folder';
@@ -51,12 +58,13 @@ export function itemOk(key: ItemKey, c: Pick<EnvCheck, 'claudePath' | 'clt' | 'p
   return false;
 }
 
-/** 바닥 선 길이 0~1 — 준비는 항목 수만큼 자라고, 로그인이 끝나면 조금 더, 끝에서 1 */
+/** 바닥 선 길이 0~1 — 준비는 항목 수만큼 자라고, 로그인(Claude → Chammo 계정)이 끝날 때마다 조금 더, 끝에서 1. loggedIn = 그 장의 로그인이 끝났나 */
 export function lineLength(screen: FrScreen, items: Item[], loggedIn: boolean): number {
   if (screen === 'start') return 0;
   if (screen === 'done') return 1;
   if (screen === 'prep') return 0.05 + 0.6 * (doneCount(items) / Math.max(items.length, 1));
-  return loggedIn ? 0.9 : 0.68;
+  if (screen === 'account') return loggedIn ? 0.95 : 0.84;
+  return loggedIn ? 0.8 : 0.68;
 }
 
 /** 첫 화면 몇 번째 단계로 다시 시작하나 — 시작을 누른 적 있으면 준비부터(껐다 켜도 이어 하기). 다 된 항목은 준비가 바로 건너뛴다 */

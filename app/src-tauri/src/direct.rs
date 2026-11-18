@@ -194,7 +194,7 @@ pub const LINK_FROM: &str = "@link";
 /// 텔레그램(밖의 중계)·참모(appctl 엔 길 자체가 없다)·다른 기기 참모 열쇠(/api/direct-answer 403)로는 못 누른다
 pub fn link_pick(pick: &Pick, by: &str) -> Result<bool, Refuse> {
     if by != "desktop" && by != "phone" {
-        return Err(Refuse::Bad(crate::i18n::tr("기기 연결은 앱이나 연결된 폰 카드에서만 허용해요", "Device links are approved only in the app or a paired phone").into()));
+        return Err(Refuse::Bad(crate::i18n::tr("기기 연결은 앱이나 연결된 폰·태블릿 카드에서만 허용해요", "Device links are approved only in the app or a paired phone or tablet").into()));
     }
     match pick {
         Pick::Yes => Ok(true),
@@ -208,7 +208,7 @@ pub fn link_pick(pick: &Pick, by: &str) -> Result<bool, Refuse> {
 /// 그게 B 가 아님을 가를 길이 없다(리뷰 11-01 ⑤). 폰이 없으면 A 앞에서
 pub fn peer_link_pick(pick: &Pick, by: &str) -> Result<bool, Refuse> {
     if by != "desktop" && by != "phone" {
-        return Err(Refuse::Bad(crate::i18n::tr("이 컴퓨터 연결은 이 컴퓨터나 이 컴퓨터와 연결된 폰에서만 허용해요", "Allow this link on this computer or a phone paired with it").into()));
+        return Err(Refuse::Bad(crate::i18n::tr("이 컴퓨터 연결은 이 컴퓨터나 이 컴퓨터와 연결된 폰·태블릿에서만 허용해요", "Allow this link on this computer or a phone or tablet paired with it").into()));
     }
     link_pick(pick, by)
 }
@@ -286,7 +286,7 @@ pub fn account_logout_row(id: &str, from: &str, account: &str, now_ms: u64, ts: 
     json!({
         "ts": ts, "type": "ask", "id": id, "from": LINK_FROM, "cwd": "", "kind": LINK_KIND, "sub": ACCOUNT_LOGOUT_SUB,
         "q": crate::i18n::tr(&format!("{from} 기기에서 이 기기의 Chammo 계정({account}) 로그아웃을 요청했어요"), &format!("{from} asked to sign this device out of its Chammo account ({account})")),
-        "detail": crate::i18n::tr("로그아웃하면 이 기기는 그 계정의 메신저·팀·폰 연결이 끊겨요. 다시 쓰려면 다시 로그인해요. 내가 요청한 게 아니면 그대로 두기", "Signing out disconnects this device from that account's messenger, teams and phone link. Sign in again to use it. Keep it if you didn't ask for this"),
+        "detail": crate::i18n::tr("로그아웃하면 이 기기는 그 계정의 메신저·팀·폰·태블릿 연결이 끊겨요. 다시 쓰려면 다시 로그인해요. 내가 요청한 게 아니면 그대로 두기", "Signing out disconnects this device from that account's messenger, teams and phone/tablet link. Sign in again to use it. Keep it if you didn't ask for this"),
         "what": crate::i18n::tr("계정 로그아웃 요청", "Sign-out request"),
         "yes": crate::i18n::tr("로그아웃", "Sign out"), "no": crate::i18n::tr("그대로 두기", "Keep"), "options": [],
         "until": iso_of_ms(until), "untilMs": until,
@@ -313,9 +313,9 @@ pub const PHONE_SUB: &str = "phone";
 pub fn phone_pair_row(id: &str, until_ms: u64, ts: &str) -> Value {
     json!({
         "ts": ts, "type": "ask", "id": id, "from": LINK_FROM, "cwd": "", "kind": LINK_KIND, "sub": PHONE_SUB,
-        "q": crate::i18n::tr("이 폰을 연결할까요? 참모가 폰 연결 QR 을 만들었어요", "Link this phone? An assistant made a phone link QR"),
-        "detail": crate::i18n::tr("허용하면 그 QR 을 연 폰이 이 컴퓨터에 사람으로 닿아요(카드 답·말 보내기). 내가 연 게 아니면 거절", "If allowed, the phone that opened the QR reaches this computer as you (card answers, messages). Decline if it wasn't you"),
-        "what": crate::i18n::tr("폰 연결 허용", "Allow phone link"),
+        "q": crate::i18n::tr("이 폰·태블릿을 연결할까요? 참모가 폰·태블릿 연결 QR 을 만들었어요", "Link this phone or tablet? An assistant made a phone link QR"),
+        "detail": crate::i18n::tr("허용하면 그 QR 을 연 기기가 이 컴퓨터에 사람으로 닿아요(카드 답·말 보내기). 내가 연 게 아니면 거절", "If allowed, the device that opened the QR reaches this computer as you (card answers, messages). Decline if it wasn't you"),
+        "what": crate::i18n::tr("폰·태블릿 연결 허용", "Allow phone or tablet link"),
         "yes": crate::i18n::tr("허용", "Allow"), "no": crate::i18n::tr("거절", "Decline"), "options": [],
         "until": iso_of_ms(until_ms),
     })
@@ -604,7 +604,7 @@ mod tests {
     fn 보안_폰_연결_허용_카드는_연결_요청_카드와_같은_판에_sub_phone_답은_사람_길만() {
         let r = phone_pair_row("ab12cd99", 1_800_000_300_000, "2027-01-15T08:00:00Z");
         assert_eq!((r["from"].as_str(), r["kind"].as_str(), r["sub"].as_str()), (Some(LINK_FROM), Some(LINK_KIND), Some(PHONE_SUB)));
-        assert!(r["q"].as_str().unwrap().contains("이 폰을 연결할까요"));
+        assert!(r["q"].as_str().unwrap().contains("이 폰·태블릿을 연결할까요"));
         assert!(check(&format!("{r}"), "ab12cd99").is_ok());
         // 참모 길(scripts/direct answer 등 by=세션)로는 허용 못 한다 — 앱·짝지은 폰 카드만
         assert!(link_pick(&Pick::Yes, "desktop").is_ok());

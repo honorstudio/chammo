@@ -44,7 +44,7 @@ describe('윈도우 PC 에 붙은 폰 문구', () => {
     expect(waitingList([orch], {}, [])[0]?.q).toBe('확인창·선택지에서 멈춰 있어요 — PC에서 열어 골라 주세요');
     const out = applyStatus([{ id: 'm1', status: 'sent', at: 0 } as never], 'm1', 'unknown', undefined, 60_000, true);
     expect((out[0] as { error?: string }).error).toBe('전해지지 않았어요');
-    expect(phoneAccountError('unsupported')).toBe('이 PC 앱은 폰 계정 바꾸기를 아직 몰라요 — PC 앱을 새로 깔아 주세요');
+    expect(phoneAccountError('unsupported')).toBe('이 PC 앱은 폰·태블릿 계정 바꾸기를 아직 몰라요 — PC 앱을 새로 깔아 주세요');
     expect(phoneAccountError('locked')).not.toMatch(/맥/);
     setLang('en');
     expect(wakeFailText('Load failed', 'wake').text).toBe("Can't reach the PC — check the connection");

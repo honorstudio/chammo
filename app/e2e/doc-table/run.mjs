@@ -5,7 +5,7 @@
 // node app/e2e/doc-table/run.mjs — 맥 전용(swiftc). 창은 화면 밖, 클립보드는 끝나면 되돌린다. 실패하면 종료 1
 import { C, PA, click, drag, ready, start, xy } from './kit.mjs';
 
-const { run, ok, done } = await start();
+const { run, ok, done, crash } = await start();
 const triple = (k) => [{ move: k }, ...[1, 2, 3].flatMap((n) => [{ down: k, clicks: n }, { up: k, clicks: n, gap: 0.05 }]), { wait: 0.3 }];
 const SEL = { js: 'return JSON.stringify(__sel())' };
 const BLOCKS = { js: 'return JSON.stringify(__blocks())' };
@@ -48,6 +48,8 @@ try {
     ok('다른 앱엔 표 html 없음', !('public.html' in pb), Object.keys(pb).join(','));
     ok('우리 문서 표 밖엔 표로', JSON.parse(blocks).includes('table:사과3바나나5'), blocks);
   }
+} catch (e) {
+  crash(e);
 } finally {
   done();
 }

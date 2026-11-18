@@ -6,5 +6,5 @@ import { tr } from '../i18n';
 export function phoneReachHint(relayReady: boolean): { text: string; login: boolean } {
   return relayReady
     ? { login: false, text: tr('어디서나 붙고 내용은 암호화돼요. 테일스케일이 있으면 더 빠른 길도 써요.', 'Connects from anywhere, with content encrypted. If you have Tailscale, a faster path is used too.') }
-    : { login: true, text: tr('Chammo 계정에 로그인하면 폰이 어디서나 붙어요.', 'Sign in to your Chammo account and your phone connects from anywhere.') };
+    : { login: true, text: tr('Chammo 계정에 로그인하면 폰·태블릿이 어디서나 붙어요.', 'Sign in to your Chammo account and your phone or tablet connects from anywhere.') };
 }

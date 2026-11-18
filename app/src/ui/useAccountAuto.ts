@@ -48,7 +48,7 @@ export function useAccountAuto(accounts: AccountsView | null, acts: SessionActiv
         // 사람이 그 계정으로 로그인하는 중 — 판단은 쉬고, 로그인이 끝났으면 창이 닫혀 있어도 여기서 마무리(막힘 풀고 바꾸기+고정)
         if (loginHeld()) {
           const r = await loginTick(v).catch((e: unknown) => {
-            notifyOnce({ kind: 'accounts', session: 'accounts-login', orch: false, title: tr('로그인한 계정으로 못 바꿨어', 'Could not switch to the signed-in account'), body: accountError(String(e)) });
+            notifyOnce({ kind: 'accounts', session: 'accounts-login', orch: false, go: 'settings:accounts', title: tr('로그인한 계정으로 못 바꿨어', 'Could not switch to the signed-in account'), body: accountError(String(e)) });
             return 'done' as const;
           });
           if (r !== 'none') return; // 끝났거나 상한이면 다음 차례부터 평소대로
@@ -96,14 +96,14 @@ export function useAccountAuto(accounts: AccountsView | null, acts: SessionActiv
             }
             restUntil.current = Date.now() + (dead ? 30_000 : f.restMs);
             rateNoted.current = f.rate; // 429 가 이어지는 동안 알림은 한 번
-            if (f.notify) notifyOnce({ kind: 'accounts', session: 'accounts', orch: false, title: tr('계정 자동 전환 실패', 'Account auto-switch failed'), body: accountError(String(e)) });
+            if (f.notify) notifyOnce({ kind: 'accounts', session: 'accounts', orch: false, go: 'settings:accounts', title: tr('계정 자동 전환 실패', 'Account auto-switch failed'), body: accountError(String(e)) });
             return;
           }
           switched = true;
           rateNoted.current = false;
           asked.current.live = 0; // 다음 차례(화면 갱신 신호로 바로 온다)에 새 계정 사용량을 바로 묻는다
           // 고정한 계정이 진짜 다 차서 고정이 풀렸다 — 사람이 일부러 고른 거라 한 줄 알린다
-          if (plan.unpinned) notifyOnce({ kind: 'accounts', session: 'accounts-unpinned', orch: false, title: tr('고정 계정이 다 차서 넘겼어', 'Pinned account used up'), body: tr(`${name(v.active)} → ${name(plan.switchTo)} · 고정은 풀렸어`, `${name(v.active)} → ${name(plan.switchTo)} · unpinned`) });
+          if (plan.unpinned) notifyOnce({ kind: 'accounts', session: 'accounts-unpinned', orch: false, go: 'settings:accounts', title: tr('고정 계정이 다 차서 넘겼어', 'Pinned account used up'), body: tr(`${name(v.active)} → ${name(plan.switchTo)} · 고정은 풀렸어`, `${name(v.active)} → ${name(plan.switchTo)} · unpinned`) });
           if (voiceRef.current && plan.why === 'terms') void speak(tr(`${name(v.active)} 계정이 약관 동의가 필요해서 ${name(plan.switchTo)} 계정으로 넘겼어. 결정 대기함 카드에서 claude.ai 를 열어 동의해 줘`, `${name(v.active)} needs to accept the new terms — switched to ${name(plan.switchTo)}. Open claude.ai from the card in Decisions to accept`)).catch(() => {});
           else if (voiceRef.current && plan.why !== 'back') void speak(tr(`${name(v.active)} 계정이 다 차서 ${name(plan.switchTo)} 계정으로 넘겼어`, `${name(v.active)} is used up — switched to ${name(plan.switchTo)}`)).catch(() => {});
         }
@@ -118,7 +118,7 @@ export function useAccountAuto(accounts: AccountsView | null, acts: SessionActiv
         if (sent.length) state = markNudged(state, sent, Date.now());
         if (plan.allOut?.notify) {
           const when = fmtUntil(plan.allOut.until, Date.now());
-          notifyOnce({ kind: 'accounts', session: 'accounts-all-out', orch: false, title: tr('계정이 다 찼어', 'All accounts are used up'), body: tr(`가장 먼저 풀리는 때: ${when}`, `First to reopen: ${when}`) });
+          notifyOnce({ kind: 'accounts', session: 'accounts-all-out', orch: false, go: 'settings:accounts', title: tr('계정이 다 찼어', 'All accounts are used up'), body: tr(`가장 먼저 풀리는 때: ${when}`, `First to reopen: ${when}`) });
           if (voiceRef.current) void speak(tr(`계정이 다 찼어. ${when}에 풀려`, `All accounts are used up. First reopens at ${when}`)).catch(() => {});
         }
         let ch = changedKeys(before, state);

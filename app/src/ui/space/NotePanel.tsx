@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { applyNotes, composeNoteSend, emptyEdits, foldedFrom, moveId, type NoteBase, type NoteEditsT } from '../../domain/noteEdits';
 import { tr } from '../../i18n';
+import { guarded } from '../../domain/guarded';
 import { IconChevron, IconClose, IconPlus, IconSend } from '../Icons';
 
 // 판 접힘 — 참모마다가 아니라 한 벌(브라우저 칸이 보일 때 가운데 파일 칸을 넓히려고, 2026-10-03 사용자)
@@ -42,6 +43,7 @@ export function NotePanel({ base, storeKey, send, sendTo, onOpenStarter }: {
   const [memo, setMemo] = useState('');
   const [adding, setAdding] = useState('');
   const [busy, setBusy] = useState(false);
+  const inflight = useRef(false); // Enter·단추 겹침 — 같은 메모가 두 번 가지 않게(SendFab 과 같은 꼴, 11-17)
   const [sent, setSent] = useState(false);
   // 순서 바꾸기 — 웹 끌기(HTML5)는 앱 창이 가로채서 안 됐다(2026-09-30 사용자). 점 손잡이를 잡고 마우스를 따라간다
   const [dragId, setDragId] = useState<string | null>(null);
@@ -92,7 +94,7 @@ export function NotePanel({ base, storeKey, send, sendTo, onOpenStarter }: {
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
   };
-  const sendAll = async () => {
+  const sendAll = () => guarded(inflight, async () => {
     if (!text) return;
     setBusy(true);
     try {
@@ -100,7 +102,7 @@ export function NotePanel({ base, storeKey, send, sendTo, onOpenStarter }: {
       save(emptyEdits()); setMemo(''); setSent(true);
       window.setTimeout(() => setSent(false), 1600);
     } finally { setBusy(false); }
-  };
+  });
   const counts = { tasks: v.tasks.filter((t) => t.state !== 'removed' && !t.done).length, decisions: v.decisions.filter((d) => d.state !== 'removed').length };
   return (
     <div className={`np ${changes ? 'dirty' : ''} ${folded ? 'np-folded' : ''}`}>

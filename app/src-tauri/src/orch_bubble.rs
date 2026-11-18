@@ -94,6 +94,20 @@ fn rect_of(w: &tauri::WebviewWindow) -> Option<Screen> {
     Some(Screen { id: String::new(), x: p.x as f64 / k, y: p.y as f64 / k, w: s.width as f64 / k, h: s.height as f64 / k })
 }
 
+/// 지난번 적은 배지 기록(종류별) — 배지가 3초마다 부르는 명령이 같은 줄을 notify.log 에 쌓지 않게
+static LAST_SCREENS: Mutex<String> = Mutex::new(String::new());
+static LAST_PLACE: Mutex<String> = Mutex::new(String::new());
+
+/// 지난번과 다르면 기억하고 참 — 같은 줄이면 거짓(안 적는다)
+fn changed(last: &Mutex<String>, line: &str) -> bool {
+    let mut l = last.lock().unwrap_or_else(|e| e.into_inner());
+    if *l == line {
+        return false;
+    }
+    line.clone_into(&mut l);
+    true
+}
+
 /// 판 크기 + 보일 칸
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Shape {
@@ -267,7 +281,10 @@ pub fn bubble_screens(app_handle: tauri::AppHandle, window: tauri::WebviewWindow
     });
     let out = Screens { screens, app, win: rect_of(&window).map(|r| plate_of(&r, shape())) };
     if cfg!(debug_assertions) {
-        crate::claude::log_out("bubble", &format!("screens {:?} app {:?} win {:?}", out.screens, out.app, out.win));
+        let line = format!("screens {:?} app {:?} win {:?}", out.screens, out.app, out.win);
+        if changed(&LAST_SCREENS, &line) {
+            crate::claude::log_out("bubble", &line);
+        }
     }
     Ok(out)
 }
@@ -283,7 +300,10 @@ pub fn bubble_place(window: tauri::WebviewWindow, x: f64, y: f64, w: f64, h: f64
         return Err("bad size".into());
     }
     if cfg!(debug_assertions) {
-        crate::claude::log_out("bubble", &format!("place {x},{y} {w}x{h} view {view:?} key={key}"));
+        let line = format!("place {x},{y} {w}x{h} view {view:?} key={key}");
+        if changed(&LAST_PLACE, &line) {
+            crate::claude::log_out("bubble", &line);
+        }
     }
     KEYABLE.store(key, Ordering::SeqCst);
     let view = fit_view(view, w, h);
@@ -845,6 +865,18 @@ mod tests {
     use super::*;
 
     // 11-10 사용자 "참모 배지가 항상 이 정도 영역을 차지(370×580 투명 판)" — 웹뷰(판)는 그대로, 맥 창만 보일 칸으로
+    // 11-17 perf S: 맥이 안 잠기면 배지가 3초마다 bubble_screens 를 불러, 계측 빌드가 같은 화면 목록을 notify.log 에 10분 302줄 덧붙였다
+    // (idle.file_rewrites_per_min 15.5 > 12 · disk 704KB/분 > 600) — 바뀔 때만 적는다
+    #[test]
+    fn 같은_기록은_한_번만_적는다() {
+        let last = Mutex::new(String::new());
+        assert!(changed(&last, "screens A"), "처음은 적는다");
+        assert!(!changed(&last, "screens A"), "같으면 안 적는다");
+        assert!(!changed(&last, "screens A"));
+        assert!(changed(&last, "screens B"), "바뀌면 적는다");
+        assert!(changed(&last, "screens A"), "되돌아와도 바뀐 것");
+    }
+
     #[test]
     fn 보이는_칸은_판_안으로_자르고_없거나_깨지면_판_전체() {
         assert_eq!(fit_view(Some([262.0, 472.0, 108.0, 108.0]), 370.0, 580.0), [262.0, 472.0, 108.0, 108.0]);

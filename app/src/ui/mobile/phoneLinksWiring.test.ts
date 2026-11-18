@@ -7,8 +7,8 @@ import css from './mobile.css?raw';
 describe('폰 보관함 링크 칸 연결', () => {
   it('PhoneLocker — 맨 위·링크 칸 머리에 파일 | 링크, 링크 칸이면 PhoneLinks', () => {
     expect(locker).toMatch(/type Place = \{ kind: 'root'; project\?: string \} \| \{ kind: 'dir'; rel: string \} \| \{ kind: 'links' \};/);
-    expect(locker).toMatch(/if \(place\.kind === 'links'\) \{\s*body = <><div className="m-lk-tools">\{sw\('links'\)\}<\/div><PhoneLinks owner=\{owner\} links=\{links\}/);
-    expect(locker).toMatch(/const links = mergeLinks\(store, shown\);/);
+    expect(locker).toMatch(/if \(place\.kind === 'links'\) \{\s*body = <><div className="m-lk-tools">\{sw\('links'\)\}<\/div><PhoneLinks owner=\{owner\} links=\{links\} loaded=\{!!store\}/);
+    expect(locker).toMatch(/const links = mergeLinks\(store \?\? EMPTY_LINKS, shown\);/);
   });
   it('PhoneLinks — 넣기는 거른 주소만, 밀기·메뉴 빼기 뒤 되돌리기, 열기는 새 창', () => {
     expect(links).toMatch(/const url = cleanLinkInput\(text\);\s*if \(!url\) \{ onSay\(tr\('주소꼴이 아니에요/);

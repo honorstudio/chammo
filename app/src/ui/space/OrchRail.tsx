@@ -8,7 +8,7 @@ import { IS_WIN } from '../../domain/reader';
 import { dragStarted, dropIndex, railOut, tabShift } from '../../domain/tabDrag';
 import { dragGhost, insertToChat } from './dragPath';
 import { lostRelease } from './dragEnd';
-import { railMoved } from '../../domain/railRows';
+import { railMoved, riseFrom } from '../../domain/railRows';
 import { wakeOnce } from '../../domain/railWake';
 import { orchVars } from '../../domain/orchTheme';
 import { assistant, tr } from '../../i18n';
@@ -20,12 +20,13 @@ import { motionOn } from '../calm';
 
 /** 띠 프사 — pip: 그 참모나 맡긴 세션이 사람을 기다림(ask)·새로 띄운 파일(new)·일하는 중(run)·쉼(rest, 빈 고리) */
 /** 카드 점 — 상태는 점 모양 규칙(domain/dot): 일함 채움+숨쉬기·기다림 노랑·쉼 빈 고리·꺼짐 점선 */
-const dotOfPip = (p: RailAvatar['pip']) => (p === 'ask' ? 'ask' : p === 'run' ? 'run' : p === 'rest' || p === 'new' ? 'rest' : 'off');
+const dotOfPip = (p: RailAvatar['pip']) => (p === 'ask' || p === 'fail' ? 'ask' : p === 'run' ? 'run' : p === 'rest' || p === 'new' ? 'rest' : 'off');
 
 /** phase = 켜는 중(깨우는 쉬는 참모·새 참모)·끄는 중 — 그 칸은 누르기·끌기·메뉴가 없고 둘째 줄이 phaseText(2026-10-12 사용자 "뿅 나왔다 뿅 사라진다").
  *  flip = 자리 옮김 열쇠(대화 id — 쉬는 참모 줄과 같은 열쇠면 그 자리에서 미끄러져 온다), flipAlt = 새 참모 '켜는 중' 칸(new:<이름>) 자리를 이어받을 때 */
-export type RailAvatar = { id: string; label: string; role?: string; node: React.ReactNode; on: boolean; color: string; pinned: boolean; pip?: 'ask' | 'new' | 'run' | 'rest' | null;
-  phase?: 'starting' | 'stopping'; phaseText?: string; flip?: string; flipAlt?: string };
+/** phase lost = 재부팅으로 꺼져 깨울 차례(켤 때 점호 v3) — 위 띠 제자리, 점은 queue(점선 고리)·fail(못 깸), 누르면 onWake(차례를 앞당겨 바로 깨움) */
+export type RailAvatar = { id: string; label: string; role?: string; node: React.ReactNode; on: boolean; color: string; pinned: boolean; pip?: 'ask' | 'new' | 'run' | 'rest' | 'queue' | 'fail' | null;
+  phase?: 'starting' | 'stopping' | 'lost'; phaseText?: string; flip?: string; flipAlt?: string; onWake?: () => void };
 
 /** 쉬는(꺼진) 참모 — 띠 아래쪽 흐린 프사, 누르면 깨움(이어서 켜기). key 는 위 줄 flip 과 같은 대화 id */
 export type RailResting = { key: string; label: string; node: React.ReactNode; onWake: () => void; onMenu?: (e: React.MouseEvent) => void };
@@ -157,6 +158,7 @@ export function OrchRail({ home, onTeam, moreDot = false, popFns, top, avatars, 
   if (sigPrev.current && railMoved(sigPrev.current, sig) && !before.current) before.current = centers(navRef.current);
   useLayoutEffect(() => {
     const first = !sigPrev.current;
+    const prevSig = sigPrev.current;
     const prev = before.current;
     sigPrev.current = sig;
     before.current = null;
@@ -165,6 +167,13 @@ export function OrchRail({ home, onTeam, moreDot = false, popFns, top, avatars, 
     for (const el of nav.querySelectorAll<HTMLElement>('[data-flip]')) {
       const r = el.getBoundingClientRect();
       const was = prev.get(el.dataset.flip!) ?? (el.dataset.flipAlt ? prev.get(el.dataset.flipAlt) : undefined);
+      // 쉬는 칸에서 고른 참모 — 접힌 띠 쉬는 칸(얼굴 겹친 칸) 자리에서 위 띠 제자리로 올라온다(켤 때 점호 v3)
+      const rest = !was && riseFrom(prevSig, el.dataset.flip!) === 'rest' ? prev.get('__rest') : undefined;
+      if (rest) {
+        const dx = rest.x - (r.left + r.width / 2), dy = rest.y - (r.top + r.height / 2);
+        el.animate([{ transform: `translate(${dx}px, ${dy}px) scale(.5)`, opacity: 0.55 }, { transform: 'none', opacity: 1 }], { duration: 620, easing: 'cubic-bezier(.4, 0, .2, 1)' });
+        continue;
+      }
       if (!was) { el.animate([{ opacity: 0, transform: 'scale(.6)' }, { opacity: 1, transform: 'none' }], { duration: 320, easing: 'cubic-bezier(.3, 1.4, .5, 1)' }); continue; }
       const dx = was.x - (r.left + r.width / 2);
       const dy = was.y - (r.top + r.height / 2);
@@ -308,11 +317,11 @@ export function OrchRail({ home, onTeam, moreDot = false, popFns, top, avatars, 
         return (
           <button key={a.flip ?? a.id} ref={speaking === a.id ? speakGlowRef : undefined} className={`lk-av ${a.on ? 'on' : ''}${speaking === a.id ? ' st-speak' : ''}${drag?.id === a.id ? ' rail-drag' : ''}${a.phase ? ` lk-ph ph-${a.phase}` : ''}`}
             style={{ ...orchVars(a.color), ...(shift ? { transform: `translateY(${shift}px)` } : {}) } as React.CSSProperties}
-            onPointerDown={down(a.id, i)} onClick={() => { if (!dragged.current && !a.phase) onPick(a.id); }}
+            onPointerDown={down(a.id, i)} onClick={() => { if (dragged.current) return; if (a.phase === 'lost') a.onWake?.(); else if (!a.phase) onPick(a.id); }}
             onDoubleClick={onRename && !a.phase ? () => onRename(a.id) : undefined} onContextMenu={onMenu && !a.phase ? (e) => onMenu(e, a.id) : (e) => e.preventDefault()}
             aria-label={a.phaseText ? `${a.label} · ${a.phaseText}` : a.label} aria-current={a.on || undefined} aria-busy={a.phase ? true : undefined} data-flip={a.flip ?? a.id} data-flip-alt={a.flipAlt} data-orch-drop={a.phase ? undefined : a.id}
-            data-tip={a.label} data-tip-sub={a.phaseText ?? a.role} data-tip-dot={a.phase === 'stopping' ? 'off' : a.phase ? 'rest' : dotOfPip(a.pip)} data-tip-color={a.color} data-tip-key={i < 9 && !a.phase ? keyLabel(`⌘${i + 1}`, IS_WIN) : undefined}>
-            <span className="lk-av-pic">{a.node}{a.pip && !a.phase && <i className={`lk-pip p-${a.pip}`} aria-hidden="true" />}{a.phase && <i className={`lk-ph-dot ph-${a.phase}`} aria-hidden="true" />}</span>
+            data-tip={a.label} data-tip-sub={a.phaseText ?? a.role} data-tip-dot={a.phase === 'stopping' ? 'off' : a.phase === 'lost' ? dotOfPip(a.pip) : a.phase ? 'rest' : dotOfPip(a.pip)} data-tip-color={a.color} data-tip-key={i < 9 && !a.phase ? keyLabel(`⌘${i + 1}`, IS_WIN) : undefined}>
+            <span className="lk-av-pic">{a.node}{a.pip && (!a.phase || a.phase === 'lost') && <i className={`lk-pip p-${a.pip}`} aria-hidden="true" />}{a.phase && a.phase !== 'lost' && <i className={`lk-ph-dot ph-${a.phase}`} aria-hidden="true" />}</span>
             {wide && <span className="lk-av-tx"><b>{a.label}</b>{(a.phaseText ?? a.role) && <span className={a.phaseText ? 'lk-ph-tx' : undefined}>{a.phaseText ?? a.role}</span>}</span>}
           </button>
         );
@@ -340,7 +349,7 @@ export function OrchRail({ home, onTeam, moreDot = false, popFns, top, avatars, 
         <>
           {/* 띠 RA(2026-10-24 사용자) — 잠든 참모는 얼굴 겹친 칸 하나, 예약·기능은 더보기 하나. 참모 10·잠든 5 에서도 안 넘친다 */}
           {resting.length > 0 && (
-            <button className={`lk-av rest-fold ${pop?.kind === 'rest' ? 'open' : ''}`} onClick={openPop('rest')} aria-expanded={pop?.kind === 'rest'}
+            <button className={`lk-av rest-fold ${pop?.kind === 'rest' ? 'open' : ''}`} data-flip="__rest" onClick={openPop('rest')} aria-expanded={pop?.kind === 'rest'}
               aria-label={tr(`쉬는 ${assistant()} ${resting.length}`, `Resting ${resting.length}`)} data-tip={tr(`쉬는 ${assistant()} ${resting.length}`, `Resting ${resting.length}`)} data-tip-sub={tr('누르면 목록', 'Click for the list')} data-tip-dot="off">
               <span className="rest-faces" aria-hidden="true">{resting.slice(0, 3).map((r) => <span key={r.key}>{r.node}</span>)}</span>
               <b className="rest-n">{resting.length}</b>

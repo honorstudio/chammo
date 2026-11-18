@@ -39,7 +39,7 @@ pub fn replay_on_start(content: &str, seen: Option<usize>, now: u64) -> Vec<Stri
         .collect()
 }
 
-/// 기록에 남길 줄 — 팀·다른 기기 부탁은 말 본문·초대 코드·짝짓기 코드가 들어 있어 action·verb·id 만(notify.log 는 진단에 붙어 나간다)
+/// 기록에 남길 줄 — 팀·다른 기기 부탁은 말 본문·초대 코드·짝짓기 코드가 들어 있어 action·verb·id 만(notify.log 는 사람이 문제를 알릴 때 통째로 붙여 보내기도 한다 — 자동으로는 안 나간다)
 pub(crate) fn log_line(line: &str) -> String {
     let v: serde_json::Value = serde_json::from_str(line).unwrap_or_default();
     if matches!(v["action"].as_str(), Some("team" | "peer")) {

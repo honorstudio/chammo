@@ -261,7 +261,7 @@ fn 카드는_알리고_버튼은_되돌리기_쉬운_것만() {
     b.tick(now);
     let s = sent(&tg);
     assert_eq!(s.len(), 4, "대기 글 + 연결 글 + 카드 둘(이틀 지난 카드는 안 보냄)");
-    assert!(s[2]["reply_markup"].is_null() && s[2]["text"].as_str().unwrap().contains("결제는 앱·폰 카드에서만"));
+    assert!(s[2]["reply_markup"].is_null() && s[2]["text"].as_str().unwrap().contains("결제는 앱·폰·태블릿 카드에서만"));
     assert!(s[2]["text"].as_str().unwrap().contains("project-b") && s[2]["text"].as_str().unwrap().contains("US$25"));
     assert_eq!(s[3]["reply_markup"]["inline_keyboard"][2][0]["callback_data"], "c:aaaa0002:y");
     assert_eq!(*b.env.shown.lock().unwrap(), vec!["aaaa0002"], "결제 카드는 텔레그램에 떠도 '보임'이 아니다(여기서 답 못 함)");

@@ -1,4 +1,5 @@
 import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { bootSignal } from '../boot/bootSignal';
 import { chatDrafts } from '../../data/drafts';
 import { interleave } from '../../domain/chatExtras';
 import { isCompacting, isPasting } from '../../domain/compacting';
@@ -10,10 +11,10 @@ import { modelCommand } from '../../domain/modelPick';
 import { screenDialog, type ScreenDialog } from '../../domain/screenDialog';
 import type { PickResult, PickWant } from './modelPickRun';
 import { builtinSlash, completeSlash, isMemoryCmd, matchSlash, slashQuery, type SlashItem } from '../../domain/slash';
-import { appendChat, chatBusy, chatEscStops, chatNorm, escUnsends, enterDelay, parseChat, pasteKind, clickFocusesInput, sentByMe, promptInput, sendControls, splitPaths, splitRefs, staleRefs, stillPending, stuckInInput, taskCounts, termRest, withRefs, type ChatItem, type ChatRef } from '../../domain/chat';
+import { appendChat, chatBusy, dropRescued, chatEscStops, chatNorm, errorTurns, escUnsends, enterDelay, parseChat, pasteKind, clickFocusesInput, sentByMe, promptInput, sendControls, splitPaths, splitRefs, staleRefs, stillPending, stuckInInput, taskCounts, termRest, withRefs, type ChatItem, type ChatRef } from '../../domain/chat';
 import type { LinkState } from '../../domain/attachExit';
 import { HOLD_MAX } from '../../domain/paneLinks';
-import { absorbedAt, absorbedLeft, againPlan, againPlanOf, applyQueueOps, autoEnterTarget, DUP_CONFIRM, emptyQueue, inputLeftover, keepAfterRemove, LOST_AFTER, markInflight, mineForLeftover, newPending, appLineShown, isAppLine, pendAct, pendingState, pendLook, queueAllMine, resent, restoreDraft, staleEcho, typingOf, waitingOf, type PendingState, type QueueState } from '../../domain/chatQueue';
+import { absorbedAt, absorbedLeft, againPlan, againPlanOf, applyQueueOps, autoEnterTarget, DUP_CONFIRM, emptyQueue, inputLeftover, keepAfterRemove, LOST_AFTER, markOutcome, mineForLeftover, newPending, appLineShown, isAppLine, pendingState, pendMark, queueAllMine, resent, restoreDraft, staleEcho, typingOf, waitingOf, type PendingState, type QueueState, type SendOutcome } from '../../domain/chatQueue';
 import { mdToHtml } from '../md';
 import { openWebLink } from '../followLink';
 import { chatSendLog, openTarget, readSessionTasks, readTranscript, type SessionTask, type TranscriptChunk } from '../../data/tauri';
@@ -26,7 +27,7 @@ import { attachStep, NO_ATT, type Att, type AttEvent, type AttState } from '../.
 import { chipName, chipPastes, isFolderChip } from '../../domain/drop';
 import { assistant, josa, tr } from '../../i18n';
 import { orchestratorLike, seenName } from '../../domain/session';
-import { IconChatSend, IconChevron, IconChevronDown, IconChevronUp, IconClose, IconEnter, IconFile, IconFolder, IconRefresh, IconSend, IconSpeaker, IconStop, IconTerminal } from '../Icons';
+import { IconChatSend, IconChevron, IconChevronDown, IconChevronUp, IconClose, IconEnter, IconFile, IconFolder, IconRefresh, IconSpeaker, IconStop, IconTerminal } from '../Icons';
 import { ChatVoice } from './chatVoice';
 import { backdropStyle } from './backdrop';
 import { sameName, shotChoices } from '../../domain/lockerShots';
@@ -37,6 +38,7 @@ import { OrchAvatar } from '../avatar/OrchAvatar';
 import { orchColor } from '../../domain/avatar';
 import { lockerApi, useLockerTree, useRecentShots, type LockerOwner } from '../space/useLocker';
 import { IconButton } from '../kit/IconButton';
+import { ContextMenu } from '../OrchDialogs';
 import { JumpBottom } from '../kit/JumpBottom';
 import { CHAT_INSERT, PATH_MIME } from '../space/dragPath';
 import { OPEN_PAGE } from '../space/pageEvents';
@@ -50,6 +52,7 @@ import { withPlain } from '../../domain/notes';
 import { useCoverEvery } from '../poll';
 import { echoOfSent, enterAction } from '../../domain/enterSend';
 import { chatPollMs, liveReply, liveStep, liveView, NO_LIVE } from '../../domain/chatLive';
+import { afterCut, CUT_BLIND_MS, type Cut } from '../../domain/cutSend';
 import './chat.css';
 
 /** 한 번에 그리는 항목 수 — 긴 대화는 "앞 대화 더 보기"로 늘린다 */
@@ -83,7 +86,7 @@ const drafts = chatDrafts;
  * 스페이스 모드의 채팅 보기(2026-09-30 사용자). 터미널(TUI)은 뒤에 그대로 붙어 있고, 이건 그 위에 덮는 판이다.
  * 읽기 = 대화 기록 이어 읽기, 쓰기 = 그 터미널 입력칸에 붙여넣고 Enter(send). 멈추기 = Esc
  */
-export function ChatView({ extra = [], fontSize, sessionId, state, send, interrupt, rawKeys, onTerminal, onInputFocus, focusRef, screen, submitTerminal, pasteImage, voiceStop = 0, sendQueuedNow, typeOnly, clearTerminal, paneId, ctx, modelInfo, pickModel, cwd, locker, notice, link, remote = false, readOnly = false, readFn, covered = false }: {
+export function ChatView({ extra = [], fontSize, sessionId, state, send, interrupt, rawKeys, onTerminal, onInputFocus, focusRef, screen, submitTerminal, pasteImage, voiceStop = 0, sendQueuedNow, cutTurn, typeOnly, clearTerminal, paneId, ctx, modelInfo, pickModel, cwd, locker, notice, link, remote = false, readOnly = false, readFn, covered = false }: {
   /** 읽기만(다른 기기 프로젝트 세션 엿보기) — 입력칸·상태 줄 아래를 숨긴다 */
   readOnly?: boolean;
   /** 다른 기기 참모 채팅(ADR 0011) — 뒤 터미널이 없다: 터미널·모델·/ 자동완성·보관함·그림 붙이기·멈춤·@ 멘션을 끈다 */
@@ -113,9 +116,12 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   state: string;
   /** 보낸다 — 약속을 주면 못 보냈을 때(false) 입력칸에 되살리고 한 줄 알린다 */
   /** again = '다시 보내기' — 세션 쪽이 입력칸에 남은 그 말에 같은 글을 겹쳐 치지 않는다(pty_type again) */
-  /** 'inflight' = 쳤고 입력칸에서 빠졌는데 기록엔 아직(훅이 도는 중) — 그 말풍선은 '전달 안 됨'을 늦게(domain/chatQueue INFLIGHT_LOST_AFTER) */
-  send: (text: string, again?: boolean) => void | Promise<boolean | 'inflight'>;
+  /** 'inflight' = 쳤고 입력칸에서 빠졌는데 기록엔 아직(훅이 도는 중) — 그 말풍선은 '전달 안 됨'을 늦게(domain/chatQueue INFLIGHT_LOST_AFTER).
+   *  'landed' = 기록에 든 걸 봤다 · 'stuck' = 다시 쳐 봐도 입력칸에 그대로 — 바로 바깥 다시 보내기(domain/chatQueue pendMark) */
+  send: (text: string, again?: boolean) => void | Promise<SendOutcome>;
   interrupt: () => void;
+  /** 끊고 보내기 — Esc 뒤 기록에 끊김이 붙을 때까지 기다리고 끊긴 턴에 묻힌 사람 말을 돌려준다(domain/cutSend). 없으면(원격) 예전처럼 0.7초 */
+  cutTurn?: () => Promise<Cut>;
   /** 터미널에 키를 하나씩(선택 창 버튼) — 한꺼번에 넣으면 TUI 가 놓친다 */
   rawKeys?: (seq: string[]) => Promise<void>;
   /** 터미널로 보기 — 선택지·권한 창처럼 채팅에 안 그려지는 화면일 때 */
@@ -244,6 +250,9 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   const addRefNow = useRef(addRef);
   addRefNow.current = addRef;
   const stableRef = useCallback((who: string, text: string) => addRefNow.current(who, text), []);
+  // Claude 오류로 답을 못 받은 기록 말풍선의 다시 보내기(domain/chat errorTurns) — 말풍선 memo 가 안 깨지게 고정 손잡이
+  const againErr = useRef<(text: string) => void>(() => {});
+  const stableAgain = useCallback((text: string) => againErr.current(text), []);
   useRefInbox(remote ? undefined : paneId, (r) => {
     // addRef 를 먼저 따로 — r.onLabel?.(addRef(…)) 로 쓰면 onLabel 이 없을 때(문서 물어보기·진행 칸) 인자째 건너뛰어 칩이 안 붙었다(하네스 실측)
     if (!r.plain) { const label = addRef(r.who, r.text, r.kind, { at: r.at, head: r.head }); r.onLabel?.(label); return; }
@@ -382,6 +391,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
         // 다음 차례에 다시
       }
       busy = false;
+      bootSignal('chat'); // 켤 때 점호 — 대화 첫 쪽을 읽었다(못 읽어도 기다림은 푼다)
     };
     tickRef.current = tick;
     void tick();
@@ -405,7 +415,6 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     const stop = everyHere(tick, 2000);
     return () => { alive = false; stop(); };
   }, [sessionId, everyHere]);
-  const [hints, setHints] = useState(() => { try { return localStorage.getItem('chatHints') !== '0'; } catch { return true; } });
   const [tasksOpen, setTasksOpen] = useState(() => { try { return localStorage.getItem('chatTasksOpen') !== '0'; } catch { return true; } });
 
   useEffect(() => {
@@ -621,8 +630,17 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   // 거둬들여져 입력칸에 되돌아온 말 — 기록엔 보낸 말로 남았지만 참모는 못 받았다. 말풍선은 빼고 입력칸 줄(다시 보내기) 하나로만(2026-10-16 사용자 두 번 보임)
   const lastItem = items[items.length - 1];
   const rewound = lastItem?.kind === 'user' && leftover?.length === 1 && chatNorm(leftover[0]!) === chatNorm(lastItem.text) && escUnsends(items, false) ? lastItem : null;
-  const liveItems = useMemo(() => (rewound ? items.filter((i) => i !== rewound) : items), [items, rewound]);
+  // 끊고 보내기가 다시 넣은 말은 한 번만(domain/chat dropRescued)
+  const liveItems = useMemo(() => dropRescued(rewound ? items.filter((i) => i !== rewound) : items), [items, rewound]);
   const dropPending = (at: number) => setPending((ps) => ps.filter((x) => x.at !== at));
+  // 끝내 안 간 말의 오른쪽 클릭 메뉴 — 빼기는 화면 단추 없이 여기서만(2026-11-17 사용자)
+  const [failMenu, setFailMenu] = useState<{ x: number; y: number; at: number; again: () => void } | null>(null);
+  // 갔지만 Claude 오류로 답을 못 받은 내 말(retry = 다시 보내기, login = 로그인 카드가 맡음). 같은 말을 이미 다시 보냈으면(대기 말풍선) 안 띄운다
+  const unanswered = useMemo(() => {
+    const m = readOnly ? new Map<string, 'retry' | 'login'>() : errorTurns(liveItems);
+    for (const [id, k] of m) { const it = liveItems.find((i) => i.id === id); if (k !== 'retry' || !it || it.kind !== 'user' || it.images?.length || waiting.some((p) => chatNorm(p.text) === chatNorm(it.text))) m.delete(id); }
+    return m;
+  }, [liveItems, waiting, readOnly]);
   // 방금 간 글을 또 보내려 하면 한 번 막는다 — 간 줄이 화면에 남아 보여 보내기를 계속 눌렀다(2026-10-10 사용자). 곧 한 번 더 누르면 보낸다
   const [dupWarn, setDupWarn] = useState<{ text: string; at: number } | null>(null);
   // 그림 아닌 파일을 붙여넣었을 때 잠깐 띄우는 안내(domain/chat pasteKind)
@@ -636,6 +654,15 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   }, [attachErr]);
   const tellAttach = (errors: string[]) => { if (errors.length) setAttachErr(errors); };
   tellNow.current = tellAttach;
+  // 오류로 답을 못 받은 말 다시 보내기 — 이미 간 말이라 '방금 간 말' 막기(dupBlocked)는 안 거친다. 새 대기 말풍선으로 보내기 흐름 그대로
+  againErr.current = (text: string) => {
+    flushLeftover();
+    const at = Date.now();
+    quietUntil.current = at + 1500;
+    setPending((p) => [...p, newPending(text, items, at)]);
+    stick.current = true;
+    sendWatched(text, at);
+  };
   // 못 보낸 말 — 세션 치기가 거절되거나 시간을 넘겼다. 말풍선 대신 입력칸에 되살리고 한 줄 알린다(2026-10-24 윈도우 '어떤 말도 안 감')
   const [sendFail, setSendFail] = useState(false);
   useEffect(() => {
@@ -647,7 +674,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     pasted.current = 0; // 붙여 넣은 글은 이 말과 같이 간다
     if (!remote) chatSendLog(`${paneId} view items=${items.length} last=${items[items.length - 1]?.ts ?? '-'} state=${state} link=${link ?? '-'}`); // 보낸 순간 화면이 기록보다 낡았나(11-05 80분 멈춘 칸)
     void Promise.resolve(send(text)).then((ok) => {
-      if (ok === 'inflight') setPending((ps) => markInflight(ps, at));
+      setPending((ps) => markOutcome(ps, at, ok));
       if (ok !== false) return;
       dropPending(at);
       setDraft((d) => restoreDraft(d, text));
@@ -701,24 +728,28 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     quietUntil.current = Date.now() + 1500;
     setTermText('');
   };
-  // 줄 선 말 빼기 — Claude 의 ↑ 가 줄 선 말을 전부 입력칸으로 되돌린다(popAll). 되돌아오면 뺄 말만 빼고 나머지는 하나씩 다시 줄 세운다
-  const removing = useRef<{ at: number; text: string; until: number } | null>(null);
+  // 줄 선 말 고치기(숨은 길) — 입력칸이 빈 채 ↑ 를 누르면 CLI 처럼 줄 선 내 말을 입력칸으로 꺼낸다. Claude 의 ↑ 가 줄 선 말을 전부
+  // 터미널 입력칸으로 되돌리니(popAll), 되돌아온 걸 보고 터미널 입력칸은 비우고 그 말들을 채팅 입력칸에 넣는다. 화면 단추는 없다(2026-11-17 사용자)
+  const pulling = useRef<{ at: number; until: number } | null>(null);
   useEffect(() => {
-    const r = removing.current;
+    const r = pulling.current;
     if (!r) return;
-    if (Date.now() > r.until) { removing.current = null; return; }
-    const back = queue.popped.some((q) => q.ts >= r.at - 10_000 && chatNorm(q.text) === chatNorm(r.text));
-    if (!back || !leftover?.includes(r.text)) return;
-    removing.current = null;
-    // 다시 줄 세울 말은 입력칸에 실제로 되돌아온 것에서 — 누른 순간의 대기열(1초 늦음)로 정하면 그사이 나간 말이 또 갔다(리뷰)
-    const others = keepAfterRemove(leftover, r.text);
+    if (Date.now() > r.until) { pulling.current = null; return; }
+    const back = queue.popped.some((q) => q.ts >= r.at - 10_000);
+    if (!back || !leftover?.length) return;
+    pulling.current = null;
+    const texts = leftover; // 입력칸에 실제로 되돌아온 것 — 누른 순간의 대기열(1초 늦음)로 정하면 그사이 나간 말까지 꺼냈다
     rebuildInput([]);
-    dropPending(r.at);
-    others.forEach((t) => send(t)); // 줄 세우기는 세션 쪽에서 앞 글 Enter 뒤로 차례대로(SessionGrid typeAndSend)
+    setPending((ps) => ps.filter((x) => !texts.includes(x.text)));
+    setDraft((d) => restoreDraft(d, texts.join('\n')));
+    requestAnimationFrame(() => input.current?.focus());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queue, termText, clock]);
-  const act = (p: { text: string; at: number }, what: 'now' | 'drop' | 'again') => {
-    const st = stateOf.get(p.at);
+  /** ↑ 로 꺼낼 수 있나 — 일하는 중, 입력칸 둘 다 비었고, Claude 대기열이 다 이 채팅이 보낸 말일 때만(남의 말까지 입력칸에 쏟는다) */
+  const canPull = () => !!rawKeys && busy && !draft && !termRef.current && queue.waiting.length > 0 && queueAllMine(queue.waiting, waiting);
+  const pullQueued = () => { pulling.current = { at: Date.now(), until: Date.now() + 4000 }; void rawKeys?.(['\x1b[A']); };
+  /** 다시 보내기(끝내 안 간 말) — lost 는 again, 입력칸에 걸린 말은 now(입력칸 그대로 Enter). 줄 선 말은 단추가 없다 — 지금 보내기는 ⌘Enter(queuedNow) */
+  const act = (p: { text: string; at: number }, what: 'now' | 'again') => {
     if (what === 'again') {
       if (dupBlocked(p.text)) return;
       // 입력칸에 이 말만 그대로 걸려 있으면 Enter 만 — flushLeftover 가 Enter 를 넣은 뒤 또 치면 같은 말이 두 번 갔다
@@ -726,30 +757,22 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
       flushLeftover();
       const sent = send(p.text, true);
       const at = repend(p);
-      void Promise.resolve(sent).then((ok) => { if (ok === 'inflight') setPending((ps) => markInflight(ps, at)); });
+      // 못 쳤으면(세션이 꺼져 칸이 없음·거절) 새 말과 같이 입력칸에 되살리고 한 줄 — 예전엔 결과를 안 봐 누른 게 아무 일도 없어 보였다
+      void Promise.resolve(sent).then((ok) => {
+        if (ok !== false) { setPending((ps) => markOutcome(ps, at, ok)); return; }
+        dropPending(at);
+        setDraft((d) => restoreDraft(d, p.text));
+        setSendFail(true);
+      });
       return;
     }
-    if (st === 'queued') {
-      if (what === 'now') { if (busy && !unsendsNow()) sendQueuedNow(); return; } // 쉬고 있으면 Claude 가 곧 꺼내 보낸다 · 앞 말에 답이 없으면 줄 선 채로(Esc 가 앞 말을 거둬들인다)
-      // ↑ 는 대기열이 비면 지난 말을 불러온다 — 일하는 중이고 그 말이 아직 줄에 있을 때만
-      if (!rawKeys || !busy || termRef.current || !(queue.waiting.some((q) => chatNorm(q.text) === chatNorm(p.text)) || queueAllMine(queue.waiting, [p]))) return;
-      removing.current = { at: p.at, text: p.text, until: Date.now() + 4000 };
-      void rawKeys(['\x1b[A']);
-      return;
-    }
-    if (st === 'input') {
-      // 입력칸에 이 말뿐이거나 모르는 글과 섞였으면 입력칸 그대로 보내기, 내 말 여럿이면 이 말만 따로 보내고 나머지는 입력칸에 되돌림
-      if (what === 'now') {
-        if (!enterOk()) return;
-        if (!leftover || leftover.length === 1) { submitTerminal(); quietUntil.current = Date.now() + 1500; repend(p); return; }
-        rebuildInput(keepAfterRemove(leftover, p.text), p.text);
-        repend(p);
-        return;
-      }
-      if (leftover) rebuildInput(keepAfterRemove(leftover, p.text));
-    }
-    dropPending(p.at);
+    if (stateOf.get(p.at) !== 'input' || !enterOk()) return;
+    // 입력칸에 이 말뿐이거나 모르는 글과 섞였으면 입력칸 그대로 보내기, 내 말 여럿이면 이 말만 따로 보내고 나머지는 입력칸에 되돌림
+    if (!leftover || leftover.length === 1) { submitTerminal(); quietUntil.current = Date.now() + 1500; repend(p); return; }
+    rebuildInput(keepAfterRemove(leftover, p.text), p.text);
+    repend(p);
   };
+
 
   const atBottom = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.clientHeight < 40;
   // 위로 많이 올려 읽는 중이면 "맨 아래로" 버튼(2026-09-30 사용자)
@@ -773,6 +796,18 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
   const lastTool = tail?.kind === 'tools' ? (() => { const t = tail.tools[tail.tools.length - 1]!; return `${t.name.replace(/^mcp__[^_]+(?:_[^_]+)*?__/, '')} ${t.target}`.trim(); })() : '';
   const shown = liveItems.length > limit ? liveItems.slice(liveItems.length - limit) : liveItems;
 
+  /** 끊긴 턴에 묻힌 사람 말을 다시 넣는다(이미 말풍선이 있던 말이라 대기 말풍선은 새로 안 띄운다) */
+  const rescue = (texts: string[]) => {
+    for (const t of texts) {
+      if (!remote) chatSendLog(`${paneId} cut rescue chars=${[...t].length}`);
+      void Promise.resolve(send(t));
+    }
+  };
+  /** 줄 선 말을 지금 — 끊고(Esc) 멈춘 걸 본 뒤, 이미 그 턴에 들어갔다가 같이 끊긴 말은 다시 넣는다. 안 들어간 말은 Claude 가 꺼내 보낸다 */
+  const queuedNow = () => {
+    if (!cutTurn) { sendQueuedNow(); return; }
+    void cutTurn().then((r) => rescue(afterCut(r.lost)));
+  };
   const submitNow = useRef<(now?: boolean) => void>(() => {});
   const submit = (now = false) => {
     // 멘션 칩(@가나 담당)은 진짜 SendMessage 이름 @[참모-3 · 가나 담당] 으로 풀어 보낸다 — 참모가 누구에게 전할지 헷갈리지 않게
@@ -793,14 +828,19 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
     const at = Date.now();
     const went = sendAtt();
     if (now) {
-      // 끊고 바로 보내기 — 막 보낸 말을 Esc 로 끊으면 Claude 가 그 말을 입력칸에 되돌려 놓는다. 끊은 뒤 입력칸을 새로 읽어 정리하고 친다(리뷰)
-      interrupt();
-      window.setTimeout(() => {
+      // 끊고 바로 보내기 — Esc 를 먼저 넣고 기록에 끊김이 붙은 걸 본 뒤에 친다(domain/cutSend). 예전엔 0.7초 뒤 무조건 쳐서
+      // Esc 가 늦거나 안 들어가면 글이 대기열 → 그 턴에 들어간 뒤 끊겨 답이 없었다(2026-11-17 참모 채팅).
+      // 막 보낸 말을 Esc 로 끊으면 Claude 가 그 말을 입력칸에 되돌려 놓는다 — 끊은 뒤 입력칸을 새로 읽어 정리하고 친다(리뷰)
+      const go = (r: Cut) => {
         const s = screen?.();
         const t = s ? promptInput(s.lines, s.cursor) ?? '' : '';
         flushLeftover(t ? inputLeftover(t, knownRef.current) : null, t);
+        rescue(afterCut(r.lost, text).slice(0, -1));
+        if (!remote) chatSendLog(`${paneId} cut type via=${r.via} cut=${r.cut}`);
         sendWatched(text, at, went);
-      }, 700);
+      };
+      if (cutTurn) void cutTurn().then(go);
+      else { interrupt(); void new Promise((ok) => window.setTimeout(ok, CUT_BLIND_MS)).then(() => go({ cut: true, via: 'blind', lost: [] })); }
     } else {
       flushLeftover();
       sendWatched(text, at, went);
@@ -867,7 +907,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
         {!sessionId && <div className="chat-empty">{tr('아직 대화 기록이 없어요. 아래에 첫 지시를 보내 보세요', 'No conversation yet. Send the first message below')}</div>}
         {/* 끼울 것(직접 답하기 카드)을 시각 순으로 말풍선 사이에 — 답을 기다리는 카드(pin)는 맨 아래(domain/chatExtras) */}
         {interleave(shown, extra).map((x) => ('item' in x
-          ? <Bubble key={`${x.item.kind}:${x.item.id}`} it={x.item} by={paneId ?? ''} onRef={stableRef} />
+          ? <Bubble key={`${x.item.kind}:${x.item.id}`} it={x.item} by={paneId ?? ''} onRef={stableRef} unanswered={unanswered.get(x.item.id)} onAgain={stableAgain} />
           : <div key={x.extra.key}>{x.extra.node}</div>))}
         {!readOnly && liveView({ blocks: live }, items).map((t, i, all) => (
           // 기록 말풍선과 같은 마크다운으로 — 바꿔 끼울 때 문단 간격이 안 튀게. 0.4초마다 바뀌는 글이라 md 기억(mdCache)엔 안 넣는다.
@@ -876,39 +916,25 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
         ))}
         {waiting.map((p) => {
           const st = stateOf.get(p.at) ?? 'sending';
-          const look = pendLook(st, busy); // 모양·글만 — 단추는 진짜 상태(st)로
           // 앱이 넣은 줄([앱] …) — 기록에 들어온 앱 줄과 같은 옅은 한 줄, 단추 없음(domain/chatQueue isAppLine)
-          const app = isAppLine(p.text);
-          if (app) return appLineShown(st) ? (
+          if (isAppLine(p.text)) return appLineShown(st) ? (
             <div key={p.at} className="chat-row relay">
               <div className="chat-relay app pending" title={tr('앱이 넣는 중', 'The app is passing this on')}><div className="who">{tr('앱이 전함', 'From the app')}</div><div className="body">{p.text.replace(/^\[앱\]\s*/, '')}</div></div>
             </div>
           ) : null;
-          // 줄 선 말 빼기는 ↑(줄 선 말 전부 입력칸으로)를 쓰니, 대기열이 다 이 채팅이 보낸 말이고 입력칸이 빌 때만 —
-          // 다른 세션 말까지 입력칸에 쏟아지고, 입력칸에 글이 있으면 ↑ 는 그 안에서 커서만 옮긴다
-          const canDrop = st === 'input' ? !!leftover?.includes(p.text) // 모르는 글과 섞였으면 그 말만 뺄 수 없다 — 입력칸 줄의 빼기로
-            : st !== 'queued' || (!!rawKeys && busy && !termText && queueAllMine(queue.waiting, waiting));
+          // 보낸 말은 CLI 처럼 보내자마자 보통 내 말풍선 — 줄 선 말도(2026-11-17 사용자). 일하는 중 표시(chat-status)가 그 아래 맨 끝이라
+          // 설명 글 없이 '줄 서 있구나'가 보인다. 아직 안 읽었으면 작은 점, 끝내 안 들어갔을 때만 다시 보내기(domain/chatQueue pendMark)
+          const mark = pendMark(st, p, { queue, now: Date.now(), enterWait });
+          const again = () => act(p, st === 'input' ? 'now' : 'again');
+          // 끝내 안 간 말 — 점 자리에 다시 보내기 아이콘 하나(아이폰 메시지의 빨간 ! 자리), 말풍선은 살짝 흐리게. 빼기는 오른쪽 클릭 메뉴로만(2026-11-17 사용자).
+          // 세션이 꺼진 채(gone) 누르면 못 보내니 입력칸에 되살린다(act) — 예전엔 누를 수 없는 점이라 어떻게 하라는 건지 몰랐다
           return (
-            <div key={p.at} className="chat-row me">
-              <div className={`bubble me pending st-${look}`}>
+            <div key={p.at} className="chat-row me" onContextMenu={mark === 'failed' ? (e) => { e.preventDefault(); setFailMenu({ x: e.clientX, y: e.clientY, at: p.at, again }); } : undefined}>
+              {mark === 'unread' && <span className="chat-unread" role="img" aria-label={tr('아직 안 읽음', 'Not read yet')} title={tr('아직 안 읽음', 'Not read yet')} />}
+              {mark === 'failed' && <IconButton size="s" className="chat-again" label={tr('다시 보내기', 'Send again')} title={tr('전달 안 됨 — 다시 보내기', 'Not delivered — send again')} onClick={again}><IconRefresh /></IconButton>}
+              <div className={`bubble me pending mk-${mark}`}>
                 {p.imgs && <div className="chat-thumbs">{p.imgs.map((u, i) => <img key={i} className="chat-thumb" src={u} alt="" />)}</div>}
                 <AtText text={splitRefs(p.text).body} />
-                <span className="chat-meta">{{
-                  sending: tr('보내는 중', 'Sending'),
-                  // 일하는 도중엔 도구 사이에 들어간다 — '일이 끝나면'은 안 간 것처럼 읽혔다(2026-10-21 사용자), '보내는 중'은 실패처럼 보였다(2026-10-26 사용자)
-                  queued: tr('대기 중 · 참모가 지금 단계를 마치면 들어가요', 'Queued · goes in when the current step finishes'),
-                  input: tr('입력칸에 걸려 있어요', 'Stuck in the terminal input'),
-                  lost: tr('전달 안 됨', 'Not delivered'),
-                  wait: tr('붙으면 보내요', 'Sends once attached'),
-                }[look]}</span>
-                {pendAct(st, app) && link !== 'gone' && ( /* 끊긴 채면 다시 보내도 줄에서 기다리다 붙는 순간 두 번 간다 — 안내 줄이 '다시 켜지면 다시 보내 줘' */
-                  <span className="chat-pend-acts">
-                    {pendAct(st) === 'again'
-                      ? <IconButton size="s" tone="line" label={tr('다시 보내기', 'Send again')} onClick={() => act(p, 'again')}><IconRefresh /></IconButton>
-                      : <IconButton size="s" tone="line" label={tr('지금 보내기', 'Send now')} title={st === 'queued' ? tr('지금 보내기 — 하던 일을 멈추고 이 말을 바로 보낸다', 'Send now — interrupt and send this now') : undefined} onClick={() => act(p, 'now')}><IconSend /></IconButton>}
-                    {canDrop && <IconButton size="s" tone="line" label={tr('빼기', 'Remove')} onClick={() => act(p, 'drop')}><IconClose /></IconButton>}
-                  </span>
-                )}
               </div>
             </div>
           );
@@ -916,6 +942,10 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
         </div>
       </div>
       {away && <JumpBottom className="chat-bottom" onClick={toBottom} />}
+      {failMenu && (
+        <ContextMenu x={failMenu.x} y={failMenu.y} onClose={() => setFailMenu(null)}
+          items={[{ label: tr('다시 보내기', 'Send again'), run: failMenu.again }, { label: tr('빼기', 'Remove'), danger: true, run: () => dropPending(failMenu.at) }]} />
+      )}
       {dialog && rawKeys && <ChatDialog d={dialog} keys={rawKeys} read={() => { const s = screen?.(); return s ? screenDialog(s.lines) : null; }} onTerminal={onTerminal} />}
       {/* 상태 줄 — 목록 끝에 두면 스크롤에 가려 작업 중인지 몰랐다(2026-09-30 사용자). 입력칸 바로 위에 늘 */}
       {(state === 'blocked' || busy || compacting || ctx !== undefined || modelInfo?.model) && (
@@ -978,14 +1008,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
           <span>{tr('방금 이미 간 말이에요 — 또 보내려면 한 번 더 눌러 주세요', 'This was just sent — press again to send it once more')}</span>
         </div>
       )}
-      {busy && (!!draft.trim() || waiting.length > 0) && hints && (
-        <div className="chat-hint">
-          <span>{draft.trim()
-            ? tr('Enter 는 줄 서 있다가 중간에 들어가요 · ⌘Enter 는 하던 일을 끊고 바로 보내요', 'Enter queues it for the next step · ⌘Enter interrupts and sends now')
-            : tr('줄 서 있는 말이 있어요 · ⌘Enter 로 하던 일을 끊고 바로 보내요', 'A message is queued · ⌘Enter interrupts and sends it now')}</span>
-          <button onClick={() => { setHints(false); try { localStorage.setItem('chatHints', '0'); } catch { /* 이번 실행만 */ } }}>{tr('힌트 끄기', 'Hide hints')}</button>
-        </div>
-      )}
+      {/* 줄 서기·⌘Enter 안내 줄은 두지 않는다 — 보낸 말은 그냥 간 말로 보이고 ⌘Enter(끊고 보내기)는 숨은 기능(2026-11-17 사용자) */}
       {refs.length > 0 && (
         <div className="chat-refs">
           {refs.map((r) => (
@@ -1060,6 +1083,8 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
               if ((e.key === 'Tab' && !e.shiftKey) || (e.key === 'Enter' && !e.shiftKey && !modKey(e, IS_WIN) && !exact)) { e.preventDefault(); slashFill(slashList[slashSel]!.name); return; }
               if (e.key === 'Escape') { e.preventDefault(); setSlashOff(draft); return; }
             }
+            // ↑ = 줄 선 내 말 꺼내 고치기(CLI 'Press up to edit queued messages' 와 같은 숨은 길)
+            if (e.key === 'ArrowUp' && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && !e.nativeEvent.isComposing && canPull()) { e.preventDefault(); pullQueued(); return; }
             // Enter = 보내기(일하는 중이면 줄 서 있다가 중간에 들어간다), ⌘Enter = 끊고 바로 보내기(2026-09-30 사용자)
             // 입력기가 아직 글을 넣는 Enter(229 — 맥 웹뷰)는 다음 차례에, 그때의 submit 으로(domain/enterSend)
             const enter = enterAction({ key: e.key, keyCode: e.keyCode, isComposing: e.nativeEvent.isComposing, shiftKey: e.shiftKey });
@@ -1069,7 +1094,7 @@ export function ChatView({ extra = [], fontSize, sessionId, state, send, interru
               // 보낸 말에 아직 답이 없으면 끊지 않고 그냥 보낸다 — Esc 가 앞 말을 거둬들여 참모에게 안 간다(domain/chat escUnsends)
               const cut = modKey(e, IS_WIN) && busy && !unsendsNow();
               if (enter === 'defer') { window.setTimeout(() => submitNow.current(cut)); return; }
-              if (cut && !draft.trim() && !termText && waiting.length) { sendQueuedNow(); return; }
+              if (cut && !draft.trim() && !termText && waiting.length) { queuedNow(); return; }
               submit(cut);
             }
             // Esc = CLI 처럼 하던 일 멈추기(일하는 중일 때만 — 2026-09-30 사용자)
@@ -1125,13 +1150,16 @@ const RefBtn = ({ onClick }: { onClick: () => void }) => (
   <IconButton size="s" className="chat-refbtn send-orch" label={tr('이 말풍선을 입력칸에 #참조로 넣기', 'Reference this bubble in the input')} title={tr('이 말풍선을 입력칸에 #참조로 넣기', 'Reference this bubble in the input')} onClick={(e) => { e.stopPropagation(); onClick(); }}><IconChatSend /></IconButton>
 );
 
-const Bubble = memo(function Bubble({ it, by, onRef }: { it: ChatItem; by: string; onRef: (who: string, text: string) => void }) {
+const Bubble = memo(function Bubble({ it, by, onRef, unanswered, onAgain }: { it: ChatItem; by: string; onRef: (who: string, text: string) => void;
+  /** retry = Claude 오류로 답을 못 받은 말 — 대기 말풍선과 같은 바깥 자리에 다시 보내기(domain/chat errorTurns) */ unanswered?: 'retry' | 'login'; onAgain?: (text: string) => void }) {
   if (it.kind === 'user') {
     const { body, refs } = splitRefs(it.text);
+    const again = unanswered === 'retry' && onAgain;
     return (
       <div className="chat-row me">
         <RefBtn onClick={() => onRef(tr(`내 말${hhmm(it.ts)}`, `Me${hhmm(it.ts)}`), body)} />
-        <div className="bubble me">
+        {again && <IconButton size="s" className="chat-again" label={tr('다시 보내기', 'Send again')} title={tr('답을 못 받음 — 다시 보내기', 'No reply — send again')} onClick={() => onAgain(it.text)}><IconRefresh /></IconButton>}
+        <div className={again ? 'bubble me unanswered' : 'bubble me'}>
           {it.images && <div className="chat-thumbs">{it.images.map((src, i) => <Thumb key={i} src={src} by={by} label={`${REF_PREFIX}img${i + 1}`} />)}</div>}
           {splitPaths(body).map((x, i) => ('text' in x ? <AtText key={i} text={x.text} /> : <button type="button" key={i} className="chat-file" title={x.path} onClick={() => void openChatFile(x.path, by, x.at)}>{x.at?.box ? <AreaCrop path={x.path} box={x.at.box} height={18} /> : <><IconFile />{x.name}</>}</button>))}
           {/* #sel 인용(파일:줄 · 제목 · 고른 글)은 말풍선에 다시 안 펼친다 — 위 파일 칸(누르면 그 줄로)이면 된다 */}

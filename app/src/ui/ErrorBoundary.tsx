@@ -11,12 +11,12 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
   static getDerivedStateFromError(e: unknown): State {
     return { err: String(e instanceof Error ? e.message : e).slice(0, 300) };
   }
-  // 익명 사용 통계 — 화면 오류 종류 이름만(문구는 안 보낸다).
+  // 익명 사용 통계 — 화면 오류 종류 이름만(문구는 안 보낸다). 오류 보고(ADR 0033)는 오류 이름·우리 번들 줄칸만.
   // 앱 기록(notify.log 'ui-crash <창> <오류>')엔 글까지 — 설치 스크립트가 새 판 메인 창 멈춤을 보고 백업으로 되돌린다(2026-11-05 TDZ 멈춤).
   // 폰·브라우저엔 앱 명령이 없어 실패한다 — 조용히 넘긴다
   componentDidCatch(e: unknown) {
     bumpUsage('webview');
-    uiCrash(String(e instanceof Error ? e.message : e)).catch(() => {});
+    uiCrash(String(e instanceof Error ? e.message : e), e instanceof Error ? e.name : undefined, e instanceof Error ? e.stack : undefined).catch(() => {});
     // 참모 배지를 꺼 뒀나 — 이 창이 멈춰도 배지 대화창은 따로 돌아 참모와 말할 수 있다(11-05 TDZ 때 비상구). 꺼져 있으면 켜는 단추
     readConfig().then((c) => this.setState({ badgeOff: !c.features.bubble }), () => {});
   }

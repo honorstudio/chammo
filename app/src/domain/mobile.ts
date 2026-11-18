@@ -281,6 +281,13 @@ export function liveWork(o: { state: string; items: ChatItem[]; pending: number;
   return { busy, line, tools, secs: Math.max(0, Math.round((o.now - from) / 1000)) };
 }
 
+/** 일하는 중 줄 꼬리 — 걸린 시간만. 도구 횟수('도구 59번')는 뺐다: 할 일 개수로 읽혔고, 답이 흘러나오는 동안 그 숫자로 멈춰 있다가
+ *  턴이 끝나면 줄째 사라져 '59개였다 사라짐'으로 보였다(2026-11-17 사용자 폰). 데스크톱 채팅도 이 줄엔 횟수를 안 쓴다 */
+export function liveMeta(live: { tools: number; secs: number }): string {
+  if (live.secs < 3) return '';
+  return live.secs < 60 ? tr(`${live.secs}초`, `${live.secs}s`) : tr(`${Math.floor(live.secs / 60)}분 ${live.secs % 60}초`, `${Math.floor(live.secs / 60)}m ${live.secs % 60}s`);
+}
+
 /** 참모 바꾸기 시트를 아래로 끌다 놓으면 닫나 — 80px 넘게 내렸거나 아래로 빠르게(0.5px/ms) 튕김. 위로 튕기면 제자리(채팅 시트 releaseSnap 과 같은 손맛) */
 export const closeOnRelease = (dy: number, v: number) => (v <= -0.5 ? false : v >= 0.5 || dy > 80);
 
@@ -473,12 +480,14 @@ export function nextAfterStop(orchs: Session[], stopped: string, current: string
 export const lineSlot = (line: string | undefined): { skel: boolean; text: string } =>
   line === undefined ? { skel: true, text: '' } : { skel: false, text: line || ' ' };
 
-export type OrchMenuKey = 'rename' | 'role' | 'pin' | 'unpin' | 'sleep' | 'wake' | 'remove';
+export type OrchMenuKey = 'rename' | 'role' | 'pin' | 'unpin' | 'sleep' | 'wake' | 'remove' | 'kids' | 'kidsTime';
 /** 참모 줄 길게 누르기 메뉴 — 밀기 동작(고정·재우기·깨우기·제거)을 다 모으고 이름 바꾸기를 더한다(입력이 필요한 건 밀기가 아니라 메뉴, iOS 관례).
  *  이름은 켜진 참모만(/rename 은 살아 있는 세션에), 고정은 대화 id 가 있을 때. 제거는 빨강(누르면 경고) */
-export function orchMenu(o: { live: boolean; pinned: boolean; canPin: boolean }): { key: OrchMenuKey; label: string; danger?: boolean }[] {
+export function orchMenu(o: { live: boolean; pinned: boolean; canPin: boolean; kids?: boolean }): { key: OrchMenuKey; label: string; danger?: boolean }[] {
   const pin = o.canPin ? [o.pinned ? { key: 'unpin' as const, label: tr('고정 풀기', 'Unpin') } : { key: 'pin' as const, label: tr('맨 위에 고정', 'Pin to top') }] : [];
+  // 키즈 참모 — 이 기기를 아이 화면으로(맨 위, 켜진 참모만). 고르면 이 기기는 그 참모 아이 화면에 잠긴다(kids_pad)
+  const kids = o.live && o.kids ? [{ key: 'kids' as const, label: tr('아이 화면으로', 'Open kids screen') }, { key: 'kidsTime' as const, label: tr('아이 시간 10분 더', '10 more min') }] : [];
   return o.live
-    ? [{ key: 'rename', label: tr('이름 바꾸기', 'Rename') }, { key: 'role', label: tr('맡은 일', 'Role') }, ...pin, { key: 'sleep', label: tr('재우기', 'Sleep') }, { key: 'remove', label: tr('제거', 'Remove'), danger: true }]
+    ? [...kids, { key: 'rename', label: tr('이름 바꾸기', 'Rename') }, { key: 'role', label: tr('맡은 일', 'Role') }, ...pin, { key: 'sleep', label: tr('재우기', 'Sleep') }, { key: 'remove', label: tr('제거', 'Remove'), danger: true }]
     : [{ key: 'wake', label: tr('깨우기', 'Wake') }, ...pin, { key: 'remove', label: tr('제거', 'Remove'), danger: true }];
 }

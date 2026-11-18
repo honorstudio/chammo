@@ -10,9 +10,11 @@ import './ui/layers.css';
 import './ui/mobile/mobile.css';
 import './ui/paused.css';
 
-import { avatarBlobUrl, hasToken, homeTried, markHomeTried, newPairCode, pair, readAvatarsForPhone } from './data/web';
+import { avatarBlobUrl, hasToken, homeTried, isKidsPad, kidsPadApi, markHomeTried, newPairCode, pair, readAvatarsForPhone } from './data/web';
+import { KidsScreen } from './ui/kids/KidsScreen';
 import { bootPair, homeCodeFrom, homeUrl, pairCodeFrom, spentBy } from './domain/mobileAuth';
 import { isStandalone } from './ui/mobile/standalone';
+import './ui/mobile/installPrompt'; // 안드로이드 설치 창을 화면이 뜨기 전부터 붙잡는다
 import { refreshAvatars, setAvatarSource } from './ui/avatar';
 import { RESUME_EVENT } from './domain/poller';
 import { blockPageZoom } from './ui/mobile/zoomGuard';
@@ -22,12 +24,20 @@ import { hideBootSplash } from './ui/mobile/bootSplash';
 blockPageZoom();
 
 // 참모 프사는 Rust 명령 대신 모바일 서버에서 — 그림은 토큰 실어 받은 blob 주소(키로만)
-setAvatarSource({ read: readAvatarsForPhone, dataDir: () => Promise.resolve('phone'), image: (e) => avatarBlobUrl(e.key) });
+// 지난번 받은 프로필은 이 폰에 기억(keep) — 홈 화면 앱이 새로 떠도 기본 색으로 먼저 그리지 않게(2026-11-16 사용자)
+const AVATAR_KEEP = 'chammo.avatars';
+setAvatarSource({ read: readAvatarsForPhone, dataDir: () => Promise.resolve('phone'), image: (e) => avatarBlobUrl(e.key),
+  keep: { load: () => JSON.parse(localStorage.getItem(AVATAR_KEEP) ?? 'null') as unknown, save: (raw) => localStorage.setItem(AVATAR_KEEP, JSON.stringify(raw)) } });
 // 돌아오거나(백그라운드·망) 다시 붙으면 다시 읽는다 — 데스크톱에서 바꾼 프로필도, 맥 재시작 중에 실패한 첫 읽기도 여기서 메워진다
 window.addEventListener(RESUME_EVENT, () => { void refreshAvatars(); });
 
 const root = createRoot(document.getElementById('root')!);
-const show = () => root.render(<StrictMode><ErrorBoundary><MobileApp /></ErrorBoundary></StrictMode>);
+// 키즈 패드면 보호자 화면 대신 아이 화면만(맥이 이 기기 줄을 키즈 길에 잠갔다 — kids_pad)
+const show = () => root.render(<StrictMode><ErrorBoundary>{isKidsPad() ? <KidsPad /> : <MobileApp />}</ErrorBoundary></StrictMode>);
+function KidsPad() {
+  hideBootSplash();
+  return <KidsScreen api={kidsPadApi} />;
+}
 
 /** 홈 화면 앱 넘기기 — 1회용 코드를 받아 그 코드를 든 주소로 다시 연다(bootPair). 못 받으면(맥이 늦음·막 받음) false → 그냥 화면,
  *  홈 화면 앱은 그때 '홈 화면 앱 연결'(HomeAppLink) 붙여넣기로 */

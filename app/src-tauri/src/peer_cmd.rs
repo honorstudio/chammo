@@ -85,7 +85,7 @@ fn fail(e: impl Into<String>) -> Value {
 }
 
 fn need_pair(name: &str) -> Value {
-    json!({ "ok": false, "needPair": true, "error": format!("{name} 와 아직 안 이어졌어 — scripts/peer connect {name} 하면 그 기기에 카드가 뜨고, 그쪽 사람이 허용하면 이어져(옛 판이면 그 기기 설정 > 폰의 연결 코드로 scripts/peer pair {name} <코드>)") })
+    json!({ "ok": false, "needPair": true, "error": format!("{name} 와 아직 안 이어졌어 — scripts/peer connect {name} 하면 그 기기에 카드가 뜨고, 그쪽 사람이 허용하면 이어져(옛 판이면 그 기기 설정 > 폰·태블릿의 연결 코드로 scripts/peer pair {name} <코드>)") })
 }
 
 fn call_err(name: &str, e: String) -> Value {

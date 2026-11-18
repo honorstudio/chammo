@@ -26,6 +26,13 @@ function ledger(events: TaskEvent[], orchs: Session[]): Ledger {
   return { sends: events.filter((e) => e.type === 'send' && e.target).reverse(), ownerOf }; // 기록은 덧붙이는 순서 = 최근이 뒤
 }
 
+/** 그 세션에 마지막으로 맡긴 일과 살아 있는 주인 참모 — 맡긴 기록이 없으면 undefined(맨 앞 참모로 짐작하지 않는다) */
+export function lastSendTo(sub: Session, events: TaskEvent[], orchs: Session[], sessions: Session[]): { send: TaskEvent; owner?: Session } | undefined {
+  const l = ledger(events, orchs);
+  const send = l.sends.find((e) => findTarget(sessions, e.target)?.id === sub.id);
+  return send && { send, owner: l.ownerOf(send.task) };
+}
+
 const lastSender = (l: Ledger, sub: Session, sessions: Session[]) => {
   const last = l.sends.find((e) => findTarget(sessions, e.target)?.id === sub.id);
   return last && l.ownerOf(last.task);

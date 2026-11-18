@@ -68,6 +68,10 @@ export type Config = {
   pingChannel?: string;
   /** 브라우저 칸 주소창 기본 검색 — '' 구글 · 'naver' 네이버 */
   searchEngine?: string;
+  /** 새 세션 기본 모델 — 'opus'·'sonnet'·'haiku'·'fable', '' = Claude Code 기본 따름(앱이 띄우는 세션에만 --model, Rust default_model) */
+  defaultModel?: string;
+  /** 새 세션 기본 노력값 — low…max, '' = 따름 */
+  defaultEffort?: string;
 };
 /** 설정 읽기 — 새 설치면 기본값(GitHub 아이디는 gh 로 채워 본다) */
 export const readConfig = () => invoke<Config>('read_config');
@@ -75,6 +79,8 @@ export const readConfig = () => invoke<Config>('read_config');
 /** 설정 파일 다시 읽기 — 참모가 scripts/app project 로 config.json 을 고친 뒤 */
 export const reloadConfig = () => invoke<Config>('reload_config');
 export const writeConfig = (config: Config) => invoke<void>('write_config', { config });
+/** 새 세션 기본 모델 칸 — 고를 수 있는 별칭(깔린 claude 판)·전역 기본값 */
+export const defaultModelView = () => invoke<import('../domain/defaultModel').DefaultModelView>('default_model_view');
 /** 설정 저장 뒤 메뉴를 다시 만든다(언어·비서 이름·꺼 둔 기능) */
 export const rebuildMenu = () => invoke<void>('rebuild_menu');
 
@@ -138,10 +144,22 @@ export function openPty(
   return invoke<number>('pty_open', { command, cwd, cols, rows, onData: onDataCh });
 }
 
+/** 그냥 셸 탭 — 로그인 셸(맥 $SHELL -l, 윈도우 PowerShell)을 cwd 에서. 쓰기·크기·닫기는 세션 칸과 같은 pty_* (Rust shell_pty) */
+export function openShell(cwd: string | undefined, cols: number, rows: number, onData: (bytes: Uint8Array) => void): Promise<number> {
+  const onDataCh = new Channel<ArrayBuffer | number[]>();
+  onDataCh.onmessage = (d) => onData(d instanceof ArrayBuffer ? new Uint8Array(d) : Uint8Array.from(d));
+  return invoke<number>('shell_open', { cwd, cols, rows, onData: onDataCh });
+}
+/** 셸 위에서 돌고 있는 프로그램 이름(쉬면 null) — 탭 닫기 전 확인 */
+export const shellBusy = (id: number) => invoke<string | null>('shell_busy', { id });
+
 export const writePty = (id: number, data: string) => invoke<void>('pty_write', { id, data });
 /** 앱이 세션에 글 치기 — 조각마다 6ms, enterMs 면 쉬고 Enter. Rust 가 TYPE_LOCK 을 잡아 다른 치기 길과 안 섞인다(끝나면 풀린다) */
 /** 보내기 블랙박스 한 줄(notify.log chat-send) — 글 내용을 넣지 않는다 */
 export const chatSendLog = (line: string) => { void invoke<void>('chat_send_log', { line }).catch(() => {}); };
+/** 끊고 보내기 — Esc 직전 그 세션 기록 끝(못 찾으면 null) · Esc 뒤 기록에 끊김이 붙기를 기다림(Rust cut_wait, 블랙박스 chat-cut 한 줄) */
+export const cutMark = (id: string) => invoke<number | null>('cut_mark', { id });
+export const cutWait = (id: string, from: number, maxMs: number) => invoke<{ via: string; ms: number; lost: string[] }>('cut_wait', { id, from, maxMs });
 /** again = '다시 보내기' — Rust 가 입력칸에 남은 그 말이면 같은 글을 또 치지 않고 Enter 만(화면을 못 보면 Enter 먼저 넣고 기록으로 확인) */
 /** 돌려주는 'dead' = 그 칸 보기가 죽어 있었다(세션엔 새로 붙어 넣었다) — 칸을 다시 붙인다(PaneApi.reattach) */
 export const typePty = (id: number, keys: string[], enterMs?: number, again?: boolean) => invoke<string>('pty_type', { id, keys, enterMs: enterMs ?? null, again: again ?? null });
@@ -229,6 +247,8 @@ export const speakPreviewStop = (id: number) => invoke<void>('speak_preview_stop
 /** target = 알림을 누르면 갈 곳(domain/notify noteTarget) — 눌리면 window.__notifyClick(target) 으로 돌아온다 */
 /** phones false = 맥 알림만(폰 푸시 없이). 안 주면 폰에도 */
 export const notify = (title: string, body: string, target: string, phones?: boolean) => invoke<void>('notify', { title, body, target, phones });
+/** 누른 알림 갈 곳 — Rust 가 화면이 가져갈 때까지 들고 있다(한 번만, 1분까지). 화면이 덜 떴을 때 누른 것도 켤 때 받는다 */
+export const notifyClickTake = () => invoke<string | null>('notify_click_take');
 /** 메인 창을 보고 있나(보임·최소화 아님·앞) — 윈도우 알림 판단용 */
 export const mainWatched = () => invoke<boolean>('main_watched');
 /** 맥 마지막 입력 뒤 초·화면 잠김(Rust away.rs) — 자리 비움이면 사람 필요 알림을 폰으로도 */
@@ -281,6 +301,11 @@ export const writeTama = (json: string) => invoke<void>('write_tama', { json });
 
 /** 세션별 컨텍스트 사용량 파일 원문들 (파싱은 domain/ctx.ts) */
 export const readCtx = (ids: string[]) => invoke<string[]>('read_ctx', { ids });
+/** 참모 자동 정리 — 인계 파일 자리·고친 시각(ms, 없으면 0), 정리 기록 한 줄(<데이터>/chief-compact.jsonl). Rust chief_compact */
+export const chiefHandoff = (base: string) => invoke<{ path: string; mtime: number }>('chief_handoff', { base });
+/** 프로젝트 세션 정리 — 그 폴더 docs/starter.md 자리·고친 시각·깃 여부, 예비 자리 <데이터>/compact/<id>.md. Rust chief_compact::project_handoff */
+export const projectHandoff = (cwd: string, id: string) => invoke<{ path: string; mtime: number; git: boolean; alt: string; altMtime: number }>('project_handoff', { cwd, id });
+export const chiefCompactLog = (line: string) => invoke<void>('chief_compact_log', { line });
 
 /** 결정 대기함 답장·앱이 넘기는 줄([앱] …) — 세션에 잠깐 attach 해서 글자 + Enter.
  *  다 친 뒤 그 세션 채팅에 '보낸 말'로 알린다 — 모르는 글로 입력칸에 걸려 보이면 Enter 를 다시 넣지도, 간 뒤 지우지도 못했다(2026-10-10:
@@ -328,6 +353,8 @@ export const readLessons = (names: string[]) => invoke<Record<string, string>>('
 /** base = 고치기 전에 읽은 글 — 그 뒤 덧붙은 교훈은 Rust 가 잠근 채 다시 읽어 남긴다 */
 export const writeLessons = (name: string, content: string, base?: string) => invoke<void>('write_lessons', { name, content, base: base ?? null });
 export const unmirrorLesson = (project: string, lesson: string) => invoke<boolean>('unmirror_lesson', { project, lesson });
+/** 알아서 기억 규칙 되돌리기 — <HQ>/scripts/memory undo <id>(장부·기억 줄 둘 다) */
+export const undoMemoryRule = (id: string) => invoke<void>('undo_memory_rule', { id });
 export const appendMemo = (name: string, entry: string) => invoke<void>('append_memo', { name, entry });
 export const readAutoAllow = () => invoke<string>('read_auto_allow');
 /** 한글 입력 진단 — <데이터 폴더>/ime-debug.on 이 있을 때만 켜진다(null = 꺼짐, 아니면 그 파일 내용) */
@@ -464,6 +491,26 @@ export const saveAvatarFile = (key: string, avatar: unknown, image: Uint8Array |
   invoke<unknown>('avatar_save', { key, avatar, image: image ? Array.from(image) : null });
 export const deleteAvatarFile = (key: string) => invoke<void>('avatar_delete', { key });
 
+/** 키즈 모드(Rust kids.rs) — on = 설정 스위치, orchs = 키즈 참모(키 = 참모 기본 이름) */
+export type KidsView = { on: boolean; orchs: Record<string, { child: string; age: number; since: number }>;
+  /** 부모 잠금 숫자를 정했나 · 하루 시간(분) · 참모별 오늘 쓴 시간(여섯째 조각) · 말 앞단 API 키를 넣었나(일곱째) */ lock?: boolean; api?: boolean; passkey?: number; daily?: number; time?: Record<string, { usedMs: number; limitMs: number; leftMs: number }> };
+export const kidsLockSet = (pin: string) => invoke<KidsView>('kids_lock_set', { pin });
+export const kidsApiKeySet = (key: string) => invoke<KidsView>('kids_api_key_set', { key });
+export const kidsApiKeyClear = () => invoke<KidsView>('kids_api_key_clear');
+export const kidsPasskeyClear = () => invoke<KidsView>('kids_passkey_clear');
+export const kidsDailySet = (min: number) => invoke<KidsView>('kids_daily_set', { min });
+export const kidsTimeAdd = (key: string, min: number) => invoke<KidsView>('kids_time_add', { key, min });
+export const kidsRead = () => invoke<KidsView>('kids_read');
+/** quiet = 새 참모를 키즈로 만들 때 — 첫 인사가 이미 키즈 판이라 '[앱] 이제 키즈 참모야' 알림을 안 보낸다 */
+export const kidsSet = (key: string, on: boolean, child: string, age: number, quiet = false) => invoke<KidsView>('kids_set', { key, on, child, age, quiet });
+/** 아이 대화 — 아이 세션 새 답을 기록으로 옮긴 뒤 최근 7일 치(kids_wire) */
+export const kidsLog = (key: string) => invoke<import('../domain/kids').KidsRow[]>('kids_log', { key });
+/** 아이 말 — 아이 세션에(이름표·켜기·기록, 맥 미리보기 키즈 화면) */
+export const kidsSay = (key: string, text: string, cid: string) => invoke<void>('kids_say', { key, text, cid });
+/** 작품 목록·한 작품(맥 미리보기 — 패드는 /api/kids/works·work) */
+export const kidsWorks = (key: string) => invoke<{ name: string; title: string; mtime: number }[]>('kids_works', { key });
+export const kidsWork = (key: string, name: string) => invoke<string>('kids_work', { key, name });
+
 /** 모바일(폰 → 테일스케일) — 켜고 끄기·짝짓기 QR·연결된 기기(Rust mobile.rs·mobile_pair.rs). 마스터 열쇠는 폰으로 안 나간다 */
 /** 기기 줄 하나 = 열쇠 하나(사파리·홈 화면 앱은 따로) — group 이 같으면 같은 폰(domain/mobileDevices) */
 export type MobileDevice = DeviceRow;
@@ -503,7 +550,8 @@ export const mobileApi = {
 /** 익명 사용 통계 — 기능을 연 횟수·화면 오류 종류만 센다(Rust usage_counts, 설정에서 끄면 안 셈). 실패는 조용히 */
 export type UsageKind = 'office' | 'messenger' | 'craft' | 'webview';
 /** 화면이 ErrorBoundary 로 멈춘 한 줄을 notify.log 'ui-crash' 칸에(창 이름은 Rust 가 붙인다) */
-export const uiCrash = (message: string) => invoke<void>('ui_crash', { message });
+// 이름·스택은 오류 보고(ADR 0033)용 — Rust 가 우리 번들 줄칸만 골라 쓰고 글은 버린다
+export const uiCrash = (message: string, name?: string, stack?: string) => invoke<void>('ui_crash', { message, name: name ?? null, stack: stack ?? null });
 /** 메인 창 오류 화면 '참모 배지로 대화' — 꺼져 있으면 켠다(bubble_menu.rs) */
 export const bubbleRescue = () => invoke<void>('bubble_rescue');
 export const bumpUsage = (kind: UsageKind) => {

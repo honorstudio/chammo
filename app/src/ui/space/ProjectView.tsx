@@ -2,6 +2,7 @@
 // 목록 = 내가 볼 차례(그 자리에서 답 — 결정 대기함과 같은 줄) / 일하는 중(오늘 진행 막대) / 쉬는 중(표지), 프로젝트 0개면 큰 입력칸.
 // 화면 = 사람 말 이름 · 한 일 이야기 · 맨 아래 '다음에 시킬 일'. 읽기는 열 때 한 번(폴링 없음), 표지는 보이는 줄만 읽는다
 import { invoke } from '@tauri-apps/api/core';
+import { openShellTab } from './navSignal';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { tr } from '../../i18n';
 import type { DotKind } from '../../domain/dot';
@@ -190,6 +191,7 @@ export function ProjectList({ all, kit, onPick, onAddProject, onReveal, onBig }:
     const out = hiddenSet.has(p.root);
     act.openMenu(e, [
       ...(onReveal ? [{ label: tr('폴더에서 보기', 'Show in folder'), run: () => onReveal(p.root) }] : []),
+      { label: tr('여기서 터미널', 'Open terminal here'), run: () => openShellTab(p.root) },
       { label: out ? tr('목록에 되돌리기', 'Put back in the list') : tr('목록에서 빼기', 'Remove from the list'), danger: !out, run: () => kit.onHide(p.root, !out) },
     ]);
   };

@@ -248,6 +248,10 @@ pub(crate) fn write_private(path: &Path, text: &str) -> std::io::Result<()> {
 
 /// User-Agent → 짧은 기기 이름
 pub fn device_name(ua: &str) -> String {
+    // 안드로이드 태블릿은 UA 에 Mobile 이 없다(폰 입구 homeFirst.phoneName 과 같은 이름). 맥 UA 아이패드는 입구가 iPad 를 붙여 보낸다(deviceUa)
+    if ua.contains("Android") && !ua.contains("Mobile") {
+        return "Android Tablet".into();
+    }
     for (needle, name) in [("iPhone", "iPhone"), ("iPad", "iPad"), ("Android", "Android"), ("Macintosh", "Mac"), ("Windows", "Windows")] {
         if ua.contains(needle) {
             return name.into();
@@ -378,7 +382,7 @@ impl Devices {
         let mut g = self.inner.lock().unwrap();
         match &g.hold {
             Some((c, false)) if c == card && g.code.is_some() => {}
-            _ => return Err(crate::i18n::tr("이 폰 연결 요청은 끝났어요(시간이 지났거나 새 QR 로 바뀌었어요)", "This phone link request is over").into()),
+            _ => return Err(crate::i18n::tr("이 폰·태블릿 연결 요청은 끝났어요(시간이 지났거나 새 QR 로 바뀌었어요)", "This phone or tablet link request is over").into()),
         }
         if yes {
             g.hold = Some((card.to_string(), true));

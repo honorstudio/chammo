@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useRef, useState } from 'react';
 import { composeSend } from '../../domain/space';
+import { guarded } from '../../domain/guarded';
 import { assistant, tr } from '../../i18n';
 import { IconCheck, IconClose, IconSend } from '../Icons';
 import { IconButton } from '../kit/IconButton';
@@ -20,6 +21,7 @@ export function SendFab({ send, sendTo, path }: { send: (text: string) => Promis
   const [flown, setFlown] = useState(false); // 보낸 직후 날아가는 움직임
   const [err, setErr] = useState('');
   const leave = useRef(0);
+  const inflight = useRef(false); // 메모 칸 Enter 와 단추가 겹쳐 두 번 갔다(11-17 space-send 486자 ×2)
   const lines = docs.reduce((k, p) => k + p.diff.added.length + p.diff.removed.length, 0);
   const cells = sheets.reduce((k, x) => k + x.pending.cells.length + x.pending.notes.length, 0);
   const count = lines + cells + comments.length;
@@ -27,7 +29,7 @@ export function SendFab({ send, sendTo, path }: { send: (text: string) => Promis
   const to = sendTo ?? assistant();
   const open = hover || pinned;
   const preview = composeSend(docs, memo, comments, sheets, path ?? undefined);
-  const sendAll = async () => {
+  const sendAll = () => guarded(inflight, async () => {
     if (!preview || !path) return;
     setSending(true); setErr('');
     try {
@@ -42,7 +44,7 @@ export function SendFab({ send, sendTo, path }: { send: (text: string) => Promis
     } finally {
       setSending(false);
     }
-  };
+  });
   return (
     <div className={`sfab ${open ? 'open' : ''} ${flown ? 'flown' : ''} ${count ? 'has' : ''}`}
       onMouseEnter={() => { window.clearTimeout(leave.current); setHover(true); }}

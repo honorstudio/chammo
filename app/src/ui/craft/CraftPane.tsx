@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import { tr } from '../../i18n';
 import { doingLine, mirrorNote, paneShotDue, saveState, takeButton, type CraftInfo } from '../../domain/craftWin';
 import { IS_WIN } from '../../domain/reader';
-import { boxOf, COVERS, shown } from '../../domain/craftTab';
+import { boxOf, shotVisible } from '../../domain/craftTab';
 import { usePanePlace } from '../space/panePlace';
 import { IconClose, IconDockIn, IconPower, IconSettings, IconWindowOut } from '../Icons';
 import { askPermission } from '../../data/tauri';
@@ -18,7 +18,7 @@ const EMPTY: CraftInfo = { name: '', version: '', pid: null, last: '', dirty: fa
 /** 스페이스 탭 칸 자리 알리기 — 답이 "window" 면 따로 창에 떠 있다(여긴 안내만). 몸통은 세션 브라우저 칸과 같이 쓴다(ui/space/panePlace) */
 function useSpacePlace(app: string, on: boolean, stage: React.RefObject<HTMLElement | null>) {
   const { answer, still } = usePanePlace(on, stage, {
-    place: (rect, vh, visible) => invoke<string>('craft_space_place', { app, rect, vh, visible }),
+    place: (rect, vh, visible, covered) => invoke<string>('craft_space_place', { app, rect, vh, visible, covered }),
     still: () => invoke<string>('craft_space_still', { app }),
     detach: () => void invoke('craft_space_detach', { app }).catch(() => {}),
   }, app);
@@ -36,7 +36,7 @@ function usePaneShot(app: string, info: CraftInfo, stage: React.RefObject<HTMLEl
     const t = setInterval(() => {
       const i = now.current;
       const el = stage.current;
-      const visible = !!el && shown(boxOf(el.getBoundingClientRect()), !!document.querySelector(COVERS));
+      const visible = !!el && shotVisible(boxOf(el.getBoundingClientRect()));
       if (!paneShotDue({ mirror: String(i.mirror), visible, docVisible: document.visibilityState === 'visible', takeover: i.takeover, inFlight: r.inFlight, lastAt: r.lastAt, now: Date.now(), last: i.last, shotLast: r.shotLast })) return;
       r.inFlight = true;
       r.lastAt = Date.now();

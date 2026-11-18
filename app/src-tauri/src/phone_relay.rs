@@ -248,7 +248,7 @@ fn run(dir: &Path, st: &TeamState, web: &str, keys: DeviceKeys, gate: Arc<Gate>,
                     Some("knock") => knock(s("k"), s("box"), s("key"), me_pub.clone(), lines.clone(), gate.clone(), st.clone(), mac.clone(), tx.clone()),
                     Some("knock-end") => {
                         if let Some(card) = LINKS.drop_knock(&s("k")) {
-                            crate::direct::close_link(&card, crate::i18n::tr("폰이 나갔어요", "The phone left"));
+                            crate::direct::close_link(&card, crate::i18n::tr("폰·태블릿이 나갔어요", "The phone or tablet left"));
                         }
                     }
                     _ => {}
@@ -335,7 +335,7 @@ fn mail_submit(body: &Value, h: &crate::device_link::Hello, dir: &std::path::Pat
             log("메일 코드로 폰 허용");
             // 맥에만 — 코드를 넣은 그 폰엔 안 보낸다(2026-11-13: 같은 폰의 옛 기기 구독으로 그 폰에 떴다). '내가 아니면 끊어라'는
             // 이 맥 알림과, 코드를 받은 계정 메일(코드 메일 자체가 '내가 한 일이 아니면 무시' 기록)에 남는다
-            crate::claude::notify_local(crate::i18n::tr("새 폰이 메일 코드로 연결됐어요", "A new phone connected with an email code").into(), crate::i18n::tr(&format!("{} — 내가 한 일이 아니면 설정 > 기기 관리에서 끊어 주세요", h.name), &format!("{} — if this wasn't you, remove it in Settings > Devices", h.name)).into());
+            crate::claude::notify_local(crate::i18n::tr("새 폰·태블릿이 메일 코드로 연결됐어요", "A new phone or tablet connected with an email code").into(), crate::i18n::tr(&format!("{} — 내가 한 일이 아니면 설정 > 기기 관리에서 끊어 주세요", h.name), &format!("{} — if this wasn't you, remove it in Settings > Devices", h.name)).into());
         }
         Err(e) => log(&format!("메일 코드 허용 실패 {e}")),
     }
@@ -368,6 +368,50 @@ fn register_tunnel(st: &TeamState, keys: &DeviceKeys) {
 /// 폰: 같은 계정 폰(허용 대기 중도 — 이 카드가 계정 허용도 한다). 컴퓨터(peer): 같은 계정의 **허용된** 다른 컴퓨터만(대기 컴퓨터는 기기 허용이 먼저)
 pub(crate) fn link_dev_ok(st: &TeamState, dev: &str, peer: bool) -> bool {
     st.my_devices.iter().any(|d| d.id == dev && !d.current && if peer { matches!(d.kind.as_str(), "mac" | "win") && !d.pending() } else { d.kind == "phone" })
+}
+
+/// 숫자·메일 없이 바로 연결해도 되나(2026-11-18 사용자 결정 A — 같은 Chammo 계정에 허용된 기기면 바로).
+/// 이 맥이 로그인·허용돼 있고, 그 기기가 같은 계정 목록(서버 말)에 **사람이 허용한** 상태로 있을 때만 — 허용 대기(그 숫자 카드가 계정 허용도 한다)·
+/// 24시간 자동 허용(사람이 본 적 없음)·목록에 없음(다른 계정·뺀 기기)은 숫자로. 갈래(폰/컴퓨터)는 link_dev_ok 와 같다
+pub(crate) fn link_direct_ok(st: &TeamState, dev: &str, peer: bool) -> bool {
+    !st.pending && st.account.is_some() && link_dev_ok(st, dev, peer) && st.my_devices.iter().any(|d| d.id == dev && !d.pending() && d.approved_by != "auto")
+}
+
+/// 바로 연결 횟수 — 기기마다 10분에 5번. 넘으면 숫자로 내려간다(같은 기기가 되풀이해 두드려 서버 목록 받기·맥 알림이 쏟아지지 않게)
+pub(crate) const DIRECT_MAX: usize = 5;
+pub(crate) const DIRECT_WINDOW: Duration = Duration::from_secs(600);
+static DIRECT_SEEN: std::sync::LazyLock<Mutex<std::collections::HashMap<String, Vec<Instant>>>> = std::sync::LazyLock::new(Default::default);
+
+/// 이 기기의 바로 연결을 한 번 쓴다 — 창 안 횟수가 남았으면 true
+pub(crate) fn direct_budget(seen: &mut Vec<Instant>, now: Instant) -> bool {
+    seen.retain(|t| now.saturating_duration_since(*t) < DIRECT_WINDOW);
+    if seen.len() >= DIRECT_MAX {
+        return false;
+    }
+    seen.push(now);
+    true
+}
+
+/// 바로 연결 — 숫자 카드 없이 허용 끝단(link5)으로. 답에 direct 를 달아 폰·컴퓨터가 숫자 없이 받게 하고, 이 맥엔 알림 한 줄(내가 아니면 끊게)
+fn direct_grant(h: &crate::device_link::Hello, st: &TeamState, reply: &dyn Fn(Value) -> Result<(), String>) {
+    let out = LINK_OUT.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|o| (o.gen, o.mac.clone(), o.devices.clone()));
+    let Some((gen, mac, devices)) = out else {
+        let _ = reply(json!({ "step": "link5", "ok": false, "error": "relay" }));
+        return;
+    };
+    let tagged = |mut v: Value| {
+        v["direct"] = json!(true);
+        reply(v)
+    };
+    let r = if h.peer { peer_link_answer(h, st, gen, &devices, mac, tagged) } else { grant_phone(h, st, gen, &devices, mac, &tagged) };
+    match r {
+        Ok(()) => {
+            log(if h.peer { "같은 계정 컴퓨터 바로 연결" } else { "같은 계정 폰 바로 연결" });
+            let name = if h.peer { peer_name(st, h) } else { h.name.clone() };
+            crate::claude::notify_local(crate::i18n::tr("새 기기가 연결됐어요", "A new device connected").into(), crate::i18n::tr(&format!("{name} — 내가 아니면 설정 > 기기 관리에서 끊어 주세요"), &format!("{name} — if this wasn't you, remove it in Settings > Devices")).into());
+        }
+        Err(e) => log(&format!("바로 연결 실패 {e}")),
+    }
 }
 
 /// 숫자 확인 한 단계 — link1(인사·commit) → link2(nM) / link3(nP) → 숫자 카드. 순서를 어기거나 못 연 상자는 닫는다
@@ -422,6 +466,24 @@ fn link_step(m: &Value, me_pub: &[u8], lines: &Arc<RealLines>, tx: &Sender<Out>)
                 }
                 if !mine(&st) {
                     return close(if peer { "내 계정의 허용된 컴퓨터가 아님" } else { "내 계정 폰이 아님" });
+                }
+            }
+            // 같은 계정의 사람이 허용한 기기 — 숫자·메일 없이 바로(결정 A). 바로 받을 줄 아는 새 판(direct)만, 서버 목록을 새로 받아 한 번 더 본다
+            // (방금 뺀 기기·바뀐 허용을 낡은 목록으로 통과시키지 않게). 새로 못 받으면 숫자로 내려간다
+            if body["direct"] == true && link_direct_ok(&st, &dev, peer) && direct_budget(DIRECT_SEEN.lock().unwrap_or_else(|e| e.into_inner()).entry(dev.clone()).or_default(), now) {
+                if let Ok(fresh) = crate::team_account::refresh_me(dir, &crate::team_relay_keys::store(), &team_relay::Curl) {
+                    if link_direct_ok(&fresh, &dev, peer) {
+                        let h = match crate::device_link::Links::hello_of(&k, &body, &s("key"), &dev, peer) {
+                            Ok(h) => h,
+                            Err(e) => return close(&e),
+                        };
+                        let x = h.x.clone();
+                        direct_grant(&h, &fresh, &|v: Value| {
+                            let b = tun::seal(&x, v.to_string().as_bytes()).map_err(|_| "seal".to_string())?;
+                            tx.send(Out::KnockLink(k.clone(), tun::b64(&b), true)).map_err(|_| "허브 연결이 끊겼어요".to_string())
+                        });
+                        return;
+                    }
                 }
             }
             // 메일 코드를 켠 맥 — 폰은 숫자 대신 코드를 받는다. 메일이 안 나가면 None 이라 아래 숫자 확인으로 내려간다
@@ -520,7 +582,7 @@ fn link_step(m: &Value, me_pub: &[u8], lines: &Arc<RealLines>, tx: &Sender<Out>)
 /// 사람이 숫자 카드에 답했다(direct::answer 의 폰 화면 열기 갈래 — 데스크톱 메인 창·짝지은 폰만).
 /// 허용 = (폰이 계정 대기면 계정 허용도) → 기기 줄 묶기 → 토큰을 폰 터널 열쇠로 봉해 link5(end). 거절 = link5 {ok:false}
 pub fn link_answer(card: &str, yes: bool) -> Result<(), String> {
-    let (k, h) = LINKS.take_card(card, Instant::now()).ok_or_else(|| crate::i18n::tr("이 확인은 끝났어요(시간 지남·폰이 나감)", "This check has ended (timed out or the phone left)").to_string())?;
+    let (k, h) = LINKS.take_card(card, Instant::now()).ok_or_else(|| crate::i18n::tr("이 확인은 끝났어요(시간 지남·폰·태블릿이 나감)", "This check has ended (timed out or the phone or tablet left)").to_string())?;
     // 보내는 길만 복제하고 잠금은 바로 놓는다 — 아래 서버 요청(curl) 동안 허브 재접속을 막지 않게(리뷰 7)
     let (gen, tx, mac, devices) = {
         let g = LINK_OUT.lock().unwrap_or_else(|e| e.into_inner());
@@ -553,11 +615,11 @@ fn grant_phone(h: &crate::device_link::Hello, st: &TeamState, gen: u64, devices:
         }
     } else if line.is_none() {
         let _ = reply(json!({ "step": "link5", "ok": false, "error": "device" }));
-        return Err(crate::i18n::tr("내 계정 기기 목록에 없는 폰이에요", "That phone is not in this account").into());
+        return Err(crate::i18n::tr("내 계정 기기 목록에 없는 폰·태블릿이에요", "That phone or tablet is not in this account").into());
     }
     // 허브가 그새 끊겼으면 줄을 만들기 전에 멈춘다 — 토큰을 아무도 모르는 줄이 남지 않게(리뷰 7)
     if LINK_OUT.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_none_or(|o| o.gen != gen) {
-        return Err(crate::i18n::tr("허브 연결이 바뀌었어요 — 폰에서 다시 해 주세요", "The relay connection changed — try again from the phone").into());
+        return Err(crate::i18n::tr("허브 연결이 바뀌었어요 — 폰·태블릿에서 다시 해 주세요", "The relay connection changed — try again from the phone or tablet").into());
     }
     let p = crate::mobile_pair::Pairing { name: &h.name, home: false, prev: None, peer: false, chammo: None };
     let Some(token) = devices.pair_linked(&p, crate::mobile_pair::Relay { device: h.dev.clone(), x: tun::b64(&h.x) }, std::time::SystemTime::now()) else {

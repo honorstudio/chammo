@@ -30,7 +30,7 @@ export function useOrchRevive(o: {
   const cards = useRef(new Map<string, string>()); // 참모 id → 카드 일 id
   const seeded = useRef<Set<string> | null>(null); // 켤 때 넣은 참모 번호 — 처음 한 번만 넣는다
   const woke = useRef(new Set<string>()); // 그중 다시 켜는 중
-  const up = useRef<string[]>([]); // 그중 다시 뜬 이름 — 다 뜨면 한 번 알린다
+  const up = useRef<{ id: string; name: string }[]>([]); // 그중 다시 뜬 참모 — 다 뜨면 한 번 알린다
   const [reviving, setReviving] = useState<ReviveOrch[]>([]);
   const latest = useRef(o);
   latest.current = o;
@@ -79,10 +79,11 @@ export function useOrchRevive(o: {
         // 켤 때 넣은 참모를 다시 켰으면 다 뜬 뒤 한 번 알린다 — 멈춰서 카드로 넘어간 참모는 기다리지 않는다
         for (const s of r.revive) if (seeded.current?.delete(s.id)) woke.current.add(s.id);
         for (const s of r.giveUp) woke.current.delete(s.id);
-        for (const s of live) if (woke.current.delete(s.id)) up.current.push(s.name);
+        for (const s of live) if (woke.current.delete(s.id)) up.current.push({ id: s.id, name: s.name });
         if (up.current.length && !woke.current.size) {
           const n = up.current.length;
-          notifyOnce({ kind: 'lost', session: 'orch-seeded', orch: true, title: tr(`꺼져 있던 참모 ${n}명을 다시 켰어요`, n > 1 ? `Restarted ${n} assistants that had stopped` : 'Restarted 1 assistant that had stopped'), body: up.current.map((x) => seenName(x) || x).join(', ') });
+          // 누르면 다시 뜬 첫 참모로 — 예전엔 session:orch-seeded 라 '세션이 꺼져 있어'가 떴다(11-18)
+          notifyOnce({ kind: 'lost', session: 'orch-seeded', orch: true, go: `session:${up.current[0]!.id}`, title: tr(`꺼져 있던 참모 ${n}명을 다시 켰어요`, n > 1 ? `Restarted ${n} assistants that had stopped` : 'Restarted 1 assistant that had stopped'), body: up.current.map((x) => seenName(x.name) || x.name).join(', ') });
           up.current = [];
         }
         // 하나씩 벌려 켠다 — 세션 하나가 뜰 때 MCP·셸까지 프로세스 수십 개라 한꺼번에 켜면 부하가 치솟아 서로 '응답 없음'으로 죽었다(10-26·11-07 재부팅 부하 122)

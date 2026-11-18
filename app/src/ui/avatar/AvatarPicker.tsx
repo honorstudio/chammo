@@ -1,12 +1,13 @@
 // 프사 바꾸기 창 — 기본형(도형 13·눈 3·색) 또는 그림·GIF 올리기(동그란 잘림·확대·끌어 옮기기). 시안 v2 D 확정
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { assistant, tr } from '../../i18n';
 import { nickChange } from '../../domain/orchLabel';
-import { avatarKey, baseVoice, defaultVoice, type Voice, checkSize, checkUpload, EYES, EYES_LABEL, ORCH_COLORS, resolveAvatar, SHAPE_LABEL, SHAPES, type Avatar, type Crop, type Eyes, type Preset, type Shape } from '../../domain/avatar';
+import { avatarKey, BRAND, baseVoice, defaultVoice, type Voice, checkSize, checkUpload, EYES, EYES_LABEL, ORCH_COLORS, resolveAvatar, SHAPE_LABEL, SHAPES, type Avatar, type Crop, type Eyes, type Preset, type Shape } from '../../domain/avatar';
 import { OrchAvatar, cropTransform } from './OrchAvatar';
 import { imageUrl, resetAvatar, saveAvatar, useAvatars } from './store';
 import { VoiceDial } from './VoiceDial';
+import { kidsRead, kidsSet, type KidsView } from '../../data/tauri';
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
@@ -24,6 +25,18 @@ export function AvatarPicker({ name, label, color, nick, onClose }: { name: stri
   // 목소리 — null = 번호 순 기본 배정. 설정이 앱의 Supertonic 이 아니면 base 가 없어 고를 수만 있고 들어 보기는 못 한다
   const [voice, setVoice] = useState<Voice | null>(start.voice ?? null);
   const [nickV, setNickV] = useState(nick?.current ?? '');
+  // 키즈 참모 — 설정 '키즈 모드'가 켜져 있을 때만 칸이 보인다(켜진 참모 프로필에서만, kids.rs)
+  const [kids, setKids] = useState<KidsView | null>(null);
+  const [kidOn, setKidOn] = useState(false);
+  const [child, setChild] = useState('');
+  // 열 때 한 번만 읽는다 — nick 은 부모가 그릴 때마다 새 객체라 그걸 기준으로 다시 읽으면 3초마다(세션 목록) 켠 스위치가 저장값으로 되돌아갔다(11-17 사용자 "프로필 바꾸면 키즈 참모가 저절로 해제됨")
+  const hasNick = !!nick;
+  useEffect(() => {
+    if (!hasNick) return;
+    let live = true;
+    kidsRead().then((v) => { if (!live) return; setKids(v); const o = v.orchs[key]; setKidOn(!!o); setChild(o?.child ?? ''); }).catch(() => { if (live) setKids(null); });
+    return () => { live = false; };
+  }, [hasNick, key]);
   const base = baseVoice(ttsCommand);
   const [crop, setCrop] = useState<Crop>(start.kind === 'image' ? start.crop : { zoom: 1, x: 0, y: 0 });
   const [file, setFile] = useState<{ bytes: Uint8Array; url: string } | null>(null);
@@ -82,6 +95,10 @@ export function AvatarPicker({ name, label, color, nick, onClose }: { name: stri
         if (tab === 'preset') await saveAvatar(key, { ...preset, voice }, null);
         else await saveAvatar(key, { kind: 'image', file: '', crop, voice }, file?.bytes ?? null);
       }
+      if (kids?.on) {
+        const was = kids.orchs[key];
+        if (kidOn !== !!was || (kidOn && child.trim() !== (was?.child ?? ''))) await kidsSet(key, kidOn, child.trim(), 5);
+      }
       const to = nick ? nickChange(nick.current, nickV) : null;
       if (nick && to !== null) nick.onSave(to);
       onClose();
@@ -103,6 +120,15 @@ export function AvatarPicker({ name, label, color, nick, onClose }: { name: stri
             <div className="oa-lbl" id="oa-name">{tr('이름', 'Name')}</div>
             <input className="oa-name" value={nickV} onChange={(e) => setNickV(e.target.value)} maxLength={24} placeholder={nick.fallback} aria-labelledby="oa-name"
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing && !busy && canSave) void save(); }} />
+          </>
+        )}
+        {nick && kids?.on && (
+          <>
+            <label className="oa-kids" style={{ '--cfg-tint': BRAND.color } as CSSProperties}>
+              <input type="checkbox" role="switch" className="cfg-sw" checked={kidOn} onChange={(e) => setKidOn(e.target.checked)} />
+              <span>{tr('키즈 참모', 'Kids assistant')}</span>
+            </label>
+            {kidOn && <input className="oa-name" value={child} onChange={(e) => setChild(e.target.value)} maxLength={24} placeholder={tr('아이 이름', "Child's name")} aria-label={tr('아이 이름', "Child's name")} />}
           </>
         )}
         <div className="oa-seg" role="tablist">

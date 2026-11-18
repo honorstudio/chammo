@@ -32,12 +32,12 @@ export function OfficeSheet({ path, title, onClose }: { path: string; title: str
   const word = wordDoc(path);
   const [html, setHtml] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  useEffect(() => { if (word) wordHtml(path).then(setHtml, (e: unknown) => setErr((e as Error).message === 'secret inside' ? tr('글 속에 키가 보여서 폰엔 안 보여 줘요', 'There is a key inside this text, so it is hidden on the phone') : tr('글로 못 바꿨어요', "Couldn't convert it to text"))); }, [path, word]);
+  useEffect(() => { if (word) wordHtml(path).then(setHtml, (e: unknown) => setErr((e as Error).message === 'secret inside' ? tr('글 속에 키가 보여서 이 기기엔 안 보여 줘요', 'There is a key inside this text, so it is hidden on this device') : tr('글로 못 바꿨어요', "Couldn't convert it to text"))); }, [path, word]);
   const safe = useMemo(() => (html === null ? null : wordDocToHtml(html)), [html]);
   // 엑셀은 읽기 전용 표로(맥에서 고친다)
   const sheet = isSheet(path);
   const [book, setBook] = useState<Awaited<ReturnType<typeof sheetBook>> | null>(null);
-  useEffect(() => { if (sheet) sheetBook(path).then(setBook, (e: unknown) => setErr((e as Error).message === 'secret inside' ? tr('칸에 키가 보여서 폰엔 안 보여 줘요', 'There is a key inside a cell, so it is hidden on the phone') : tr('표로 못 읽었어요', "Couldn't read it as a sheet"))); }, [path, sheet]);
+  useEffect(() => { if (sheet) sheetBook(path).then(setBook, (e: unknown) => setErr((e as Error).message === 'secret inside' ? tr('칸에 키가 보여서 이 기기엔 안 보여 줘요', 'There is a key inside a cell, so it is hidden on this device') : tr('표로 못 읽었어요', "Couldn't read it as a sheet"))); }, [path, sheet]);
   // 워드·엑셀이 아니거나 글·표로 못 바꿨으면 첫 장 그림
   const pic = useBlobUrl((!word && !sheet) || err ? path : null, true, 1600);
   return (
@@ -49,8 +49,8 @@ export function OfficeSheet({ path, title, onClose }: { path: string; title: str
         {err && <p className="m-muted m-sm">{err} — {tr('첫 장만 보여 줘요', 'showing the first page only')}</p>}
         {(word ? safe === null : sheet && !book) && !err && <p className="m-muted">{tr('여는 중…', 'Opening…')}</p>}
         <div className="m-office-foot">
-          {!word && !sheet && <span className="m-muted m-sm">{tr('폰에선 첫 장만 보여 줘요', 'The phone shows the first page only')}</span>}
-          {sheet && book && <span className="m-muted m-sm">{tr(`폰에선 보기만 — 고치기는 ${machine()} 스페이스에서`, `View only on the phone — edit in Space on the ${machine()}`)}</span>}
+          {!word && !sheet && <span className="m-muted m-sm">{tr('이 기기에선 첫 장만 보여 줘요', 'This device shows the first page only')}</span>}
+          {sheet && book && <span className="m-muted m-sm">{tr(`이 기기에선 보기만 — 고치기는 ${machine()} 스페이스에서`, `View only on this device — edit in Space on the ${machine()}`)}</span>}
           <OpenOnMac path={path} />
         </div>
       </div>

@@ -1,16 +1,16 @@
 // 말풍선 목록 — parseChat 결과를 그리는 얇은 목록(데스크톱 ChatView 는 tauri 의존이라 통째로 못 쓴다)
 // 내 말·참모 말풍선을 길게 누르면 '참조'(입력칸에 #chat1, 데스크톱과 같은 인용 블록)·'복사'(2026-10-23 사용자 — 글을 복사해 붙이고 있었다)
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { tr } from '../../i18n';
-import { splitRefs, stripMarks, type ChatItem } from '../../domain/chat';
+import { chatNorm, dropRescued, errorTurns, splitRefs, stripMarks, type ChatItem } from '../../domain/chat';
 import { bubbleWho } from '../../domain/refChips';
 import { BottomSheet } from './kit';
 import { usePress } from './PhoneLockerParts';
-import { farFromBottom, jumpDot, nearAfterScroll, nearBottom, phoneBubble, phoneName, stickBottom, wantEarlier, type PhoneAtt } from '../../domain/mobile';
+import { farFromBottom, jumpDot, liveMeta, nearAfterScroll, nearBottom, phoneBubble, phoneName, stickBottom, wantEarlier, type PhoneAtt } from '../../domain/mobile';
 import type { OutMsg } from '../../domain/mobileOutbox';
 import { sentMentionLabel, splitTokens } from '../../domain/chatTokens';
 import type { EarlierApi } from './useEarlier';
-import { IconChevronDown, IconClose, IconRefresh } from '../Icons';
+import { IconChevronDown, IconRefresh } from '../Icons';
 import { mdToHtmlNewTab } from '../md';
 import { useBlobUrl } from './useBlobUrl';
 import { interleave } from '../../domain/chatExtras';
@@ -46,12 +46,12 @@ type Hold = (who: string, text: string) => void;
 const noop = () => {};
 
 /** 내 말 — 폰에서 붙인 첨부 경로는 썸네일로(phoneBubble), 데스크톱에서 붙인 그림(data URL)도 같은 자리에. 말풍선 참조는 아래 인용으로(데스크톱과 같은 모양) */
-function Mine({ text, images, pending, press }: { text: string; images?: string[]; pending?: boolean; press?: Press }) {
+function Mine({ text, images, press, dim }: { text: string; images?: string[]; press?: Press; /** 끝내 안 감·답을 못 받음 — 살짝 흐리게 */ dim?: boolean }) {
   const { body: said, refs } = splitRefs(text);
   const { body, atts } = phoneBubble(said);
   const all: PhoneAtt[] = [...(images ?? []).map((src, i) => ({ path: src, label: `#img${i + 1}`, image: true })), ...atts];
   return (
-    <div className={pending ? 'm-bubble m-me m-pending' : 'm-bubble m-me'} {...press}>
+    <div className={dim ? 'm-bubble m-me m-dim' : 'm-bubble m-me'} {...press}>
       {all.length > 0 && <div className="m-pics">{all.map((a) => <Thumb key={a.path} att={a} />)}</div>}
       {mentionText(body)}
       {refs.map((r) => <div key={r.label} className="m-quote"><b>{r.label}</b> {r.who}<div className="m-quote-q">{r.text}</div></div>)}
@@ -79,25 +79,42 @@ function copyOld(text: string) {
 /** 데스크톱에서 보낸 멘션 @[참모-3 · 가나 담당] 은 화면 이름 @가나 담당 으로 */
 const mentionText = (body: string) => splitTokens(body).map((t) => (typeof t === 'string' ? t : 'mention' in t ? `@${sentMentionLabel(t.mention)}` : 'ref' in t ? t.ref : t.live)).join('');
 
-/** 보낼 함 말풍선 — 보내는 중은 흐리게, 못 보냈으면 아래에 이유 + 다시 보내기·지우기 */
+/** 다시 보내기 아이콘 — 점 자리(말풍선 바깥 왼쪽, 아이폰 메시지의 빨간 ! 자리). 글자 안내 없이 이름만(2026-11-17 사용자) */
+function Again({ title, onClick }: { title: string; onClick: () => void }) {
+  return <button type="button" className="m-icon m-again" onClick={onClick} aria-label={tr('다시 보내기', 'Resend')} title={title}><IconRefresh /></button>;
+}
+
+/** 보낼 함 말풍선 — 보내자마자 보통 내 말풍선, 아직 안 읽혔으면 옆에 작은 점 하나(데스크톱 채팅과 같이, 2026-11-17 사용자 — 흐리면 안 간 것처럼 보였다).
+ *  못 보냈으면 그 점 자리에 다시 보내기 아이콘 + 말풍선 살짝 흐리게. 빼기는 길게 누르기 메뉴로만(화면 단추 없음) */
 function Outgoing({ m, onRetry, onDrop }: { m: OutMsg; onRetry: (id: string) => void; onDrop: (id: string) => void }) {
-  if (m.status !== 'failed') return <Mine text={m.text} pending />;
+  const failed = m.status === 'failed';
+  const [menu, setMenu] = useState(false);
+  const press = usePress(noop, () => { if (failed) setMenu(true); });
+  if (!failed) return <div className="m-out-wait"><span className="m-unread" role="img" aria-label={tr('아직 안 읽음', 'Not read yet')} /><Mine text={m.text} /></div>;
+  const why = m.error || tr('전해지지 않았어요', 'Not delivered');
   return (
-    <div className="m-out-failed">
-      <Mine text={m.text} />
-      <div className="m-out-row">
-        <span className="m-out-why">{m.error || tr('전해지지 않았어요', 'Not delivered')}</span>
-        <button type="button" className="m-icon" onClick={() => onRetry(m.id)} aria-label={tr('다시 보내기', 'Resend')} title={tr('다시 보내기', 'Resend')}><IconRefresh /></button>
-        <button type="button" className="m-icon" onClick={() => onDrop(m.id)} aria-label={tr('이 말 지우기', 'Delete this message')} title={tr('지우기', 'Delete')}><IconClose /></button>
-      </div>
+    <div className="m-out-wait">
+      <Again title={`${why} — ${tr('다시 보내기', 'Resend')}`} onClick={() => onRetry(m.id)} />
+      <Mine text={m.text} press={press} dim />
+      {menu && (
+        <BottomSheet label={tr('보내지 못한 말', 'Unsent message')} kind="card" armMs={450} onClose={() => setMenu(false)}>
+          {({ close, armed }) => (
+            <>
+              <button type="button" className="m-menu-item" onClick={() => { if (armed) { close(); onRetry(m.id); } }}>{tr('다시 보내기', 'Resend')}</button>
+              <button type="button" className="m-menu-item m-danger-ink" onClick={() => { if (armed) { close(); onDrop(m.id); } }}>{tr('빼기', 'Remove')}</button>
+            </>
+          )}
+        </BottomSheet>
+      )}
     </div>
   );
 }
 
-function Bubble({ it, onHold }: { it: ChatItem; onHold?: Hold }) {
+function Bubble({ it, onHold, again }: { it: ChatItem; onHold?: Hold; /** Claude 오류로 답을 못 받은 내 말 — 바깥에 다시 보내기(domain/chat errorTurns) */ again?: () => void }) {
   const mine = it.kind === 'user';
   const press = usePress(noop, () => (it.kind === 'user' || it.kind === 'assistant') && onHold?.(bubbleWho(mine, it.ts), mine ? splitRefs(it.text).body : it.text));
   const held = onHold ? press : undefined;
+  if (it.kind === 'user' && again) return <div className="m-out-wait"><Again title={tr('답을 못 받음 — 다시 보내기', 'No reply — resend')} onClick={again} /><Mine text={it.text} images={it.images} press={held} dim /></div>;
   if (it.kind === 'user') return <Mine text={it.text} images={it.images} press={held} />;
   // 답은 마크다운으로 — DOMPurify 를 거친 HTML 만(ui/md.ts), 링크는 새 탭
   if (it.kind === 'assistant') return <div className="m-bubble m-ai m-md" dangerouslySetInnerHTML={{ __html: md(it.text) }} {...held} />;
@@ -109,12 +126,12 @@ function Bubble({ it, onHold }: { it: ChatItem; onHold?: Hold }) {
 /** ask = 지금 참모가 사용자에게 묻고 멈춘 것 — 대화 끝에 카드로(답은 아래 입력칸에) */
 /** 일하는 중 한 줄 — 데스크톱 채팅의 '작업 중 · 도구'(liveWork). 점 세 개가 차례로 깜빡인다(동작 줄이기면 멈춤) */
 function LiveRow({ live }: { live: LiveState }) {
-  const parts = [live.tools ? tr(`도구 ${live.tools}번`, `${live.tools} tool calls`) : '', live.secs >= 3 ? (live.secs < 60 ? tr(`${live.secs}초`, `${live.secs}s`) : tr(`${Math.floor(live.secs / 60)}분 ${live.secs % 60}초`, `${Math.floor(live.secs / 60)}m ${live.secs % 60}s`)) : ''].filter(Boolean);
+  const meta = liveMeta(live);
   return (
     <div className="m-live" role="status" aria-live="polite">
       <span className="m-live-dots" aria-hidden><i /><i /><i /></span>
       <span className="m-live-line">{live.line || tr('생각 중…', 'Thinking…')}</span>
-      {parts.length > 0 && <span className="m-live-meta">{parts.join(' · ')}</span>}
+      {meta && <span className="m-live-meta">{meta}</span>}
     </div>
   );
 }
@@ -123,7 +140,11 @@ type LiveState = { busy: boolean; line: string; tools: number; secs: number };
 /** 처음엔 끝 말 이만큼만 그리고, 위로 올리면 더(그다음엔 서버에서 앞 대화를 거슬러) */
 const SHOW_STEP = 200;
 
-export function MessageList({ items, out, onRetry, onDrop, live, ask, who, earlier, loading, stale, files, onOpenFile, onRef }: { items: ChatItem[]; out: OutMsg[]; onRetry: (id: string) => void; onDrop: (id: string) => void; live?: LiveState; ask?: { lead: string; q: string } | null; who?: ReactNode;
+export function MessageList({ items, out, onRetry, onDrop, onResend, live, ask, who, earlier, loading, stale, files, onOpenFile, onRef, kids }: { items: ChatItem[]; out: OutMsg[]; onRetry: (id: string) => void; onDrop: (id: string) => void; live?: LiveState; ask?: { lead: string; q: string } | null; who?: ReactNode;
+  /** 키즈 참모 — 아이 화면 대화를 그 시각 자리에(두 세션 한 줄기, usePhoneKids) */
+  kids?: { ts: string; key: string; clip?: boolean; node: ReactNode }[];
+  /** Claude 오류로 답을 못 받은 내 말을 같은 글로 다시 보내기 — 없으면(읽기만 하는 엿보기) 아이콘도 없다 */
+  onResend?: (text: string) => void;
   /** 길게 누른 말풍선을 입력칸에 #chat 참조로 — 없으면 길게 누르기 메뉴도 없다 */
   onRef?: Hold;
   /** 참모가 보여 준 파일(domain/chatFiles) — 그 시각 자리 말풍선 사이에 카드로. 그려진 첫 말보다 앞선 건 안 그린다(clip) */
@@ -184,6 +205,19 @@ export function MessageList({ items, out, onRetry, onDrop, live, ask, who, earli
     if (items.length > shown) { setShown((n) => n + SHOW_STEP); return; }
     if (earlier && !earlier.done) void earlier.more();
   };
+  // 끊고 보내기가 다시 넣은 말은 한 번만(domain/chat dropRescued — 데스크톱 채팅과 같이)
+  const said = useMemo(() => dropRescued(items), [items]);
+  // 갔지만 Claude 오류로 답을 못 받은 내 말(데스크톱 ChatView 와 같은 기준) — 그림 붙인 말·이미 다시 보낸 말(보낼 함)은 빼고, 로그인 풀림은 로그인 카드가 맡는다
+  const unanswered = useMemo(() => {
+    const ids = new Set<string>();
+    if (!onResend) return ids;
+    for (const [id, k] of errorTurns(said)) {
+      const it = said.find((i) => i.id === id);
+      if (k === 'retry' && it?.kind === 'user' && !it.images?.length && !out.some((o) => chatNorm(o.text) === chatNorm(it.text))) ids.add(id);
+    }
+    return ids;
+  }, [said, out, onResend]);
+  const againOf = (text: string) => () => onResend?.(text);
   const olderN = earlier?.items.length ?? 0;
   // 앞에 붙으면 붙은 높이만큼 지금 자리에 더한다 — 불러오는 사이 더 올렸어도 보던 말이 그 자리에(시작할 때 자리로 되돌리면 홱 당겨졌다)
   const prev = useRef({ h: 0, older: olderN, shown, done: !!earlier?.done });
@@ -210,9 +244,10 @@ export function MessageList({ items, out, onRetry, onDrop, live, ask, who, earli
       {earlier && (items.length <= shown) && (earlier.loading
         ? <div className="m-older-spin" role="status" aria-label={tr('앞 대화 불러오는 중', 'Loading earlier messages')}><span className="m-live-dots" aria-hidden><i /><i /><i /></span></div>
         : earlier.done && <div className="m-note m-older">{tr('대화 처음이에요', 'Start of the conversation')}</div>)}
-      {interleave([...(earlier?.items ?? []).map((it, i) => ({ it, ts: it.ts, k: `o-${it.id}-${i}` })), ...items.slice(-shown).map((it, i) => ({ it, ts: it.ts, k: `${it.id}-${i}` }))],
-        (files ?? []).map((f) => ({ ...f, clip: true }))).map((x) => ('item' in x
-        ? <Bubble key={x.item.k} it={x.item.it} onHold={onRef ? (w, t) => setHeld({ who: w, text: t }) : undefined} />
+      {interleave([...(earlier?.items ?? []).map((it, i) => ({ it, ts: it.ts, k: `o-${it.id}-${i}` })), ...said.slice(-shown).map((it, i) => ({ it, ts: it.ts, k: `${it.id}-${i}` }))],
+        [...(files ?? []).map((f) => ({ ...f, clip: true })), ...(kids ?? []).map((k) => ({ ...k, kid: true as const }))]).map((x) => ('item' in x
+        ? <Bubble key={x.item.k} it={x.item.it} onHold={onRef ? (w, t) => setHeld({ who: w, text: t }) : undefined} again={onResend && unanswered.has(x.item.it.id) && 'text' in x.item.it ? againOf(x.item.it.text) : undefined} />
+        : 'kid' in x.extra ? <div key={x.extra.key} className="m-kid-row">{x.extra.node}</div>
         : <ChatFileCard key={x.extra.key} f={x.extra} onOpen={(f) => onOpenFile?.(f)} />))}
       {loading && !items.length && <div className="m-note m-older">{tr('대화 불러오는 중…', 'Loading the conversation…')}</div>}
       {out.map((m) => <Outgoing key={m.id} m={m} onRetry={onRetry} onDrop={onDrop} />)}

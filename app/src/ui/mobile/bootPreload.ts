@@ -1,6 +1,7 @@
 // 폰 첫 화면 미리 받기 — 스플래시(모찌) 동안 대시보드·대화 첫 묶음·첫 카드 썸네일을 기억(memo·대화 캐시·BlobMemo)에 넣는다.
 // 화면 쪽 훅(useMemoPoll 등)이 같은 열쇠를 읽어 뜨는 순간 다 차 있다 — 열쇠는 그 훅들과 같게(2026-10-03 사용자 "뚝뚝 나오는데")
-import { listStoppedOrchs, readFileText, readShowLog, readTails, readTranscript, readUsage, routinesList, type MobileEnv } from '../../data/web';
+import { farDevices, listStoppedOrchs, readModes, readFileText, readOrder, readPins, readShowLog, readTails, readTranscript, readUsage, routinesList, type MobileEnv } from '../../data/web';
+import { loadAvatars } from '../avatar';
 import { offOrchRows } from '../../domain/mobile';
 import { OFF_TAILS } from './OrchWake';
 import { firstThumbs } from '../../domain/boot';
@@ -30,5 +31,14 @@ export async function preloadFirstScreen(env: MobileEnv, orch: Session | undefin
     return readTails(ids).then((t) => remember(OFF_TAILS, t));
   }).catch(() => {});
   if (orch) jobs.push(shows.then((log) => Promise.allSettled(firstThumbs(log, orch.id).map((t) => warmBlob(t.path, true, t.size)))));
+  // 프사(첫 화면 입력칸 프사부터 쓴다)는 바로, 참모 바꾸기 시트의 고정·순서·기기 줄은 첫 화면 몫이 끝난 뒤 — 스플래시는 안 기다린다.
+  // 지난번 값은 기억(memo KEEP_KEYS·프사 keep)에서 바로 그리고, 이건 새 값으로 맞추는 몫(2026-11-16 사용자 "잠깐 초기화 상태에서 맞춰져")
+  loadAvatars();
+  void Promise.allSettled(jobs).then(() => {
+    void get('pins', readPins).catch(() => {});
+    void get('order', readOrder).catch(() => {});
+    void shared('far', farDevices).then((v) => remember('far', v), () => {});
+    void shared('modes', () => readModes().catch(() => [])).then((v) => remember('modes', v));
+  });
   await Promise.allSettled(jobs);
 }

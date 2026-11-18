@@ -36,6 +36,114 @@ pub fn eval_from_env<R: Runtime>(app: &tauri::AppHandle<R>) {
     });
 }
 
+/// 켤 때 알림 누름 흉내(e2e/notif-jump) — CHAMMO_TEST_NOTIFY_CLICK="<갈 곳>,<ms>" 면 켠 뒤 ms 에 알림을 누른 것처럼 deep_link::open_notify.
+/// ms 0 은 웹뷰가 뜨기도 전(앱이 꺼져 있다 알림으로 켜진 때) — 그 누름이 화면까지 가는지 본다. 디버그 빌드만
+pub fn notify_click_from_env<R: Runtime>(app: &tauri::AppHandle<R>) {
+    if !cfg!(debug_assertions) {
+        return;
+    }
+    let Ok(v) = std::env::var("CHAMMO_TEST_NOTIFY_CLICK") else { return };
+    let Some((go, ms)) = v.rsplit_once(',').and_then(|(g, m)| Some((g.to_owned(), m.trim().parse::<u64>().ok()?))) else { return };
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+        let a = app.clone();
+        let _ = app.run_on_main_thread(move || crate::deep_link::open_notify(&a, &go));
+    });
+}
+
+/// 켠 직후 창 키우기 실측(e2e/launch-size) — CHAMMO_TEST_RESIZE="<폭>,<높이>,<ms>[,1]" 면 켠 뒤 ms 에 메인 창을 그 논리 크기로(사람이 꽉 채우기를 누른 것처럼).
+/// 넷째 값 1 = 맥 초록 단추 최대화처럼 애니메이션으로(setFrame:display:animate:) — 자리는 왼쪽 위 그대로라 화면 밖 시험 창이 화면에 안 들어온다.
+/// 부른 시각·끝난 시각(유닉스 ms)을 HONOR_ORCH_DEBUG_OUT/resize.txt 에. 디버그 빌드만
+pub fn resize_from_env<R: Runtime>(app: &tauri::AppHandle<R>) {
+    if !cfg!(debug_assertions) {
+        return;
+    }
+    let Some((w, h, ms, animate)) = std::env::var("CHAMMO_TEST_RESIZE").ok().and_then(|v| {
+        let n: Vec<f64> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+        (n.len() == 3 || n.len() == 4).then(|| (n[0], n[1], n[2] as u64, n.get(3) == Some(&1.0)))
+    }) else {
+        return;
+    };
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+        let now = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+        let a = app.clone();
+        let asked = now();
+        let _ = app.run_on_main_thread(move || {
+            let ran = now();
+            if let Some(win) = a.get_webview_window("main") {
+                if !(animate && zoom_like(&win, w, h)) {
+                    let _ = win.set_size(tauri::LogicalSize::new(w, h));
+                }
+            }
+            let done = now();
+            let _ = debug_dump("resize".into(), format!("{{\"asked\":{asked},\"ran\":{ran},\"done\":{done},\"w\":{w},\"h\":{h}}}"));
+        });
+    });
+}
+
+/// 진짜 화면 최대화 실측(아이맥 — fix/max-blank) — CHAMMO_TEST_ZOOM="front@8000,zoom@12000,zoom@20000,full@28000" 처럼 켠 뒤 ms 에 메인 창으로
+/// 맥 초록 단추 길(zoom:)·전체 화면(toggleFullScreen:)·맨 앞으로(front)를 차례로. 시각은 HONOR_ORCH_DEBUG_OUT/zoom-<차례>.txt. 디버그 빌드·맥만
+pub fn zoom_from_env<R: Runtime>(app: &tauri::AppHandle<R>) {
+    if !cfg!(debug_assertions) || !cfg!(target_os = "macos") {
+        return;
+    }
+    let Ok(v) = std::env::var("CHAMMO_TEST_ZOOM") else { return };
+    let steps: Vec<(String, u64)> = v.split(',').filter_map(|x| x.split_once('@')).filter_map(|(a, t)| Some((a.trim().to_string(), t.trim().parse().ok()?))).collect();
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let t0 = std::time::Instant::now();
+        for (i, (act, ms)) in steps.into_iter().enumerate() {
+            std::thread::sleep(std::time::Duration::from_millis(ms).saturating_sub(t0.elapsed()));
+            let a = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                let now = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+                let ran = now();
+                #[cfg(target_os = "macos")]
+                if let Some(Ok(ns)) = a.get_webview_window("main").map(|w| w.ns_window()) {
+                    use objc2::msg_send;
+                    use objc2::runtime::AnyObject;
+                    let ns = ns as *mut AnyObject;
+                    let nil = std::ptr::null_mut::<AnyObject>();
+                    unsafe {
+                        match act.as_str() {
+                            "zoom" => { let _: () = msg_send![ns, zoom: nil]; }
+                            "full" => { let _: () = msg_send![ns, toggleFullScreen: nil]; }
+                            // 캡처 전에 시험 창을 맨 앞으로(아이맥엔 진짜 Chammo 가 떠 있다 — 안 하면 그게 찍힌다)
+                            "front" => { let _: () = msg_send![ns, orderFrontRegardless]; }
+                            _ => {}
+                        }
+                    }
+                }
+                let _ = debug_dump(format!("zoom-{i}"), format!("{{\"act\":\"{act}\",\"ran\":{ran},\"done\":{}}}", now()));
+            });
+        }
+    });
+}
+
+/// 맥 최대화(zoom)가 부르는 길 그대로 — 왼쪽 위를 그대로 두고 애니메이션으로 키운다. 메인 스레드에서
+#[cfg(target_os = "macos")]
+fn zoom_like<R: Runtime>(win: &tauri::WebviewWindow<R>, w: f64, h: f64) -> bool {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+    let Ok(ns) = win.ns_window() else { return false };
+    let ns = ns as *mut AnyObject;
+    unsafe {
+        let f: NSRect = msg_send![ns, frame];
+        let top = f.origin.y + f.size.height;
+        let r = NSRect::new(NSPoint::new(f.origin.x, top - h), NSSize::new(w, h));
+        let _: () = msg_send![ns, setFrame: r, display: true, animate: true];
+    }
+    true
+}
+#[cfg(not(target_os = "macos"))]
+fn zoom_like<R: Runtime>(_: &tauri::WebviewWindow<R>, _: f64, _: f64) -> bool {
+    false
+}
+
 /// perf-bench 메인 스레드 맥박 — 아무것도 안 하는 동기 명령. 화면이 자주 불러 답이 늦게 오면 그동안 메인 스레드가 막힌 것
 #[tauri::command]
 pub fn perf_ping() -> u8 {
@@ -44,7 +152,7 @@ pub fn perf_ping() -> u8 {
 
 /// 웹뷰 가림 감지 끄기(WebKit 사설 API — 디버그 빌드의 실측에서만 부른다). 없으면 그냥 지나간다
 #[cfg(target_os = "macos")]
-fn keep_visible<R: Runtime>(w: &tauri::WebviewWindow<R>) {
+pub(crate) fn keep_visible<R: Runtime>(w: &tauri::WebviewWindow<R>) {
     let _ = w.with_webview(|wv| unsafe {
         use objc2::msg_send;
         use objc2::runtime::AnyObject;
@@ -61,7 +169,7 @@ fn keep_visible<R: Runtime>(w: &tauri::WebviewWindow<R>) {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn keep_visible<R: Runtime>(_: &tauri::WebviewWindow<R>) {}
+pub(crate) fn keep_visible<R: Runtime>(_: &tauri::WebviewWindow<R>) {}
 
 /// 팀 성능 예산 넘침 알림(메모리만 — team_relay::take_alerts) — 앱 화면이 1분마다 가져가 참모 입력칸에 [앱] 한 줄로. 릴리스에서도 돈다.
 /// 개인판(데이터 폴더 .honor-orchestrator)에서만 넘긴다 — 알림 줄이 개발자 스킬(perf-budget)을 시켜서 공개판 사용자 참모에겐 버린다(0.4.6 2차 검증)
@@ -99,11 +207,14 @@ pub fn space_trace(line: String) -> Result<(), String> {
     append_capped(&crate::config::data_file("space-trace.log"), line.trim(), 100 * 1024).map_err(|e| e.to_string())
 }
 
-/// 화면이 ErrorBoundary 로 멈춘 한 줄 — notify.log 'ui-crash' 칸에 '<창> <오류 글>'. 설치 스크립트가 새 판 메인 창의 이 줄을 보면
+/// 화면이 ErrorBoundary 로 멈춘 한 줄 — notify.log 'ui-crash' 칸에 '<창> <오류 글>'(로컬만). 설치 스크립트가 새 판 메인 창의 이 줄을 보면
 /// 방금 만든 백업으로 되돌린다(2026-11-05 결정 대기함 TDZ — 메인 창이 켤 때마다 멈춰 대화로 못 돌아왔다). 창 이름은 웹이 아니라 Rust 가 붙인다
 #[tauri::command]
-pub fn ui_crash(window: tauri::WebviewWindow, message: String) {
+pub fn ui_crash(window: tauri::WebviewWindow, message: String, name: Option<String>, stack: Option<String>) {
     crate::claude::log_out("ui-crash", &ui_crash_line(window.label(), &message));
+    // 오류 보고(ADR 0033) — 글은 안 넘기고 오류 이름·우리 번들 줄칸·창 자리만. 동기 명령(메인 스레드)이라 파일은 다른 스레드에서 쓴다(offmain_scan)
+    let (label, name, stack) = (window.label().to_string(), name.unwrap_or_default(), stack.unwrap_or_default());
+    std::thread::spawn(move || crate::crash_report::on_webview(&label, &name, &stack));
 }
 
 /// '<창> <오류 글>' — 줄바꿈·연속 빈칸은 한 칸으로(설치 스크립트가 줄 단위로 읽는다), 오류 글은 200자까지
@@ -139,6 +250,11 @@ pub fn aside_spot(monitors: &[(i32, i32, u32, u32, bool)], scale: f64) -> ((i32,
 /// 개발판에서 새로 여는 앱 창(모드 따로 창 등)도 메인 창이 가는 옆 화면에 — 사용자 눈앞에 시험 창이 튀지 않게.
 /// 메인 창 자리를 읽지 않는다: 앱을 켤 때 다시 여는 모드 창은 메인 창 옮기기가 반영되기 전이라 옛 자리(주 화면)가 나왔다(2026-10-10)
 pub fn place_near_main<R: Runtime>(_app: &tauri::AppHandle<R>, w: &tauri::WebviewWindow<R>) {
+    if let Some((x, y)) = crate::test_window::spot() {
+        let _ = w.set_position(tauri::LogicalPosition::new(x + 60, y + 60));
+        keep_visible(w);
+        return;
+    }
     if !cfg!(debug_assertions) || std::env::var("CHAMMO_DEV_WINDOW").as_deref() == Ok("main") {
         return;
     }
@@ -172,10 +288,16 @@ pub fn dev_spot(v: &str) -> Option<(i32, i32)> {
 }
 
 pub fn place_dev_window<R: Runtime>(app: &tauri::AppHandle<R>) {
+    let Some(w) = app.get_webview_window("main") else { return };
+    // 시험판 — 처음부터 화면 밖(test_window::prepare). 가려진 채 그리게 가림 감지만 끈다
+    if let Some((x, y)) = crate::test_window::spot() {
+        let _ = w.set_position(tauri::LogicalPosition::new(x, y));
+        keep_visible(&w);
+        return;
+    }
     if !cfg!(debug_assertions) || std::env::var("CHAMMO_DEV_WINDOW").as_deref() == Ok("main") {
         return;
     }
-    let Some(w) = app.get_webview_window("main") else { return };
     let Some(((x, y), screen)) = aside_of(&w) else { return };
     let _ = w.set_position(tauri::LogicalPosition::new(x, y));
     if let Some((mw, mh)) = screen {

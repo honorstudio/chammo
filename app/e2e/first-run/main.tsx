@@ -10,9 +10,11 @@ type Fake = {
   /** 다음 실패 — 그 일에서 한 번 실패 */ fail: Record<string, string>;
   loginDone: boolean; browserMs: number; installMs: number; live: string | null; accounts: Acc[]; nextEmail: string | null;
   calls: { cmd: string; args?: unknown }[]; closed: number[]; consented: boolean;
+  /** Chammo 계정 — chammo: 이미 로그인된 메일(없으면 null) · teamMs: 브라우저에서 마치기까지 · teamFail: 로그인 실패 글(한 번) · teamHang: 끝나지 않음(취소 시험) */
+  chammo: string | null; teamMs: number; teamFail: string | null; teamHang: boolean;
 };
 const KEY = 'fake-state';
-const init: Fake = { python: false, claude: false, loggedIn: false, browser: false, git: false, winPython: false, winget: true, fail: {}, loginDone: true, browserMs: 400, installMs: 250, live: null, accounts: [], nextEmail: null, calls: [], closed: [], consented: false };
+const init: Fake = { python: false, claude: false, loggedIn: false, browser: false, git: false, winPython: false, winget: true, fail: {}, loginDone: true, browserMs: 400, installMs: 250, live: null, accounts: [], nextEmail: null, calls: [], closed: [], consented: false, chammo: null, teamMs: 300, teamFail: null, teamHang: false };
 const f: Fake = { ...init, ...JSON.parse(sessionStorage.getItem(KEY) ?? '{}') };
 const save = () => sessionStorage.setItem(KEY, JSON.stringify(f));
 (window as unknown as { __fake: Fake; __save: () => void }).__fake = f;
@@ -51,6 +53,9 @@ function openPty(command: string, onData: { id: number }) {
 
 const view = () => ({ accounts: f.accounts, active: f.accounts.find((a) => a.email === f.live)?.id ?? null, liveEmail: f.live, livePlan: null });
 
+let teamReject: ((e: string) => void) | null = null;
+const teamView = () => ({ account: f.chammo ? { id: 'acc1', email: f.chammo, name: '' } : null, devices: [], pending: false });
+
 const invoke = async (cmd: string, args: Record<string, unknown> = {}) => {
   f.calls.push({ cmd, args: cmd === 'pty_open' ? { command: args.command } : args }); save();
   switch (cmd) {
@@ -75,6 +80,16 @@ const invoke = async (cmd: string, args: Record<string, unknown> = {}) => {
     case 'accounts_capture': if (f.live && !f.accounts.some((a) => a.email === f.live)) { f.accounts.push({ id: `a${f.accounts.length}`, name: '', email: f.live }); save(); } return view();
     case 'accounts_auto_patch': return view();
     case 'write_config': return null;
+    case 'team_status': return teamView();
+    case 'team_login': return new Promise((ok, no) => {
+      teamReject = no;
+      if (f.teamHang) return;
+      setTimeout(() => {
+        if (f.teamFail) { const m = f.teamFail; f.teamFail = null; save(); no(m); return; }
+        f.chammo = 'me@gmail.com'; save(); ok(teamView());
+      }, f.teamMs);
+    });
+    case 'team_login_cancel': teamReject?.('로그인을 취소했어요'); teamReject = null; return true;
     default: return null;
   }
 };

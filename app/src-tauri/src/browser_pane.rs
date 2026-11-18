@@ -84,6 +84,23 @@ pub fn fit_bounds(want: Want, g: &Geom, vd: crate::vdisplay::Rect) -> [f64; 4] {
     [vd.x, vd.y, (want.w + dw).min(vd.w).round(), (want.h + top).min(vd.h).round()]
 }
 
+/// 칸을 보는 중으로 칠까(일꾼 그림 받기·크기 맞춤) — 보이거나 덮였을 때. 덮임(팝오버가 칸에 겹침)을 안 보임으로 쳤더니
+/// 3초 뒤 그림 받기가 멈춰 알림이 떠 있는 동안 칸이 마지막 그림에 굳었다(11-18 사용자)
+pub fn pane_watched(visible: bool, covered: bool) -> bool {
+    visible || covered
+}
+
+/// Swift 비추기에 넘길 보임 값 — 0 안 보임(받기 멈춤) · 1 보임 · 2 덮임(뷰만 숨기고 받기는 계속 — 웹이 still 로 그 자리에 그린다)
+pub fn pane_code(visible: bool, covered: bool) -> i32 {
+    if visible {
+        1
+    } else if covered {
+        2
+    } else {
+        0
+    }
+}
+
 /// 칸 상태 글 — 웹이 안내를 고른다(craft_window mirror_word 와 같은 말 + 브라우저 없음)
 pub fn status_word(n: Option<i32>) -> &'static str {
     match n {
@@ -407,6 +424,18 @@ mod tests {
     }
 
     #[test]
+    fn 덮인_칸은_숨기되_받기는_계속() {
+        // 11-18 사용자: 알림 팝오버가 칸 귀퉁이를 덮은 동안 브라우저 그림이 굳었다 — 덮임은 안 보임과 다르다
+        assert!(pane_watched(true, false), "보이는 칸");
+        assert!(pane_watched(false, true), "덮인 칸도 보는 중 — 그림 받기를 멈추면 굳는다");
+        assert!(!pane_watched(false, false), "안 보이는 칸(접힘·앱 창 숨음)은 멈춘다");
+        assert_eq!(pane_code(true, false), 1);
+        assert_eq!(pane_code(false, true), 2, "덮임 = 비추기는 숨기고(팝오버가 위에 보이게) 받기는 계속");
+        assert_eq!(pane_code(false, false), 0);
+        assert_eq!(pane_code(true, true), 1, "보임이 이긴다");
+    }
+
+    #[test]
     fn 상태_글() {
         assert_eq!(status_word(None), "no-browser");
         assert_eq!(status_word(Some(1)), "live");
@@ -588,10 +617,11 @@ fn win_handle_for(parent: usize, profile: &str, pid: i32) -> Option<usize> {
 /// 칸 자리(웹뷰 왼쪽 위 기준 CSS 점)·보임 — 웹이 바뀔 때·0.5초마다. 답 = 칸 상태 글(status_word)
 /// lsof(크롬 pid)·일꾼 자물쇠를 쥐니 메인 스레드 밖에서, Swift 는 메인 스레드에서
 #[tauri::command]
-pub async fn browser_pane_place(handle: tauri::AppHandle, profile: String, rect: [f64; 4], vh: f64, visible: bool) -> Result<String, String> {
+pub async fn browser_pane_place(handle: tauri::AppHandle, profile: String, rect: [f64; 4], vh: f64, visible: bool, covered: Option<bool>) -> Result<String, String> {
+    let covered = covered.unwrap_or(false);
     let _ = APP.set(handle.clone());
     tauri::async_runtime::spawn_blocking(move || {
-        let Some((pid, geom, cast)) = crate::agent_browser::pane_geom(&profile, rect[2], rect[3], visible) else { return Ok(status_word(None).to_string()) };
+        let Some((pid, geom, cast)) = crate::agent_browser::pane_geom(&profile, rect[2], rect[3], pane_watched(visible, covered)) else { return Ok(status_word(None).to_string()) };
         let prior = handles(|m| m.get(&profile).map(|&(_, p, c)| (p, c)));
         // 헤드리스(비출 창 없음)·가린 크롬(SCK 가 못 받음) — 창 자리를 비워 SCK 를 안 켜고 그림은 일꾼이 넘긴다(push_frame)
         let geom = if cast { None } else { geom };
@@ -599,11 +629,12 @@ pub async fn browser_pane_place(handle: tauri::AppHandle, profile: String, rect:
         let (tx, rx) = std::sync::mpsc::channel();
         let g = geom.unwrap_or_default();
         #[cfg(not(any(craft_mirror, windows)))]
-        let _ = (main.clone(), pid, g, vh, visible, tx, cast);
+        let _ = (main.clone(), pid, g, vh, visible, covered, tx, cast);
         // 윈도우 — 비출 창이 없어(숨은 데스크톱) 늘 그림 칸. 칸 자리는 물리 픽셀로(웹뷰 = 창 안쪽 전체)
         #[cfg(windows)]
         {
-            let _ = (g, vh, cast);
+            // 윈도우 칸 창은 덮이면 숨는다(SW_HIDE) — 그림은 일꾼이 계속 받아(pane_watched) still 이 마지막 JPEG 를 준다
+            let _ = (g, vh, cast, covered);
             let (m2, profile) = (main.clone(), profile.clone());
             let scale = main.scale_factor().unwrap_or(1.0);
             main.run_on_main_thread(move || {
@@ -621,7 +652,7 @@ pub async fn browser_pane_place(handle: tauri::AppHandle, profile: String, rect:
                 let Ok(ns) = m2.ns_window() else { return };
                 let Some(h) = handle_for(ns as usize, &profile, pid, cast) else { return };
                 unsafe {
-                    browser_mirror_place(h as *mut _, rect[0], rect[1], rect[2], rect[3], vh, visible as i32, g.win[0], g.win[1], g.win[2], g.win[3], g.top);
+                    browser_mirror_place(h as *mut _, rect[0], rect[1], rect[2], rect[3], vh, pane_code(visible, covered), g.win[0], g.win[1], g.win[2], g.win[3], g.top);
                     let _ = tx.send((browser_mirror_status(h as *mut _), browser_mirror_blind(h as *mut _) == 1));
                 }
             })

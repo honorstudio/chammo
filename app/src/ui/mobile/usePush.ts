@@ -1,5 +1,6 @@
 // 폰 웹 푸시 켜기·끄기 — 서비스 워커(/sw.js)를 걸고, 켜면 알림 허락 → 맥 앱 키로 구독 → 맥에 등록. 끄면 맥에서 빼고 구독 해제.
 // iOS 는 홈 화면에 붙인 앱에서만 된다(pushSupport). 맥이 알림을 보낼 때(참모 창을 안 보고 있을 때) 폰에 뜬다
+import { isIos } from '../../phone-web/homeFirst';
 import { useEffect, useState } from 'react';
 import { getPushKey, pushSubscribe, pushUnsubscribe } from '../../data/web';
 import { autoResubscribe, b64urlBytes, pushError, pushSupport, type PushSupport } from '../../domain/mobilePush';
@@ -24,7 +25,8 @@ const support = (): PushSupport => {
     push: typeof window !== 'undefined' && 'PushManager' in window,
     notif: typeof Notification !== 'undefined',
     standalone: isStandalone(),
-    ios: /iPhone|iPad|iPod/.test(navigator.userAgent),
+    // 아이패드는 맥 UA 라 손가락 수로(11-18 — 정규식만으론 아이패드가 iOS 가 아니었다)
+    ios: isIos(navigator.userAgent, navigator.maxTouchPoints ?? 0),
     permission: typeof Notification !== 'undefined' ? Notification.permission : 'default',
     secure: typeof window === 'undefined' || window.isSecureContext !== false,
   });

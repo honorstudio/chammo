@@ -15,7 +15,8 @@ import { Composer } from './Composer';
 import { BottomSheet, SheetHostProvider } from './kit';
 import { MessageList } from './MessageList';
 import { Notice } from './Notice';
-import { usePoll } from './usePoll';
+import { useMemoPoll, usePoll } from './usePoll';
+import { remembered } from './memo';
 import type { Viewport } from './useViewport';
 import type { Snap } from '../../domain/mobile';
 import type { OutMsg } from '../../domain/mobileOutbox';
@@ -25,9 +26,13 @@ export type FarPick = { id: string; name: string };
 const avState = (d: FarSession['dot']) => (d === 'run' ? 'work' : d === 'ask' ? 'ask' : 'rest');
 
 /** 짝지은 기기(끊긴 기기도) — 하나도 없으면 기기 줄이 안 뜬다 */
-export function useFarDevices(): FarPick[] {
-  return usePoll<FarPick[]>(() => farDevices().catch(() => []), 30_000, []);
+/** 짝지은 기기 — 기억(memo 'far', 다시 떠도 남음)으로 바로 그리고 뒤에서 새로. loaded = 한 번이라도 알았나(모르면 시트는 뼈대).
+ *  받기가 실패하면 아는 값을 둔다(빈 목록으로 덮으면 다음에 다시 뜰 때 기기 줄이 없다가 생겼다) */
+export function useFarDevices(): [FarPick[], boolean] {
+  const [v, loaded] = useMemoPoll<FarPick[]>('far', () => farDevices().catch(() => remembered<FarPick[]>('far') ?? []), 30_000, NO_FAR);
+  return [v, loaded];
 }
+const NO_FAR: FarPick[] = [];
 
 /** 이 컴퓨터를 부르는 말 — 폰 서버가 준 컴퓨터 이름(짝지은 기기 이름과 나란히), 없으면(옛 서버) '이 맥'(2026-10-23 사용자 "무슨 뜻인지 안 읽혀") */
 export const selfDevice = (name?: string | null): string => name?.trim() || tr(`이 ${machine()}`, `This ${machine()}`);
@@ -135,7 +140,7 @@ export function PhoneFar({ t, devices, self, onPick, vp }: { t: FarPick; devices
               draftKey={`far:${t.id}:${agent?.id ?? ''}`} onChip={() => setPicker(true)} onFocus={() => snap === 'peek' && setSnap('half')} send={send} />
           }>
           {note && <Notice text={note} error onClose={() => setNote(null)} />}
-          <MessageList items={items} out={out.filter((m) => m.session === agent?.id)} onRetry={retry} onDrop={drop} loading={!!agent?.sessionId && !chatLoaded(agent.sessionId)}
+          <MessageList items={items} out={out.filter((m) => m.session === agent?.id)} onRetry={retry} onDrop={drop} onResend={(t) => send(t)} loading={!!agent?.sessionId && !chatLoaded(agent.sessionId)}
             who={agent ? <OrchAvatar name={agent.name} size={28} state="ask" color={orchColor(agent.name)} label={seenName(agent.name)} /> : undefined} />
         </ChatSheet>
         {picker && (

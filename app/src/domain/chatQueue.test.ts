@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { absorbedLeft, ABSORB_GRACE, againPlanOf, applyQueueOps, LOST_AFTER, autoEnterTarget, emptyQueue, ESC_GAP, escPlan, inputLeftover, keepAfterRemove, MINE_KEEP, mineForLeftover, appLineShown, isAppLine, pendAct, pendingState, pendLook, queueAllMine, restoreDraft, staleEcho, typeQueue, TYPE_TIMEOUT_MSG, typingOf, type QueueState } from './chatQueue';
+import { absorbedLeft, ABSORB_GRACE, againPlanOf, applyQueueOps, LOST_AFTER, autoEnterTarget, emptyQueue, ESC_GAP, escPlan, inputLeftover, keepAfterRemove, MINE_KEEP, mineForLeftover, appLineShown, isAppLine, pendingState, queueAllMine, restoreDraft, staleEcho, typeQueue, TYPE_TIMEOUT_MSG, typingOf, type QueueState } from './chatQueue';
 import chat from '../ui/chat/ChatView.tsx?raw';
 import grid from '../ui/SessionGrid.tsx?raw';
 import pane from '../ui/TerminalPane.tsx?raw';
@@ -150,7 +150,6 @@ describe('pendingState — 보낸 말이 지금 어디 있나', () => {
   it('터미널 보기가 다시 붙는 중이면 기다림(wait) — 단추 없이, 붙으면 앱이 친다(사람이 다시 보내면 두 번 간다)', () => {
     const p = { text: '일러 드래그', at: at(1) };
     expect(pendingState(p, { ...base, link: 'reattaching', now: at(1) + LOST_AFTER * 4 })).toBe('wait');
-    expect(pendAct('wait')).toBeNull();
   });
 
   it('세션이 없다(끊긴 채 안 돌아옴)면 30초를 안 기다리고 바로 전달 안 됨', () => {
@@ -209,21 +208,6 @@ describe('pendingState — 입력칸에 내 말 토막만 보일 때(긴 말)', 
   });
   it('토막이 30초 넘게 그대로면 Enter 가 안 먹은 것 — 입력칸에 걸림(지금 보내기), 다시 쳐서 두 벌로 붙지 않게', () => {
     expect(pendingState({ text: LONG, at: at(1) }, { ...base, termText: LONG.slice(500, 900), now: at(1) + LOST_AFTER + 1000 })).toBe('input');
-    expect(pendAct('input')).toBe('now');
-  });
-});
-
-describe('pendLook — 말풍선에 보일 모양', () => {
-  it('일하는 중엔 보내는 중도 대기 중으로 — Enter 뒤 훅이 도는 몇 초도 실패처럼 흐리지 않게', () => {
-    expect(pendLook('sending', true)).toBe('queued');
-    expect(pendLook('queued', true)).toBe('queued');
-  });
-  it('쉬는 세션은 그대로 — 곧 들어간다', () => {
-    expect(pendLook('sending', false)).toBe('sending');
-    expect(pendLook('queued', false)).toBe('queued');
-  });
-  it('걸림·안 갔어요·다시 붙는 중은 일하는 중이어도 그대로 보인다', () => {
-    for (const st of ['input', 'lost', 'wait'] as const) expect(pendLook(st, true)).toBe(st);
   });
 });
 
@@ -394,8 +378,8 @@ describe('typeQueue — 세션별 앱 치기 줄', () => {
     expect(restoreDraft('안녕', '안녕')).toBe('안녕');
   });
   it('채팅 보내기 실패(치기 거절·시간 넘김)가 채팅 칸까지 닿는다 — 오류 한 줄 + 입력 되살림', () => {
-    // 성공은 true(훅이 도는 중이면 'inflight' — 2026-11-13 stable-night), 실패는 false
-    expect(grid).toMatch(/LINK_WAIT \+ TYPE_TIMEOUT\)\.then\(\(\) => \{[\s\S]{0,120}return (inflight \? 'inflight' as const : )?true; \}, \(e: unknown\) => \{[\s\S]{0,160}return false; \}\)/);
+    // 성공은 true(훅이 도는 중이면 'inflight' — 2026-11-13 stable-night, 기록에 듦 'landed'·입력칸에 남음 'stuck' — 11-17), 실패는 false
+    expect(grid).toMatch(/LINK_WAIT \+ TYPE_TIMEOUT\)\.then\(\(\) => \{[\s\S]{0,120}return got; \}, \(e: unknown\) => \{[\s\S]{0,160}return false; \}\)/);
     expect(grid).toMatch(/const sent = typeAndSend\(id, text, true, again\);[\s\S]{0,240}return sent;/);
     expect(chat).toMatch(/restoreDraft\(/);
     expect(chat).toMatch(/sendFail &&/);
@@ -496,9 +480,11 @@ describe('줄 선 말 빼기(X)는 대기열이 다 내 말일 때 — 글 없�
 });
 
 describe('앱이 넣은 줄([앱] …) 말풍선 — 사람 말이 아니다(2026-11-10 참모-2)', () => {
-  it('다시 보내기·지금 보내기가 없다 — 누르면 같은 줄이 두 번 간다', () => {
-    for (const st of ['sending', 'queued', 'input', 'lost', 'wait'] as const) expect(pendAct(st, true)).toBeNull();
-    expect(pendAct('lost')).toBe('again');
+  it('다시 보내기가 없다 — 누르면 같은 줄이 두 번 간다(앱 줄은 표시를 정하기 전에 따로 그리고 끝난다)', () => {
+    const app = chat.indexOf('if (isAppLine(p.text)) return');
+    expect(app).toBeGreaterThan(0);
+    expect(chat.indexOf('pendMark(st, p,', app)).toBeGreaterThan(app);
+    expect(chat.slice(app, chat.indexOf('pendMark(st, p,', app))).not.toMatch(/IconRefresh|act\(p/);
   });
   it('앱 줄은 [앱] 머리로 알아본다', () => {
     expect(isAppLine('[앱] 오래 멈춘 목표: 가짜 목표 — 조각 0/3')).toBe(true);
@@ -511,6 +497,5 @@ describe('앱이 넣은 줄([앱] …) 말풍선 — 사람 말이 아니다(202
   });
   it('채팅 화면이 앱 줄을 옅은 한 줄로 그리고 단추를 안 붙인다', () => {
     expect(chat).toMatch(/isAppLine\(p\.text\)/);
-    expect(chat).toMatch(/pendAct\(st, app\)/);
   });
 });

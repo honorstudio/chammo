@@ -846,7 +846,7 @@ fn judge_world(b: Option<&str>, strict: bool) -> crate::peer_account::Verdict {
     let mine = Mine { account: "acct-me".into(), device: "dev-self".into() };
     let now = 90_000_000;
     let at = if strict { now } else { now - FRESH_MS - 1 };
-    let seen = Seen { mine: mine.clone(), at_ms: at, computers: vec![("dev-box".into(), String::new()), ("hub-1".into(), String::new())], phones: vec![] };
+    let seen = Seen { mine: mine.clone(), at_ms: at, computers: vec![("dev-box".into(), String::new()), ("hub-1".into(), String::new())], phones: vec![], online: vec![] };
     judge(b, Some(&mine), Some(&seen), now)
 }
 

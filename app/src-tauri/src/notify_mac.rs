@@ -1,6 +1,6 @@
 //! macOS 알림을 앱 이름·아이콘으로 — UNUserNotificationCenter.
 //! osascript "display notification" 은 '스크립트 편집기' 이름으로 묶이고 눌러도 우리 앱이 안 열렸다(2026-09-27 사용자).
-//! 알림을 누르면 메인 창을 앞으로 가져오고 window.__notifyClick('<갈 곳>') 을 부른다(갈 곳은 프론트 domain/notify noteTarget).
+//! 알림을 누르면 deep_link::open_notify — 메인 창을 앞으로 가져오고 window.__notifyClick('<갈 곳>') 을 부른다(갈 곳은 프론트 domain/notify noteTarget, 화면이 덜 떴으면 켤 때 가져감).
 //! .app 번들로 돌 때만 쓸 수 있다 — `tauri dev` 맨 실행 파일에서 부르면 죽으므로 available() 로 가른다
 
 use std::sync::OnceLock;
@@ -13,7 +13,7 @@ use objc2_user_notifications::{
     UNAuthorizationOptions, UNMutableNotificationContent, UNNotification, UNNotificationPresentationOptions,
     UNNotificationRequest, UNNotificationResponse, UNUserNotificationCenter, UNUserNotificationCenterDelegate,
 };
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 use crate::claude::log_out;
 
@@ -86,18 +86,10 @@ define_class!(
         ) {
             let id = response.notification().request().identifier().to_string();
             let target = target_of(&id).to_owned();
-            log_out("notify-click", &target);
+            // 윈도우 토스트와 같은 길(deep_link::open_notify) — 화면이 덜 떴으면 들고 있다가 켤 때 넘기고, ⌘Q 로 빠진 Dock 도 되살린다
             if let Some(app) = APP.get() {
                 let a = app.clone();
-                let _ = app.run_on_main_thread(move || {
-                    if let Some(w) = a.get_webview_window("main") {
-                        let _ = w.show();
-                        let _ = w.unminimize();
-                        let _ = w.set_focus();
-                        let arg = serde_json::to_string(&target).unwrap_or_default();
-                        let _ = w.eval(format!("window.__notifyClick && window.__notifyClick({arg})"));
-                    }
-                });
+                let _ = app.run_on_main_thread(move || crate::deep_link::open_notify(&a, &target));
             }
             completion.call(());
         }
@@ -134,6 +126,9 @@ fn request_auth() {
 
 /// 보낸다. 번들이 아니면 false(부르는 쪽이 osascript 로 대신)
 pub fn send(title: &str, body: &str, target: &str) -> bool {
+    if crate::test_window::quiet() {
+        return true; // 시험판 — 낸 셈 치고 안 낸다(false 면 부른 쪽이 osascript 로 대신 낸다)
+    }
     if APP.get().is_none() {
         return false;
     }

@@ -10,7 +10,8 @@ export type Shortcut =
   | { type: 'fontReset' }
   | { type: 'toggleSidebar' }
   | { type: 'toggleTasks' }
-  | { type: 'search' }
+  /** k = ⌘K 로 눌렀다 — 셸 탭에 포커스가 있으면 화면 지우기(⌘F 는 늘 찾기) */
+  | { type: 'search'; k?: boolean }
   /** ⌘⇧W — 보고 있는 창의 세션 끄기(확인을 한 번 거친다) */
   | { type: 'closePane' }
   /** ⌘⇧T — 보고 있는 프로젝트에 새 세션(참모 화면이면 새 참모) */
@@ -19,6 +20,8 @@ export type Shortcut =
   | { type: 'closeTab' }
   /** ⌘T — 보고 있는 보관함 폴더에 빈 문서 새로 */
   | { type: 'newDoc' }
+  /** ⌥⌘T — 그냥 셸 탭(보고 있는 프로젝트 폴더, 없으면 devRoot). ⌘⇧T 는 새 세션이라 ⌥(11-17) */
+  | { type: 'newShell' }
   /** ⌘⇧H·⌘⇧L — 고른 참모의 홈·보관함 고정 탭으로 */
   | { type: 'goHome' }
   | { type: 'goLocker' }
@@ -76,6 +79,7 @@ export function shortcutFor(input: KeyLike, win = IS_WIN): Shortcut | null {
   if (!e) return null;
   // ⌥⌘1~4 = 화면 이동. ⌥ 를 누르면 글자가 바뀌니(¡™£¢) 키 자리로 읽는다
   if (e.metaKey && e.altKey && !e.ctrlKey) {
+    if (e.code === 'KeyT' && !e.shiftKey) return { type: 'newShell' }; // ⌥ 를 누르면 글자가 † 로 바뀌니 키 자리로
     const d = e.code?.match(/^Digit([1-9])$/);
     return d ? gotoOfNum(Number(d[1])) : null;
   }
@@ -106,6 +110,7 @@ export function shortcutFor(input: KeyLike, win = IS_WIN): Shortcut | null {
     case 'j':
       return { type: 'toggleTasks' };
     case 'k':
+      return { type: 'search', k: true };
     case 'f': // ⌘F — 문서가 열려 있으면 문서 찾기, 아니면 ⌘K 와 같은 검색(App 'search')
       return { type: 'search' };
     case 'w':
@@ -150,7 +155,7 @@ const MENU: Record<string, Shortcut> = {
   goto_office: { type: 'goto', to: 'office' },
   sidebar: { type: 'toggleSidebar' },
   tasks: { type: 'toggleTasks' },
-  search: { type: 'search' },
+  search: { type: 'search', k: true }, // 메뉴 단축키가 ⌘K
   font_up: { type: 'font', delta: 1 },
   font_down: { type: 'font', delta: -1 },
   font_reset: { type: 'fontReset' },
@@ -158,6 +163,7 @@ const MENU: Record<string, Shortcut> = {
   close_pane: { type: 'closePane' },
   close_tab: { type: 'closeTab' },
   new_doc: { type: 'newDoc' },
+  new_shell: { type: 'newShell' },
   go_home: { type: 'goHome' },
   go_locker: { type: 'goLocker' },
   memo: { type: 'memo' },

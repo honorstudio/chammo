@@ -1305,3 +1305,48 @@ fn red_box(b: &[u8], skip: f64) -> (usize, usize, Option<(usize, usize, usize, u
     }
     (w, h, bx)
 }
+
+/// 덮인 칸(11-18 사용자 "알림이 떠 있을 때 참모 브라우저 렌더링이 멈춤") — 결정 대기함 팝오버가 칸 한 귀퉁이만 덮어도 웹은 칸을 '안 보임'으로 알렸고,
+/// 그러면 일꾼이 3초 뒤 그림 받기를 멈춰 칸이 마지막 그림에 굳었다. 덮였을 땐 '안 보임'이 아니라 '덮임'(pane_watched)이어야 그림이 계속 온다.
+/// 헤드리스 = 그림 길(screencast) — 페이지가 0.1초마다 바뀌는 동안 3초 덮어 두고 그 뒤 3초에 온 그림을 센다.
+/// `CHAMMO_HOME=<빈 시험 폴더> cargo test pane_covered_e2e -- --ignored --nocapture --test-threads=1`
+#[test]
+#[ignore]
+fn pane_covered_e2e() {
+    let profile = format!("e2e-covered-{}", std::process::id());
+    let (_chrome, live) = start(&profile);
+    let mut owner = Owner::new(&live);
+    let (t, _) = owner.tab("data:text/html,<h1 id=h style=font-size:80px>0</h1><script>setInterval(()=>h.textContent=Date.now(),100)</script>");
+    // 칸이 0.3초마다 자리를 알리는 흉내 — mode 0 = 보임, 1 = 덮임을 옛 길로(안 보임), 2 = 덮임을 새 길로
+    let mode = Arc::new(std::sync::atomic::AtomicU8::new(0));
+    let on = Arc::new(AtomicBool::new(true));
+    let (o, m, p) = (on.clone(), mode.clone(), profile.clone());
+    std::thread::spawn(move || {
+        while o.load(Ordering::Relaxed) {
+            let watched = match m.load(Ordering::Relaxed) {
+                0 => crate::browser_pane::pane_watched(true, false),
+                1 => false,
+                _ => crate::browser_pane::pane_watched(false, true),
+            };
+            let _ = pane_geom(&p, 800.0, 600.0, watched);
+            std::thread::sleep(Duration::from_millis(300));
+        }
+    });
+    show(&profile, &t);
+    wait_for("첫 그림", 10, || (crate::browser_pane::pushed(&profile) > 0).then_some(()));
+    let count = |m: u8| {
+        mode.store(m, Ordering::Relaxed);
+        std::thread::sleep(Duration::from_secs(3)); // 일꾼이 '안 보는 칸'으로 칠 때까지(IDLE 3초)
+        let before = crate::browser_pane::pushed(&profile);
+        std::thread::sleep(Duration::from_secs(3));
+        crate::browser_pane::pushed(&profile) - before
+    };
+    let shown = count(0);
+    let old = count(1);
+    let new = count(2);
+    eprintln!("3초 그림 — 보임 {shown}장 · 덮임(옛 길: 안 보임) {old}장 · 덮임(새 길) {new}장");
+    on.store(false, Ordering::Relaxed);
+    let _ = std::fs::remove_file(live_dir().join(format!("{profile}.json")));
+    assert!(shown >= 5, "보이는 칸에도 그림이 안 온다: {shown}장");
+    assert!(new >= 5, "덮인 칸에 그림이 안 온다(굳음): {new}장");
+}

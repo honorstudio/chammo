@@ -13,6 +13,7 @@ import { installBlockPick } from './blockPick';
 import { DocSideMenu } from './HandleMenu';
 import { AskSelButton } from './AskSelButton';
 import { installImeEnter } from './imeEnter';
+import { ImeListGuard } from './imeListGuard';
 import { cellRangeAt, installTableSelect, isCellPick, oneCellRange } from './tableSelect';
 import { linesAsBlocks } from '../../domain/pasteLines';
 import { duplicateBlock, notionSlashItems } from '../../domain/docBlocks';
@@ -33,7 +34,8 @@ if (typeof window !== 'undefined' && !(window as { __docOpen?: boolean }).__docO
 }
 
 const schema = BlockNoteSchema.create({ blockSpecs: { ...defaultBlockSpecs, page: PageBlock() } });
-import { CanvasListBackspace } from './listBackspace';
+import { ListKeys } from './listBackspace';
+import { NotionKeys } from './notionKeys';
 import { copyText } from './copyText';
 import { selectAllStep, wholeText } from './selectAllStep';
 import { docSelectAll } from '../selectAll';
@@ -63,7 +65,7 @@ export default function SpaceEditor({ md, docPath, personal, onReady, onChange, 
   const editor = useCreateBlockNote({
     schema,
     dictionary: ko,
-    extensions: [CanvasListBackspace],
+    extensions: [ListKeys, NotionKeys, ImeListGuard()], // 목록 지우기·빠져나오기·단축키 노션처럼(listBackspace·notionKeys) + 하위 목록 새 항목 한글 첫 글자 떨어짐 막이(imeListGuard.ts)
     // 그림 넣기·바꾸기 — 문서 옆 assets/ 에 저장하고 md 엔 상대 경로(참모·세션이 파일로 바로 읽는다)
     uploadFile: async (file: File) => invoke<string>('save_asset', { docPath, name: file.name || 'image.png', bytes: Array.from(new Uint8Array(await file.arrayBuffer())) }),
     // 상대 경로는 문서 폴더 기준, 절대 경로도 앱 파일 주소로(그대로 두면 그림이 깨졌다)

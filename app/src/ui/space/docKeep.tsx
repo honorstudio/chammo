@@ -54,8 +54,8 @@ export function useDocKeep() {
   };
 }
 
-/** 문서 자리 — 붙어 있는 동안 그 참모의 상자를 안에 둔다 */
-function DocSlot({ box }: { box: HTMLDivElement }) {
+/** 문서 자리 — 붙어 있는 동안 그 참모의 상자를 안에 둔다(셸 탭도 같은 자리 — ui/space/shellKeep) */
+export function DocSlot({ box }: { box: HTMLDivElement }) {
   const ref = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const at = ref.current;

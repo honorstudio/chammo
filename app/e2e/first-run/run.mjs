@@ -67,12 +67,24 @@ try {
     await waitText(p, '로그인됐어요');
     await p.screenshot({ path: path.join(out, '3-ok.png') });
     ok('로그인 뒤 다음 단추 없음 — 저절로', (await p.getByRole('button', { name: '다음', exact: true }).count()) === 0);
+    // Chammo 계정 — Claude 로그인 다음 장(2026-11-18 사용자: 설정 말고 설치 끝에)
+    await waitText(p, 'Chammo 계정', 7000);
+    await sleep(500);
+    await p.screenshot({ path: path.join(out, '3b-account.png') });
+    ok('계정 장 — 구글 로그인이 기본, 나중에는 옆 글 단추', (await p.locator('.fr-btn').textContent()) === '구글로 로그인' && (await p.getByRole('button', { name: '나중에', exact: true }).count()) === 1);
+    ok('계정 장 — Claude 낱말이 없다(두 로그인을 헷갈리지 않게)', !(await text(p)).includes('Claude'));
+    await click('구글로 로그인');
+    await p.screenshot({ path: path.join(out, '3c-account-wait.png') });
+    ok('계정 장 — 기다리는 동안 다시 열기·취소', (await text(p)).includes('브라우저에서 로그인을 마쳐') && (await p.getByRole('button', { name: '취소', exact: true }).count()) === 1);
+    await waitText(p, 'me@gmail.com');
+    await p.screenshot({ path: path.join(out, '3d-account-ok.png') });
+    ok('계정 로그인은 서버를 Rust 에 맡긴다', (await calls(p, 'team_login'))[0]?.server === '');
     await waitText(p, '됐어요!', 7000);
     await sleep(900);
     await p.screenshot({ path: path.join(out, '4-done-rising.png') });
     await sleep(2800);
     await p.screenshot({ path: path.join(out, '4-done-blue.png') });
-    ok('끝 — 익명 사용 통계 안내 줄(시작하기 전)', (await text(p)).includes('하루 한 번 익명 사용 통계를 보내요'));
+    ok('끝 — 익명 사용 통계 안내 줄(시작하기 전)', (await text(p)).includes('하루 한 번 익명 사용 통계를'));
     ok('끝 — 안내 줄이 시작하기 단추 위, 창 안', await p.evaluate(() => { const n = document.querySelector('.fr-note')?.getBoundingClientRect(); const b = document.querySelector('.fr-last .fr-btn')?.getBoundingClientRect(); return !!n && !!b && n.bottom <= b.top + 1 && n.right <= 640; }));
     ok('끝 — 선이 창을 파랗게 채운다', await p.evaluate(() => getComputedStyle(document.querySelector('.fr-flood')).transform === 'matrix(1, 0, 0, 1, 0, 0)'));
     await p.evaluate(() => { window.__noReload = true; });
@@ -83,7 +95,7 @@ try {
     ok('첫 참모 표시를 남긴다', (await p.evaluate(() => localStorage.getItem('firstRunSpawn'))) === '1');
     ok('맥이 알림을 한 번 묻는다', (await calls(p, 'notify_request')).length === 1);
     ok('창을 원래 크기로', (await calls(p, 'first_run_window')).some((a) => a.on === false));
-    ok('앱 단추 합계 3', clicks === 3, String(clicks));
+    ok('앱 단추 합계 4(시작·Claude 로그인·구글로 로그인·시작하기)', clicks === 4, String(clicks));
     await p.close();
   }
 
@@ -170,11 +182,61 @@ try {
 
   // ── 이미 다 있는 맥 — 시작 한 번이면 로그인도 건너뛰고 끝까지
   {
-    const p = await fresh({ python: true, claude: true, browser: true, loggedIn: true });
+    const p = await fresh({ python: true, claude: true, browser: true, loggedIn: true, chammo: 'me@gmail.com' });
     await p.getByRole('button', { name: '시작', exact: true }).click();
     await waitText(p, '로그인됐어요');
     await waitText(p, '됐어요!', 7000);
     ok('다 있으면 시작·시작하기 둘로 끝', (await calls(p, 'pty_open')).length === 0);
+    ok('Chammo 계정이 이미 있으면 계정 장을 건너뛴다', (await calls(p, 'team_login')).length === 0);
+    await p.close();
+  }
+
+  // ── Chammo 계정 장의 갈래 — 나중에·취소·실패·이미 로그인
+  const toAccount = async (set = {}, opts = {}) => {
+    const p = await fresh({ python: true, claude: true, browser: true, loggedIn: true, ...set }, opts);
+    await p.getByRole('button', { name: '시작', exact: true }).click();
+    await waitText(p, 'Chammo 계정', 9000);
+    return p;
+  };
+  {
+    const p = await toAccount();
+    await p.getByRole('button', { name: '나중에', exact: true }).click();
+    await waitText(p, '됐어요!', 4000);
+    ok('나중에 — 로그인 없이 끝 장으로', (await calls(p, 'team_login')).length === 0);
+    await p.close();
+  }
+  {
+    const p = await toAccount({ teamHang: true });
+    await p.getByRole('button', { name: '구글로 로그인', exact: true }).click();
+    await waitText(p, '브라우저에서 로그인을 마쳐');
+    await p.getByRole('button', { name: '취소', exact: true }).click();
+    await p.waitForSelector('.fr-account .fr-btn', { timeout: 4000 }).catch(() => {});
+    ok('취소 — 계정 장 처음으로, 오류 줄 없음', (await p.locator('.fr-btn').textContent()) === '구글로 로그인' && (await p.locator('.fr-err').count()) === 0);
+    ok('취소 — 끝 장으로 안 넘어간다', !(await text(p)).includes('됐어요!'));
+    await p.close();
+  }
+  {
+    const p = await toAccount({ teamFail: '[offline] 인터넷 연결을 확인해 주세요' });
+    await p.getByRole('button', { name: '구글로 로그인', exact: true }).click();
+    await p.waitForSelector('.fr-err', { timeout: 4000 }).catch(() => {});
+    await p.screenshot({ path: path.join(out, 'x-account-fail.png') });
+    ok('실패 — 이름표 뗀 오류 한 줄 + 다시 누를 단추', (await p.locator('.fr-err').textContent()) === '인터넷 연결을 확인해 주세요' && (await p.locator('.fr-btn').count()) === 1);
+    await p.getByRole('button', { name: '구글로 로그인', exact: true }).click();
+    await waitText(p, '됐어요!', 7000);
+    ok('실패 뒤 다시 누르면 이어서 끝까지', true);
+    await p.close();
+  }
+  {
+    const p = await toAccount({ teamFail: '[already] 이미 로그인돼 있어요' });
+    await p.getByRole('button', { name: '구글로 로그인', exact: true }).click();
+    await waitText(p, '됐어요!', 7000);
+    ok('밖에서 먼저 로그인됨 — 오류 대신 넘어간다', (await p.locator('.fr-err').count()) === 0);
+    await p.close();
+  }
+  {
+    const p = await toAccount({}, { dark: true });
+    await sleep(700);
+    await p.screenshot({ path: path.join(out, 'x-account-dark.png') });
     await p.close();
   }
 
@@ -194,7 +256,8 @@ try {
     await sleep(4500);
     ok('누른 뒤엔 저절로 안 넘어간다', !(await text(p)).includes('됐어요!'));
     await p.getByRole('button', { name: '다음', exact: true }).click();
-    await waitText(p, '됐어요!');
+    await waitText(p, 'Chammo 계정');
+    ok('계정 추가 뒤 다음 — Chammo 계정 장으로', true);
     await p.close();
   }
 

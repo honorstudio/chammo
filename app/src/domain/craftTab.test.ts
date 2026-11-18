@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boxOf, coveredAt, popOverlaps, craftAppOf, craftGone, craftKey, dropCraftEverywhere, sameBox, shown, wantStill, leftCraft } from './craftTab';
+import { boxOf, coveredAt, popOverlaps, craftAppOf, craftGone, craftKey, dropCraftEverywhere, sameBox, shown, wantStill, leftCraft, paneMode, shotVisible, stillDue, STILL_EVERY_MS } from './craftTab';
 
 describe('Craft 스페이스 탭', () => {
   it('탭 열쇠 k:<앱>', () => {
@@ -126,5 +126,31 @@ describe('dropCraftEverywhere keep — 주인이 정해지면 다른 참모 탭 
     expect(popOverlaps(pane, [[1200, 40, 200, 200]])).toBe(false); // 칸 밖 팝오버
     expect(popOverlaps(pane, [[0, 0, 0, 0]])).toBe(false); // 숨은(크기 0) 팝오버
     expect(popOverlaps(pane, [])).toBe(false);
+  });
+});
+
+describe('덮인 칸 — 11-18 사용자 "알림이 떠 있을 때 참모 브라우저 렌더링이 멈춤"', () => {
+  it('덮임은 안 보임과 다르다 — 받기는 계속', () => {
+    expect(paneMode([0, 0, 900, 600], false, false)).toBe('shown');
+    expect(paneMode([0, 0, 900, 600], true, false)).toBe('covered');
+    expect(paneMode([0, 0, 900, 600], true, true)).toBe('off'); // 앱 창이 숨으면 덮였든 말든 멈춤
+    expect(paneMode([0, 0, 900, 600], false, true)).toBe('off');
+    expect(paneMode([0, 0, 0, 600], true, false)).toBe('off'); // 접힌 칸
+    expect(paneMode([0, 0, 30, 600], true, false)).toBe('off'); // Swift 가 숨기는 40점 아래 — 깔 그림도 없다
+  });
+  it('덮인 동안 깐 그림을 계속 갈아 끼운다', () => {
+    expect(stillDue('covered', false, 0, 1000)).toBe(true);
+    expect(stillDue('covered', false, 1000, 1000 + STILL_EVERY_MS)).toBe(true);
+    expect(stillDue('covered', false, 1000, 1000 + STILL_EVERY_MS - 1)).toBe(false);
+    expect(stillDue('covered', true, 0, 5000)).toBe(false); // 하나씩
+    expect(stillDue('shown', false, 0, 5000)).toBe(false);
+    expect(stillDue('off', false, 0, 5000)).toBe(false);
+  });
+});
+
+describe('웹이 그리는 칸 그림(윈도우 Craft)', () => {
+  it('덮여도 계속 받는다 — 접힌 칸만 멈춘다', () => {
+    expect(shotVisible([0, 0, 900, 600])).toBe(true);
+    expect(shotVisible([0, 0, 0, 600])).toBe(false);
   });
 });

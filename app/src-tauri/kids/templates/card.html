@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>카드 틀</title>
+<style>html,body{margin:0;height:100%;display:grid;place-items:center;background:#f4f1ec;font-family:-apple-system,'Apple SD Gothic Neo',sans-serif}svg{width:min(92vw,92vh*1.4);height:auto}</style>
+</head><body><svg id="card" viewBox="0 0 700 500" role="img"></svg>
+<script>
+// 키즈 '말로 만들기' 카드 틀 — 아래 CFG 한 줄만 바뀐다(모델은 CFG JSON 만 낸다). 인터넷·외부 파일 없음.
+const CFG = /*CFG*/{"to":"엄마","from":"서아","message":"생일 축하해요","bg":"#ffe3ec","accent":"#e91e63","picture":"cake","pictureCount":1,"sparkles":true}/*END*/;
+const NS = 'http://www.w3.org/2000/svg', svg = document.getElementById('card');
+const el = (n, a, p = svg) => { const e = document.createElementNS(NS, n); for (const k in a) e.setAttribute(k, a[k]); p.appendChild(e); return e; };
+el('rect', { x: 10, y: 10, width: 680, height: 480, rx: 36, fill: CFG.bg, stroke: CFG.accent, 'stroke-width': 8 });
+const pics = {
+  cake: (g) => { el('rect', { x: -60, y: -10, width: 120, height: 70, rx: 12, fill: CFG.accent }, g); el('rect', { x: -60, y: -10, width: 120, height: 18, fill: '#fff', opacity: .8 }, g); el('rect', { x: -4, y: -50, width: 8, height: 40, fill: '#ffca28' }, g); el('ellipse', { cx: 0, cy: -58, rx: 7, ry: 11, fill: '#ff7043' }, g); },
+  heart: (g) => { el('path', { d: 'M0 50 C-80 0 -50 -60 0 -25 C50 -60 80 0 0 50Z', fill: CFG.accent }, g); },
+  star: (g) => { el('path', { d: 'M0 -55 L16 -16 L58 -16 L24 8 L36 50 L0 26 L-36 50 L-24 8 L-58 -16 L-16 -16Z', fill: CFG.accent }, g); },
+  flower: (g) => { for (let i = 0; i < 6; i++) el('ellipse', { cx: Math.cos(i * 1.047) * 30, cy: Math.sin(i * 1.047) * 30, rx: 22, ry: 22, fill: CFG.accent }, g); el('circle', { cx: 0, cy: 0, r: 20, fill: '#ffca28' }, g); },
+};
+const n = Math.max(1, Math.min(5, CFG.pictureCount));
+for (let i = 0; i < n; i++) { const g = el('g', { transform: `translate(${350 + (i - (n - 1) / 2) * 130} 200) scale(${n > 3 ? .7 : 1})` }); (pics[CFG.picture] || pics.heart)(g); }
+if (CFG.sparkles) for (let i = 0; i < 14; i++) el('circle', { cx: 40 + Math.random() * 620, cy: 40 + Math.random() * 120, r: 3 + Math.random() * 5, fill: CFG.accent, opacity: .5 });
+const txt = (t, y, size, w = 700) => { const e = el('text', { x: 350, y, 'text-anchor': 'middle', 'font-size': size, 'font-weight': w, fill: '#333' }); e.textContent = t; };
+txt(`${CFG.to}에게`, 330, 34, 600); txt(CFG.message, 395, 52); txt(`${CFG.from} 가`, 455, 28, 500);
+</script></body></html>

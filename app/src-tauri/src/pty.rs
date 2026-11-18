@@ -329,10 +329,20 @@ pub(crate) fn spawn_pty(
     cwd: Option<String>,
     cols: u16,
     rows: u16,
-    mut on_data: impl FnMut(&[u8]) -> bool + Send + 'static,
+    on_data: impl FnMut(&[u8]) -> bool + Send + 'static,
+) -> Result<(Box<dyn MasterPty + Send>, Box<dyn Write + Send>, Box<dyn Child + Send + Sync>), String> {
+    spawn_cmd(crate::platform::shell_command(command), cwd, cols, rows, on_data)
+}
+
+/// 만들어 둔 명령을 pty 로 — spawn_pty(셸 -lc 한 줄)와 그냥 셸 탭(shell_pty, 로그인 셸 그대로)이 같은 길을 쓴다
+pub(crate) fn spawn_cmd(
+    mut cmd: portable_pty::CommandBuilder,
+    cwd: Option<String>,
+    cols: u16,
+    rows: u16,
+    on_data: impl FnMut(&[u8]) -> bool + Send + 'static,
 ) -> Result<(Box<dyn MasterPty + Send>, Box<dyn Write + Send>, Box<dyn Child + Send + Sync>), String> {
     let pair = native_pty_system().openpty(size(cols, rows)).map_err(|e| e.to_string())?;
-    let mut cmd = crate::platform::shell_command(command);
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
     if let Some(dir) = cwd.or_else(|| Some(crate::platform::home()).filter(|h| !h.is_empty())) {
@@ -503,6 +513,24 @@ pub fn pty_open(
     Ok(id)
 }
 
+/// 세션에 안 붙는 칸(그냥 셸 탭)을 목록에 넣는다 — 쓰기·크기·닫기·창 다시 읽기 정리는 세션 칸과 같은 길(pty_write·pty_resize·pty_close·close_owned)
+pub(crate) fn insert_plain(state: &Ptys, master: Box<dyn MasterPty + Send>, writer: Box<dyn Write + Send>, child: Box<dyn Child + Send + Sync>, owner: &str) -> u32 {
+    let id = state.next.fetch_add(1, Ordering::SeqCst) + 1;
+    state.map.lock().unwrap().insert(id, Pty { master, writer: Arc::new(Mutex::new(writer)), child, owner: owner.to_string() });
+    id
+}
+
+/// 칸의 앞 프로세스 묶음(tcgetpgrp)과 그 칸 자식 pid — 둘이 다르면 셸 위에서 무언가 돌고 있다(vim·npm run dev …). 윈도우는 (None, pid)
+pub(crate) fn fg_and_child(state: &Ptys, id: u32) -> Option<(Option<i32>, Option<u32>)> {
+    let map = state.map.lock().unwrap();
+    let p = map.get(&id)?;
+    #[cfg(unix)]
+    let fg = p.master.process_group_leader();
+    #[cfg(not(unix))]
+    let fg: Option<i32> = None;
+    Some((fg, p.child.process_id()))
+}
+
 /// 앱 안에서 바로 쓰기 — 지구본 키 말하기(ptt)가 스페이스를 흘린다
 pub fn write_to(state: &Ptys, id: u32, data: &str) {
     if let Some(p) = state.map.lock().unwrap().get_mut(&id) {
@@ -561,11 +589,14 @@ pub async fn pty_type(state: State<'_, Ptys>, id: u32, keys: Vec<String>, enter_
 /// 채팅에 돌려줄 치기 결과 — 'inflight' = 친 글을 입력칸에서 봤고 Enter 뒤 빠졌는데 기록엔 아직. UserPromptSubmit 훅이 도는 동안이다:
 /// 11-10~11-12 landed=false 31번이 전부 그 말의 훅이 6초를 넘긴 때였고 31번 다 늦게 들어갔다. 채팅은 이 말을 30초에 '전달 안 됨'으로 띄우지 않는다
 /// (domain/chatQueue INFLIGHT_LOST_AFTER) — 띄우면 다시 보내기가 훅 뒤에 같은 말을 한 번 더 넣는다(11-13 시험 세션 재현 2번 들어감)
+/// 'landed' = 기록에 든 걸 봤다(채팅 기록 읽기가 늦어도 '전달 안 됨'을 안 띄운다) · 'stuck' = Enter·지우고 다시 치기 뒤에도 그 말이 입력칸에 그대로(믿을 화면에서 봄)
+/// — 채팅이 30초를 안 기다리고 바로 바깥 다시 보내기를 띄운다(2026-11-17 '못 갔다' 기준 ②). 그 밖(화면을 못 봄·기록으로 못 가림)은 '' — 채팅이 예전대로 30초
 pub(crate) fn type_outcome(n: &TypeNote) -> &'static str {
-    if n.landed == Some(false) && n.seen && !n.left {
-        "inflight"
-    } else {
-        ""
+    match n.landed {
+        Some(true) => "landed",
+        Some(false) if n.seen && !n.left => "inflight",
+        Some(false) if n.seen && n.left => "stuck",
+        _ => "",
     }
 }
 
@@ -703,6 +734,10 @@ pub fn pty_resize(state: State<Ptys>, id: u32, cols: u16, rows: u16) -> Result<(
             p.lock().unwrap_or_else(|e| e.into_inner()).set_size(rows, cols);
         }
     }
+    resize_plain(&state, id, cols, rows)
+}
+
+pub(crate) fn resize_plain(state: &Ptys, id: u32, cols: u16, rows: u16) -> Result<(), String> {
     let map = state.map.lock().unwrap();
     let p = map.get(&id).ok_or(crate::i18n::tr("없는 pty", "No such pty"))?;
     p.master.resize(size(cols, rows)).map_err(|e| e.to_string())
@@ -713,6 +748,11 @@ pub fn pty_resize(state: State<Ptys>, id: u32, cols: u16, rows: u16) -> Result<(
 pub fn pty_close(state: State<Ptys>, id: u32) {
     crate::ptt::forget(id);
     OPEN.lock().unwrap().retain(|v| v.pty != id);
+    close_plain(&state, id);
+}
+
+/// 칸 하나 닫기(목록에서 빼고 자식 끝내기) — 셸 탭은 이걸로 셸이 끝난다(SIGHUP)
+pub(crate) fn close_plain(state: &Ptys, id: u32) {
     let gone = state.map.lock().unwrap().remove(&id);
     if let Some(p) = gone {
         close_pty(p);
@@ -1472,10 +1512,12 @@ mod tests {
     fn inflight_는_입력칸에서_빠진_걸_본_때만() {
         let n = |landed, seen, left| super::TypeNote { landed, seen, left, ..Default::default() };
         assert_eq!(super::type_outcome(&n(Some(false), true, false)), "inflight");
-        assert_eq!(super::type_outcome(&n(Some(true), true, false)), "", "들어갔다");
+        assert_eq!(super::type_outcome(&n(Some(true), true, false)), "landed", "들어갔다");
+        assert_eq!(super::type_outcome(&n(Some(true), false, false)), "landed", "화면은 못 봤어도 기록에 들어갔다");
         assert_eq!(super::type_outcome(&n(None, true, false)), "", "기록으로 못 가림");
+        assert_eq!(super::type_outcome(&n(None, true, true)), "", "기록으로 못 가리면 남은 말도 모름 — 채팅이 입력칸을 보고 정한다");
         assert_eq!(super::type_outcome(&n(Some(false), false, false)), "", "친 글을 못 봤다 — 빠졌는지 모른다");
-        assert_eq!(super::type_outcome(&n(Some(false), true, true)), "", "입력칸에 남았다");
+        assert_eq!(super::type_outcome(&n(Some(false), true, true)), "stuck", "다시 쳐 봐도 입력칸에 남았다");
     }
 
     #[test]

@@ -19,6 +19,7 @@ pub const TEMPLATE: &[TemplateFile] = &[
     TemplateFile { path: "CHAMMO.ko.md", body: include_str!("../../hq-template/CHAMMO.ko.md"), exec: false },
     TemplateFile { path: ".claude/settings.json", body: include_str!("../../hq-template/.claude/settings.json"), exec: false },
     TemplateFile { path: "scripts/task", body: include_str!("../../hq-template/scripts/task"), exec: true },
+    TemplateFile { path: "scripts/default-model-hook", body: include_str!("../../hq-template/scripts/default-model-hook"), exec: true },
     TemplateFile { path: "scripts/say", body: include_str!("../../hq-template/scripts/say"), exec: true },
     TemplateFile { path: "scripts/show", body: include_str!("../../hq-template/scripts/show"), exec: true },
     // 엑셀 칸 읽기·쓰기 — 앱(app.jsonl)을 거친다. 스페이스에 열려 있으면 칸마다 보여 주며 넣는다
@@ -204,8 +205,10 @@ pub fn pin_data_dir(dir: &Path, data_dir: &str) -> std::io::Result<()> {
     // 알아서 기억(ADR 0032) — 세션 시작에 그 참모 칸·공통 규칙을 싣고(SessionStart), 끝내기 전 영어 검사(Stop).
     // 이미 깐 HQ 의 settings.json 은 앱이 통째로 안 덮으니 여기서 우리 줄만 한 번 넣는다(사용자 훅은 그대로)
     for (event, arg) in [("SessionStart", "start"), ("Stop", "stop")] {
-        ensure_hook(&mut v, event, &format!("scripts/memory hook {arg}"));
+        ensure_hook(&mut v, event, None, &format!("scripts/memory hook {arg}"));
     }
+    // 새 세션 기본 모델·노력값(설정) — 참모가 Bash 로 치는 `claude --bg` 에도 붙게(default_model.rs, 2026-11-17)
+    ensure_hook(&mut v, "PreToolUse", Some("Bash"), "scripts/default-model-hook");
     if v == before {
         return Ok(());
     }
@@ -216,7 +219,7 @@ pub fn pin_data_dir(dir: &Path, data_dir: &str) -> std::io::Result<()> {
 }
 
 /// hooks.<event> 에 `"$CLAUDE_PROJECT_DIR"/<tail>` 명령이 없으면 한 묶음 더한다. hooks·event 가 객체·배열이 아니면(사람이 다르게 쓴 것) 건드리지 않는다
-fn ensure_hook(v: &mut serde_json::Value, event: &str, tail: &str) {
+fn ensure_hook(v: &mut serde_json::Value, event: &str, matcher: Option<&str>, tail: &str) {
     if v["hooks"].is_null() {
         v["hooks"] = serde_json::json!({});
     }
@@ -229,7 +232,11 @@ fn ensure_hook(v: &mut serde_json::Value, event: &str, tail: &str) {
     let Some(list) = v["hooks"][event].as_array_mut() else { return };
     let has = list.iter().any(|g| g["hooks"].as_array().is_some_and(|hs| hs.iter().any(|h| h["command"].as_str().is_some_and(|c| c.contains(tail)))));
     if !has {
-        list.push(serde_json::json!({ "hooks": [{ "type": "command", "command": format!("\"$CLAUDE_PROJECT_DIR\"/{tail}") }] }));
+        let mut g = serde_json::json!({ "hooks": [{ "type": "command", "command": format!("\"$CLAUDE_PROJECT_DIR\"/{tail}") }] });
+        if let Some(m) = matcher {
+            g["matcher"] = m.into();
+        }
+        list.push(g);
     }
 }
 
@@ -648,6 +655,9 @@ mod tests {
         };
         assert_eq!(cmds("Stop"), vec!["my-stop".to_string(), "\"$CLAUDE_PROJECT_DIR\"/scripts/memory hook stop".to_string()]);
         assert_eq!(cmds("SessionStart"), vec!["\"$CLAUDE_PROJECT_DIR\"/scripts/memory hook start".to_string()]);
+        // 새 세션 기본 모델 훅 — Bash 에만, 한 번
+        assert_eq!(cmds("PreToolUse"), vec!["\"$CLAUDE_PROJECT_DIR\"/scripts/default-model-hook".to_string()]);
+        assert_eq!(v["hooks"]["PreToolUse"][0]["matcher"], "Bash");
         // hooks 가 객체가 아니면(사람이 다르게 쓴 것) 안 건드린다
         std::fs::write(d.join(".claude/settings.json"), r#"{"hooks":[1]}"#).unwrap();
         pin_data_dir(&d, "/Users/me/demo-data").unwrap();

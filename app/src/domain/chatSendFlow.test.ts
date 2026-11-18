@@ -1,10 +1,10 @@
 // 보내기 상태 흐름을 한 표로 — 채팅 보내기 유령('안 갔어요')은 고친 뒤 4번 다시 나왔다(2026-09-30 ~ 10-10, 불편 순위 6번).
 // 고칠 때마다 조각(대기열·기록 맞대기·다시 보내기 막기)만 따로 시험해서, 조각 사이 이음매가 다시 어긋나도 CI 가 몰랐다.
-// 이 표는 ChatView 가 매 초 하는 것(waitingOf → pendingState → pendAct, 다시 보내기 = againPlan → resent, 걸린 Enter = autoEnterTarget)을
+// 이 표는 ChatView 가 매 초 하는 것(waitingOf → pendingState → pendMark, 다시 보내기 = againPlan → resent, 걸린 Enter = autoEnterTarget)을
 // 시간 순서대로 그대로 돌린다. 새 증상이 나오면 고치기 전에 여기 한 줄(장면)을 먼저 더한다.
 import { describe, expect, it } from 'vitest';
 import { appendChat, enterDelay, escUnsends, type ChatItem } from './chat';
-import { absorbedAt, againPlan, applyQueueOps, autoEnterTarget, DUP_CONFIRM, emptyQueue, INFLIGHT_LOST_AFTER, LOST_AFTER, markInflight, newPending, pendAct, pendingState, PENDING_MS, resent, waitingOf, type QueueState } from './chatQueue';
+import { absorbedAt, againPlan, applyQueueOps, autoEnterTarget, DUP_CONFIRM, emptyQueue, INFLIGHT_LOST_AFTER, LOST_AFTER, markInflight, newPending, pendingState, pendMark, PENDING_MS, resent, waitingOf, type QueueState } from './chatQueue';
 
 const T0 = Date.parse('2026-10-10T12:00:00Z');
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -32,7 +32,7 @@ type Step =
   | { wait: number }
   | { log: string[] } // 세션 기록에 붙은 줄(기록 읽기 = appendChat + applyQueueOps)
   | { term: string } // 터미널 입력칸에 보이는 글
-  | { see: string[] } // 말풍선들 '글=상태/단추'
+  | { see: string[] } // 말풍선들 '글=상태/다시 보내기'
   | { again: 'send' | 'warn' } // 다시 보내기(맨 앞 말풍선 또는 입력칸 글 A) 눌렀을 때 막나
   | { enter: string | null } // 입력칸에 걸린 말에 Enter 를 다시 넣나
   | { esc: boolean } // 채팅 Esc 가 방금 보낸 말을 거둬들이게 되나(그럼 안 넘긴다 — domain/chat escUnsends)
@@ -45,7 +45,7 @@ function run(steps: Step[]): void {
   const view = () => {
     s.pending = waitingOf(s.pending, s.items, s.now, s.queue); // ChatView: waiting 이 줄면 setPending(waiting)
     const enterWait = Math.max(0, ...s.pending.map((p) => enterDelay(p.text.length, false)));
-    return { enterWait, rows: s.pending.map((p) => ({ p, st: pendingState(p, { queue: s.queue, termText: s.term, now: s.now, enterWait }) })) };
+    return { enterWait, rows: s.pending.map((p) => { const st = pendingState(p, { queue: s.queue, termText: s.term, now: s.now, enterWait }); return { p, st, mark: pendMark(st, p, { queue: s.queue, now: s.now, enterWait }) }; }) };
   };
   steps.forEach((step, i) => {
     const where = `${i + 1}번째 ${JSON.stringify(step)}`;
@@ -56,7 +56,8 @@ function run(steps: Step[]): void {
     else if ('log' in step) { const c = step.log.join('\n'); s.items = appendChat(s.items, c); s.queue = applyQueueOps(s.queue, c); }
     else if ('term' in step) s.term = step.term;
     else if ('see' in step) {
-      const got = view().rows.map(({ p, st }) => `${p.text}=${st}${pendAct(st) ? `/${pendAct(st)}` : ''}`);
+      // 끝내 안 간 말(failed)에만 다시 보내기 — 줄 선 말·걸린 말엔 단추가 없다(2026-11-17 사용자)
+      const got = view().rows.map(({ p, st, mark }) => `${p.text}=${st}${mark === 'failed' ? '/again' : ''}`);
       expect(got, where).toEqual(step.see);
     } else if ('again' in step) {
       const p = view().rows[0]?.p;
@@ -108,14 +109,14 @@ const FLOW: [string, Step[]][] = [
   ['일하는 중 긴 말(2,500자) — 치는 동안 입력칸엔 토막만 보여도, Enter 뒤 훅이 도는 동안도 보내는 중이고, 줄 서면 대기 중, 도구가 끝나 흡수되면 사라진다(2026-10-26 사용자 301.png)',
     [{ send: LONG }, { term: LONG.slice(0, 600) }, { wait: 3000 }, { see: [`${LONG}=sending`] }, { term: LONG.slice(1200, 1800) }, { wait: 3000 },
       { see: [`${LONG}=sending`] }, { enter: null }, { term: '' }, { wait: 3000 }, { see: [`${LONG}=sending`] },
-      { log: [op('enqueue', 9000, LONG)] }, { see: [`${LONG}=queued/now`] }, { wait: 13_000 }, { log: [absorbed(22_000, LONG), queued(LONG, 22_000)] }, { see: [] }]],
+      { log: [op('enqueue', 9000, LONG)] }, { see: [`${LONG}=queued`] }, { wait: 13_000 }, { log: [absorbed(22_000, LONG), queued(LONG, 22_000)] }, { see: [] }]],
   ['긴 말의 Enter 가 안 먹어 토막이 입력칸에 그대로 — 30초 뒤 입력칸에 걸려 있어요 + 지금 보내기(다시 보내기면 입력칸에 두 벌로 붙는다)',
-    [{ send: LONG }, { term: LONG.slice(1200, 1800) }, { wait: LOST_AFTER + 1000 }, { see: [`${LONG}=input/now`] }]],
+    [{ send: LONG }, { term: LONG.slice(1200, 1800) }, { wait: LOST_AFTER + 1000 }, { see: [`${LONG}=input/again`] }]],
   ['일하는 중 — 줄 서면 대기 중 + 지금 보내기, 차례가 와 queued_command 로 들어가면 사라진다',
-    [{ send: A }, { wait: 1500 }, { log: [op('enqueue', 600, A)] }, { see: [`${A}=queued/now`] }, { wait: 120_000 },
-      { see: [`${A}=queued/now`] }, { log: [op('dequeue', 121_000), queued(A, 121_000)] }, { see: [] }]],
+    [{ send: A }, { wait: 1500 }, { log: [op('enqueue', 600, A)] }, { see: [`${A}=queued`] }, { wait: 120_000 },
+      { see: [`${A}=queued`] }, { log: [op('dequeue', 121_000), queued(A, 121_000)] }, { see: [] }]],
   ['긴 도구(72초) 중 그림 칩과 보냄 — 도구가 끝나 흡수(remove)만 먼저 읽힌 순간에도 안 갔어요로 튀지 않고, 다음 조각의 queued_command(글+그림 배열)로 사라진다(2026-10-21 사용자 캡처)',
-    [{ send: IMG }, { wait: 1500 }, { log: [op('enqueue', 800, `[Image #255] ${IMG}`)] }, { see: [`${IMG}=queued/now`] }, { wait: 71_000 },
+    [{ send: IMG }, { wait: 1500 }, { log: [op('enqueue', 800, `[Image #255] ${IMG}`)] }, { see: [`${IMG}=queued`] }, { wait: 71_000 },
       { log: [absorbed(72_500, `[Image #255] ${IMG}`)] }, { see: [`${IMG}=sending`] }, { wait: 1000 }, { log: [queuedImg(`[Image #255] ${IMG}`, 400)] }, { see: [] }, { bubbles: [IMG] }]],
   ['흡수된 말이 기록 전이어도 채팅 Esc 는 멈춤으로 넘긴다 — 그 말은 이미 턴 안에 있다(거둬들일 게 없다)',
     [{ log: [user(B, 0, 'p0'), think(500), L({ type: 'assistant', uuid: 'a-txt', timestamp: iso(T0 + 600), message: { role: 'assistant', content: [{ type: 'text', text: '보는 중' }] } })] },
@@ -132,11 +133,11 @@ const FLOW: [string, Step[]][] = [
   ['입력칸에 남아 있던 글(받아 적은 말)과 붙어 흡수됨 — 내 말은 끝에 있다, 간 것으로',
     [{ term: '받아 적은 말' }, { send: A }, { wait: 1500 }, { term: '' }, { log: [op('enqueue', 600, `받아 적은 말 ${A}`)] }, { wait: 50_000 }, { log: [absorbed(51_000, `받아 적은 말 ${A}`)] }, { see: [`${A}=sending`] }, { wait: 6000 }, { see: [] }]],
   ['Enter 가 줄바꿈으로 먹혀 입력칸에 걸림 — 입력칸에 걸려 있어요 + 2초 뒤 Enter 를 다시, 들어가면 사라진다',
-    [{ send: A }, { term: A }, { wait: 1500 }, { see: [`${A}=input/now`] }, { enter: null }, { wait: 1000 }, { enter: A },
+    [{ send: A }, { term: A }, { wait: 1500 }, { see: [`${A}=input`] }, { enter: null }, { wait: 1000 }, { enter: A },
       { term: '' }, { log: [user(A, 2600)] }, { see: [] }]],
   ['↑로 줄 선 말이 입력칸에 되돌아옴(popAll) — 입력칸에 걸림이지만 사람이 고치는 중일 수 있어 Enter 는 안 넣는다',
-    [{ send: A }, { log: [op('enqueue', 500, A)] }, { wait: 2000 }, { see: [`${A}=queued/now`] }, { log: [op('popAll', 2500, A)] },
-      { term: A }, { wait: 3000 }, { see: [`${A}=input/now`] }, { enter: null }]],
+    [{ send: A }, { log: [op('enqueue', 500, A)] }, { wait: 2000 }, { see: [`${A}=queued`] }, { log: [op('popAll', 2500, A)] },
+      { term: A }, { wait: 3000 }, { see: [`${A}=input`] }, { enter: null }]],
   ['[앱] 줄 — 앱이 참모 입력칸에 친 줄은 기록에 앱이 넘긴 줄(relay)로 잡혀도 간 것으로',
     [{ send: APP }, { wait: 2000 }, { log: [user(APP, 1000)] }, { see: [] }]],
   ['[앱] 줄 — 다 치고(붙기 1.5초 + Enter 뒤 0.7초) 알리는 사이 기록이 먼저 읽혀도 간 말이다(2026-10-21 qa-036 6g, 돌려받음·브라우저 알림 줄)',

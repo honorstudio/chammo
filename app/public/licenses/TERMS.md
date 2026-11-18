@@ -7,6 +7,7 @@ Honor Studio 가 배포하는 Chammo 공식 설치 파일에 적용돼요.
 - 팀 기능은 서비스 권한(팀 플랜)을 따라요.
 - 제3자 라이브러리는 각자의 라이선스를 따라요. 앱 안 '오픈소스 라이선스'에서 볼 수 있어요.
 - 공개 저장소(github.com/honorstudio/chammo)의 소스는 AGPL-3.0 을 따라요. 이 조건은 공식 설치 파일에만 적용되고, 일부 팀 기능은 설치 파일에만 들어 있어요.
+- 앱이 익명 사용 통계와 오류 난 자리를 보내요(대화·파일·경로·이름은 안 보내요). 설정 > 기능 > '익명 사용 통계'에서 끌 수 있고, 자세한 건 chammo.app/privacy 에 있어요.
 - 있는 그대로 제공하고, 보증은 없어요.
 - 준거법은 대한민국 법이에요.
 - 문의는 https://github.com/honorstudio/chammo/issues 에 남겨 주세요.
@@ -20,6 +21,7 @@ Applies to the official Chammo installers distributed by Honor Studio.
 - Team features follow your service entitlement (team plan).
 - Third-party libraries keep their own licenses. See "Open-source licenses" inside the app.
 - The source in the public repository (github.com/honorstudio/chammo) is under AGPL-3.0. These terms apply only to the official installers, and some team features are included only in the installers.
+- The app sends anonymous usage statistics and error locations (never conversations, files, paths or names). You can turn this off in Settings > Features > "Anonymous usage statistics"; details at chammo.app/privacy.
 - Provided as is, without warranty.
 - Governed by the laws of the Republic of Korea.
 - Questions: open an issue at https://github.com/honorstudio/chammo/issues
