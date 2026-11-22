@@ -1,0 +1,20 @@
+name: 이런 게 있으면 좋겠다 / Idea
+description: 불편한 점이나 바라는 기능 — Something that would make Chammo better
+labels: [idea]
+body:
+  - type: textarea
+    id: pain
+    attributes:
+      label: 어떤 게 불편했나요? / What was inconvenient?
+      description: 매일 쓰면서 걸리는 장면 하나면 충분해요
+    validations:
+      required: true
+  - type: textarea
+    id: wish
+    attributes:
+      label: 이렇게 되면 좋겠어요 / What would help
+  - type: dropdown
+    id: os
+    attributes:
+      label: 운영체제 / OS
+      options: [macOS, Windows, 둘 다 / Both]
