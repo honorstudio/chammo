@@ -99,7 +99,9 @@ Chammo 계정으로 팀을 만들거나(팀 권한이 있는 계정만 — 중�
 curl -fsSL https://raw.githubusercontent.com/honorstudio/chammo/main/scripts/install.sh | bash
 ```
 
-**Windows** — [Releases](https://github.com/honorstudio/chammo/releases)의 `Chammo_x.y.z_x64-setup.exe` 를 실행합니다. 내 사용자에게만 깔리고 WebView2 가 없으면 받아 옵니다. 설치 파일에 아직 코드 서명이 없어 SmartScreen 이 막을 수 있습니다 — **추가 정보 > 실행**. 참모의 도우미 스크립트와 Craft 앱은 **Python 3** 이 필요합니다 — 없으면 첫 설치의 준비 단계(와 앱 서랍의 **설치하기**)가 winget 으로 깝니다(`winget install -e --id Python.Python.3.12 --scope user --custom "InstallLauncherAllUsers=0" --accept-source-agreements --accept-package-agreements` — winget 원본·패키지 약관에 동의하고 `%LOCALAPPDATA%\Programs\Python` 에 깔며 사용자 PATH 맨 앞에 붙습니다, 관리자 권한 필요 없음). 0.4.9 부터 윈도우 첫 설치는 Git·Python 3 을 알아서 받고, winget 이 없으면 '받기' 링크가 뜨며 '나중에'로 넘길 수 있습니다(없으면 일부 기능이 안 됩니다). 단축키는 아래 [단축키](#단축키) 표 밑에 있습니다. 0.4.7 부터 창의 X 는 앱을 끄지 않고 알림 영역(트레이)으로 숨기며, 끝내려면 트레이 아이콘 메뉴의 끝내기를 누릅니다.
+> **Windows 에서 "Windows의 PC 보호" 창이 뜨면** — 설치 파일에 아직 코드 서명이 없어서 나오는 경고입니다. 창의 **추가 정보**를 누른 뒤 **실행**을 누르면 설치가 이어집니다.
+
+**Windows** — [Releases](https://github.com/honorstudio/chammo/releases)의 `Chammo_x.y.z_x64-setup.exe` 를 실행합니다. 내 사용자에게만 깔리고 WebView2 가 없으면 받아 옵니다. 참모의 도우미 스크립트와 Craft 앱은 **Python 3** 이 필요합니다 — 없으면 첫 설치의 준비 단계(와 앱 서랍의 **설치하기**)가 winget 으로 깝니다(`winget install -e --id Python.Python.3.12 --scope user --custom "InstallLauncherAllUsers=0" --accept-source-agreements --accept-package-agreements` — winget 원본·패키지 약관에 동의하고 `%LOCALAPPDATA%\Programs\Python` 에 깔며 사용자 PATH 맨 앞에 붙습니다, 관리자 권한 필요 없음). 0.4.9 부터 윈도우 첫 설치는 Git·Python 3 을 알아서 받고, winget 이 없으면 '받기' 링크가 뜨며 '나중에'로 넘길 수 있습니다(없으면 일부 기능이 안 됩니다). 단축키는 아래 [단축키](#단축키) 표 밑에 있습니다. 0.4.7 부터 창의 X 는 앱을 끄지 않고 알림 영역(트레이)으로 숨기며, 끝내려면 트레이 아이콘 메뉴의 끝내기를 누릅니다.
 
 **업데이트** — 0.3.1 부터는 새 버전이 나오면 위 띠의 업데이트 버튼 하나로 받기·설치·다시 켜기까지 됩니다(세션은 그대로). 0.3.0 이하에서 올 때만 한 번 손으로 까세요.
 
